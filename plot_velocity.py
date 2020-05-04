@@ -6,12 +6,12 @@ import h5py
 from utils import Params
 
 
-parser = argparse.ArgumentParser(description="Plot pos")
+parser = argparse.ArgumentParser(description="Plot velocity")
 parser.add_argument("folder", type=str, help="Folder")
-parser.add_argument("-t_min", type=float, default=0.0, help="t_min")
-parser.add_argument("-t_max", type=float, default=np.inf, help="t_max")
+parser.add_argument("-t", type=float, default=0.0, help="t")
 parser.add_argument("-cmap", type=str, default="parula", help="colormap")
-parser.add_argument("-axis", type=int, default=2, help="Projection axis")
+parser.add_argument("-pcomp", type=int, default=2, help="Spatial comp")
+parser.add_argument("-ucomp", type=int, default=2, help="Velocity comp")
 parser.add_argument("--show", action="store_true", help="Show plot")
 args = parser.parse_args()
 
@@ -40,54 +40,43 @@ for file in files:
             pass
 
 imgfolder = os.path.join(args.folder, "Images")
+statsfolder = os.path.join(args.folder, "Statistics")
 if not os.path.exists(imgfolder):
     os.makedirs(imgfolder)
 
-ts = []
-for t in list(sorted(posf.keys())):
-    if t >= args.t_min and t <= args.t_max:
-        ts.append(t)
+ts = list(sorted(posf.keys()))
+t_dist = []
+for t in ts:
+    t_dist.append(abs(t-args.t))
+tq = ts[np.argmin(t_dist)]
 
-proj_axis = [[1, 2],
-             [2, 0],
-             [0, 1]]
-pax = proj_axis[args.axis]
+pcomp = args.pcomp
+ucomp = args.ucomp
 
 if args.cmap == "parula":
     cmap = plt.cm.viridis
 elif args.cmap == "twilight":
     cmap = plt.cm.twilight
 
-for t in ts:
+for t in [tq]:
     posft, cat = posf[t]
     with h5py.File(posft, "r") as h5f:
         data = np.array(h5f[cat])
 
-    eps = 0
-    if t == ts[0]:
-        eps = 1e-2*np.random.rand(len(data[:, 1]))
-
     fig, ax = plt.subplots(figsize=(5, 10))
-    ax.scatter(np.remainder(data[:, pax[0]], L[pax[0]]),
-               np.remainder(data[:, pax[1]]+eps, L[pax[1]]),
-               c=data[:, -1],
-               marker=',', lw=0, s=0.5, cmap=cmap)
-    plt.tick_params(
-        axis='both',          # changes apply to the x-axis
-        which='both',      # both major and minor ticks are affected
-        bottom=False,      # ticks along the bottom edge are off
-        top=False,         # ticks along the top edge are off
-        left=False,
-        right=False,
-        labelleft=False,
-        labelbottom=False)  # labels along the bottom edge are off
-    ax.set_xlim(0, L[pax[0]])
-    ax.set_ylim(0, L[pax[1]])
-    ax.set_aspect('equal')
+    x = np.remainder(data[:, pcomp], L[pcomp])
+    u = data[:, 3+ucomp]
+    ax.plot(x, u, marker=',', lw=1)
+    ax.set_xlim(0, L[pcomp])
+    # ax.set_ylim(0, L[pax[1]])
+    # ax.set_aspect('equal')
     plt.tight_layout()
     if args.show:
         plt.show()
+    np.savetxt(os.path.join(
+        statsfolder, "x{}_u{}_{:06d}.dat".format(pcomp, ucomp, int(t))),
+               np.vstack((x, u)).T)
     plt.savefig(os.path.join(
         imgfolder,
-        "pos_{:06d}.png".format(int(t))))
+        "vel_{:06d}.png".format(int(t))))
     plt.close()

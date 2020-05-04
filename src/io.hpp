@@ -39,6 +39,7 @@ void print_param(const string key, const int val);
 void print_param(const string key, const string val);
 void write_param(ofstream &ofile, string key, double val);
 void write_param(ofstream &ofile, string key, int val);
+void write_param(ofstream &ofile, string key, long int val);
 void write_param(ofstream &ofile, string key, string val);
 void load_field(H5File &h5file,
 		double*** u,
@@ -46,12 +47,12 @@ void load_field(H5File &h5file,
 		const int nx,
 		const int ny,
 		const int nz);
-void load_field(H5File &h5file,
-		int*** u,
-		const string field,
-		const int nx,
-		const int ny,
-		const int nz);
+void load_int_field(H5File &h5file,
+		    int*** u,
+		    const string field,
+		    const int nx,
+		    const int ny,
+		    const int nz);
 void load_h5(const string h5filename,
 	     double*** ux,
 	     double*** uy,

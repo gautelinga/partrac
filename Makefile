@@ -23,6 +23,7 @@ trace: 	$(OBJECTS_TRACE)
 
 build:
 	@mkdir -p $(OBJ_DIR)
+	ctags -e -R src/*.cpp src/*.hpp
 
 clean:
 	rm -rf build/*

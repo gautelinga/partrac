@@ -13,11 +13,9 @@ public:
   Interpol(string infilename);
   ~Interpol() {};
   void update(const double t);
+  void set_folder(string folder){ this->folder=folder; };
   void probe(const double x, const double y, const double z);
   bool inside_domain();
-  //double get_ux(const double x, const double y, const double z);
-  //double get_uy(const double x, const double y, const double z);
-  //double get_uz(const double x, const double y, const double z);
   double get_ux();
   double get_uy();
   double get_uz();
@@ -25,10 +23,11 @@ public:
   double get_Lx() { return Lx; };
   double get_Ly() { return Ly; };
   double get_Lz() { return Lz; };
+  int get_nx() { return nx; };
+  int get_ny() { return ny; };
+  int get_nz() { return nz; };
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
-  //double get_rho(const double x, const double y, const double z);
-  //double get_p(const double x, const double y, const double z);
   double get_rho();
   double get_p();
   double get_uxx();
@@ -53,6 +52,18 @@ public:
   double get_Juz() { return (get_uzx()*get_ux()
 			     + get_uzy()*get_uy()
 			     + get_uzz()*get_uz()); };
+  bool get_nodal_inside(const int ix, const int iy, const int iz){
+    return !isSolid[ix][iy][iz];
+  }
+  double get_nodal_ux(const int ix, const int iy, const int iz){
+    return alpha_t * ux_next[ix][iy][iz] + (1-alpha_t) * ux_prev[ix][iy][iz];
+  }
+  double get_nodal_uy(const int ix, const int iy, const int iz){
+    return alpha_t * uy_next[ix][iy][iz] + (1-alpha_t) * uy_prev[ix][iy][iz];
+  }
+  double get_nodal_uz(const int ix, const int iy, const int iz){
+    return alpha_t * uz_next[ix][iy][iz] + (1-alpha_t) * uz_prev[ix][iy][iz];
+  }
 private:
   Timestamps ts;
   string folder;
@@ -172,7 +183,7 @@ Interpol::Interpol(string infilename) : ts(infilename) {
   }
   
   // Smooth solid-liquid interface
-  load_field(solid_file, isSolid, "is_solid", nx, ny, nz);
+  load_int_field(solid_file, isSolid, "is_solid", nx, ny, nz);
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -284,13 +295,12 @@ void Interpol::probe(const double x,
   ind[1][0] = imodulo(iy_fl, ny);
   ind[1][1] = imodulo(ind[1][0] + 1, ny);
   ind[2][0] = imodulo(iz_fl, nz);
-  ind[2][0] = imodulo(ind[2][0] + 1, nz);
+  ind[2][1] = imodulo(ind[2][0] + 1, nz);
 
   ind_pc[0] = imodulo(round(x/dx), nx);
   ind_pc[1] = imodulo(round(y/dy), ny);
   ind_pc[2] = imodulo(round(z/dz), nz);
 
-  
   double wx = (x-dx*ix_fl)/dx;
   double wy = (y-dy*iy_fl)/dy;
   double wz = (z-dz*iz_fl)/dz;
@@ -298,16 +308,6 @@ void Interpol::probe(const double x,
   double wq[3][2] = {{1-wx, wx},
 		     {1-wy, wy},
 		     {1-wz, wz}};
-  /*
-  w[0][0][0] = (1-wx)*(1-wy)*(1-wz);
-  w[0][0][1] = (1-wx)*(1-wy)*  wz;
-  w[0][1][0] = (1-wx)*  wy  *(1-wz);
-  w[0][1][1] = (1-wx)*  wy  *  wz;
-  w[1][0][0] =   wx  *(1-wy)*(1-wz);
-  w[1][0][1] =   wx  *(1-wy)*  wz;
-  w[1][1][0] =   wx  *  wy  *(1-wz);
-  w[1][1][1] =   wx  *  wy  *  wz;
-  */
 
   double dwq[3][2] = {{-1./dx, 1./dx},
 		      {-1./dy, 1./dy},

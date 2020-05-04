@@ -173,6 +173,10 @@ void write_param(ofstream &ofile, string key, int val){
   ofile << key << "=" << val << std::endl;
 }
 
+void write_param(ofstream &ofile, string key, long int val){
+  ofile << key << "=" << val << std::endl;
+}
+
 void write_param(ofstream &ofile, string key, string val){
   ofile << key << "=" << val << std::endl;
 }
@@ -195,10 +199,10 @@ void load_field(H5File &h5file,
   }
 }
 
-void load_field(H5File &h5file,
-		int*** u,
-		const string field,
-		const int nx, const int ny, const int nz){
+void load_int_field(H5File &h5file,
+		    int*** u,
+		    const string field,
+		    const int nx, const int ny, const int nz){
   DataSet dset = h5file.openDataSet(field);
   DataSpace dspace = dset.getSpace();
   vector<int> Uv(nx*ny*nz);

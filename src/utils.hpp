@@ -21,7 +21,7 @@ public:
     prev(t_prev, filename_prev), next(t_next, filename_next) {};
   Stamp prev;
   Stamp next;
-  double weight_next(const double t){ return (this->prev.t-t)/(this->next.t-this->prev.t); };
+  double weight_next(const double t){ return (t-this->prev.t)/(this->next.t-this->prev.t); };
   double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 

@@ -1,16 +1,25 @@
 #include <iostream>
 #include "io.hpp"
 #include "utils.hpp"
+#include "Parameters.hpp"
 #include "Interpol.hpp"
 #include "distribute.hpp"
 #include <vector>
 #include <filesystem>
 #include <boost/algorithm/string.hpp>
 #include <fstream>
+#include <sstream>
 #include <random>
+#include <math.h>
 #include "H5Cpp.h"
 
 using namespace H5;
+
+double dist(int i1, int i2, double* x_rw, double* y_rw, double* z_rw){
+  return sqrt(pow(x_rw[i1]-x_rw[i2], 2)
+	      + pow(y_rw[i1]-y_rw[i2], 2)
+	      + pow(z_rw[i1]-z_rw[i2], 2));
+}
 
 int main(int argc, char* argv[]){
   // Input parameters
@@ -18,212 +27,193 @@ int main(int argc, char* argv[]){
     std::cout << "Specify an input timestamps file." << std::endl;
     return 0;
   }
-  // Default parameters
-  double Dm = 1.0;
-  double t0 = 0.;
-  double T = 10000000.;
-  int Nrw = 100;
-  double traj_intv = 1.0;
-  double pos_intv = 10.0;
-  double stat_intv = 10.0;
-  bool dump_traj = true;
-  bool verbose = false;
-  double U0 = 1.0;
-  double x0 = 0.0;
-  double y0 = 0.0;
-  double z0 = 0.0;
-  double dt = 1.0;
-  int int_order = 1;
-  string init_mode = "line_x";  // what else?
-  string init_weight = "none";
-
-  size_t found;
-  string argstr, key, val;
-  std::cout << "TEST" << std::endl;
-  for (int iarg=2; iarg < argc; ++iarg){
-    argstr = argv[iarg];
-    found = argstr.find('=');
-    if (found != string::npos){
-      key = argstr.substr(0, found);
-      val = argstr.substr(found+1);
-      boost::trim(key);
-      boost::trim(val);
-
-      if (key == "Dm") Dm = stod(val);
-      if (key == "t0") t0 = stod(val);
-      if (key == "T") T = stod(val);
-      if (key == "dt") dt = stod(val);
-      if (key == "Nrw") Nrw = stoi(val);
-      if (key == "traj_intv") traj_intv = stod(val);
-      if (key == "pos_intv") pos_intv = stod(val);
-      if (key == "stat_intv") stat_intv = stod(val);
-      if (key == "dump_traj") dump_traj = (val == "true" || val == "True") ? true : false;
-      if (key == "verbose") verbose = (val == "true" || val == "True") ? true : false;
-      if (key == "U") U0 = stod(val);
-      if (key == "x0") x0 = stod(val);
-      if (key == "y0") y0 = stod(val);
-      if (key == "z0") z0 = stod(val);
-      if (key == "int_order") int_order = stoi(val);
-      if (key == "init_mode") init_mode = val;
-      if (key == "init_weight") init_weight = val;
-    }
+  Parameters prm(argc, argv);
+  if (prm.restart_folder != ""){
+    prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
+    prm.parse_cmd(argc, argv);
   }
-
-  if (verbose){
-    print_param("Dm         ", Dm);
-    print_param("t0         ", t0);
-    print_param("T          ", T);
-    print_param("dt         ", dt);
-    print_param("Nrw        ", Nrw);
-    print_param("traj_intv  ", traj_intv);
-    print_param("pos_intv   ", pos_intv);
-    print_param("stat_intv  ", stat_intv);
-    print_param("dump_traj  ", dump_traj ? "true" : "false");
-    print_param("verbose    ", verbose ? "true" : "false");
-    print_param("U          ", U0);
-    print_param("x0         ", x0);
-    print_param("y0         ", y0);
-    print_param("z0         ", z0);
-    print_param("int_order  ", int_order);
-    print_param("init_mode  ", init_mode);
-    print_param("init_weight", init_mode);
-  }
-  traj_intv = max(traj_intv, dt);
-  pos_intv = max(pos_intv, dt);
-  stat_intv = max(pos_intv, dt);
-
+  
   string infilename = string(argv[1]);
 
   Interpol intp(infilename);
-  string folder = intp.get_folder();
   
-  string rwfolder = create_folder(folder + "/RandomWalkers/");
-  string newfolder = create_folder(rwfolder +
-    "/Dm" + to_string(Dm) + "_U" + to_string(U0) +
-    "_dt" + to_string(dt) + "_Nrw" + to_string(Nrw) + "/");
-  string trajfolder = create_folder(newfolder + "Trajectories/");
-  string posfolder = create_folder(newfolder + "Positions/");
+  double Dm = prm.Dm;
+  double dt = prm.dt;
+  int Nrw = prm.Nrw;
+  double U0 = prm.U0;
 
+  bool refine = prm.refine;
+  double ds_max = prm.ds_max;
+  int Nrw_max = prm.Nrw_max;
+
+  string folder = intp.get_folder();
+  string rwfolder = create_folder(folder + "/RandomWalkers/");
+  string newfolder;
+  if (prm.restart_folder != ""){
+    newfolder = prm.folder;
+  }
+  else {
+    ostringstream ss_Dm, ss_dt, ss_Nrw;
+    ss_Dm << std::scientific << std::setprecision(7) << Dm;
+    ss_dt << std::scientific << std::setprecision(7) << dt;
+    ss_Nrw << Nrw;
+    newfolder = create_folder(rwfolder +
+			      "/Dm" + ss_Dm.str() + // "_U" + to_string(prm.U0) +
+			      "_dt" + ss_dt.str() +
+			      "_Nrw" + ss_Nrw.str() + "/");
+  }
+  string posfolder = create_folder(newfolder + "Positions/");
+  string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
+  string histfolder = create_folder(newfolder + "Histograms/");
+  prm.folder = newfolder;
+
+  prm.print();
+  
   random_device rd;
   mt19937 gen(rd());
-  
-  int n = 0;
-  double x, y, z;
-  double ux, uy, uz;
-  double rho, p;
-  double divu, vortz;
   
   double Lx = intp.get_Lx();
   double Ly = intp.get_Ly();
   double Lz = intp.get_Lz();
+  prm.Lx = Lx;
+  prm.Ly = Ly;
+  prm.Lz = Lz;
+  prm.nx = intp.get_nx();
+  prm.ny = intp.get_ny();
+  prm.nz = intp.get_nz();
+  
   double U02 = U0*U0;
   
-  t0 = max(intp.get_t_min(), t0);  // 587500.0;
-  T = min(intp.get_t_max(), T);
+  double t0 = max(intp.get_t_min(), prm.t0);
+  double T = min(intp.get_t_max(), prm.T);
+  prm.t0 = t0;
+  prm.T = T;
   
-  cout << "t0 = " << t0 << endl;
-  cout << "T  = " << T  << endl;
-  
-  intp.update(587500.0);
-  uniform_real_distribution<> uni_dist_x(0*Lx, Lx);
-  uniform_real_distribution<> uni_dist_y(0*Ly, Ly);
-  uniform_real_distribution<> uni_dist_z(0*Lz, Lz);
-  
-  ofstream ofile("test.dat");
-  while (n < 100000){
-    x = uni_dist_x(gen);  // mod?
-    y = uni_dist_y(gen);
-    z = uni_dist_z(gen);
+  if (prm.interpolation_test > 0){
+    int n = 0;
+    double x, y, z;
+    double ux, uy, uz;
+    double rho, p;
+    double divu, vortz;
+    
+    intp.update(t0);
+    uniform_real_distribution<> uni_dist_x(0, Lx);
+    uniform_real_distribution<> uni_dist_y(0, Ly);
+    uniform_real_distribution<> uni_dist_z(0, Lz);
 
-    intp.probe(x, y, z);
-    if (intp.inside_domain()){
-      ux = intp.get_ux();
-      uy = intp.get_uy();
-      uz = intp.get_uz();
-      rho = intp.get_rho();
-      p = intp.get_p();
-      divu = intp.get_divu();
-      vortz = intp.get_vortz();
-      ofile << x  << " " << y  << " " << z  << " "
-	    << ux << " " << uy << " " << uz << " "
-	    << rho << " " << p << " " << divu << " "
-	    << vortz << endl;
-    }    
-    ++n;
+    ofstream nodalfile(newfolder + "/nodal_values.dat");
+    for (int ix=0; ix<intp.get_nx(); ++ix){
+      for (int iy=0; iy<intp.get_ny(); ++iy){
+	for (int iz=0; iz<intp.get_nz(); ++iz){
+	  bool inside = intp.get_nodal_inside(ix, iy, iz);
+	  ux = intp.get_nodal_ux(ix, iy, iz);
+	  uy = intp.get_nodal_uy(ix, iy, iz);
+	  uz = intp.get_nodal_uz(ix, iy, iz);
+	  nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
+		    << ux << " " << uy << " " << uz << endl;
+	}
+      }
+    }
+    nodalfile.close();
+    
+    ofstream ofile(newfolder + "/interpolation.dat");
+    while (n < prm.interpolation_test){
+      x = uni_dist_x(gen);
+      y = uni_dist_y(gen);
+      z = uni_dist_z(gen);
+
+      intp.probe(x, y, z);
+      if (intp.inside_domain()){
+	ux = intp.get_ux();
+	uy = intp.get_uy();
+	uz = intp.get_uz();
+	rho = intp.get_rho();
+	p = intp.get_p();
+	divu = intp.get_divu();
+	vortz = intp.get_vortz();
+	ofile << x  << " " << y  << " " << z  << " "
+	      << ux << " " << uy << " " << uz << " "
+	      << rho << " " << p << " " << divu << " "
+	      << vortz << endl;
+      }    
+      ++n;
+    }
+    ofile.close();
   }
-  ofile.close();
   
   normal_distribution<double> rnd_normal(0.0, 1.0);
 
-  double* x_rw = new double[Nrw];
-  double* y_rw = new double[Nrw];
-  double* z_rw = new double[Nrw];
-  double* ux_rw = new double[Nrw];
-  double* uy_rw = new double[Nrw];
-  double* uz_rw = new double[Nrw];
+  double* x_rw = new double[Nrw_max];
+  double* y_rw = new double[Nrw_max];
+  double* z_rw = new double[Nrw_max];
+
+  double* c_rw = new double[Nrw_max];
+  
+  double* ux_rw = new double[Nrw_max];
+  double* uy_rw = new double[Nrw_max];
+  double* uz_rw = new double[Nrw_max];
+  double* rho_rw = new double[Nrw_max];
+  double* p_rw = new double[Nrw_max];
+  
   // Second-order terms
-  double* Jux_rw = new double[Nrw];
-  double* Juy_rw = new double[Nrw];
-  double* Juz_rw = new double[Nrw];
-  if (int_order > 2){
+  double* Jux_rw = new double[Nrw_max];
+  double* Juy_rw = new double[Nrw_max];
+  double* Juz_rw = new double[Nrw_max];
+  if (prm.int_order > 2){
     cout << "No support for such high temporal integration order." << endl;
     exit(0);
   }
 
-  vector<array<double, 3>> pos_init = initial_positions(init_mode,
-							init_weight,
-							Nrw,
-							x0, y0, z0,
-							intp, gen);
+  vector<array<double, 3>> pos_init;
+  vector<tuple<int, int, double>> edges;
   
-  ofstream paramsfile(newfolder + "/params.dat");
-  write_param(paramsfile, "Dm", Dm);
-  write_param(paramsfile, "t0", t0);
-  write_param(paramsfile, "T", T);
-  write_param(paramsfile, "dt", dt);
-  write_param(paramsfile, "Nrw", Nrw);
-  write_param(paramsfile, "traj_intv", traj_intv);
-  write_param(paramsfile, "pos_intv", pos_intv);
-  write_param(paramsfile, "stat_intv", stat_intv);
-  write_param(paramsfile, "dump_traj", dump_traj ? "true" : "false");
-  write_param(paramsfile, "verbose", verbose ? "true" : "false");
-  write_param(paramsfile, "U", U0);
-  write_param(paramsfile, "x0", x0);
-  write_param(paramsfile, "y0", y0);
-  write_param(paramsfile, "z0", z0);
-  write_param(paramsfile, "Lx", Lx);
-  write_param(paramsfile, "Ly", Ly);
-  write_param(paramsfile, "Lz", Lz);
-  write_param(paramsfile, "int_order", int_order);
-  write_param(paramsfile, "init_mode", init_mode);
-  write_param(paramsfile, "init_weight", init_mode);
-  paramsfile.close();
+  if (prm.restart_folder != ""){
+    string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
+    load_positions(posfile, pos_init, Nrw);
+    string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
+    load_edges(edgefile, edges);
+    string colfile = prm.restart_folder + "/Checkpoints/colors.col";
+    load_colors(colfile, c_rw, Nrw);
+  }
+  else {
+    pos_init = initial_positions(prm.init_mode,
+				 prm.init_weight,
+				 Nrw,
+				 prm.x0, prm.y0, prm.z0,
+				 prm.ds_max,
+				 intp, gen);
+  }
+
+  double ds0, ds;
   
-  ofstream* traj_outs = new ofstream[Nrw];
   for (int irw=0; irw < Nrw; ++irw){
-    // Initial position
-    if (dump_traj){
-      string filename = trajfolder + "traj_" + to_string(irw) + ".traj";
-      traj_outs[irw].open(filename, ofstream::out);
-      if (verbose)
-	std::cout << "Opened: " << irw << std::endl;
+    // Assign initial position
+    x_rw[irw] = pos_init[irw][0];
+    y_rw[irw] = pos_init[irw][1];
+    z_rw[irw] = pos_init[irw][2];
+
+    if (prm.restart_folder == ""){
+      c_rw[irw] = double(irw)/(Nrw-1);
+      if (irw > 0){
+	ds0 = dist(irw-1, irw, x_rw, y_rw, z_rw);
+	if (ds0 < 2)  // 2 lattice units
+	  edges.push_back({irw-1, irw, ds0});
+	// Needs customization for 2D/3D applications
+      }
     }
-    x = pos_init[irw][0];
-    y = pos_init[irw][1];
-    z = pos_init[irw][2];
-
-    // cout << x << " " << y << " " << z << endl;
-
-    x_rw[irw] = x;
-    y_rw[irw] = y;
-    z_rw[irw] = z;
-
+    intp.update(t0);
+    intp.probe(x_rw[irw],
+	       y_rw[irw],
+	       z_rw[irw]);
     ux_rw[irw] = U0*intp.get_ux();
     uy_rw[irw] = U0*intp.get_uy();
     uz_rw[irw] = U0*intp.get_uz();
+
+    rho_rw[irw] = intp.get_rho();
+    p_rw[irw] = intp.get_p();
     
     // Second-order terms
-    if (int_order >= 2){
+    if (prm.int_order >= 2){
       Jux_rw[irw] = U02*intp.get_Jux();
       Juy_rw[irw] = U02*intp.get_Juy();
       Juz_rw[irw] = U02*intp.get_Juz();
@@ -235,9 +225,8 @@ int main(int argc, char* argv[]){
   int it = 0;
   double dt2 = dt*dt;
 
-
   double sqrt2Dmdt = sqrt(2*Dm*dt);
-  if (verbose){
+  if (prm.verbose){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
     print_param("U*dt", U0*dt);
   }
@@ -246,57 +235,41 @@ int main(int argc, char* argv[]){
   double y_mean, dy2_mean;
   double z_mean, dz2_mean;
   double t = t0;
-
-  int n_accepted = 0;
-  int n_declined = 0;
-
-  H5File posf_h5(newfolder + "/positions.h5", H5F_ACC_TRUNC);
-  hsize_t posf_dims[2];
-  posf_dims[0] = Nrw;
-  posf_dims[1] = 6;
-  DataSpace posf_dspace(2, posf_dims);
-  double** posdata = new double*[Nrw];
-  for (int irw=0; irw<Nrw; ++irw){
-    posdata[irw] = new double[6];
+  if (prm.restart_folder != ""){
+    t = prm.t;
   }
   
-  ofstream statfile(newfolder + "/tdata.dat");
-  ofstream declinedfile(newfolder + "/declinedpos.dat");
+  prm.dump(newfolder, t);
+  
+  unsigned long int n_accepted = prm.n_accepted;
+  unsigned long int n_declined = prm.n_declined;
+  
+  const int NCOLS = 9;
+
+  H5File* posf_h5 = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+  
+  int int_stat_intv = int(prm.stat_intv/dt);
+  int int_dump_intv = int(prm.dump_intv/dt);
+  int int_checkpoint_intv = int(prm.checkpoint_intv/dt);
+  int int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
+  int int_refine_intv = int(prm.refine_intv/dt);
+  int int_hist_intv = int_stat_intv*prm.hist_chunk_size;
+  
+  double s;
+  int n_too_long;
+  double logdens_mean;
+  double logdens_var;
+  double logdens;
+  
+  string write_mode = prm.write_mode;
+  
+  ofstream statfile(newfolder + "/tdata_from_t" + to_string(t) + ".dat");
+  ofstream declinedfile(newfolder + "/declinedpos_from_t" + to_string(t) + ".dat");
   while (t <= T){
     intp.update(t);
-    if (it % int(stat_intv/dt) == 0){
+    if (it % int_stat_intv == 0){
       cout << "Time = " << t << endl;
-    }
-    //
-    if (it % int(pos_intv/dt) == 0){
-      string posfile = posfolder + "xy_t" + to_string(t) + ".pos";
-      ofstream pos_out(posfile);
 
-      for (int irw=0; irw < Nrw; ++irw){
-	pos_out << irw << " "
-		<< x_rw[irw] << " "
-		<< y_rw[irw] << " "
-		<< z_rw[irw] << " "
-		<< ux_rw[irw] << " "
-		<< uy_rw[irw] << " "
-		<< uz_rw[irw] << std::endl;
-	posdata[irw][0] = x_rw[irw];
-	posdata[irw][1] = y_rw[irw];
-	posdata[irw][2] = z_rw[irw];
-	posdata[irw][3] = ux_rw[irw];
-	posdata[irw][4] = uy_rw[irw];
-	posdata[irw][5] = uz_rw[irw];
-      }
-      pos_out.close();
-
-      DataSet posf_dset = posf_h5.createDataSet(to_string(t),
-						PredType::NATIVE_DOUBLE,
-						posf_dspace
-						);
-      posf_dset.write(posdata, PredType::NATIVE_DOUBLE);
-      // posf_h5.close();
-    }    
-    if (it % int(stat_intv/dt) == 0){
       x_mean = 0.;
       y_mean = 0.;
       z_mean = 0.;
@@ -315,28 +288,158 @@ int main(int argc, char* argv[]){
 	dy2_mean += pow(y_rw[irw]-y_mean, 2)/(Nrw-1);
 	dz2_mean += pow(z_rw[irw]-z_mean, 2)/(Nrw-1);
       }
-      statfile << t << " "
-	       << x_mean << " " << dx2_mean << " "
-	       << y_mean << " " << dy2_mean << " "
-	       << z_mean << " " << dz2_mean << " "
-	       << n_accepted << " " << n_declined << std::endl;
+      s = 0.;
+      n_too_long = 0;
+      double logdens_wsum = 0.;
+      double s0 = 0.;
+      vector<array<double,2>> logdens_vec;
+      for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
+	   edgeit != edges.end(); ++edgeit){
+	int first = get<0>(*edgeit);
+	int second = get<1>(*edgeit);
+	double ds0 = get<2>(*edgeit);
+	ds = dist(first, second, x_rw, y_rw, z_rw);
+	if (ds > ds_max){
+	  ++n_too_long;
+	}
+	logdens = log(ds/ds0);
+	logdens_wsum += logdens*ds;
+	logdens_vec.push_back({logdens, ds});
+	s += ds;
+	s0 += ds0;
+      }
+      logdens_mean = logdens_wsum/s;
+      double logdens_var_wsum = 0.;
+      for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
+	   lit != logdens_vec.end(); ++lit){
+	logdens_var_wsum += pow((*lit)[0]-logdens_mean, 2)*(*lit)[1];
+      }
+      logdens_var = logdens_var_wsum/s;
+      double s_ = 0.;
+      if (int_hist_intv > 0 && it % int_hist_intv == 0){
+	sort(logdens_vec.begin(), logdens_vec.end());
+	ofstream logdensfile(histfolder + "/logdens_t" + to_string(t) + ".hist");
+	for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
+	     lit != logdens_vec.end(); ++lit){
+	  s_ += (*lit)[1];
+	  logdensfile << (*lit)[0] << " " << (*lit)[1] << " " << s_ << " " << s_/s << endl;
+	}
+	logdensfile.close();
+      }
+      
+      statfile << t << " "  // 1
+	       << x_mean << " "  // 2
+	       << dx2_mean << " "
+	       << y_mean << " "
+	       << dy2_mean << " "
+	       << z_mean << " "
+	       << dz2_mean << " "
+	       << n_accepted << " "
+	       << n_declined << " "
+	       << s << " "
+	       << n_too_long << " "
+	       << Nrw << " "
+	       << logdens_mean << " "
+	       << logdens_var << " "
+	       << s0
+	       << std::endl;
+    }
+    //
+    if (it % int_checkpoint_intv == 0 || t+dt > T){
+       prm.t = t;
+       prm.n_accepted = n_accepted;
+       prm.n_declined = n_declined;
+       prm.Nrw = Nrw;
+       prm.dump(checkpointsfolder);
+       dump_positions(checkpointsfolder + "/positions.pos",
+		      x_rw, y_rw, z_rw, Nrw);
+       dump_edges(checkpointsfolder + "/edges.edge",
+		  edges);
+       dump_colors(checkpointsfolder + "/colors.col",
+		  c_rw, Nrw);
+    }
+    // Refinement
+    if (refine && it % int_refine_intv == 0){
+      for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
+	   edgeit != edges.end(); ++edgeit){
+	int first = get<0>(*edgeit);
+	int second = get<1>(*edgeit);
+	double ds0 = get<2>(*edgeit);
+	ds = dist(first, second, x_rw, y_rw, z_rw);
+	if (ds > ds_max && Nrw < Nrw_max){
+	  get<1>(*edgeit) = Nrw;
+	  get<2>(*edgeit) = ds0/2;
+	  edgeit = edges.insert(edgeit+1, {Nrw, second, ds0/2});
+	  edgeit -= 2;
+
+	  x_rw[Nrw] = 0.5*(x_rw[first]+x_rw[second]);
+	  y_rw[Nrw] = 0.5*(y_rw[first]+y_rw[second]);
+	  z_rw[Nrw] = 0.5*(z_rw[first]+z_rw[second]);
+
+	  c_rw[Nrw] = 0.5*(c_rw[first]+c_rw[second]);
+	  
+	  ux_rw[Nrw] = 0.5*(ux_rw[first]+ux_rw[second]);
+	  uy_rw[Nrw] = 0.5*(uy_rw[first]+uy_rw[second]);
+	  uz_rw[Nrw] = 0.5*(uz_rw[first]+uz_rw[second]);
+	  if (it % int_dump_intv == 0){
+	    rho_rw[Nrw] = 0.5*(rho_rw[first]+rho_rw[second]);
+	    p_rw[Nrw] = 0.5*(p_rw[first]+p_rw[second]);
+	  }
+	  ++Nrw;
+	}
+      }
+    }
+    //
+    if (it % int_dump_intv == 0){
+      if (write_mode == "text"){
+	string posfile = posfolder + "xy_t" + to_string(t) + ".pos";
+	ofstream pos_out(posfile);
+	for (int irw=0; irw < Nrw; ++irw){
+	  pos_out << irw << " "
+		  << x_rw[irw] << " "
+		  << y_rw[irw] << " "
+		  << z_rw[irw] << " "
+		  << ux_rw[irw] << " "
+		  << uy_rw[irw] << " "
+		  << uz_rw[irw] << std::endl;
+	}
+	pos_out.close();
+      }
+      else if (write_mode == "hdf5"){
+	// Clear file if it exists, otherwise create
+	if (it % int_chunk_intv == 0 && it > 0){
+	  posf_h5->close();
+	  posf_h5 = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+	}
+	hsize_t posf_dims[2];
+	posf_dims[0] = Nrw;
+	posf_dims[1] = NCOLS;
+	DataSpace posf_dspace(2, posf_dims);
+	double* posdata = new double[Nrw*NCOLS];
+	for (int irw=0; irw < Nrw; ++irw){
+	  posdata[irw*NCOLS+0] = x_rw[irw];
+	  posdata[irw*NCOLS+1] = y_rw[irw];
+	  posdata[irw*NCOLS+2] = z_rw[irw];
+	  posdata[irw*NCOLS+3] = ux_rw[irw];
+	  posdata[irw*NCOLS+4] = uy_rw[irw];
+	  posdata[irw*NCOLS+5] = uz_rw[irw];
+	  posdata[irw*NCOLS+6] = rho_rw[irw];
+	  posdata[irw*NCOLS+7] = p_rw[irw];
+	  posdata[irw*NCOLS+8] = c_rw[irw];
+	}
+	DataSet posf_dset = posf_h5->createDataSet(to_string(t),
+						   PredType::NATIVE_DOUBLE,
+						   posf_dspace);
+	posf_dset.write(posdata, PredType::NATIVE_DOUBLE);
+      }
     }
     for (int irw=0; irw < Nrw; ++irw){
-      if (dump_traj && it % int(traj_intv/dt) == 0){
-	traj_outs[irw] << t << " "
-		       << x_rw[irw] << " "
-		       << y_rw[irw] << " "
-		       << z_rw[irw] << " "
-		       << ux_rw[irw] << " "
-		       << uy_rw[irw] << " "
-		       << uz_rw[irw] << std::endl;
-      }
       dx_rw = ux_rw[irw]*dt;
       dy_rw = uy_rw[irw]*dt;
       dz_rw = uz_rw[irw]*dt;
 
       // Second-order terms
-      if (int_order >= 2){
+      if (prm.int_order >= 2){
 	dx_rw += 0.5*Jux_rw[irw]*dt2;
 	dy_rw += 0.5*Juy_rw[irw]*dt2;
 	dz_rw += 0.5*Juz_rw[irw]*dt2;
@@ -361,8 +464,13 @@ int main(int argc, char* argv[]){
 	uy_rw[irw] = U0*intp.get_uy();
 	uz_rw[irw] = U0*intp.get_uz();
 
+	if ((it+1) % int_dump_intv == 0){
+	  rho_rw[irw] = intp.get_rho();
+	  p_rw[irw] = intp.get_p();
+	}
+	
 	// Second-order terms
-	if (int_order >= 2){
+	if (prm.int_order >= 2){
 	  Jux_rw[irw] = U02*intp.get_Jux();
 	  Juy_rw[irw] = U02*intp.get_Juy();
 	  Juz_rw[irw] = U02*intp.get_Juz();
@@ -382,11 +490,6 @@ int main(int argc, char* argv[]){
     it += 1;
   }
   
-  if (dump_traj){
-    for (int irw=0; irw < Nrw; ++irw){
-      traj_outs[irw].close();
-    }
-  }
   statfile.close();
   declinedfile.close();
 

@@ -1,6 +1,8 @@
+#include <iomanip>
 #include <vector>
 #include <random>
 #include <algorithm>
+#include <fstream>
 #include "Interpol.hpp"
 
 #ifndef __DISTRIBUTE_HPP
@@ -8,12 +10,77 @@
 
 using namespace std;
 
+void load_positions(string input_file,
+		    vector<array<double, 3>> &pos_init,
+		    const int Nrw){
+  ifstream infile(input_file);
+  double x, y, z;
+  while (infile >> x >> y >> z){
+    pos_init.push_back({x, y, z});
+  }
+  infile.close();
+  if (Nrw != int(pos_init.size())){
+    cout << "Wrong dimensions..." << endl;
+    exit(0);
+  }
+}
+
+void dump_positions(string output_file,
+		    double* x_rw, double* y_rw, double* z_rw,
+		    int Nrw){
+  ofstream outfile(output_file);
+  for (int irw=0; irw<Nrw; ++irw){
+    outfile << std::setprecision(12) << x_rw[irw] << " " << y_rw[irw] << " " << z_rw[irw] << endl;
+  }
+  outfile.close();
+}
+
+void load_edges(string input_file,
+		vector<tuple<int, int, double>> &edges){
+  ifstream infile(input_file);
+  int first, second;
+  double third;
+  while (infile >> first >> second >> third){
+    edges.push_back({first, second, third});
+  }
+  infile.close();
+}
+
+void dump_edges(string output_file,
+		vector<tuple<int, int, double>> &edges){
+  ofstream outfile(output_file);
+  for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
+       edgeit != edges.end(); ++edgeit){
+    outfile << get<0>(*edgeit) << " " << get<1>(*edgeit) << " " << get<2>(*edgeit) << endl;
+  }
+  outfile.close();
+}
+
+void load_colors(string input_file,
+		 double* c_rw, const int Nrw){
+  ifstream infile(input_file);
+  for (int irw=0; irw < Nrw; ++irw){
+    infile >> c_rw[irw];
+  }
+  infile.close();
+}
+
+void dump_colors(string output_file,
+		 double* c_rw, const int Nrw){
+  ofstream outfile(output_file);
+  for (int irw=0; irw < Nrw; ++irw){
+    outfile << setprecision(12) << c_rw[irw] << endl;
+  }
+  outfile.close();
+}
+
 vector<array<double, 3>> initial_positions(string init_mode,
 					   string init_weight,
 					   int &Nrw,
 					   const double x0,
 					   const double y0,
 					   const double z0,
+					   const double ds,
 					   Interpol &intp,
 					   mt19937 &gen
 					   ){
@@ -25,6 +92,32 @@ vector<array<double, 3>> initial_positions(string init_mode,
   int Nx = 1;
   int Ny = 1;
   int Nz = 1;
+
+  if (init_mode == "pair_xy"){
+    uniform_real_distribution<> uni_dist_theta(0., 2*M_PI);
+    double theta = uni_dist_theta(gen);
+    double dx = 0.5*ds*cos(theta);
+    double dy = 0.5*ds*sin(theta);
+
+    vector<array<double, 3>> pos_init;
+    double x_a = x0 + dx;
+    double y_a = y0 + dy;
+    double z_a = z0;
+    intp.probe(x_a, y_a, z_a);
+    bool inside_a = intp.inside_domain();
+    double x_b = x0 - dx;
+    double y_b = y0 - dy;
+    double z_b = z0;
+    bool inside_b = intp.inside_domain();
+    if (!inside_a || !inside_b){
+      cout << "Pair not inside domain" << endl;
+      exit(0);
+    }
+    pos_init.push_back({x_a, y_a, z_a});
+    pos_init.push_back({x_b, y_b, z_b});
+    Nrw = 2;
+    return pos_init;
+  }
   
   bool init_rand_x = false;
   bool init_rand_y = false;

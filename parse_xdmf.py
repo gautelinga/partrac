@@ -14,9 +14,21 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Needs to add something
-    
-    tree = etree.parse(args.filename)
+    try:
+        tree = etree.parse(args.filename)
+    except:
+        name = os.path.basename(args.filename).split(".")
+        newfilename = os.path.join(
+            os.path.dirname(args.filename),
+            ".".join(name[:-1]) + "_mod." + name[-1])
+        # with open(args.filename)
+        print("Making new file: " + newfilename)
+        with open(args.filename, "r") as fin:
+            content = fin.read()
+        content += "    </Grid>\n</Domain>\n</Xdmf>"
+        with open(newfilename, "w") as fout:
+            fout.write(content)
+        tree = etree.parse(newfilename)
 
     root = tree.getroot()
 
