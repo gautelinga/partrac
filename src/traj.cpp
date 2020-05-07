@@ -15,10 +15,193 @@
 
 using namespace H5;
 
-double dist(int i1, int i2, double* x_rw, double* y_rw, double* z_rw){
-  return sqrt(pow(x_rw[i1]-x_rw[i2], 2)
-	      + pow(y_rw[i1]-y_rw[i2], 2)
-	      + pow(z_rw[i1]-z_rw[i2], 2));
+void write_stats(ofstream &statfile,
+		 const double t,
+		 double* x_rw, double* y_rw, double* z_rw,
+		 double* ux_rw, double* uy_rw, double* uz_rw,
+		 const int Nrw, vector<tuple<int, int, double>> &edges,
+		 const double ds_max, const bool do_dump_logdenshist,
+		 const string histfolder,
+		 const unsigned long int n_accepted,
+		 const unsigned long int n_declined
+		 ){
+  double x_mean = 0.;
+  double y_mean = 0.;
+  double z_mean = 0.;
+  double dx2_mean = 0.;
+  double dy2_mean = 0.;
+  double dz2_mean = 0.;
+  double ux_mean = 0.;
+  double uy_mean = 0.;
+  double uz_mean = 0.;
+  for (int irw=0; irw < Nrw; ++irw){
+    // Sample mean
+    x_mean += x_rw[irw]/Nrw;
+    y_mean += y_rw[irw]/Nrw;
+    z_mean += z_rw[irw]/Nrw;
+    ux_mean += ux_rw[irw]/Nrw;
+    uy_mean += uy_rw[irw]/Nrw;
+    uz_mean += uz_rw[irw]/Nrw;
+  }
+  for (int irw=0; irw < Nrw; ++irw){
+    // Sample variance
+    dx2_mean += pow(x_rw[irw]-x_mean, 2)/(Nrw-1);
+    dy2_mean += pow(y_rw[irw]-y_mean, 2)/(Nrw-1);
+    dz2_mean += pow(z_rw[irw]-z_mean, 2)/(Nrw-1);
+  }
+  double s = 0.;
+  int n_too_long = 0;
+  double logdens_wsum = 0.;
+  double s0 = 0.;
+  vector<array<double, 2>> logdens_vec;
+  for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
+       edgeit != edges.end(); ++edgeit){
+    int first = get<0>(*edgeit);
+    int second = get<1>(*edgeit);
+    double ds0 = get<2>(*edgeit);
+    double ds = dist(first, second, x_rw, y_rw, z_rw);
+    if (ds > ds_max){
+      ++n_too_long;
+    }
+    double logdens = log(ds/ds0);
+    logdens_wsum += logdens*ds;
+    logdens_vec.push_back({logdens, ds});
+    s += ds;
+    s0 += ds0;
+  }
+  double logdens_mean = logdens_wsum/s;
+  double logdens_var_wsum = 0.;
+  for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
+       lit != logdens_vec.end(); ++lit){
+    logdens_var_wsum += pow((*lit)[0]-logdens_mean, 2)*(*lit)[1];
+  }
+  double logdens_var = logdens_var_wsum/s;
+  double s_ = 0.;
+  if (do_dump_logdenshist){
+    sort(logdens_vec.begin(), logdens_vec.end());
+    ofstream logdensfile(histfolder + "/logdens_t" + to_string(t) + ".hist");
+    for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
+	 lit != logdens_vec.end(); ++lit){
+      s_ += (*lit)[1];
+      logdensfile << (*lit)[0] << " " << (*lit)[1] << " " << s_ << " " << s_/s << endl;
+    }
+    logdensfile.close();
+  }
+      
+  statfile << t << " "           //  1
+	   << x_mean << " "      //  2
+	   << dx2_mean << " "    //  3
+	   << y_mean << " "      //  4
+	   << dy2_mean << " "    //  5
+	   << z_mean << " "      //  6
+	   << dz2_mean << " "    //  7
+	   << n_accepted << " "  //  8
+	   << n_declined << " "  //  9
+	   << s << " "           // 10
+	   << n_too_long << " "  // 11
+	   << Nrw << " "         // 12
+	   << logdens_mean << " "// 13
+	   << logdens_var << " " // 14
+	   << s0 << " "          // 15
+	   << ux_mean << " "     // 16
+	   << uy_mean << " "     // 17
+	   << uz_mean            // 18
+	   << std::endl;
+}
+
+void write2txt(ofstream &pos_out,
+	       double* x_rw, double* y_rw, double* z_rw,
+	       double* ux_rw, double* uy_rw, double* uz_rw,
+	       const int Nrw){
+  for (int irw=0; irw < Nrw; ++irw){
+    pos_out << irw << " "
+	    << x_rw[irw] << " "
+	    << y_rw[irw] << " "
+	    << z_rw[irw] << " "
+	    << ux_rw[irw] << " "
+	    << uy_rw[irw] << " "
+	    << uz_rw[irw] << std::endl;
+  }
+}
+
+void write2hdf5(H5File* posf_h5, const string dsetname,
+		double* x_rw, double* y_rw, double* z_rw,
+		double* ux_rw, double* uy_rw, double* uz_rw,
+		double* rho_rw, double* p_rw, double* c_rw,
+		const int Nrw, const int NCOLS){
+  hsize_t posf_dims[2];
+  posf_dims[0] = Nrw;
+  posf_dims[1] = NCOLS;
+  DataSpace posf_dspace(2, posf_dims);
+  double* posdata = new double[Nrw*NCOLS];
+  for (int irw=0; irw < Nrw; ++irw){
+    posdata[irw*NCOLS+0] = x_rw[irw];
+    posdata[irw*NCOLS+1] = y_rw[irw];
+    posdata[irw*NCOLS+2] = z_rw[irw];
+    posdata[irw*NCOLS+3] = ux_rw[irw];
+    posdata[irw*NCOLS+4] = uy_rw[irw];
+    posdata[irw*NCOLS+5] = uz_rw[irw];
+    posdata[irw*NCOLS+6] = rho_rw[irw];
+    posdata[irw*NCOLS+7] = p_rw[irw];
+    posdata[irw*NCOLS+8] = c_rw[irw];
+  }
+  DataSet posf_dset = posf_h5->createDataSet(dsetname,
+					     PredType::NATIVE_DOUBLE,
+					     posf_dspace);
+  posf_dset.write(posdata, PredType::NATIVE_DOUBLE);
+}
+
+void perform_refinement(vector<tuple<int, int, double>> &edges,
+			double* x_rw, double* y_rw, double* z_rw,
+			double* ux_rw, double* uy_rw, double* uz_rw,
+			double* rho_rw, double* p_rw, double* c_rw,
+			double* Jux_rw, double* Juy_rw, double* Juz_rw,
+			int &Nrw, const int Nrw_max, const double ds_max,
+			const bool do_output_all, Interpol &intp,
+			const double U0, const int int_order
+			){
+  for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
+       edgeit != edges.end(); ++edgeit){
+    int first = get<0>(*edgeit);
+    int second = get<1>(*edgeit);
+    double ds0 = get<2>(*edgeit);
+    double ds = dist(first, second, x_rw, y_rw, z_rw);
+    double U02 = U0*U0;
+    if (ds > ds_max && Nrw < Nrw_max){
+      get<1>(*edgeit) = Nrw;
+      get<2>(*edgeit) = ds0/2;
+      edgeit = edges.insert(edgeit+1, {Nrw, second, ds0/2});
+      edgeit -= 2;
+
+      x_rw[Nrw] = 0.5*(x_rw[first]+x_rw[second]);
+      y_rw[Nrw] = 0.5*(y_rw[first]+y_rw[second]);
+      z_rw[Nrw] = 0.5*(z_rw[first]+z_rw[second]);
+
+      c_rw[Nrw] = 0.5*(c_rw[first]+c_rw[second]);
+
+      intp.probe(x_rw[Nrw], y_rw[Nrw], z_rw[Nrw]);
+      
+      // ux_rw[Nrw] = 0.5*(ux_rw[first]+ux_rw[second]);
+      // uy_rw[Nrw] = 0.5*(uy_rw[first]+uy_rw[second]);
+      // uz_rw[Nrw] = 0.5*(uz_rw[first]+uz_rw[second]);
+      ux_rw[Nrw] = U0*intp.get_ux();
+      uy_rw[Nrw] = U0*intp.get_uy();
+      uz_rw[Nrw] = U0*intp.get_uz();
+      if (do_output_all){
+	// rho_rw[Nrw] = 0.5*(rho_rw[first]+rho_rw[second]);
+	// p_rw[Nrw] = 0.5*(p_rw[first]+p_rw[second]);
+	rho_rw[Nrw] = intp.get_rho();
+	p_rw[Nrw] = intp.get_p();
+      }
+      // Second-order terms
+      if (int_order >= 2){
+	Jux_rw[Nrw] = U02*intp.get_Jux();
+	Juy_rw[Nrw] = U02*intp.get_Juy();
+	Juz_rw[Nrw] = U02*intp.get_Juz();
+      }
+      ++Nrw;
+    }
+  }
 }
 
 int main(int argc, char* argv[]){
@@ -97,9 +280,6 @@ int main(int argc, char* argv[]){
     double divu, vortz;
     
     intp.update(t0);
-    uniform_real_distribution<> uni_dist_x(0, Lx);
-    uniform_real_distribution<> uni_dist_y(0, Ly);
-    uniform_real_distribution<> uni_dist_z(0, Lz);
 
     ofstream nodalfile(newfolder + "/nodal_values.dat");
     for (int ix=0; ix<intp.get_nx(); ++ix){
@@ -115,6 +295,10 @@ int main(int argc, char* argv[]){
       }
     }
     nodalfile.close();
+
+    uniform_real_distribution<> uni_dist_x(0, Lx);
+    uniform_real_distribution<> uni_dist_y(0, Ly);
+    uniform_real_distribution<> uni_dist_z(0, Lz);
     
     ofstream ofile(newfolder + "/interpolation.dat");
     while (n < prm.interpolation_test){
@@ -183,8 +367,6 @@ int main(int argc, char* argv[]){
 				 prm.ds_max,
 				 intp, gen);
   }
-
-  double ds0, ds;
   
   for (int irw=0; irw < Nrw; ++irw){
     // Assign initial position
@@ -195,7 +377,7 @@ int main(int argc, char* argv[]){
     if (prm.restart_folder == ""){
       c_rw[irw] = double(irw)/(Nrw-1);
       if (irw > 0){
-	ds0 = dist(irw-1, irw, x_rw, y_rw, z_rw);
+	double ds0 = dist(irw-1, irw, x_rw, y_rw, z_rw);
 	if (ds0 < 2)  // 2 lattice units
 	  edges.push_back({irw-1, irw, ds0});
 	// Needs customization for 2D/3D applications
@@ -228,12 +410,9 @@ int main(int argc, char* argv[]){
   double sqrt2Dmdt = sqrt(2*Dm*dt);
   if (prm.verbose){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
-    print_param("U*dt", U0*dt);
+    print_param("U*dt         ", U0*dt);
   }
   
-  double x_mean, dx2_mean;
-  double y_mean, dy2_mean;
-  double z_mean, dz2_mean;
   double t = t0;
   if (prm.restart_folder != ""){
     t = prm.t;
@@ -254,98 +433,24 @@ int main(int argc, char* argv[]){
   int int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
   int int_refine_intv = int(prm.refine_intv/dt);
   int int_hist_intv = int_stat_intv*prm.hist_chunk_size;
-  
-  double s;
-  int n_too_long;
-  double logdens_mean;
-  double logdens_var;
-  double logdens;
-  
+    
   string write_mode = prm.write_mode;
   
   ofstream statfile(newfolder + "/tdata_from_t" + to_string(t) + ".dat");
   ofstream declinedfile(newfolder + "/declinedpos_from_t" + to_string(t) + ".dat");
   while (t <= T){
     intp.update(t);
+    // Statistics
     if (it % int_stat_intv == 0){
       cout << "Time = " << t << endl;
-
-      x_mean = 0.;
-      y_mean = 0.;
-      z_mean = 0.;
-      dx2_mean = 0.;
-      dy2_mean = 0.;
-      dz2_mean = 0.;
-      for (int irw=0; irw < Nrw; ++irw){
-	// Sample mean
-	x_mean += x_rw[irw]/Nrw;
-	y_mean += y_rw[irw]/Nrw;
-	z_mean += z_rw[irw]/Nrw;
-      }
-      for (int irw=0; irw < Nrw; ++irw){
-	// Sample variance
-	dx2_mean += pow(x_rw[irw]-x_mean, 2)/(Nrw-1);
-	dy2_mean += pow(y_rw[irw]-y_mean, 2)/(Nrw-1);
-	dz2_mean += pow(z_rw[irw]-z_mean, 2)/(Nrw-1);
-      }
-      s = 0.;
-      n_too_long = 0;
-      double logdens_wsum = 0.;
-      double s0 = 0.;
-      vector<array<double,2>> logdens_vec;
-      for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
-	   edgeit != edges.end(); ++edgeit){
-	int first = get<0>(*edgeit);
-	int second = get<1>(*edgeit);
-	double ds0 = get<2>(*edgeit);
-	ds = dist(first, second, x_rw, y_rw, z_rw);
-	if (ds > ds_max){
-	  ++n_too_long;
-	}
-	logdens = log(ds/ds0);
-	logdens_wsum += logdens*ds;
-	logdens_vec.push_back({logdens, ds});
-	s += ds;
-	s0 += ds0;
-      }
-      logdens_mean = logdens_wsum/s;
-      double logdens_var_wsum = 0.;
-      for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
-	   lit != logdens_vec.end(); ++lit){
-	logdens_var_wsum += pow((*lit)[0]-logdens_mean, 2)*(*lit)[1];
-      }
-      logdens_var = logdens_var_wsum/s;
-      double s_ = 0.;
-      if (int_hist_intv > 0 && it % int_hist_intv == 0){
-	sort(logdens_vec.begin(), logdens_vec.end());
-	ofstream logdensfile(histfolder + "/logdens_t" + to_string(t) + ".hist");
-	for (vector<array<double, 2>>::iterator lit = logdens_vec.begin();
-	     lit != logdens_vec.end(); ++lit){
-	  s_ += (*lit)[1];
-	  logdensfile << (*lit)[0] << " " << (*lit)[1] << " " << s_ << " " << s_/s << endl;
-	}
-	logdensfile.close();
-      }
-      
-      statfile << t << " "  // 1
-	       << x_mean << " "  // 2
-	       << dx2_mean << " "
-	       << y_mean << " "
-	       << dy2_mean << " "
-	       << z_mean << " "
-	       << dz2_mean << " "
-	       << n_accepted << " "
-	       << n_declined << " "
-	       << s << " "
-	       << n_too_long << " "
-	       << Nrw << " "
-	       << logdens_mean << " "
-	       << logdens_var << " "
-	       << s0
-	       << std::endl;
+      bool do_dump_logdenshist = (int_hist_intv > 0 && it % int_hist_intv == 0);
+      write_stats(statfile, t, x_rw, y_rw, z_rw,
+		  ux_rw, uy_rw, uz_rw,
+		  Nrw, edges, ds_max, do_dump_logdenshist, histfolder,
+		  n_accepted, n_declined);
     }
-    //
-    if (it % int_checkpoint_intv == 0 || t+dt > T){
+    // Checkpoint
+    if (it % int_checkpoint_intv == 0){
        prm.t = t;
        prm.n_accepted = n_accepted;
        prm.n_declined = n_declined;
@@ -360,49 +465,24 @@ int main(int argc, char* argv[]){
     }
     // Refinement
     if (refine && it % int_refine_intv == 0){
-      for (vector<tuple<int, int, double>>::iterator edgeit = edges.begin();
-	   edgeit != edges.end(); ++edgeit){
-	int first = get<0>(*edgeit);
-	int second = get<1>(*edgeit);
-	double ds0 = get<2>(*edgeit);
-	ds = dist(first, second, x_rw, y_rw, z_rw);
-	if (ds > ds_max && Nrw < Nrw_max){
-	  get<1>(*edgeit) = Nrw;
-	  get<2>(*edgeit) = ds0/2;
-	  edgeit = edges.insert(edgeit+1, {Nrw, second, ds0/2});
-	  edgeit -= 2;
-
-	  x_rw[Nrw] = 0.5*(x_rw[first]+x_rw[second]);
-	  y_rw[Nrw] = 0.5*(y_rw[first]+y_rw[second]);
-	  z_rw[Nrw] = 0.5*(z_rw[first]+z_rw[second]);
-
-	  c_rw[Nrw] = 0.5*(c_rw[first]+c_rw[second]);
-	  
-	  ux_rw[Nrw] = 0.5*(ux_rw[first]+ux_rw[second]);
-	  uy_rw[Nrw] = 0.5*(uy_rw[first]+uy_rw[second]);
-	  uz_rw[Nrw] = 0.5*(uz_rw[first]+uz_rw[second]);
-	  if (it % int_dump_intv == 0){
-	    rho_rw[Nrw] = 0.5*(rho_rw[first]+rho_rw[second]);
-	    p_rw[Nrw] = 0.5*(p_rw[first]+p_rw[second]);
-	  }
-	  ++Nrw;
-	}
-      }
+      bool do_output_all = it % int_dump_intv == 0;
+      perform_refinement(edges,
+			 x_rw, y_rw, z_rw,
+			 ux_rw, uy_rw, uz_rw,
+			 rho_rw, p_rw, c_rw,
+			 Jux_rw, Juy_rw, Juz_rw,
+			 Nrw, Nrw_max, ds_max,
+			 do_output_all, intp,
+			 U0, prm.int_order);
     }
-    //
+    // Dump detailed data
     if (it % int_dump_intv == 0){
       if (write_mode == "text"){
 	string posfile = posfolder + "xy_t" + to_string(t) + ".pos";
 	ofstream pos_out(posfile);
-	for (int irw=0; irw < Nrw; ++irw){
-	  pos_out << irw << " "
-		  << x_rw[irw] << " "
-		  << y_rw[irw] << " "
-		  << z_rw[irw] << " "
-		  << ux_rw[irw] << " "
-		  << uy_rw[irw] << " "
-		  << uz_rw[irw] << std::endl;
-	}
+	write2txt(pos_out,
+		  x_rw, y_rw, z_rw,
+		  ux_rw, uy_rw, uz_rw, Nrw);
 	pos_out.close();
       }
       else if (write_mode == "hdf5"){
@@ -411,26 +491,11 @@ int main(int argc, char* argv[]){
 	  posf_h5->close();
 	  posf_h5 = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
 	}
-	hsize_t posf_dims[2];
-	posf_dims[0] = Nrw;
-	posf_dims[1] = NCOLS;
-	DataSpace posf_dspace(2, posf_dims);
-	double* posdata = new double[Nrw*NCOLS];
-	for (int irw=0; irw < Nrw; ++irw){
-	  posdata[irw*NCOLS+0] = x_rw[irw];
-	  posdata[irw*NCOLS+1] = y_rw[irw];
-	  posdata[irw*NCOLS+2] = z_rw[irw];
-	  posdata[irw*NCOLS+3] = ux_rw[irw];
-	  posdata[irw*NCOLS+4] = uy_rw[irw];
-	  posdata[irw*NCOLS+5] = uz_rw[irw];
-	  posdata[irw*NCOLS+6] = rho_rw[irw];
-	  posdata[irw*NCOLS+7] = p_rw[irw];
-	  posdata[irw*NCOLS+8] = c_rw[irw];
-	}
-	DataSet posf_dset = posf_h5->createDataSet(to_string(t),
-						   PredType::NATIVE_DOUBLE,
-						   posf_dspace);
-	posf_dset.write(posdata, PredType::NATIVE_DOUBLE);
+	write2hdf5(posf_h5, to_string(t),
+		   x_rw, y_rw, z_rw,
+		   ux_rw, uy_rw, uz_rw,
+		   rho_rw, p_rw, c_rw,
+		   Nrw, NCOLS);
       }
     }
     for (int irw=0; irw < Nrw; ++irw){
@@ -489,7 +554,19 @@ int main(int argc, char* argv[]){
     t += dt;
     it += 1;
   }
-  
+
+  // Final checkpoint
+  prm.t = t;
+  prm.n_accepted = n_accepted;
+  prm.n_declined = n_declined;
+  prm.Nrw = Nrw;
+  prm.dump(checkpointsfolder);
+  dump_positions(checkpointsfolder + "/positions.pos",
+		 x_rw, y_rw, z_rw, Nrw);
+  dump_edges(checkpointsfolder + "/edges.edge", edges);
+  dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+
+  // Close files
   statfile.close();
   declinedfile.close();
 

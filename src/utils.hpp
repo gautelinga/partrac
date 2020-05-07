@@ -114,4 +114,10 @@ double weighted_sum(double*** C,
   return f;
 }
 
+double dist(int i1, int i2, double* x_rw, double* y_rw, double* z_rw){
+  return sqrt(pow(x_rw[i1]-x_rw[i2], 2)
+	      + pow(y_rw[i1]-y_rw[i2], 2)
+	      + pow(z_rw[i1]-z_rw[i2], 2));
+}
+
 #endif

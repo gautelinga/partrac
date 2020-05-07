@@ -13,6 +13,7 @@ parser.add_argument("-t_max", type=float, default=np.inf, help="t_max")
 parser.add_argument("-cmap", type=str, default="parula", help="colormap")
 parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
+parser.add_argument("--export", action="store_true", help="Export")
 args = parser.parse_args()
 
 
@@ -43,6 +44,10 @@ imgfolder = os.path.join(args.folder, "Images")
 if not os.path.exists(imgfolder):
     os.makedirs(imgfolder)
 
+posfolder = os.path.join(args.folder, "Positions")
+if not os.path.exists(posfolder):
+    os.makedirs(posfolder)
+
 ts = []
 for t in list(sorted(posf.keys())):
     if t >= args.t_min and t <= args.t_max:
@@ -68,8 +73,9 @@ for t in ts:
         eps = 1e-2*np.random.rand(len(data[:, 1]))
 
     fig, ax = plt.subplots(figsize=(5, 10))
-    ax.scatter(np.remainder(data[:, pax[0]], L[pax[0]]),
-               np.remainder(data[:, pax[1]]+eps, L[pax[1]]),
+    x1 = np.remainder(data[:, pax[0]], L[pax[0]])
+    x2 = np.remainder(data[:, pax[1]], L[pax[1]])
+    ax.scatter(x1, x2+eps,
                c=data[:, -1],
                marker=',', lw=0, s=0.5, cmap=cmap)
     plt.tick_params(
@@ -87,6 +93,12 @@ for t in ts:
     plt.tight_layout()
     if args.show:
         plt.show()
+    if args.export:
+        order = np.argsort(x1)
+        np.savetxt(os.path.join(
+            posfolder,
+            "pos_{:06}.pos".format(int(t))),
+                   np.vstack((x1[order], x2[order], data[order, -1])).T)
     plt.savefig(os.path.join(
         imgfolder,
         "pos_{:06d}.png".format(int(t))))

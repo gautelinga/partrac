@@ -34,7 +34,6 @@ Timestamps::Timestamps(string infilename){
   string fname;
   double key;
   while (input >> key >> fname){
-    // std::cout << key << " " << fname << std::endl;
     stamps[key] = fname;
     if (key < t_min){
       t_min = key;
@@ -71,7 +70,15 @@ StampPair Timestamps::get(const double t){
       return Pair;
     }
   }
-  StampPair Pair(0.0, "", 0.0, "");
+  double t_last = (--stamps.end())->first;
+  string filename_last = (--stamps.end())->second;
+  if (t >= t_last){
+    StampPair Pair(t_last, filename_last, t_last, filename_last);
+    return Pair;
+  }
+  double t_first = stamps.begin()->first;
+  string filename_first = stamps.begin()->second;
+  StampPair Pair(t_first, filename_first, t_first, filename_first);
   return Pair;
 }
 
