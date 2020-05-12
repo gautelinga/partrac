@@ -18,3 +18,36 @@ This creates the folder `data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0.
 ## Visualization
 Plotting the position:
 `python3 plot_pos.py data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0..../`
+
+## Parameters
+| Parameter          |  Default value | Description                                            |
+|--------------------|----------------|--------------------------------------------------------|
+| folder             | ""             | Folder to store files in                               |
+| restart_folder     | ""             | Folder to restart from                                 |
+| Dm                 | 1.0            | Diffusion constant                                     |
+| t0                 | 0.0            | Initial simulation time                                |
+| T                  | 10000000.0     | Total simulation time                                  |
+| Nrw                | 100            | Initial number of particles                            |
+| dump_intv          | 100.0          | Time interval between dumping particle data            |
+| stat_intv          | 100.0          | Time interval between dumpting ensemble statistics     |
+| checkpoint_intv    | 1000.0         | Time interval between each checkpoint                  |
+| dump_chunk_size    | 50             | Number of time stamps in a single hdf5 file            |
+| verbose            | false          | Verbose output                                         |
+| U0                 | 1.0            | Rescale velocity (not active)                          |
+| x0                 | 0.0            | x parameter for initial distribution                   |
+| y0                 | 0.0            | y parameter for initial distribution                   |
+| z0                 | 0.0            | z parameter for initial distribution                   |
+| dt                 | 1.0            | Time step size                                         |
+| int_order          | 1              | Explicit integration order (1 or 2)                    |
+| init_mode          | "line_x"       | Initialization mode                                    |
+| init_weight        | "none"         | Initialization weighting                               |
+| write_mode         | "hdf5"         | Dump mode ("hdf5" or "txt")                            |
+| interpolation_test | 0              | Number of particles to test the interpolation with     |
+| refine             | false          | Refine edges                                           |
+| refine_intv        | 100.0          | Time interval between when to refine                   |
+| hist_chunk_size    | 10             | Number of stats_intv between when to output histograms |
+| ds_max             | 1.0            | Maximum accepted edge length                           |
+| Nrw_max            | -1             | Maximum number of particles                            |
+
+Parameters that are also stored in the event of a restart:
+`t, Lx, Ly, Lz, nx, ny, nz, n_accepted, n_declined`
