@@ -1,5 +1,5 @@
 CXX      := -h5c++
-CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -O3 -std=c++17 -ffast-math
+CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -O3 -std=c++17 -ffast-math -fconcepts
 LDFLAGS  := -L/usr/lib -lstdc++
 BUILD    := build
 OBJ_DIR  := $(BUILD)

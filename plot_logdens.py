@@ -32,9 +32,10 @@ for file in files:
 
 ts = list(sorted(histf.keys()))
 for t in ts:
-    rho = np.loadtxt(histf[t])
-    print(rho)
+    data = np.loadtxt(histf[t])
+    rho = data[:, 0]
+    w = data[:, 1]
     fig, ax = plt.subplots(figsize=(5, 10))
 
-    plt.hist(rho, bins=256)
+    plt.hist(rho, weights=w, bins=256)
     plt.show()

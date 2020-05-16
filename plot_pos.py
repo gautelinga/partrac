@@ -14,6 +14,7 @@ parser.add_argument("-cmap", type=str, default="parula", help="colormap")
 parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
 parser.add_argument("--export", action="store_true", help="Export")
+parser.add_argument("--elong", action="store_true", help="Plot elong")
 args = parser.parse_args()
 
 
@@ -35,8 +36,8 @@ for file in files:
         posft = os.path.join(args.folder, file)
         try:
             with h5py.File(posft, "r") as h5f:
-                for cat in h5f:
-                    posf[float(cat)] = (posft, cat)
+                for grp in h5f:
+                    posf[float(grp)] = (posft, grp)
         except:
             pass
 
@@ -64,9 +65,9 @@ elif args.cmap == "twilight":
     cmap = plt.cm.twilight
 
 for t in ts:
-    posft, cat = posf[t]
+    posft, grp = posf[t]
     with h5py.File(posft, "r") as h5f:
-        data = np.array(h5f[cat])
+        data = np.array(h5f[grp + "/points"])
 
     eps = 0
     if t == ts[0]:
@@ -75,8 +76,13 @@ for t in ts:
     fig, ax = plt.subplots(figsize=(5, 10))
     x1 = np.remainder(data[:, pax[0]], L[pax[0]])
     x2 = np.remainder(data[:, pax[1]], L[pax[1]])
+    if args.elong:
+        c = np.log(data[:, -1])
+    else:
+        c = data[:, -2]
+
     ax.scatter(x1, x2+eps,
-               c=data[:, -1],
+               c=c,
                marker=',', lw=0, s=0.5, cmap=cmap)
     plt.tick_params(
         axis='both',          # changes apply to the x-axis
@@ -98,7 +104,7 @@ for t in ts:
         np.savetxt(os.path.join(
             posfolder,
             "pos_{:06}.pos".format(int(t))),
-                   np.vstack((x1[order], x2[order], data[order, -1])).T)
+                   np.vstack((x1[order], x2[order], data[order, -2])).T)
     plt.savefig(os.path.join(
         imgfolder,
         "pos_{:06d}.png".format(int(t))))

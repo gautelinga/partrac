@@ -31,9 +31,14 @@ public:
   int dump_chunk_size = 50;
   bool verbose = false;
   double U0 = 1.0;
+  //
   double x0 = 0.0;
   double y0 = 0.0;
   double z0 = 0.0;
+  //
+  double La = 0.0;
+  double Lb = 0.0;
+  //
   double Lx = 0.0;
   double Ly = 0.0;
   double Lz = 0.0;
@@ -114,6 +119,8 @@ void Parameters::set_param(string key, string val){
   if (key == "x0") x0 = stod(val);
   if (key == "y0") y0 = stod(val);
   if (key == "z0") z0 = stod(val);
+  if (key == "La") La = stod(val);
+  if (key == "Lb") Lb = stod(val);
   if (key == "int_order") int_order = stoi(val);
   if (key == "init_mode") init_mode = val;
   if (key == "init_weight") init_weight = val;
@@ -148,6 +155,8 @@ void Parameters::print(){
     print_param("x0             ", x0);
     print_param("y0             ", y0);
     print_param("z0             ", z0);
+    print_param("La             ", La);
+    print_param("Lb             ", Lb);
     print_param("int_order      ", int_order);
     print_param("init_mode      ", init_mode);
     print_param("init_weight    ", init_weight);
@@ -189,6 +198,8 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "x0", x0);
   write_param(paramsfile, "y0", y0);
   write_param(paramsfile, "z0", z0);
+  write_param(paramsfile, "La", La);
+  write_param(paramsfile, "Lb", Lb);
   write_param(paramsfile, "Lx", Lx);
   write_param(paramsfile, "Ly", Ly);
   write_param(paramsfile, "Lz", Lz);
@@ -197,7 +208,7 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "nz", nz);
   write_param(paramsfile, "int_order", int_order);
   write_param(paramsfile, "init_mode", init_mode);
-  write_param(paramsfile, "init_weight", init_mode);
+  write_param(paramsfile, "init_weight", init_weight);
   write_param(paramsfile, "write_mode", write_mode);
   write_param(paramsfile, "interpolation_test", interpolation_test);
   write_param(paramsfile, "dump_chunk_size", dump_chunk_size);
