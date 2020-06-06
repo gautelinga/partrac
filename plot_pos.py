@@ -90,7 +90,7 @@ for t in ts:
         label = "Color"
 
     p = ax.scatter(x1, x2+eps,
-                   c=c, vmin=min(c.min(), args.cmin), vmax=max(c.max(), args.cmax),
+                   c=c, vmin=args.cmin, vmax=args.cmax,
                    marker=',', lw=0, s=args.pointsize, cmap=cmap)
     if args.cbar:
         divider = make_axes_locatable(ax)
