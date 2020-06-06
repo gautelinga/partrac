@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 from utils import Params
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 parser = argparse.ArgumentParser(description="Plot pos")
@@ -15,6 +16,12 @@ parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
 parser.add_argument("--export", action="store_true", help="Export")
 parser.add_argument("--elong", action="store_true", help="Plot elong")
+parser.add_argument("--cbar", action="store_true", help="Colorbar")
+parser.add_argument("-cmax", type=float, default=5, help="cmax")
+parser.add_argument("-cmin", type=float, default=0, help="cmin")
+parser.add_argument("-size_x", type=float, default=5, help="Image size x")
+parser.add_argument("-size_y", type=float, default=10, help="Image size y")
+parser.add_argument("-pointsize", type=float, default=1.0, help="Point/dot size")
 args = parser.parse_args()
 
 
@@ -59,31 +66,38 @@ proj_axis = [[1, 2],
              [0, 1]]
 pax = proj_axis[args.axis]
 
-if args.cmap == "parula":
-    cmap = plt.cm.viridis
-elif args.cmap == "twilight":
-    cmap = plt.cm.twilight
+cmap = plt.cm.get_cmap(args.cmap)
 
 for t in ts:
     posft, grp = posf[t]
     with h5py.File(posft, "r") as h5f:
-        data = np.array(h5f[grp + "/points"])
+        pos = np.array(h5f[grp + "/points"])
+        elong = np.array(h5f[grp + "/e"])
+        col = np.array(h5f[grp + "/c"])
 
     eps = 0
     if t == ts[0]:
-        eps = 1e-2*np.random.rand(len(data[:, 1]))
+        eps = 1e-2*np.random.rand(len(pos[:, 1]))
 
-    fig, ax = plt.subplots(figsize=(5, 10))
-    x1 = np.remainder(data[:, pax[0]], L[pax[0]])
-    x2 = np.remainder(data[:, pax[1]], L[pax[1]])
+    fig, ax = plt.subplots(figsize=(args.size_x, args.size_y))
+    x1 = np.remainder(pos[:, pax[0]], L[pax[0]])
+    x2 = np.remainder(pos[:, pax[1]], L[pax[1]])
     if args.elong:
-        c = np.log(data[:, -1])
+        c = np.log(elong[:, 0])
+        label = "$\mathrm{log}(\delta \ell/\delta \ell_0)$"
     else:
-        c = data[:, -2]
+        c = col[:, 0]
+        label = "Color"
 
-    ax.scatter(x1, x2+eps,
-               c=c,
-               marker=',', lw=0, s=0.5, cmap=cmap)
+    p = ax.scatter(x1, x2+eps,
+                   c=c, vmin=min(c.min(), args.cmin), vmax=max(c.max(), args.cmax),
+                   marker=',', lw=0, s=args.pointsize, cmap=cmap)
+    if args.cbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cbar = fig.colorbar(p, ax=ax, cax=cax)
+        cbar.set_label(label, rotation=270)
+
     plt.tick_params(
         axis='both',          # changes apply to the x-axis
         which='both',      # both major and minor ticks are affected
@@ -104,7 +118,7 @@ for t in ts:
         np.savetxt(os.path.join(
             posfolder,
             "pos_{:06}.pos".format(int(t))),
-                   np.vstack((x1[order], x2[order], data[order, -2])).T)
+                   np.vstack((x1[order], x2[order], c[order])).T)
     plt.savefig(os.path.join(
         imgfolder,
         "pos_{:06d}.png".format(int(t))))
