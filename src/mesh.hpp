@@ -821,7 +821,7 @@ bool collapse_edge(const Uint iedge,
     replace_edges[kedge_max] = kedge_min;
     assert(edge_isactive[kedge_max]);
     edge_isactive[kedge_max] = false;
-    if (iedges_set.contains(kedge_max))
+    if (contains(iedges_set, kedge_max))
       iedges_set.erase(kedge_max);
     //cout << "kedge_max=" << kedge_max << ", kedge_min=" << kedge_min << endl;
   }
@@ -837,7 +837,7 @@ bool collapse_edge(const Uint iedge,
     //     << faces[*jfaceit].first[1] << " "
     //     << faces[*jfaceit].first[2] << endl;
     for (Uint j=0; j<3; ++j){
-      if (replace_edges.contains(faces[*jfaceit].first[j])){
+      if (contains(replace_edges, faces[*jfaceit].first[j])){
         faces[*jfaceit].first[j] = replace_edges[faces[*jfaceit].first[j]];
       }
     }
@@ -930,7 +930,7 @@ void remove_edges(FacesType &faces, EdgesType &edges,
   for (Uint iface=0; iface < faces.size(); ++iface){
     for (Uint j=0; j<3; ++j){
       Uint iedge = faces[iface].first[j];
-      if (replace_edges.contains(iedge)){
+      if (contains(replace_edges, iedge)){
         faces[iface].first[j] = replace_edges[iedge];
       }
     }
@@ -979,7 +979,7 @@ void remove_nodes(EdgesType& edges,
   for (Uint iedge=0; iedge < edges.size(); ++iedge){
     for (Uint j=0; j<2; ++j){
       Uint inode = edges[iedge].first[j];
-      if (replace_nodes.contains(inode)){
+      if (contains(replace_nodes, inode)){
         edges[iedge].first[j] = replace_nodes[inode];
       }
     }
@@ -1332,7 +1332,7 @@ void compute_interior_prop(InteriorAnglesType &interior_ang,
         for (FacesListType::const_iterator faceit = edge2faces[iedge].begin();
              faceit != edge2faces[iedge].end(); ++faceit){
           Uint jface = *faceit;
-          if (iface != jface && not_visited.contains(jface)){
+          if (iface != jface && contains(not_visited, jface)){
             to_visit.insert(jface);
             if (face_normals[iface].dot(face_normals[jface]) < 0){
               face_normals[jface] *= -1;
@@ -1369,7 +1369,7 @@ void compute_sheet_curv(double* H_rw,
       assert(other_edges.size()==2);
       Uint inode = get_intersection(edges[other_edges[0]].first,
                                     edges[other_edges[1]].first);
-      assert(interior_ang[*faceit].contains(inode));
+      assert(contains(interior_ang[*faceit], inode));
       map<Uint, double> angles = interior_ang[*faceit];
       edge_w[iedge] += 1.0/tan(angles[inode]);
     }

@@ -211,18 +211,28 @@ Uint get_other(const Uint i, const Uint j, const Uint k){
 }
 
 double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
-  Vector3d D = (B-A).cross(C-A);
+  Vector3d D((B-A).cross(C-A));
   double b = (A-C).norm();
   double c = (A-B).norm();
   double a = (B-C).norm();
   return 0.5*a*b*c/D.norm();
 }
 
+template<typename T>
+bool contains(const set<T>& container, const T &elem){
+  return container.find(elem) != container.end();
+}
+
+template<typename T1, typename T2>
+bool contains(const map<T1, T2>& container, const T1 &elem){
+  return container.find(elem) != container.end();
+}
+
 Vector3d vec_repl(const Uint inode,
                   Vector3d* x_rw,
                   const set<Uint> repl_nodes,
                   const Vector3d &x){
-  if (repl_nodes.contains(inode))
+  if (contains(repl_nodes, inode))
     return x;
   return x_rw[inode];
 }

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0)
 project(partrac)
 
 set(CMAKE_CXX_COMPILER g++-9)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "-pedantic-errors -Wall -Wextra -Werror -O3 -ffast-math -fconcepts -lstdc++")
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
