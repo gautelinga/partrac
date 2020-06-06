@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <vector>
 #include <list>
+#include <set>
+#include <Eigen/Dense>
 
 #ifndef __UTILS_HPP
 #define __UTILS_HPP
@@ -15,7 +17,11 @@ typedef size_t Uint;
 typedef vector<pair<array<Uint, 2>, double>> EdgesType;
 typedef vector<pair<array<Uint, 3>, double>> FacesType;
 typedef list<Uint> FacesListType;
+typedef list<Uint> EdgesListType;
 typedef vector<FacesListType> Edge2FacesType;
+typedef vector<EdgesListType> Node2EdgesType;
+typedef vector<map<Uint, double>> InteriorAnglesType;
+typedef Eigen::Vector3d Vector3d;
 
 class Stamp {
 public:
@@ -128,45 +134,50 @@ double norm(const double x, const double y, const double z){
   return sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
 }
 
-double norm(const array<double, 3> r){
-  return norm(r[0], r[1], r[2]);
+double norm(const Vector3d &r){
+  return r.norm();
 }
 
-double dist(const Uint i1, const Uint i2, double* x_rw, double* y_rw, double* z_rw){
-  return norm(x_rw[i1]-x_rw[i2], y_rw[i1]-y_rw[i2], z_rw[i1]-z_rw[i2]);
+double dist(const Uint i1, const Uint i2, Vector3d* x_rw){
+  Vector3d dr = x_rw[i1]-x_rw[i2];
+  return dr.norm();
 }
 
-double dist(const array<double, 3> pta, const array<double, 3> ptb){
-  double x_a = pta[0];
-  double y_a = pta[1];
-  double z_a = pta[2];
-  double x_b = ptb[0];
-  double y_b = ptb[1];
-  double z_b = ptb[2];
-  return norm(x_a-x_b, y_a-y_b, z_a-z_b);
+double dist(const Vector3d &pta, const Vector3d &ptb){
+  Vector3d dr = pta-ptb;
+  return dr.norm();
 }
 
-array<double, 3> cross(const array<double, 3> a, const array<double, 3> b){
-  return {a[1]*b[2]-a[2]*b[1],
-          a[2]*b[0]-a[0]*b[2],
-          a[0]*b[1]-a[1]*b[0]};
+double dot(const Vector3d &a, const Vector3d &b){
+  return a.dot(b);
 }
 
-double area(const Uint iedge, const Uint jedge, double* x_rw, double* y_rw, double* z_rw, const EdgesType& edges){
-  array<double, 3> a = {x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]],
-                        y_rw[edges[iedge].first[0]]-y_rw[edges[iedge].first[1]],
-                        z_rw[edges[iedge].first[0]]-z_rw[edges[iedge].first[1]]};
-  array<double, 3> b = {x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]],
-                        y_rw[edges[jedge].first[0]]-y_rw[edges[jedge].first[1]],
-                        z_rw[edges[jedge].first[0]]-z_rw[edges[jedge].first[1]]};
-  return norm(cross(a, b))/2;
+Vector3d diff(const Vector3d &a, const Vector3d &b){
+  return a-b;
 }
 
-double area(const Uint iface, double* x_rw, double* y_rw, double* z_rw,
+Vector3d cross(const Vector3d &a, const Vector3d &b){
+  return a.cross(b);
+}
+
+double get_abs_angle(const Vector3d &a, const Vector3d &b){
+  double costheta = a.dot(b)/(a.norm()*b.norm());
+  return acos(costheta);
+}
+
+double area(const Uint iedge, const Uint jedge,
+            Vector3d* x_rw,
+            const EdgesType& edges){
+  Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
+  Vector3d b = x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]];
+  return a.cross(b).norm()/2;
+}
+
+double area(const Uint iface, Vector3d* x_rw,
             const FacesType& faces, const EdgesType& edges){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
-  return area(iedge, jedge, x_rw, y_rw, z_rw, edges);
+  return area(iedge, jedge, x_rw, edges);
 }
 
 vector<size_t> argsort_descending(const vector<double> &v){
@@ -175,6 +186,74 @@ vector<size_t> argsort_descending(const vector<double> &v){
   stable_sort(idx.begin(), idx.end(),
               [&v](size_t i1, size_t i2) {return v[i1] > v[i2]; });
   return idx;
+}
+
+Uint get_intersection(const array<Uint, 2> &a, const array<Uint, 2> &b){
+  for (array<Uint, 2>::const_iterator ait=a.begin();
+       ait != a.end(); ++ait){
+    for (array<Uint, 2>::const_iterator bit=b.begin();
+         bit != b.end(); ++bit){
+      if (*ait == *bit){
+        return *ait;
+      }
+    }
+  }
+  cout << "Error: found no intersection." << endl;
+  exit(0);
+  return 0;
+}
+
+Uint get_other(const Uint i, const Uint j, const Uint k){
+  if (i==k)
+    return j;
+  assert(j==k);
+  return i;
+}
+
+double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
+  Vector3d D = (B-A).cross(C-A);
+  double b = (A-C).norm();
+  double c = (A-B).norm();
+  double a = (B-C).norm();
+  return 0.5*a*b*c/D.norm();
+}
+
+Vector3d vec_repl(const Uint inode,
+                  Vector3d* x_rw,
+                  const set<Uint> repl_nodes,
+                  const Vector3d &x){
+  if (repl_nodes.contains(inode))
+    return x;
+  return x_rw[inode];
+}
+
+Vector3d get_normal(const Uint iface,
+                    const FacesType &faces,
+                    const EdgesType &edges,
+                    Vector3d* x_rw){
+  Uint iedge = faces[iface].first[0];
+  Uint jedge = faces[iface].first[1];
+  Uint i00 = edges[iedge].first[0];
+  Uint i01 = edges[iedge].first[1];
+  Uint i10 = edges[jedge].first[0];
+  Uint i11 = edges[jedge].first[1];
+
+  Vector3d a = x_rw[i01]-x_rw[i00];
+  Vector3d b = x_rw[i11]-x_rw[i10];
+  Vector3d crossprod = a.cross(b);
+  return crossprod/crossprod.norm();
+}
+
+Vector3d get_normal(const Uint jedge, const Uint kedge,
+                    const EdgesType &edges,
+                    Vector3d* x_rw,
+                    const set<Uint> repl_nodes,
+                    const Vector3d &x){
+  Vector3d drj = vec_repl(edges[jedge].first[1], x_rw, repl_nodes, x)
+    - vec_repl(edges[jedge].first[0], x_rw, repl_nodes, x);
+  Vector3d drk = vec_repl(edges[kedge].first[1], x_rw, repl_nodes, x)
+    - vec_repl(edges[kedge].first[0], x_rw, repl_nodes, x);
+  return drj.cross(drk);
 }
 
 #endif

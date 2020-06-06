@@ -14,11 +14,12 @@ public:
   ~Interpol() {};
   void update(const double t);
   void set_folder(string folder){ this->folder=folder; };
-  void probe(const double x, const double y, const double z);
+  void probe(const Vector3d &x);
   bool inside_domain();
   double get_ux();
   double get_uy();
   double get_uz();
+  Vector3d get_u() { return {get_ux(), get_uy(), get_uz()}; };
   string get_folder(){ return folder; };
   double get_Lx() { return Lx; };
   double get_Ly() { return Ly; };
@@ -52,6 +53,7 @@ public:
   double get_Juz() { return (get_uzx()*get_ux()
                              + get_uzy()*get_uy()
                              + get_uzz()*get_uz()); };
+  Vector3d get_Ju() { return {get_Jux(), get_Juy(), get_Juz()}; };
   bool get_nodal_inside(const Uint ix, const Uint iy, const Uint iz){
     return !isSolid[ix][iy][iz];
   }
@@ -278,16 +280,14 @@ void Interpol::update(const double t){
   alpha_t = sp.weight_next(t);
 }
 
-void Interpol::probe(const double x,
-                     const double y,
-                     const double z){
+void Interpol::probe(const Vector3d &x){
   double dx = Lx/nx;
   double dy = Ly/ny;
   double dz = Lz/nz;
 
-  int ix_fl = floor(x/dx);
-  int iy_fl = floor(y/dy);
-  int iz_fl = floor(z/dz);
+  int ix_fl = floor(x[0]/dx);
+  int iy_fl = floor(x[1]/dy);
+  int iz_fl = floor(x[2]/dz);
 
   ind[0][0] = imodulo(ix_fl, nx);
   ind[0][1] = imodulo(ind[0][0] + 1, nx);
@@ -296,13 +296,13 @@ void Interpol::probe(const double x,
   ind[2][0] = imodulo(iz_fl, nz);
   ind[2][1] = imodulo(ind[2][0] + 1, nz);
 
-  ind_pc[0] = imodulo(round(x/dx), nx);
-  ind_pc[1] = imodulo(round(y/dy), ny);
-  ind_pc[2] = imodulo(round(z/dz), nz);
+  ind_pc[0] = imodulo(round(x[0]/dx), nx);
+  ind_pc[1] = imodulo(round(x[1]/dy), ny);
+  ind_pc[2] = imodulo(round(x[2]/dz), nz);
 
-  double wx = (x-dx*ix_fl)/dx;
-  double wy = (y-dy*iy_fl)/dy;
-  double wz = (z-dz*iz_fl)/dz;
+  double wx = (x[0]-dx*ix_fl)/dx;
+  double wy = (x[1]-dy*iy_fl)/dy;
+  double wz = (x[2]-dz*iz_fl)/dz;
 
   double wq[3][2] = {{1-wx, wx},
                      {1-wy, wy},

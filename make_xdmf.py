@@ -95,18 +95,21 @@ for t in list(sorted(posf.keys())):
     if t >= args.t_min and t <= args.t_max:
         ts.append(t)
 
-fields = [["u", "Vector", "Node"],
-          ["c", "Scalar", "Node"],
-          ["p", "Scalar", "Node"],
-          ["rho", "Scalar", "Node"],
-          ["dA", "Scalar", "Face"],
-          ["dA0", "Scalar", "Face"],
-          ["dl", "Scalar", "Edge"],
-          ["dl0", "Scalar", "Edge"]]
+possible_fields = [["u", "Vector", "Node"],
+                   ["c", "Scalar", "Node"],
+                   ["p", "Scalar", "Node"],
+                   ["rho", "Scalar", "Node"],
+                   ["H", "Scalar", "Node"],
+                   ["n", "Vector", "Node"],
+                   ["dA", "Scalar", "Face"],
+                   ["dA0", "Scalar", "Face"],
+                   ["dl", "Scalar", "Edge"],
+                   ["dl0", "Scalar", "Edge"]]
 
 text = header.format(name="Timeseries")
 for it, t in enumerate(ts):
     posft, grp = posf[t]
+    fields = []
     with h5py.File(posft, "r") as h5f:
         nodes = np.array(h5f[grp + "/points"])
         has_faces = grp + "/faces" in h5f
@@ -117,6 +120,10 @@ for it, t in enumerate(ts):
         has_edges = grp + "/edges" in h5f
         if has_edges:
             edges = np.array(h5f[grp + "/edges"])
+        for field in possible_fields:
+            if field[0] in h5f[grp]:
+                fields.append(field)
+
     posftrel = posft[len(args.folder):]
 
     text += grid_begin

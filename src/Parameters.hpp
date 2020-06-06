@@ -54,10 +54,15 @@ public:
   long int n_accepted = 0;
   long int n_declined = 0;
   bool refine = false;
+  bool coarsen = false;
   double refine_intv = 100.0;
+  double coarsen_intv = 1000.0;
   int hist_chunk_size = 10;
   double ds_max = 1.0;
+  double ds_min = 0.1;
   int Nrw_max = -1;
+  double curv_refine_factor = 0.0;
+  bool output_all_props = true;
 private:
   void write_params_to_file(string);
 };
@@ -135,40 +140,50 @@ void Parameters::set_param(string key, string val){
 
   if (key == "refine") refine = (val == "true" || val == "True") ? true : false;
   if (key == "refine_intv") refine_intv = stod(val);
+  if (key == "coarsen") coarsen = (val == "true" || val == "True") ? true : false;
+  if (key == "coarsen_intv") coarsen_intv = stod(val);
   if (key == "hist_chunk_size") hist_chunk_size = stoi(val);
   if (key == "ds_max") ds_max = stod(val);
+  if (key == "ds_min") ds_min = stod(val);
   if (key == "Nrw_max") Nrw_max = stoi(val);
+  if (key == "curv_refine_factor") curv_refine_factor = stod(val);
+  if (key == "output_all_props") output_all_props = (val == "true" || val == "True") ? true : false;
 }
 
 void Parameters::print(){
   if (verbose){
-    print_param("Dm             ", Dm);
-    print_param("t0             ", t0);
-    print_param("T              ", T);
-    print_param("dt             ", dt);
-    print_param("Nrw            ", Nrw);
-    print_param("dump_intv      ", dump_intv);
-    print_param("stat_intv      ", stat_intv);
-    print_param("checkpoint_intv", checkpoint_intv);
-    print_param("verbose        ", verbose ? "true" : "false");
-    print_param("U              ", U0);
-    print_param("x0             ", x0);
-    print_param("y0             ", y0);
-    print_param("z0             ", z0);
-    print_param("La             ", La);
-    print_param("Lb             ", Lb);
-    print_param("int_order      ", int_order);
-    print_param("init_mode      ", init_mode);
-    print_param("init_weight    ", init_weight);
-    print_param("dump_mode      ", write_mode);
-    print_param("restart_folder ", restart_folder);
-    print_param("folder         ", folder);
+    print_param("Dm                ", Dm);
+    print_param("t0                ", t0);
+    print_param("T                 ", T);
+    print_param("dt                ", dt);
+    print_param("Nrw               ", Nrw);
+    print_param("dump_intv         ", dump_intv);
+    print_param("stat_intv         ", stat_intv);
+    print_param("checkpoint_intv   ", checkpoint_intv);
+    print_param("verbose           ", verbose ? "true" : "false");
+    print_param("U                 ", U0);
+    print_param("x0                ", x0);
+    print_param("y0                ", y0);
+    print_param("z0                ", z0);
+    print_param("La                ", La);
+    print_param("Lb                ", Lb);
+    print_param("int_order         ", int_order);
+    print_param("init_mode         ", init_mode);
+    print_param("init_weight       ", init_weight);
+    print_param("dump_mode         ", write_mode);
+    print_param("restart_folder    ", restart_folder);
+    print_param("folder            ", folder);
 
-    print_param("refine         ", refine ? "true" : "false");
-    print_param("refine_intv    ", refine_intv);
-    print_param("hist_chunk_size", hist_chunk_size);
-    print_param("ds_max         ", ds_max);
-    print_param("Nrw_max        ", Nrw_max);
+    print_param("refine            ", refine ? "true" : "false");
+    print_param("refine_intv       ", refine_intv);
+    print_param("coarsen           ", coarsen ? "true" : "false");
+    print_param("coarsen_intv      ", coarsen_intv);
+    print_param("hist_chunk_size   ", hist_chunk_size);
+    print_param("ds_max            ", ds_max);
+    print_param("ds_min            ", ds_min);
+    print_param("Nrw_max           ", Nrw_max);
+    print_param("curv_refine_factor", curv_refine_factor);
+    print_param("output_all_props  ", output_all_props ? "true" : "false");
   }
 }
 
@@ -219,9 +234,14 @@ void Parameters::write_params_to_file(string filename){
 
   write_param(paramsfile, "refine", refine ? "true" : "false");
   write_param(paramsfile, "refine_intv", refine_intv);
+  write_param(paramsfile, "coarsen", coarsen ? "true" : "false");
+  write_param(paramsfile, "coarsen_intv", coarsen_intv);
   write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
   write_param(paramsfile, "ds_max", ds_max);
+  write_param(paramsfile, "ds_min", ds_min);
   write_param(paramsfile, "Nrw_max", Nrw_max);
+  write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
+  write_param(paramsfile, "output_all_props", output_all_props ? "true" : "false");
   paramsfile.close();
 }
 

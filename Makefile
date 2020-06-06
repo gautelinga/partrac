@@ -1,10 +1,10 @@
 CXX      := -h5c++
-CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -O3 -std=c++17 -ffast-math -fconcepts
+CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -O3 -std=c++2a -ffast-math -fconcepts
 LDFLAGS  := -L/usr/lib -lstdc++
 BUILD    := build
 OBJ_DIR  := $(BUILD)
 TARGET   := lbm
-INCLUDE  := -Iinclude/
+INCLUDE  := -I/include/ -I/usr/include/eigen3/
 SRC_TRACE :=  $(wildcard src/*.cpp)
 
 OBJECTS_TRACE := $(SRC_TRACE:%.cpp=$(OBJ_DIR)/%.o)

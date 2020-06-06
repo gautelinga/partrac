@@ -11,8 +11,14 @@
 
 using namespace std;
 
+struct less_than_op {
+  inline bool operator() (const Vector3d &a, const Vector3d &b){
+    return a[0] < b[0] || (a[0] == b[0] && a[1] < b[1]) || (a[0] == b[0] && a[1] == b[1] && a[2] < b[2]);
+  }
+};
+
 void load_positions(string input_file,
-                    vector<array<double, 3>> &pos_init,
+                    vector<Vector3d> &pos_init,
                     const Uint Nrw){
   ifstream infile(input_file);
   double x, y, z;
@@ -27,11 +33,14 @@ void load_positions(string input_file,
 }
 
 void dump_positions(string output_file,
-                    double* x_rw, double* y_rw, double* z_rw,
+                    Vector3d* x_rw,
                     const Uint Nrw){
   ofstream outfile(output_file);
   for (Uint irw=0; irw<Nrw; ++irw){
-    outfile << std::setprecision(12) << x_rw[irw] << " " << y_rw[irw] << " " << z_rw[irw] << endl;
+    outfile << std::setprecision(12)
+            << x_rw[irw][0] << " "
+            << x_rw[irw][1] << " "
+            << x_rw[irw][2] << endl;
   }
   outfile.close();
 }
@@ -97,21 +106,19 @@ void dump_colors(string output_file,
   outfile.close();
 }
 
-vector<array<double, 3>> initial_positions(string init_mode,
-                                           string init_weight,
-                                           Uint &Nrw,
-                                           double x0,
-                                           double y0,
-                                           double z0,
-                                           double La,
-                                           double Lb,
-                                           const double ds,
-                                           Interpol &intp,
-                                           mt19937 &gen,
-                                           EdgesType &edges,
-                                           FacesType &faces
-                                           ){
-  double x, y, z;
+vector<Vector3d> initial_positions(const string init_mode,
+                                   const string init_weight,
+                                   Uint &Nrw,
+                                   const Vector3d &x0,
+                                   const double La,
+                                   const double Lb,
+                                   const double ds,
+                                   Interpol &intp,
+                                   mt19937 &gen,
+                                   EdgesType &edges,
+                                   FacesType &faces
+                                   ){
+  Vector3d x;
   double Lx = intp.get_Lx();
   double Ly = intp.get_Ly();
   double Lz = intp.get_Lz();
@@ -123,64 +130,54 @@ vector<array<double, 3>> initial_positions(string init_mode,
   if (init_mode == "sheet_xy" ||
       init_mode == "sheet_xz" ||
       init_mode == "sheet_yz"){
-    vector<array<double, 3>> pos_init;
+    vector<Vector3d> pos_init;
 
-    double n_x = 0.;
-    double n_y = 0.;
-    double n_z = 0.;
-    double ta_x = 0.;
-    double ta_y = 0.;
-    double ta_z = 0.;
-    double tb_x = 0.;
-    double tb_y = 0.;
-    double tb_z = 0.;
+    Vector3d n(0., 0., 0.);
+    Vector3d ta(0., 0., 0.);
+    Vector3d tb(0., 0., 0.);
     if (init_mode == "sheet_xy"){
-      n_z = 1.0;
-      ta_x = 1.0;
-      tb_y = 1.0;
+      n[2] = 1.0;
+      ta[0] = 1.0;
+      tb[1] = 1.0;
     }
     if (init_mode == "sheet_xz"){
-      n_y = 1.0;
-      ta_x = 1.0;
-      tb_z = 1.0;
+      n[1] = 1.0;
+      ta[0] = 1.0;
+      tb[2] = 1.0;
     }
     if (init_mode == "sheet_yz"){
-      n_x = 1.0;
-      ta_y = 1.0;
-      tb_z = 1.0;
+      n[0] = 1.0;
+      ta[1] = 1.0;
+      tb[2] = 1.0;
     }
 
-    double x00 = x0 - La/2*ta_x - Lb/2*tb_x;
-    double y00 = y0 - La/2*ta_y - Lb/2*tb_y;
-    double z00 = z0 - La/2*ta_z - Lb/2*tb_z;
+    Vector3d x00 = x0;
+    x00[0] += - La/2*ta[0] - Lb/2*tb[0];
+    x00[1] += - La/2*ta[1] - Lb/2*tb[1];
+    x00[2] += - La/2*ta[2] - Lb/2*tb[2];
 
-    double x01 = x0 + La/2*ta_x + Lb/2*tb_x;
-    double y01 = y0 + La/2*ta_y - Lb/2*tb_y;
-    double z01 = z0 - La/2*ta_z - Lb/2*tb_z;
+    Vector3d x01 = x0;
+    x01[0] += La/2*ta[0] + Lb/2*tb[0];
+    x01[1] += La/2*ta[1] - Lb/2*tb[1];
+    x01[2] += - La/2*ta[2] - Lb/2*tb[2];
 
-    double x10 = x0 + La/2*ta_x + Lb/2*tb_x;
-    double y10 = y0 + La/2*ta_y + Lb/2*tb_y;
-    double z10 = z0 + La/2*ta_z + Lb/2*tb_z;
+    Vector3d x10 = x0;
+    x10[0] += La/2*ta[0] + Lb/2*tb[0];
+    x10[1] += La/2*ta[1] + Lb/2*tb[1];
+    x10[2] += La/2*ta[2] + Lb/2*tb[2];
 
-    double x11 = x0 - La/2*ta_x - Lb/2*tb_x;
-    double y11 = y0 - La/2*ta_y + Lb/2*tb_y;
-    double z11 = z0 - La/2*ta_z + Lb/2*tb_z;
+    Vector3d x11 = x0;
+    x11[0] += - La/2*ta[0] - Lb/2*tb[0];
+    x11[1] += - La/2*ta[1] + Lb/2*tb[1];
+    x11[2] += - La/2*ta[2] + Lb/2*tb[2];
 
-    if (false){
-      cout << n_x << " " << n_y << " " << n_z << endl;
-      cout << x00 << " " << y00 << " " << z00 << endl;
-      cout << x01 << " " << y01 << " " << z01 << endl;
-      cout << x10 << " " << y10 << " " << z10 << endl;
-      cout << x11 << " " << y11 << " " << z11 << endl;
-    }
-
-    intp.probe(x00, y00, z00);
+    intp.probe(x00);
     bool inside_00 = intp.inside_domain();
-    intp.probe(x01, y01, z01);
+    intp.probe(x01);
     bool inside_01 = intp.inside_domain();
-    intp.probe(x10, y10, z10);
+    intp.probe(x10);
     bool inside_10 = intp.inside_domain();
-    intp.probe(x11, y11, z11);
+    intp.probe(x11);
     bool inside_11 = intp.inside_domain();
     if (inside_00 && inside_01 && inside_10 && inside_11){
       cout << "Sheet inside domain." << endl;
@@ -190,10 +187,10 @@ vector<array<double, 3>> initial_positions(string init_mode,
       exit(0);
     }
 
-    pos_init.push_back({x00, y00, z00});
-    pos_init.push_back({x01, y01, z01});
-    pos_init.push_back({x10, y10, z10});
-    pos_init.push_back({x11, y11, z11});
+    pos_init.push_back(x00);
+    pos_init.push_back(x01);
+    pos_init.push_back(x10);
+    pos_init.push_back(x11);
 
     edges.push_back({{0, 1}, dist(pos_init[0], pos_init[1])});
     edges.push_back({{0, 2}, dist(pos_init[0], pos_init[2])});
@@ -224,7 +221,7 @@ vector<array<double, 3>> initial_positions(string init_mode,
            init_mode == "pairs_yz_y" ||
            init_mode == "pairs_yz_z"
            ){
-    vector<array<double, 3>> pos_init;
+    vector<Vector3d> pos_init;
 
     uniform_real_distribution<> uni_dist_x(0, Lx);
     uniform_real_distribution<> uni_dist_y(0, Ly);
@@ -239,75 +236,69 @@ vector<array<double, 3>> initial_positions(string init_mode,
 
     cout << "Npairs = " << Npairs << endl;
 
+    Vector3d x0_ = x0;
     Uint ipair=0;
     while (ipair < Npairs){
       if (init_mode == "pairs_xyz_x" ||
           init_mode == "pairs_xy_x" ||
           init_mode == "pairs_xz_x" ||
           init_mode == "pairs_yz_x"){
-        x0 = uni_dist_x(gen);
+        x0_[0] = uni_dist_x(gen);
       }
       if (init_mode == "pairs_xyz_y" ||
           init_mode == "pairs_xy_y" ||
           init_mode == "pairs_xz_y" ||
           init_mode == "pairs_yz_y"){
-        y0 = uni_dist_y(gen);
+        x0_[0] = uni_dist_y(gen);
       }
       if (init_mode == "pairs_xyz_z" ||
           init_mode == "pairs_xy_z" ||
           init_mode == "pairs_xz_z" ||
           init_mode == "pairs_yz_z"){
-        z0 = uni_dist_z(gen);
+        x0_[0] = uni_dist_z(gen);
       }
 
-      double dx, dy, dz;
+      Vector3d dx(0., 0., 0.);
       if (init_mode == "pair_yz" ||
           init_mode == "pairs_yz_x" ||
           init_mode == "pairs_yz_y" ||
           init_mode == "pairs_yz_z"){
-        dx = 0.;
+        dx[0] = 0.;
       }
       else {
-        dx = rnd_normal(gen);
+        dx[0] = rnd_normal(gen);
       }
       if (init_mode == "pair_xz" ||
           init_mode == "pairs_xz_x" ||
           init_mode == "pairs_xz_y" ||
           init_mode == "pairs_xz_z"){
-        dy = 0.;
+        dx[1] = 0.;
       }
       else {
-        dy = rnd_normal(gen);
+        dx[1] = rnd_normal(gen);
       }
       if (init_mode == "pair_xy" ||
           init_mode == "pairs_xy_x" ||
           init_mode == "pairs_xy_y" ||
           init_mode == "pairs_xy_z"){
-        dz = 0.;
+        dx[2] = 0.;
       }
       else {
-        dz = rnd_normal(gen);
+        dx[2] = rnd_normal(gen);
       }
-      double ds_tentative = sqrt(pow(dx, 2)+pow(dy, 2)+pow(dz, 2));
-      dx *= 0.5*ds/ds_tentative;
-      dy *= 0.5*ds/ds_tentative;
-      dz *= 0.5*ds/ds_tentative;
+      dx *= 0.5*ds/dx.norm();
 
-      double x_a = x0 + dx;
-      double y_a = y0 + dy;
-      double z_a = z0 + dz;
-      intp.probe(x_a, y_a, z_a);
+      Vector3d x_a = x0_ + dx;
+      intp.probe(x_a);
       bool inside_a = intp.inside_domain();
-      double x_b = x0 - dx;
-      double y_b = y0 - dy;
-      double z_b = z0 - dz;
-      intp.probe(x_b, y_b, z_b);
+      Vector3d x_b = x0_ - dx;
+      intp.probe(x_b);
       bool inside_b = intp.inside_domain();
       if (inside_a && inside_b){
         cout << "INSIDE" << endl;
-        pos_init.push_back({x_a, y_a, z_a});
-        pos_init.push_back({x_b, y_b, z_b});
-        double ds0 = sqrt(pow(x_a-x_b, 2) + pow(y_a-y_b, 2) + pow(z_a-z_b, 2));
+        pos_init.push_back(x_a);
+        pos_init.push_back(x_b);
+        double ds0 = (x_a-x_b).norm();
         edges.push_back({{2*ipair, 2*ipair+1}, ds0});
         ++ipair;
       }
@@ -357,17 +348,15 @@ vector<array<double, 3>> initial_positions(string init_mode,
   double ww;
 
   vector<double> wei;
-  vector<array<double, 3>> pos;
+  vector<Vector3d> pos;
   for (Uint ix=0; ix<Nx; ++ix){
     for (Uint iy=0; iy<Ny; ++iy){
       for (Uint iz=0; iz<Nz; ++iz){
         x = x0;
-        y = y0;
-        z = z0;
-        if (init_rand_x) x = (ix+0.5)*dx;
-        if (init_rand_y) y = (iy+0.5)*dy;
-        if (init_rand_z) z = (iz+0.5)*dz;
-        intp.probe(x, y, z);
+        if (init_rand_x) x[0] = (ix+0.5)*dx;
+        if (init_rand_y) x[1] = (iy+0.5)*dy;
+        if (init_rand_z) x[2] = (iz+0.5)*dz;
+        intp.probe(x);
         if (init_weight == "ux"){
           ww = abs(intp.get_ux());
         }
@@ -386,7 +375,7 @@ vector<array<double, 3>> initial_positions(string init_mode,
           ww = 1.;
         }
         wei.push_back(ww);
-        pos.push_back({x, y, z});
+        pos.push_back(x);
       }
     }
   }
@@ -395,22 +384,20 @@ vector<array<double, 3>> initial_positions(string init_mode,
   uniform_real_distribution<> uni_dist_dz(-0.5*dz, 0.5*dz);
   discrete_distribution<Uint> discrete_dist(wei.begin(), wei.end());
 
-  vector<array<double, 3>> pos_init;
+  vector<Vector3d> pos_init;
   for (Uint irw=0; irw<Nrw; ++irw){
     do {
       Uint ind = discrete_dist(gen);
-      x = pos[ind][0];
-      y = pos[ind][1];
-      z = pos[ind][2];
-      if (init_rand_x) x += uni_dist_dx(gen);
-      if (init_rand_y) y += uni_dist_dy(gen);
-      if (init_rand_z) z += uni_dist_dz(gen);
-      intp.probe(x, y, z);
+      x = pos[ind];
+      if (init_rand_x) x[0] += uni_dist_dx(gen);
+      if (init_rand_y) x[1] += uni_dist_dy(gen);
+      if (init_rand_z) x[2] += uni_dist_dz(gen);
+      intp.probe(x);
     } while (!intp.inside_domain());
-    pos_init.push_back({x, y, z});
+    pos_init.push_back(x);
   }
 
-  sort(pos_init.begin(), pos_init.end());
+  sort(pos_init.begin(), pos_init.end(), less_than_op());
 
   for (Uint irw=1; irw < Nrw; ++irw){
     double ds0 = dist(pos_init[irw-1], pos_init[irw]);
