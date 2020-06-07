@@ -26,6 +26,8 @@ with h5py.File(os.path.join(folder, "output_is_solid.h5"), "r") as h5f:
 u_mean = np.zeros((len(timestamps), 3))
 #su_mean = np.zeros_like(u_mean)
 for it, (t, h5fname) in enumerate(timestamps):
+    if it % 10 == 0:
+        print(float(it)/len(timestamps))
     filename = os.path.join(folder, h5fname)
     with h5py.File(filename, "r") as h5f:
         u_x = np.array(h5f["u_x"]).flatten()
