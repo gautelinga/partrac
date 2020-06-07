@@ -159,7 +159,7 @@ int main(int argc, char* argv[]){
   double* p_rw = new double[Nrw_max];
 
   // Second-order terms
-  Vector3d* Ju_rw = new Vector3d[Nrw_max];
+  Vector3d* a_rw = new Vector3d[Nrw_max];
   if (prm.int_order > 2){
     cout << "No support for such high temporal integration order." << endl;
     exit(0);
@@ -212,7 +212,7 @@ int main(int argc, char* argv[]){
 
     // Second-order terms
     if (prm.int_order >= 2){
-      Ju_rw[irw] = U02*intp.get_Ju();
+      a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
     }
   }
   // Initial refinement
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]){
                             u_rw,
                             rho_rw, p_rw, c_rw,
                             H_rw, n_rw,
-                            Ju_rw,
+                            a_rw,
                             Nrw, Nrw_max, ds_max,
                             do_output_all, intp,
                             U0, prm.int_order,
@@ -238,7 +238,7 @@ int main(int argc, char* argv[]){
                             u_rw,
                             rho_rw, p_rw, c_rw,
                             H_rw, n_rw,
-                            Ju_rw,
+                            a_rw,
                             Nrw, ds_min,
                             do_output_all, intp,
                             U0, prm.int_order,
@@ -350,7 +350,7 @@ int main(int argc, char* argv[]){
                               u_rw,
                               rho_rw, p_rw, c_rw,
                               H_rw, n_rw,
-                              Ju_rw,
+                              a_rw,
                               Nrw, Nrw_max, ds_max,
                               do_output_all, intp,
                               U0, prm.int_order,
@@ -367,7 +367,7 @@ int main(int argc, char* argv[]){
                               u_rw,
                               rho_rw, p_rw, c_rw,
                               H_rw, n_rw,
-                              Ju_rw,
+                              a_rw,
                               Nrw, ds_min,
                               do_output_all, intp,
                               U0, prm.int_order,
@@ -429,7 +429,7 @@ int main(int argc, char* argv[]){
 
       // Second-order terms
       if (prm.int_order >= 2){
-        dx_rw += 0.5*Ju_rw[irw]*dt2;
+        dx_rw += 0.5*a_rw[irw]*dt2;
       }
       if (Dm > 0.0){
         Vector3d eta = {rnd_normal(gen),
@@ -449,7 +449,7 @@ int main(int argc, char* argv[]){
 
         // Second-order terms
         if (prm.int_order >= 2){
-          Ju_rw[irw] = U02*intp.get_Ju();
+          a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
         }
         n_accepted++;
       }

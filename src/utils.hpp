@@ -22,6 +22,7 @@ typedef vector<FacesListType> Edge2FacesType;
 typedef vector<EdgesListType> Node2EdgesType;
 typedef vector<map<Uint, double>> InteriorAnglesType;
 typedef Eigen::Vector3d Vector3d;
+typedef Eigen::Matrix3d Matrix3d;
 
 class Stamp {
 public:

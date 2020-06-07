@@ -290,7 +290,7 @@ void append_new_node(const Uint inode, const Uint jnode,
                      Vector3d* u_rw,
                      double* rho_rw, double* p_rw, double* c_rw,
                      double* H_rw, Vector3d* n_rw,
-                     Vector3d* Ju_rw,
+                     Vector3d* a_rw,
                      Uint& Nrw, const bool do_output_all, Interpol &intp,
                      const double U0, const int int_order){
   x_rw[Nrw] = 0.5*(x_rw[inode]+x_rw[jnode]);
@@ -310,7 +310,7 @@ void append_new_node(const Uint inode, const Uint jnode,
   }
   // Second-order terms
   if (int_order >= 2){
-    Ju_rw[Nrw] = U0*U0*intp.get_Ju();
+    a_rw[Nrw] = U0*U0*intp.get_Ju() + U0*intp.get_a();
   }
   ++Nrw;
 }
@@ -323,7 +323,7 @@ Uint sheet_refinement(FacesType &faces,
                       Vector3d* u_rw,
                       double* rho_rw, double* p_rw, double* c_rw,
                       double* H_rw, Vector3d* n_rw,
-                      Vector3d* Ju_rw,
+                      Vector3d* a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
                       const bool do_output_all, Interpol &intp,
                       const double U0,
@@ -369,7 +369,7 @@ Uint sheet_refinement(FacesType &faces,
       // Add point
       append_new_node(inode, jnode, x_rw, u_rw,
                       rho_rw, p_rw, c_rw, H_rw, n_rw,
-                      Ju_rw, Nrw, do_output_all, intp, U0, int_order);
+                      a_rw, Nrw, do_output_all, intp, U0, int_order);
       ++n_add;
       //
       edges[iedge].first[1] = new_inode;
@@ -419,7 +419,7 @@ Uint strip_refinement(EdgesType &edges,
                       Vector3d* u_rw,
                       double* rho_rw, double* p_rw, double* c_rw,
                       double* H_rw, Vector3d* n_rw,
-                      Vector3d* Ju_rw,
+                      Vector3d* a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
                       const bool do_output_all, Interpol &intp,
                       const double U0, const int int_order,
@@ -444,7 +444,7 @@ Uint strip_refinement(EdgesType &edges,
 
       append_new_node(inode, jnode, x_rw, u_rw,
                       rho_rw, p_rw, c_rw, H_rw, n_rw,
-                      Ju_rw, Nrw, do_output_all, intp, U0, int_order);
+                      a_rw, Nrw, do_output_all, intp, U0, int_order);
       ++n_add;
     }
   }
@@ -459,7 +459,7 @@ Uint refinement(FacesType &faces,
                 Vector3d* u_rw,
                 double* rho_rw, double* p_rw, double* c_rw,
                 double* H_rw, Vector3d* n_rw,
-                Vector3d* Ju_rw,
+                Vector3d* a_rw,
                 Uint &Nrw, const Uint Nrw_max, const double ds_max,
                 const bool do_output_all, Interpol &intp,
                 const double U0, const int int_order,
@@ -470,7 +470,7 @@ Uint refinement(FacesType &faces,
                              x_rw,
                              u_rw,
                              rho_rw, p_rw, c_rw, H_rw, n_rw,
-                             Ju_rw,
+                             a_rw,
                              Nrw, Nrw_max, ds_max,
                              do_output_all, intp,
                              U0, int_order, curv_refine_factor);
@@ -481,7 +481,7 @@ Uint refinement(FacesType &faces,
                              x_rw,
                              u_rw,
                              rho_rw, p_rw, c_rw, H_rw, n_rw,
-                             Ju_rw,
+                             a_rw,
                              Nrw, Nrw_max, ds_max,
                              do_output_all, intp,
                              U0, int_order,
@@ -707,7 +707,7 @@ bool collapse_edge(const Uint iedge,
                    Vector3d* u_rw,
                    double* rho_rw, double* p_rw, double* c_rw,
                    double* H_rw, Vector3d* n_rw,
-                   Vector3d* Ju_rw,
+                   Vector3d* a_rw,
                    const bool do_output_all, Interpol &intp,
                    const double U0, const int int_order){
 
@@ -786,7 +786,7 @@ bool collapse_edge(const Uint iedge,
     // Second-order terms
     if (int_order >= 2){
       double U02 = U0*U0;
-      Ju_rw[irw] = U02*intp.get_Ju();
+      a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
     }
     c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
     H_rw[irw] = 0.5*(H_rw[inode]+H_rw[jnode]);
@@ -942,7 +942,7 @@ void remove_nodes(EdgesType& edges,
                   Vector3d* u_rw,
                   double* rho_rw, double* p_rw, double* c_rw,
                   double* H_rw, Vector3d* n_rw,
-                  Vector3d* Ju_rw,
+                  Vector3d* a_rw,
                   Uint& Nrw,
                   const vector<bool> &node_isactive,
                   const bool do_output_all,
@@ -970,7 +970,7 @@ void remove_nodes(EdgesType& edges,
     n_rw[i] = n_rw[j];
 
     if (int_order >= 2){
-      Ju_rw[i] = Ju_rw[j];
+      a_rw[i] = a_rw[j];
     }
   }
 
@@ -1001,7 +1001,7 @@ void remove_unused_nodes(EdgesType &edges,
                          Vector3d* u_rw,
                          double* rho_rw, double* p_rw, double* c_rw,
                          double* H_rw, Vector3d* n_rw,
-                         Vector3d* Ju_rw,
+                         Vector3d* a_rw,
                          Uint &Nrw,
                          const bool do_output_all,
                          const int int_order){
@@ -1012,7 +1012,7 @@ void remove_unused_nodes(EdgesType &edges,
     }
   }
   remove_nodes(edges, x_rw, u_rw,
-               rho_rw, p_rw, c_rw, H_rw, n_rw, Ju_rw, Nrw,
+               rho_rw, p_rw, c_rw, H_rw, n_rw, a_rw, Nrw,
                node_isactive, do_output_all, int_order);
 }
 
@@ -1033,7 +1033,7 @@ Uint sheet_coarsening(FacesType &faces,
                       Vector3d* u_rw,
                       double* rho_rw, double* p_rw, double* c_rw,
                       double* H_rw, Vector3d* n_rw,
-                      Vector3d* Ju_rw,
+                      Vector3d* a_rw,
                       Uint &Nrw, const double ds_min,
                       const bool do_output_all, Interpol &intp,
                       const double U0, const int int_order,
@@ -1068,7 +1068,7 @@ Uint sheet_coarsening(FacesType &faces,
                                   x_rw,
                                   u_rw,
                                   rho_rw, p_rw, c_rw, H_rw, n_rw,
-                                  Ju_rw,
+                                  a_rw,
                                   do_output_all, intp,
                                   U0, int_order);
         // what's wrong?
@@ -1094,7 +1094,7 @@ Uint sheet_coarsening(FacesType &faces,
   remove_unused_nodes(edges, x_rw,
                       u_rw,
                       rho_rw, p_rw, c_rw, H_rw, n_rw,
-                      Ju_rw,
+                      a_rw,
                       Nrw, do_output_all, int_order);
 
   compute_edge2faces(edge2faces, faces, edges);
@@ -1108,7 +1108,7 @@ Uint strip_coarsening(EdgesType &edges,
                       Vector3d* u_rw,
                       double* rho_rw, double* p_rw, double* c_rw,
                       double* H_rw, Vector3d* n_rw,
-                      Vector3d* Ju_rw,
+                      Vector3d* a_rw,
                       Uint &Nrw, const double ds_min,
                       const bool do_output_all, Interpol &intp,
                       const double U0, const int int_order,
@@ -1181,7 +1181,7 @@ Uint strip_coarsening(EdgesType &edges,
           n_rw[new_inode] = 0.5*(n_rw[inode]+n_rw[jnode]);
           n_rw[new_inode] /= n_rw[new_inode].norm();
           if (int_order >= 2){
-            Ju_rw[new_inode] = U0*U0*intp.get_Ju();
+            a_rw[new_inode] = U0*U0*intp.get_Ju() + U0*intp.get_a();
           }
 
           changed = true;
@@ -1198,7 +1198,7 @@ Uint strip_coarsening(EdgesType &edges,
   remove_unused_nodes(edges, x_rw,
                       u_rw,
                       rho_rw, p_rw, c_rw, H_rw, n_rw,
-                      Ju_rw,
+                      a_rw,
                       Nrw, do_output_all, int_order);
   compute_node2edges(node2edges, edges, Nrw);
   return n_coll;
@@ -1212,7 +1212,7 @@ Uint coarsening(FacesType &faces,
                 Vector3d* u_rw,
                 double* rho_rw, double* p_rw, double* c_rw,
                 double* H_rw, Vector3d* n_rw,
-                Vector3d* Ju_rw,
+                Vector3d* a_rw,
                 Uint &Nrw, const double ds_min,
                 const bool do_output_all, Interpol &intp,
                 const double U0, const int int_order,
@@ -1222,14 +1222,14 @@ Uint coarsening(FacesType &faces,
                             edge2faces, node2edges,
                             x_rw, u_rw,
                             rho_rw, p_rw, c_rw, H_rw, n_rw,
-                            Ju_rw, Nrw, ds_min,
+                            a_rw, Nrw, ds_min,
                             do_output_all, intp,
                             U0, int_order, curv_refine_factor);
   }
   else{
     return strip_coarsening(edges, node2edges,
                             x_rw, u_rw, rho_rw, p_rw, c_rw, H_rw, n_rw,
-                            Ju_rw, Nrw, ds_min,
+                            a_rw, Nrw, ds_min,
                             do_output_all, intp,
                             U0, int_order, curv_refine_factor);
   }

@@ -20,6 +20,10 @@ public:
   double get_uy();
   double get_uz();
   Vector3d get_u() { return {get_ux(), get_uy(), get_uz()}; };
+  double get_ax();
+  double get_ay();
+  double get_az();
+  Vector3d get_a() { return {get_ax(), get_ay(), get_az()}; };
   string get_folder(){ return folder; };
   double get_Lx() { return Lx; };
   double get_Ly() { return Ly; };
@@ -54,6 +58,8 @@ public:
                              + get_uzy()*get_uy()
                              + get_uzz()*get_uz()); };
   Vector3d get_Ju() { return {get_Jux(), get_Juy(), get_Juz()}; };
+  Matrix3d get_J();
+  Matrix3d get_grada();
   bool get_nodal_inside(const Uint ix, const Uint iy, const Uint iz){
     return !isSolid[ix][iy][iz];
   }
@@ -109,6 +115,9 @@ private:
   double Ux = 0.;
   double Uy = 0.;
   double Uz = 0.;
+  double Ax = 0.;
+  double Ay = 0.;
+  double Az = 0.;
 };
 
 Interpol::Interpol(string infilename) : ts(infilename) {
@@ -334,14 +343,17 @@ void Interpol::probe(const Vector3d &x){
   double Ux_prev = weighted_sum(ux_prev, ind, w);
   double Ux_next = weighted_sum(ux_next, ind, w);
   Ux = alpha_t * Ux_next + (1-alpha_t) * Ux_prev;
+  Ax = (Ux_next-Ux_prev)/(t_next-t_prev);
 
   double Uy_prev = weighted_sum(uy_prev, ind, w);
   double Uy_next = weighted_sum(uy_next, ind, w);
   Uy = alpha_t * Uy_next + (1-alpha_t) * Uy_prev;
+  Ay = (Uy_next-Uy_prev)/(t_next-t_prev);
 
   double Uz_prev = weighted_sum(uz_prev, ind, w);
   double Uz_next = weighted_sum(uz_next, ind, w);
   Uz = alpha_t * Uz_next + (1-alpha_t) * Uz_prev;
+  Az = (Uz_next-Uz_prev)/(t_next-t_prev);
 }
 
 bool Interpol::inside_domain(){
@@ -359,6 +371,18 @@ double Interpol::get_uy(){
 
 double Interpol::get_uz(){
   return Uz*inside_domain_factor;
+}
+
+double Interpol::get_ax(){
+  return Ax*inside_domain_factor;
+}
+
+double Interpol::get_ay(){
+  return Ay*inside_domain_factor;
+}
+
+double Interpol::get_az(){
+  return Az*inside_domain_factor;
 }
 
 double Interpol::get_rho(){
@@ -436,6 +460,33 @@ double Interpol::get_uzz(){
   double Uzz_next = weighted_sum(uz_next, ind, dw_z);
   double Uzz = alpha_t * Uzz_next + (1-alpha_t) * Uzz_prev;
   return Uz * inside_domain_factor_z + Uzz * inside_domain_factor;
+}
+
+Matrix3d Interpol::get_J(){
+  Matrix3d J;
+  J <<
+    get_uxx(), get_uxy(), get_uxz(),
+    get_uyx(), get_uyy(), get_uyz(),
+    get_uzx(), get_uzy(), get_uzz();
+  return J;
+}
+
+Matrix3d Interpol::get_grada(){
+  double dt_inv = 1./(t_next-t_prev);
+  double Axx = dt_inv*(weighted_sum(ux_next, ind, dw_x)-weighted_sum(ux_prev, ind, dw_x));
+  double Axy = dt_inv*(weighted_sum(ux_next, ind, dw_y)-weighted_sum(ux_prev, ind, dw_y));
+  double Axz = dt_inv*(weighted_sum(ux_next, ind, dw_z)-weighted_sum(ux_prev, ind, dw_z));
+  double Ayx = dt_inv*(weighted_sum(uy_next, ind, dw_x)-weighted_sum(uy_prev, ind, dw_x));
+  double Ayy = dt_inv*(weighted_sum(uy_next, ind, dw_y)-weighted_sum(uy_prev, ind, dw_y));
+  double Ayz = dt_inv*(weighted_sum(uy_next, ind, dw_z)-weighted_sum(uy_prev, ind, dw_z));
+  double Azx = dt_inv*(weighted_sum(uz_next, ind, dw_x)-weighted_sum(uz_prev, ind, dw_x));
+  double Azy = dt_inv*(weighted_sum(uz_next, ind, dw_y)-weighted_sum(uz_prev, ind, dw_y));
+  double Azz = dt_inv*(weighted_sum(uz_next, ind, dw_z)-weighted_sum(uz_prev, ind, dw_z));
+  Matrix3d M;
+  M << Axx, Axy, Axz,
+    Ayx, Ayy, Ayz,
+    Azx, Azy, Azz;
+  return M;
 }
 
 #endif
