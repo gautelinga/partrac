@@ -101,6 +101,12 @@ c_r = colorConverter.to_rgba("blue", alpha=0.2)
 cmap_tg = LinearSegmentedColormap.from_list("tg_cmap", [c_tg, c_g])
 cmap_tr = LinearSegmentedColormap.from_list("tr_cmap", [c_tr, c_r])
 
+# hardcoded this
+rho_a = 1.0
+rho_b = 0.8
+rho_mid = 0.5*(rho_a+rho_b)
+levels = [0.5*(rho_a+rho_mid), rho_mid, 0.5*(rho_a+rho_mid)]
+
 for t in ts:
     if bool(len(timestamps) > timestamp_entry+2
             and timestamps[timestamp_entry+1][0] < t):
@@ -133,13 +139,10 @@ for t in ts:
     alpha_t = (t-t_prev)/(t_next-t_prev)
     rho = alpha_t*rho_next + (1-alpha_t)*rho_prev
 
-    rho_max = rho[rho < rho.max()].max()
-    rho_min = rho.min()
-    rho_mean = 0.5*(rho_max+rho_min)
-    rho[rho > rho_max] = rho_mean
+    rho[rho > rho_max] = rho_mid
 
     if not args.singlephase:
-        ax.contourf(x, y, rho, levels=[0.5*(rho_min+rho_mean), rho_mean, 0.5*(rho_max+rho_max)], cmap=cmap_tr)
+        ax.contourf(x, y, rho, levels=levels, cmap=cmap_tr)
     if not args.hideobstacles:
         ax.contourf(x, y, is_solid, cmap=cmap_tg)
     #ax.contour(x, y, is_solid, [0.9], colors='grey', linewidths=0.5)
