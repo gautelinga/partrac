@@ -105,7 +105,7 @@ cmap_tr = LinearSegmentedColormap.from_list("tr_cmap", [c_tr, c_r])
 rho_a = 1.1
 rho_b = 0.7
 rho_mid = 0.5*(rho_a+rho_b)
-levels = [0.5*(rho_a+rho_mid), rho_mid, 0.5*(rho_a+rho_mid)]
+levels = [0.5*(rho_b+rho_mid), rho_mid, 0.5*(rho_a+rho_mid)]
 
 for t in ts:
     if bool(len(timestamps) > timestamp_entry+2
