@@ -102,15 +102,16 @@ cmap_tg = LinearSegmentedColormap.from_list("tg_cmap", [c_tg, c_g])
 cmap_tr = LinearSegmentedColormap.from_list("tr_cmap", [c_tr, c_r])
 
 # hardcoded this
-rho_a = 1.1
-rho_b = 0.7
+rho_a = 1.05
+rho_b = 0.9
 rho_mid = 0.5*(rho_a+rho_b)
-levels = [0.5*(rho_b+rho_mid), rho_mid, 0.5*(rho_a+rho_mid)]
+levels = [rho_b, rho_mid, rho_a]
 
 for t in ts:
     if bool(len(timestamps) > timestamp_entry+2
             and timestamps[timestamp_entry+1][0] < t):
-        timestamp_entry += 1
+        while timestamps[timestamp_entry+1][0] < t:
+            timestamp_entry += 1
         rho_prev[:, :] = rho_next[:, :]
         t_prev = t_next
         t_next = timestamps[timestamp_entry+1][0]
@@ -125,10 +126,6 @@ for t in ts:
         pos = np.array(h5f[grp + "/points"])
         elong = np.array(h5f[grp + "/e"])
 
-    eps = 0
-    if t == ts[0]:
-        eps = 1e-2*np.random.rand(len(pos[:, 1]))
-
     fig, ax = plt.subplots(figsize=figsize)
     x1 = np.remainder(pos[:, pax[0]], L[pax[0]])
     x2 = np.remainder(pos[:, pax[1]], L[pax[1]])
@@ -137,16 +134,18 @@ for t in ts:
     label = "$\mathrm{log}(\delta \ell/\delta \ell_0)$"
 
     alpha_t = (t-t_prev)/(t_next-t_prev)
-    rho = alpha_t*rho_next + (1-alpha_t)*rho_prev
+    rho = alpha_t*rho_next + (1.0-alpha_t)*rho_prev
 
-    rho[rho > rho_a] = rho_mid
+    print(t, t_prev, t_next, alpha_t)
+    
+    rho[rho > 1.9] = rho_mid
 
     if not args.singlephase:
         ax.contourf(x, y, rho, levels=levels, cmap=cmap_tr)
     if not args.hideobstacles:
         ax.contourf(x, y, is_solid, cmap=cmap_tg)
     #ax.contour(x, y, is_solid, [0.9], colors='grey', linewidths=0.5)
-    p = ax.scatter(x1, x2+eps,
+    p = ax.scatter(x1, x2,
                    c=c, vmin=args.cmin, vmax=args.cmax,
                    marker=',', lw=0, s=args.pointsize, cmap=cmap)
     if args.cbar:
