@@ -36,3 +36,13 @@ def read_params(folder):
                 line = pf.readline()
                 cnt += 1
     return params
+
+
+def read_timestamps(infile):
+    timestamps = []
+    with open(infile, "r") as tf:
+        for line in tf:
+            line = line.strip()
+            tstr, fname = line.split("\t")
+            timestamps.append((float(tstr), fname))
+    return timestamps

@@ -1,5 +1,5 @@
 import argparse
-from utils import Params
+from utils import Params, read_timestamps
 import numpy as np
 import os
 import h5py
@@ -9,12 +9,7 @@ parser = argparse.ArgumentParser(description="Analyze timestamps")
 parser.add_argument("infile", type=str, help="Timestamps file")
 args = parser.parse_args()
 
-timestamps = []
-with open(args.infile, "r") as tf:
-    for line in tf:
-        line = line.strip()
-        tstr, fname = line.split("\t")
-        timestamps.append((float(tstr), fname))
+timestamps = read_timestamps(args.infile)
 
 folder = os.path.dirname(args.infile)
 
