@@ -23,6 +23,8 @@ parser.add_argument("-size_x", type=float, default=5, help="Image size_y")
 parser.add_argument("-size_y", type=float, default=5, help="Image size_x")
 parser.add_argument("-pointsize", type=float, default=1.0, help="Point/dot size")
 parser.add_argument("--singlephase", action="store_true", help="Single phase")
+parser.add_argument("--hideobstacles", action="store_true", help="Hide obstacles")
+parser.add_argument("--skip", type=int, default=1, help="Skip timesteps")
 args = parser.parse_args()
 
 params = Params(args.folder)
@@ -67,6 +69,7 @@ ts = []
 for t in list(sorted(posf.keys())):
     if t >= args.t_min and t <= args.t_max:
         ts.append(t)
+ts = ts[::args.skip]
 
 proj_axis = [[1, 2],
              [2, 0],
