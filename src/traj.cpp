@@ -219,7 +219,7 @@ int main(int argc, char* argv[]){
   if (refine){
     cout << "Initial refinement" << endl;
 
-    bool do_output_all = prm.output_all_props;
+    bool do_output_all = prm.output_all_props && !prm.minimal_output;
     Uint n_add = refinement(faces, edges,
                             edge2faces, node2edges,
                             x_rw,
@@ -344,7 +344,7 @@ int main(int argc, char* argv[]){
 
     // Refinement
     if (refine && it % int_refine_intv == 0){
-      bool do_output_all = prm.output_all_props && it % int_dump_intv == 0;
+      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
       Uint n_add = refinement(faces, edges, edge2faces, node2edges,
                               x_rw,
                               u_rw,
@@ -360,7 +360,7 @@ int main(int argc, char* argv[]){
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
-      bool do_output_all = prm.output_all_props && it % int_dump_intv == 0;
+      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
       Uint n_rem = coarsening(faces, edges,
                               edge2faces, node2edges,
                               x_rw,
@@ -392,28 +392,33 @@ int main(int argc, char* argv[]){
         string groupname = to_string(t);
         h5f->createGroup(groupname + "/");
 
-        for (EdgesType::const_iterator edgeit = edges.begin();
-             edgeit != edges.end(); ++edgeit){
-          int inode = edgeit->first[0];
-          int jnode = edgeit->first[1];
-          double ds0 = edgeit->second;
-          double ds = dist(inode, jnode, x_rw);
-          if (e_rw[inode] <= 0.) e_rw[inode] = ds/ds0;
-          else e_rw[inode] = 0.5*(e_rw[inode] + ds/ds0);
-          if (e_rw[jnode] <= 0.) e_rw[jnode] = ds/ds0;
-          else e_rw[jnode] = 0.5*(e_rw[jnode] + ds/ds0);
+        if (faces.size() == 0){
+          for (EdgesType::const_iterator edgeit = edges.begin();
+               edgeit != edges.end(); ++edgeit){
+            int inode = edgeit->first[0];
+            int jnode = edgeit->first[1];
+            double ds0 = edgeit->second;
+            double ds = dist(inode, jnode, x_rw);
+
+            if (e_rw[inode] <= 0.) e_rw[inode] = ds/ds0;
+            else e_rw[inode] = 0.5*(e_rw[inode] + ds/ds0);
+            if (e_rw[jnode] <= 0.) e_rw[jnode] = ds/ds0;
+            else e_rw[jnode] = 0.5*(e_rw[jnode] + ds/ds0);
+          }
         }
 
         vector2hdf5(h5f, groupname + "/points", x_rw, Nrw);
-        vector2hdf5(h5f, groupname + "/u", u_rw, Nrw);
-        if (prm.output_all_props){
+        if (!prm.minimal_output)
+          vector2hdf5(h5f, groupname + "/u", u_rw, Nrw);
+        if (prm.output_all_props && !prm.minimal_output){
           scalar2hdf5(h5f, groupname + "/rho", rho_rw, Nrw);
           scalar2hdf5(h5f, groupname + "/p", p_rw, Nrw);
         }
-        scalar2hdf5(h5f, groupname + "/c", c_rw, Nrw);
-        if (edges.size() > 0)
+        if (!prm.minimal_output)
+          scalar2hdf5(h5f, groupname + "/c", c_rw, Nrw);
+        if (!prm.minimal_output && edges.size() > 0)
           scalar2hdf5(h5f, groupname + "/H", H_rw, Nrw);
-        if (faces.size() > 0)
+        if (!prm.minimal_output && faces.size() > 0)
           vector2hdf5(h5f, groupname + "/n", n_rw, Nrw);
         if (faces.size() == 0)
           scalar2hdf5(h5f, groupname + "/e", e_rw, Nrw);

@@ -210,7 +210,7 @@ void mesh2hdf(H5File* h5f, const string groupname,
     scalar2hdf5(h5f, groupname + "/dA0", dA0, faces_dims[0]);
   }
   // Edges
-  if (edges.size() > 0){
+  else if (edges.size() > 0){
     hsize_t edges_dims[2];
     edges_dims[0] = edges.size();
     edges_dims[1] = 2;
@@ -685,8 +685,8 @@ vector<Uint> get_incident_faces(const Uint iedge,
 }
 
 vector<double> areas(const vector<Uint> &kfaces,
-                     Vector3d* x_rw,
-                     const FacesType &faces, const EdgesType &edges){
+                          Vector3d* x_rw,
+                          const FacesType &faces, const EdgesType &edges){
   vector<double> a;
   for (vector<Uint>::const_iterator faceit=kfaces.begin();
        faceit != kfaces.end(); ++faceit){
@@ -757,6 +757,7 @@ bool collapse_edge(const Uint iedge,
        faceit != edge2faces[iedge].end(); ++faceit){
     dA_res += area(*faceit, x_rw, faces, edges);
     dA0_res += faces[*faceit].second;
+    //faces[*faceit].second = 0.;
   }
 
   vector<Uint> kfaces = get_incident_faces(iedge, edges, edge2faces, node2edges);
@@ -847,13 +848,32 @@ bool collapse_edge(const Uint iedge,
     //     << faces[*jfaceit].first[2] << endl;
   }
   vector<double> dAs_new = areas(kfaces, x_rw, faces, edges);
+  double wsum = 0.;
+  vector<double> w_;
+  for (Uint k=0; k < kfaces.size(); ++k){
+    //Uint kface = kfaces[k];
+    // cout << faces[kface].second << "+=" << dA0_res << "/" << dA_res << "*(" << dAs_new[k] << "-" << dAs_old[k] << ")" << endl;
+    // cout << dA0_res << " " << dA_res << endl;
+    // if (dA_res > 0.0){
+    //     faces[kface].second += dA0_res/dA_res*(dAs_new[k]-dAs_old[k]);
+    // faces[kface].second += dA0_res/kfaces.size();
+    double w = dAs_new[k]-dAs_old[k]; // May give negative mass
+    w = max(w, 0.0);
+    //faces[kface].second += dA0_res*w;
+    w_.push_back(w);
+    wsum += w;
+  }
+  if (wsum <= 0.0){
+    wsum = 0.0;
+    for (Uint k=0; k < kfaces.size(); ++k){
+      double w = dAs_new[k];
+      w_[k] = w;
+      wsum += w;
+    }
+  }
   for (Uint k=0; k < kfaces.size(); ++k){
     Uint kface = kfaces[k];
-  //   //cout << faces[kface].second << "+=" << dA0_res << "/" << dA_res << "*(" << dAs_new[k] << "-" << dAs_old[k] << ")" << endl;
-  //   //cout << dA0_res << " " << dA_res << endl;
-    if (dA_res > 0.0){
-      faces[kface].second += dA0_res/dA_res*(dAs_new[k]-dAs_old[k]);
-    }
+    faces[kface].second += dA0_res*w_[k]/wsum;
   }
 
   for (FacesListType::const_iterator jfaceit=edge2faces[iedge].begin();

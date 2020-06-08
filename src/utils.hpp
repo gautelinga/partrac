@@ -166,16 +166,16 @@ double get_abs_angle(const Vector3d &a, const Vector3d &b){
   return acos(costheta);
 }
 
-double area(const Uint iedge, const Uint jedge,
-            Vector3d* x_rw,
-            const EdgesType& edges){
+long double area(const Uint iedge, const Uint jedge,
+                 Vector3d* x_rw,
+                 const EdgesType& edges){
   Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
   Vector3d b = x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]];
   return a.cross(b).norm()/2;
 }
 
-double area(const Uint iface, Vector3d* x_rw,
-            const FacesType& faces, const EdgesType& edges){
+long double area(const Uint iface, Vector3d* x_rw,
+                 const FacesType& faces, const EdgesType& edges){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return area(iedge, jedge, x_rw, edges);

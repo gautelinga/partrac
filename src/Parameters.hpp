@@ -8,6 +8,14 @@
 
 using namespace std;
 
+bool stobool(const string val){
+  return (val == "true" || val == "True") ? true : false;
+}
+
+string bool2string(const bool val){
+  return (val ? "true" : "false");
+}
+
 class Parameters {
 public:
   Parameters(int argc, char* argv[]);
@@ -30,7 +38,7 @@ public:
   double checkpoint_intv = 1000.0;
   int dump_chunk_size = 50;
   bool verbose = false;
-  double U0 = 1.0;
+  double U0 = 1.0; 
   //
   double x0 = 0.0;
   double y0 = 0.0;
@@ -63,6 +71,7 @@ public:
   int Nrw_max = -1;
   double curv_refine_factor = 0.0;
   bool output_all_props = true;
+  bool minimal_output = false;
 private:
   void write_params_to_file(string);
 };
@@ -119,7 +128,7 @@ void Parameters::set_param(string key, string val){
   if (key == "dump_intv") dump_intv = stod(val);
   if (key == "stat_intv") stat_intv = stod(val);
   if (key == "checkpoint_intv") checkpoint_intv = stod(val);
-  if (key == "verbose") verbose = (val == "true" || val == "True") ? true : false;
+  if (key == "verbose") verbose = stobool(val);
   if (key == "U") U0 = stod(val);
   if (key == "x0") x0 = stod(val);
   if (key == "y0") y0 = stod(val);
@@ -138,16 +147,17 @@ void Parameters::set_param(string key, string val){
   if (key == "folder") folder = val;
   if (key == "t") t = stod(val);
 
-  if (key == "refine") refine = (val == "true" || val == "True") ? true : false;
+  if (key == "refine") refine = stobool(val);
   if (key == "refine_intv") refine_intv = stod(val);
-  if (key == "coarsen") coarsen = (val == "true" || val == "True") ? true : false;
+  if (key == "coarsen") coarsen = stobool(val);
   if (key == "coarsen_intv") coarsen_intv = stod(val);
   if (key == "hist_chunk_size") hist_chunk_size = stoi(val);
   if (key == "ds_max") ds_max = stod(val);
   if (key == "ds_min") ds_min = stod(val);
   if (key == "Nrw_max") Nrw_max = stoi(val);
   if (key == "curv_refine_factor") curv_refine_factor = stod(val);
-  if (key == "output_all_props") output_all_props = (val == "true" || val == "True") ? true : false;
+  if (key == "output_all_props") output_all_props = stobool(val);
+  if (key == "minimal_output") minimal_output = stobool(val);
 }
 
 void Parameters::print(){
@@ -160,7 +170,7 @@ void Parameters::print(){
     print_param("dump_intv         ", dump_intv);
     print_param("stat_intv         ", stat_intv);
     print_param("checkpoint_intv   ", checkpoint_intv);
-    print_param("verbose           ", verbose ? "true" : "false");
+    print_param("verbose           ", bool2string(verbose));
     print_param("U                 ", U0);
     print_param("x0                ", x0);
     print_param("y0                ", y0);
@@ -174,16 +184,17 @@ void Parameters::print(){
     print_param("restart_folder    ", restart_folder);
     print_param("folder            ", folder);
 
-    print_param("refine            ", refine ? "true" : "false");
+    print_param("refine            ", bool2string(refine));
     print_param("refine_intv       ", refine_intv);
-    print_param("coarsen           ", coarsen ? "true" : "false");
+    print_param("coarsen           ", bool2string(coarsen));
     print_param("coarsen_intv      ", coarsen_intv);
     print_param("hist_chunk_size   ", hist_chunk_size);
     print_param("ds_max            ", ds_max);
     print_param("ds_min            ", ds_min);
     print_param("Nrw_max           ", Nrw_max);
     print_param("curv_refine_factor", curv_refine_factor);
-    print_param("output_all_props  ", output_all_props ? "true" : "false");
+    print_param("output_all_props  ", bool2string(output_all_props));
+    print_param("minimal_output    ", bool2string(minimal_output));
   }
 }
 
@@ -208,7 +219,7 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "dump_intv", dump_intv);
   write_param(paramsfile, "stat_intv", stat_intv);
   write_param(paramsfile, "checkpoint_intv", checkpoint_intv);
-  write_param(paramsfile, "verbose", verbose ? "true" : "false");
+  write_param(paramsfile, "verbose", bool2string(verbose));
   write_param(paramsfile, "U", U0);
   write_param(paramsfile, "x0", x0);
   write_param(paramsfile, "y0", y0);
@@ -232,16 +243,18 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "restart_folder", restart_folder);
   write_param(paramsfile, "folder", folder);
 
-  write_param(paramsfile, "refine", refine ? "true" : "false");
+  write_param(paramsfile, "refine", bool2string(refine));
   write_param(paramsfile, "refine_intv", refine_intv);
-  write_param(paramsfile, "coarsen", coarsen ? "true" : "false");
+  write_param(paramsfile, "coarsen", bool2string(coarsen));
   write_param(paramsfile, "coarsen_intv", coarsen_intv);
   write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
   write_param(paramsfile, "ds_max", ds_max);
   write_param(paramsfile, "ds_min", ds_min);
   write_param(paramsfile, "Nrw_max", Nrw_max);
   write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
-  write_param(paramsfile, "output_all_props", output_all_props ? "true" : "false");
+  write_param(paramsfile, "output_all_props", bool2string(output_all_props));
+  write_param(paramsfile, "minimal_output", bool2string(minimal_output));
+
   paramsfile.close();
 }
 
