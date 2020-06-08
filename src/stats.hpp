@@ -122,9 +122,9 @@ void write_stats(ofstream &statfile,
     // Sheet method
     double A = 0.;
     double A0 = 0.;
-    double logthickness_wmean = 0.;
-    double logthickness_w0mean = 0.;
-    vector<array<double, 3>> logthickness_vec;
+    double logelong_wmean = 0.;
+    double logelong_w0mean = 0.;
+    vector<array<double, 3>> logelong_vec;
     for (FacesType::const_iterator faceit = faces.begin();
          faceit != faces.end(); ++faceit){
       Uint iedge = faceit->first[0];
@@ -132,46 +132,46 @@ void write_stats(ofstream &statfile,
       // Uint kedge = faceit->first[2];
       double dA0 = faceit->second;
       double dA = area(iedge, jedge, x_rw, edges);
-      double logthickness = log(dA0/dA);
-      logthickness_wmean += logthickness*dA;
-      logthickness_w0mean += logthickness*dA0;
-      logthickness_vec.push_back({logthickness, dA, dA0});
+      double logelong = log(dA/dA0);
+      logelong_wmean += logelong*dA;
+      logelong_w0mean += logelong*dA0;
+      logelong_vec.push_back({logelong, dA, dA0});
       A += dA;
       A0 += dA0;
     }
-    logthickness_wmean /= A;
-    logthickness_w0mean /= A0;
-    double logthickness_wvar = 0.;
-    double logthickness_w0var = 0.;
-    for (vector<array<double, 3>>::const_iterator lit = logthickness_vec.begin();
-         lit != logthickness_vec.end(); ++lit){
-      logthickness_wvar += pow((*lit)[0]-logthickness_wmean, 2)*(*lit)[1];
-      logthickness_w0var += pow((*lit)[0]-logthickness_w0mean, 2)*(*lit)[1];
+    logelong_wmean /= A;
+    logelong_w0mean /= A0;
+    double logelong_wvar = 0.;
+    double logelong_w0var = 0.;
+    for (vector<array<double, 3>>::const_iterator lit = logelong_vec.begin();
+         lit != logelong_vec.end(); ++lit){
+      logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
+      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[1];
     }
-    logthickness_wvar /= A;
-    logthickness_w0var /= A0;
+    logelong_wvar /= A;
+    logelong_w0var /= A0;
     double A_ = 0.;
     double A0_ = 0.;
     if (do_dump_hist){
-      sort(logthickness_vec.begin(), logthickness_vec.end());
-      ofstream logthicknessfile(histfolder + "/logthickness_t" + to_string(t) + ".hist");
-      for (vector<array<double, 3>>::const_iterator lit=logthickness_vec.begin();
-           lit != logthickness_vec.end(); ++lit){
+      sort(logelong_vec.begin(), logelong_vec.end());
+      ofstream logelongfile(histfolder + "/logelong_t" + to_string(t) + ".hist");
+      for (vector<array<double, 3>>::const_iterator lit=logelong_vec.begin();
+           lit != logelong_vec.end(); ++lit){
         A_ += (*lit)[1];
         A0_ += (*lit)[2];
-        logthicknessfile << (*lit)[0] << " "
+        logelongfile << (*lit)[0] << " "
                          << (*lit)[1] << " " << A_ << " " << A_/A << " "
                          << (*lit)[2] << " " << A0_ << " " << A0_/A0 << " "
                          << endl;
       }
-      logthicknessfile.close();
+      logelongfile.close();
     }
     statfile << A << "\t"                   // 15
              << A0 << "\t"                  // 16
-             << logthickness_wmean << "\t"  // 17
-             << logthickness_wvar << "\t"   // 18
-             << logthickness_w0mean << "\t" // 19
-             << logthickness_w0var << "\t"; // 20
+             << logelong_wmean << "\t"  // 17
+             << logelong_wvar << "\t"   // 18
+             << logelong_w0mean << "\t" // 19
+             << logelong_w0var << "\t"; // 20
   }
   statfile << std::endl;
 }
@@ -206,10 +206,10 @@ void write_stats_header(ofstream &statfile,
   else {
     statfile << "A" << "\t"                   // 15
              << "A0" << "\t"                  // 16
-             << "logthickness_wmean" << "\t"  // 17
-             << "logthickness_wvar" << "\t"   // 18
-             << "logthickness_w0mean" << "\t" // 19
-             << "logthickness_w0var" << "\t"; // 20
+             << "logelong_wmean" << "\t"  // 17
+             << "logelong_wvar" << "\t"   // 18
+             << "logelong_w0mean" << "\t" // 19
+             << "logelong_w0var" << "\t"; // 20
   }
   statfile << endl;
 }

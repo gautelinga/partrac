@@ -118,7 +118,6 @@ for t in ts:
     with h5py.File(posft, "r") as h5f:
         pos = np.array(h5f[grp + "/points"])
         elong = np.array(h5f[grp + "/e"])
-        col = np.array(h5f[grp + "/c"])
 
     eps = 0
     if t == ts[0]:
