@@ -22,6 +22,7 @@ parser.add_argument("-cmin", type=float, default=-2, help="cmin")
 parser.add_argument("-size_x", type=float, default=5, help="Image size_y")
 parser.add_argument("-size_y", type=float, default=5, help="Image size_x")
 parser.add_argument("-pointsize", type=float, default=1.0, help="Point/dot size")
+parser.add_argument("--singlephase", action="store_true", help="Single phase")
 args = parser.parse_args()
 
 params = Params(args.folder)
@@ -135,8 +136,10 @@ for t in ts:
     rho_mean = 0.5*(rho_max+rho_min)
     rho[rho > rho_max] = rho_mean
 
-    ax.contourf(x, y, rho, levels=[0.5*(rho_min+rho_mean), rho_mean, 0.5*(rho_max+rho_max)], cmap=cmap_tr)
-    #ax.contourf(x, y, is_solid, cmap=cmap_tg)
+    if not args.singlephase:
+        ax.contourf(x, y, rho, levels=[0.5*(rho_min+rho_mean), rho_mean, 0.5*(rho_max+rho_max)], cmap=cmap_tr)
+    else:
+        ax.contourf(x, y, is_solid, cmap=cmap_tg)
     #ax.contour(x, y, is_solid, [0.9], colors='grey', linewidths=0.5)
     p = ax.scatter(x1, x2+eps,
                    c=c, vmin=args.cmin, vmax=args.cmax,
