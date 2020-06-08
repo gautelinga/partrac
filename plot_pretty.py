@@ -102,8 +102,8 @@ cmap_tg = LinearSegmentedColormap.from_list("tg_cmap", [c_tg, c_g])
 cmap_tr = LinearSegmentedColormap.from_list("tr_cmap", [c_tr, c_r])
 
 # hardcoded this
-rho_a = 1.0
-rho_b = 0.8
+rho_a = 1.1
+rho_b = 0.7
 rho_mid = 0.5*(rho_a+rho_b)
 levels = [0.5*(rho_a+rho_mid), rho_mid, 0.5*(rho_a+rho_mid)]
 
@@ -139,7 +139,7 @@ for t in ts:
     alpha_t = (t-t_prev)/(t_next-t_prev)
     rho = alpha_t*rho_next + (1-alpha_t)*rho_prev
 
-    rho[rho > rho_max] = rho_mid
+    rho[rho > rho_a] = rho_mid
 
     if not args.singlephase:
         ax.contourf(x, y, rho, levels=levels, cmap=cmap_tr)
