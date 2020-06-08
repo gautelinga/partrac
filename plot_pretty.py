@@ -141,7 +141,7 @@ for t in ts:
 
     if not args.singlephase:
         ax.contourf(x, y, rho, levels=[0.5*(rho_min+rho_mean), rho_mean, 0.5*(rho_max+rho_max)], cmap=cmap_tr)
-    else:
+    if not args.hideobstacles:
         ax.contourf(x, y, is_solid, cmap=cmap_tg)
     #ax.contour(x, y, is_solid, [0.9], colors='grey', linewidths=0.5)
     p = ax.scatter(x1, x2+eps,
