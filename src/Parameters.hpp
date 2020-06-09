@@ -141,7 +141,7 @@ void Parameters::set_param(string key, string val){
   if (key == "dump_mode") write_mode = val;
   if (key == "interpolation_test") interpolation_test = stoi(val);
   if (key == "dump_chunk_size") dump_chunk_size = stoi(val);
-  if (key == "n_accepted") n_accepted = stoi(val);
+  if (key == "n_accepted") n_accepted = stoi(val);  // may be too large?
   if (key == "n_declined") n_declined = stoi(val);
   if (key == "restart_folder") restart_folder = val;
   if (key == "folder") folder = val;

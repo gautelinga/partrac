@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import h5py
 
 
 class Params:
@@ -46,3 +47,26 @@ def read_timestamps(infile):
             tstr, fname = line.split("\t")
             timestamps.append((float(tstr), fname))
     return timestamps
+
+
+def get_timeseries(folder, t_min=-np.inf, t_max=np.inf):
+    files = os.listdir(folder)
+
+    posf = dict()
+    for file in files:
+        if file[:11] == "data_from_t" and file[-3:] == ".h5":
+            t = float(file[11:-3])
+            posft = os.path.join(folder, file)
+            try:
+                with h5py.File(posft, "r") as h5f:
+                    for grp in h5f:
+                        posf[float(grp)] = (posft, grp)
+            except:
+                pass
+
+    ts = []
+    for t in list(sorted(posf.keys())):
+        if t >= t_min and t <= t_max:
+            ts.append(t)
+
+    return ts, posf
