@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 from utils import Params, get_timeseries
+from scipy.optimize import curve_fit
 
 
 parser = argparse.ArgumentParser(description="Make elongation pdf from sheet or strip")
@@ -66,6 +67,16 @@ for t in ts:
             print("Does not contain this.")
             exit()
 
+    ids = np.argsort(elong)
+    elong = elong[ids]
+    w = w[ids]
+    w /= w.sum()
+    wcum = np.cumsum(w)
+    ids = np.logical_and(wcum > 0.01, wcum < 0.99)
+    elong = elong[ids]
+    w = w[ids]
+    wcum = wcum[ids]
+
     if args.nolog:
         data = elong
     else:
@@ -77,7 +88,7 @@ for t in ts:
     print(string)
     elongdatafile.write(string + "\n")
 
-hist, bin_edges = np.histogram(np.log(elong), weights=w, density=True,
+hist, bin_edges = np.histogram(data, weights=w, density=True,
                                bins=args.bins,
                                range=(data_mean-args.nstd*data_std,
                                       data_mean+args.nstd*data_std))
@@ -86,6 +97,7 @@ x = 0.5*(bin_edges[1:]+bin_edges[:-1])
 if args.show:
     plt.plot(x, hist)
     plt.show()
+
 
 if args.terminal:
     for xi, hi in zip(x, hist):
