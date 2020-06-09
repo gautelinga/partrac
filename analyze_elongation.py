@@ -17,6 +17,7 @@ parser.add_argument("-o", "--output", type=str, default="", help="Output")
 parser.add_argument("-nstd", type=int, default=5, help="Number of stds to include in data")
 parser.add_argument("--all", action="store_true", help="Do it on all")
 parser.add_argument("--nolog", action="store_true", help="No logarithm")
+parser.add_argument("--tol", type=float, default=0.0, help="Tolerance for removing outliers")
 args = parser.parse_args()
 
 params = Params(args.folder)
@@ -72,7 +73,7 @@ for t in ts:
     w = w[ids]
     w /= w.sum()
     wcum = np.cumsum(w)
-    ids = np.logical_and(wcum > 0.01, wcum < 0.99)
+    ids = np.logical_and(wcum > args.tol, wcum < 1-args.tol)
     elong = elong[ids]
     w = w[ids]
     wcum = wcum[ids]
