@@ -12,6 +12,8 @@ parser.add_argument("-t", type=float, default=0.0, help="t")
 parser.add_argument("-bins", type=int, default=256, help="Number of bins")
 parser.add_argument("--show", action="store_true", help="Show")
 parser.add_argument("--terminal", action="store_true", help="Print to terminal")
+parser.add_argument("-o", "--output", type=str, default="", help="Output")
+parser.add_argument("-nstd", type=int, default=5, help="Number of stds to include in data")
 args = parser.parse_args()
 
 params = Params(args.folder)
@@ -55,7 +57,18 @@ with h5py.File(posft, "r") as h5f:
         print("Does not contain this.")
         exit()
 
-hist, bin_edges = np.histogram(np.log(elong), weights=w, density=True, bins=args.bins)
+logrho = np.log(elong)
+logrho_mean = np.mean(logrho*w)/np.mean(w)
+logrho_var = np.mean((logrho-logrho_mean)**2*w)/np.mean(w)
+logrho_std = np.sqrt(logrho_var)
+print("logrho_mean =", logrho_mean)
+print("logrho_var  =", logrho_var)
+print("logrho_std  =", logrho_std)
+
+hist, bin_edges = np.histogram(np.log(elong), weights=w, density=True,
+                               bins=args.bins,
+                               range=(logrho_mean-args.nstd*logrho_std,
+                                      logrho_mean+args.nstd*logrho_std))
 x = 0.5*(bin_edges[1:]+bin_edges[:-1])
 
 if args.show:
@@ -65,4 +78,9 @@ if args.show:
 if args.terminal:
     for xi, hi in zip(x, hist):
         print("{}\t{}".format(xi, hi))
+
+if args.output != "":
+    with open(args.output, "w") as ofile:
+        for xi, hi in zip(x, hist):
+            ofile.write("{}\t{}\n".format(xi, hi))
 
