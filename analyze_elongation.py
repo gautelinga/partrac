@@ -34,6 +34,8 @@ it = np.argmin(abs(np.array(ts)-args.t))
 
 t = ts[it]
 
+print("Found", t)
+
 posft, grp = posf[t]
 fields = []
 with h5py.File(posft, "r") as h5f:
