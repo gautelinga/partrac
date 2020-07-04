@@ -3,6 +3,8 @@
 #include "utils.hpp"
 #include "Parameters.hpp"
 #include "Interpol.hpp"
+#include "StructuredInterpol.hpp"
+#include "AnalyticInterpol.hpp"
 #include "distribute.hpp"
 #include "mesh.hpp"
 #include "stats.hpp"
@@ -19,31 +21,31 @@
 
 using namespace H5;
 
-void test_interpolation(Uint num_points, Interpol &intp,
+void test_interpolation(Uint num_points, Interpol *intp,
                         const string &newfolder, const double t0,
                         mt19937 &gen){
   Uint n = 0;
 
-  double Lx = intp.get_Lx();
-  double Ly = intp.get_Ly();
-  double Lz = intp.get_Lz();
+  double Lx = intp->get_Lx();
+  double Ly = intp->get_Ly();
+  double Lz = intp->get_Lz();
 
-  intp.update(t0);
+  intp->update(t0);
 
-  ofstream nodalfile(newfolder + "/nodal_values.dat");
-  for (Uint ix=0; ix<intp.get_nx(); ++ix){
-    for (Uint iy=0; iy<intp.get_ny(); ++iy){
-      for (Uint iz=0; iz<intp.get_nz(); ++iz){
-        bool inside = intp.get_nodal_inside(ix, iy, iz);
-        Vector3d u(intp.get_nodal_ux(ix, iy, iz),
-                   intp.get_nodal_uy(ix, iy, iz),
-                   intp.get_nodal_uz(ix, iy, iz));
-        nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-                  << u[0] << " " << u[1] << " " << u[2] << endl;
-      }
-    }
-  }
-  nodalfile.close();
+  // ofstream nodalfile(newfolder + "/nodal_values.dat");
+  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
+  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
+  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
+  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
+  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
+  //                  intp->get_nodal_uy(ix, iy, iz),
+  //                  intp->get_nodal_uz(ix, iy, iz));
+  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
+  //                 << u[0] << " " << u[1] << " " << u[2] << endl;
+  //     }
+  //   }
+  // }
+  // nodalfile.close();
 
   uniform_real_distribution<> uni_dist_x(0, Lx);
   uniform_real_distribution<> uni_dist_y(0, Ly);
@@ -52,13 +54,13 @@ void test_interpolation(Uint num_points, Interpol &intp,
   ofstream ofile(newfolder + "/interpolation.dat");
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    intp.probe(x);
-    if (intp.inside_domain()){
-      Vector3d u = intp.get_u();
-      double rho = intp.get_rho();
-      double p = intp.get_p();
-      double divu = intp.get_divu();
-      double vortz = intp.get_vortz();
+    intp->probe(x);
+    if (intp->inside_domain()){
+      Vector3d u = intp->get_u();
+      double rho = intp->get_rho();
+      double p = intp->get_p();
+      double divu = intp->get_divu();
+      double vortz = intp->get_vortz();
       ofile << x[0] << " " << x[1] << " " << x[2] << " "
             << u[0] << " " << u[1] << " " << u[2] << " "
             << rho << " " << p << " " << divu << " "
@@ -83,7 +85,23 @@ int main(int argc, char* argv[]){
 
   string infilename = string(argv[1]);
 
-  Interpol intp(infilename);
+  Interpol *intp;
+  string mode = prm.mode;
+  if (mode == "analytic"){
+    cout << "AnalyticInterpol initiated." << endl;
+    intp = new AnalyticInterpol(infilename);
+  }
+  else if (mode == "unstructured" || mode == "fenics"){
+    cout << "FEniCS format is not implemented yet." << endl;
+    exit(0);
+  }
+  else if (mode == "structured" || mode == "lbm"){
+    intp = new StructuredInterpol(infilename);
+  }
+  else {
+    cout << "Mode not supported." << endl;
+    exit(0);
+  }
 
   double Dm = prm.Dm;
   double dt = prm.dt;
@@ -96,7 +114,7 @@ int main(int argc, char* argv[]){
   double ds_min = prm.ds_min;
   Uint Nrw_max = prm.Nrw_max;
 
-  string folder = intp.get_folder();
+  string folder = intp->get_folder();
   string rwfolder = create_folder(folder + "/RandomWalkers/");
   string newfolder;
   if (prm.restart_folder != ""){
@@ -122,20 +140,20 @@ int main(int argc, char* argv[]){
   random_device rd;
   mt19937 gen(rd());
 
-  double Lx = intp.get_Lx();
-  double Ly = intp.get_Ly();
-  double Lz = intp.get_Lz();
+  double Lx = intp->get_Lx();
+  double Ly = intp->get_Ly();
+  double Lz = intp->get_Lz();
   prm.Lx = Lx;
   prm.Ly = Ly;
   prm.Lz = Lz;
-  prm.nx = intp.get_nx();
-  prm.ny = intp.get_ny();
-  prm.nz = intp.get_nz();
+  prm.nx = intp->get_nx();
+  prm.ny = intp->get_ny();
+  prm.nz = intp->get_nz();
 
   double U02 = U0*U0;
 
-  double t0 = max(intp.get_t_min(), prm.t0);
-  double T = min(intp.get_t_max(), prm.T);
+  double t0 = max(intp->get_t_min(), prm.t0);
+  double T = min(intp->get_t_max(), prm.T);
   prm.t0 = t0;
   prm.T = T;
 
@@ -203,16 +221,16 @@ int main(int argc, char* argv[]){
     if (prm.restart_folder == ""){
       c_rw[irw] = double(irw)/(Nrw-1);
     }
-    intp.update(t0);
-    intp.probe(x_rw[irw]);
-    u_rw[irw] = U0*intp.get_u();
+    intp->update(t0);
+    intp->probe(x_rw[irw]);
+    u_rw[irw] = U0*intp->get_u();
 
-    rho_rw[irw] = intp.get_rho();
-    p_rw[irw] = intp.get_p();
+    rho_rw[irw] = intp->get_rho();
+    p_rw[irw] = intp->get_p();
 
     // Second-order terms
     if (prm.int_order >= 2){
-      a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
+      a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
     }
   }
   // Initial refinement
@@ -304,7 +322,7 @@ int main(int argc, char* argv[]){
   write_stats_header(statfile, faces, edges);
   ofstream declinedfile(newfolder + "/declinedpos_from_t" + to_string(t) + ".dat");
   while (t <= T){
-    intp.update(t);
+    intp->update(t);
     // Statistics
     if (it % int_stat_intv == 0){
       cout << "Time = " << t << endl;
@@ -442,19 +460,19 @@ int main(int argc, char* argv[]){
                         rnd_normal(gen)};
         dx_rw += sqrt2Dmdt*eta;
       }
-      intp.probe(x_rw[irw]+dx_rw);
-      if (intp.inside_domain()){
+      intp->probe(x_rw[irw]+dx_rw);
+      if (intp->inside_domain()){
         x_rw[irw] += dx_rw;
-        u_rw[irw] = U0*intp.get_u();
+        u_rw[irw] = U0*intp->get_u();
 
         if ((it+1) % int_dump_intv == 0){
-          rho_rw[irw] = intp.get_rho();
-          p_rw[irw] = intp.get_p();
+          rho_rw[irw] = intp->get_rho();
+          p_rw[irw] = intp->get_p();
         }
 
         // Second-order terms
         if (prm.int_order >= 2){
-          a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
+          a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
         }
         n_accepted++;
       }

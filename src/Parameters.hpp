@@ -26,6 +26,7 @@ public:
   void dump(string folder);
   void dump(string folder, const double t);
   // Default parameters
+  string mode = "structured";
   string folder = "";
   string restart_folder = "";
   double Dm = 1.0;
@@ -144,6 +145,7 @@ void Parameters::set_param(string key, string val){
   if (key == "n_accepted") n_accepted = stoi(val);  // may be too large?
   if (key == "n_declined") n_declined = stoi(val);
   if (key == "restart_folder") restart_folder = val;
+  if (key == "mode") mode = val;
   if (key == "folder") folder = val;
   if (key == "t") t = stod(val);
 
@@ -182,6 +184,7 @@ void Parameters::print(){
     print_param("init_weight       ", init_weight);
     print_param("dump_mode         ", write_mode);
     print_param("restart_folder    ", restart_folder);
+    print_param("mode              ", mode);
     print_param("folder            ", folder);
 
     print_param("refine            ", bool2string(refine));
@@ -241,6 +244,7 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "n_accepted", n_accepted);
   write_param(paramsfile, "n_declined", n_declined);
   write_param(paramsfile, "restart_folder", restart_folder);
+  write_param(paramsfile, "mode", mode);
   write_param(paramsfile, "folder", folder);
 
   write_param(paramsfile, "refine", bool2string(refine));

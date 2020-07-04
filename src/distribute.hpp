@@ -113,15 +113,15 @@ vector<Vector3d> initial_positions(const string init_mode,
                                    const double La,
                                    const double Lb,
                                    const double ds,
-                                   Interpol &intp,
+                                   Interpol *intp,
                                    mt19937 &gen,
                                    EdgesType &edges,
                                    FacesType &faces
                                    ){
   Vector3d x;
-  double Lx = intp.get_Lx();
-  double Ly = intp.get_Ly();
-  double Lz = intp.get_Lz();
+  double Lx = intp->get_Lx();
+  double Ly = intp->get_Ly();
+  double Lz = intp->get_Lz();
 
   Uint Nx = 1;
   Uint Ny = 1;
@@ -171,14 +171,14 @@ vector<Vector3d> initial_positions(const string init_mode,
     x11[1] += - La/2*ta[1] + Lb/2*tb[1];
     x11[2] += - La/2*ta[2] + Lb/2*tb[2];
 
-    intp.probe(x00);
-    bool inside_00 = intp.inside_domain();
-    intp.probe(x01);
-    bool inside_01 = intp.inside_domain();
-    intp.probe(x10);
-    bool inside_10 = intp.inside_domain();
-    intp.probe(x11);
-    bool inside_11 = intp.inside_domain();
+    intp->probe(x00);
+    bool inside_00 = intp->inside_domain();
+    intp->probe(x01);
+    bool inside_01 = intp->inside_domain();
+    intp->probe(x10);
+    bool inside_10 = intp->inside_domain();
+    intp->probe(x11);
+    bool inside_11 = intp->inside_domain();
     if (inside_00 && inside_01 && inside_10 && inside_11){
       cout << "Sheet inside domain." << endl;
     }
@@ -289,11 +289,11 @@ vector<Vector3d> initial_positions(const string init_mode,
       dx *= 0.5*ds/dx.norm();
 
       Vector3d x_a = x0_ + dx;
-      intp.probe(x_a);
-      bool inside_a = intp.inside_domain();
+      intp->probe(x_a);
+      bool inside_a = intp->inside_domain();
       Vector3d x_b = x0_ - dx;
-      intp.probe(x_b);
-      bool inside_b = intp.inside_domain();
+      intp->probe(x_b);
+      bool inside_b = intp->inside_domain();
       if (inside_a && inside_b){
         cout << "INSIDE" << endl;
         pos_init.push_back(x_a);
@@ -356,20 +356,20 @@ vector<Vector3d> initial_positions(const string init_mode,
         if (init_rand_x) x[0] = (ix+0.5)*dx;
         if (init_rand_y) x[1] = (iy+0.5)*dy;
         if (init_rand_z) x[2] = (iz+0.5)*dz;
-        intp.probe(x);
+        intp->probe(x);
         if (init_weight == "ux"){
-          ww = abs(intp.get_ux());
+          ww = abs(intp->get_ux());
         }
         else if (init_weight == "uy"){
-          ww = abs(intp.get_uy());
+          ww = abs(intp->get_uy());
         }
         else if (init_weight == "uz"){
-          ww = abs(intp.get_uz());
+          ww = abs(intp->get_uz());
         }
         else if (init_weight == "u"){
-          ww = sqrt(pow(intp.get_ux(), 2)
-                    + pow(intp.get_uy(), 2)
-                    + pow(intp.get_uz(), 2));
+          ww = sqrt(pow(intp->get_ux(), 2)
+                    + pow(intp->get_uy(), 2)
+                    + pow(intp->get_uz(), 2));
         }
         else {
           ww = 1.;
@@ -392,8 +392,8 @@ vector<Vector3d> initial_positions(const string init_mode,
       if (init_rand_x) x[0] += uni_dist_dx(gen);
       if (init_rand_y) x[1] += uni_dist_dy(gen);
       if (init_rand_z) x[2] += uni_dist_dz(gen);
-      intp.probe(x);
-    } while (!intp.inside_domain());
+      intp->probe(x);
+    } while (!intp->inside_domain());
     pos_init.push_back(x);
   }
 

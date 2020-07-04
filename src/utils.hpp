@@ -267,4 +267,15 @@ Vector3d get_normal(const Uint jedge, const Uint kedge,
   return drj.cross(drk);
 }
 
+double getd(map<string, string> &expr_params, const string key){
+  if (expr_params.find(key) != expr_params.end()){
+    return stod(expr_params[key]);
+  }
+  else {
+    cout << "Missing key: " << key << endl;
+    exit(0);
+    return 0.;
+  }
+}
+
 #endif

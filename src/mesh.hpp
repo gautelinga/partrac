@@ -291,7 +291,8 @@ void append_new_node(const Uint inode, const Uint jnode,
                      double* rho_rw, double* p_rw, double* c_rw,
                      double* H_rw, Vector3d* n_rw,
                      Vector3d* a_rw,
-                     Uint& Nrw, const bool do_output_all, Interpol &intp,
+                     Uint& Nrw, const bool do_output_all,
+                     Interpol *intp,
                      const double U0, const int int_order){
   x_rw[Nrw] = 0.5*(x_rw[inode]+x_rw[jnode]);
 
@@ -301,16 +302,16 @@ void append_new_node(const Uint inode, const Uint jnode,
   n_rw[Nrw] = 0.5*(n_rw[inode]+n_rw[jnode]);
   n_rw[Nrw] /= n_rw[Nrw].norm();
 
-  intp.probe(x_rw[Nrw]);
+  intp->probe(x_rw[Nrw]);
 
-  u_rw[Nrw] = U0*intp.get_u();
+  u_rw[Nrw] = U0*intp->get_u();
   if (do_output_all){
-    rho_rw[Nrw] = intp.get_rho();
-    p_rw[Nrw] = intp.get_p();
+    rho_rw[Nrw] = intp->get_rho();
+    p_rw[Nrw] = intp->get_p();
   }
   // Second-order terms
   if (int_order >= 2){
-    a_rw[Nrw] = U0*U0*intp.get_Ju() + U0*intp.get_a();
+    a_rw[Nrw] = U0*U0*intp->get_Ju() + U0*intp->get_a();
   }
   ++Nrw;
 }
@@ -325,7 +326,8 @@ Uint sheet_refinement(FacesType &faces,
                       double* H_rw, Vector3d* n_rw,
                       Vector3d* a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
-                      const bool do_output_all, Interpol &intp,
+                      const bool do_output_all,
+                      Interpol *intp,
                       const double U0,
                       const int int_order,
                       const double curv_refine_factor){
@@ -421,7 +423,8 @@ Uint strip_refinement(EdgesType &edges,
                       double* H_rw, Vector3d* n_rw,
                       Vector3d* a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
-                      const bool do_output_all, Interpol &intp,
+                      const bool do_output_all,
+                      Interpol *intp,
                       const double U0, const int int_order,
                       const double curv_refine_factor){
   Uint n_add = 0;
@@ -461,7 +464,8 @@ Uint refinement(FacesType &faces,
                 double* H_rw, Vector3d* n_rw,
                 Vector3d* a_rw,
                 Uint &Nrw, const Uint Nrw_max, const double ds_max,
-                const bool do_output_all, Interpol &intp,
+                const bool do_output_all,
+                Interpol *intp,
                 const double U0, const int int_order,
                 const double curv_refine_factor){
   Uint n_add = 0;
@@ -708,7 +712,8 @@ bool collapse_edge(const Uint iedge,
                    double* rho_rw, double* p_rw, double* c_rw,
                    double* H_rw, Vector3d* n_rw,
                    Vector3d* a_rw,
-                   const bool do_output_all, Interpol &intp,
+                   const bool do_output_all,
+                   Interpol *intp,
                    const double U0, const int int_order){
 
   assert(edge_isactive[iedge]);
@@ -772,22 +777,22 @@ bool collapse_edge(const Uint iedge,
     return false;
   }
 
-  intp.probe(x);  //
+  intp->probe(x);  //
 
   Uint irws[2] = {inode, jnode};
   for (Uint i=0; i<2; ++i){
     Uint irw = irws[i];
     x_rw[irw] = x;
-    u_rw[irw] = U0*intp.get_u();
+    u_rw[irw] = U0*intp->get_u();
 
     if (do_output_all){
-      rho_rw[irw] = intp.get_rho();
-      p_rw[irw] = intp.get_p();
+      rho_rw[irw] = intp->get_rho();
+      p_rw[irw] = intp->get_p();
     }
     // Second-order terms
     if (int_order >= 2){
       double U02 = U0*U0;
-      a_rw[irw] = U02*intp.get_Ju() + U0*intp.get_a();
+      a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
     }
     c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
     H_rw[irw] = 0.5*(H_rw[inode]+H_rw[jnode]);
@@ -1055,7 +1060,7 @@ Uint sheet_coarsening(FacesType &faces,
                       double* H_rw, Vector3d* n_rw,
                       Vector3d* a_rw,
                       Uint &Nrw, const double ds_min,
-                      const bool do_output_all, Interpol &intp,
+                      const bool do_output_all, Interpol *intp,
                       const double U0, const int int_order,
                       const double curv_refine_factor){
   bool changed;
@@ -1130,7 +1135,7 @@ Uint strip_coarsening(EdgesType &edges,
                       double* H_rw, Vector3d* n_rw,
                       Vector3d* a_rw,
                       Uint &Nrw, const double ds_min,
-                      const bool do_output_all, Interpol &intp,
+                      const bool do_output_all, Interpol *intp,
                       const double U0, const int int_order,
                       const double curv_refine_factor){
   bool changed;
@@ -1190,18 +1195,18 @@ Uint strip_coarsening(EdgesType &edges,
           replace(node2edges[new_inode].begin(),
                   node2edges[new_inode].end(), iedge, jedge);
 
-          intp.probe(x_rw[new_inode]);
-          u_rw[new_inode] = U0*intp.get_u();
+          intp->probe(x_rw[new_inode]);
+          u_rw[new_inode] = U0*intp->get_u();
           if (do_output_all){
-            rho_rw[new_inode] = intp.get_rho();
-            p_rw[new_inode] = intp.get_p();
+            rho_rw[new_inode] = intp->get_rho();
+            p_rw[new_inode] = intp->get_p();
           }
           c_rw[new_inode] = 0.5*(c_rw[inode]+c_rw[jnode]);
           H_rw[new_inode] = 0.5*(H_rw[inode]+H_rw[jnode]);
           n_rw[new_inode] = 0.5*(n_rw[inode]+n_rw[jnode]);
           n_rw[new_inode] /= n_rw[new_inode].norm();
           if (int_order >= 2){
-            a_rw[new_inode] = U0*U0*intp.get_Ju() + U0*intp.get_a();
+            a_rw[new_inode] = U0*U0*intp->get_Ju() + U0*intp->get_a();
           }
 
           changed = true;
@@ -1234,7 +1239,8 @@ Uint coarsening(FacesType &faces,
                 double* H_rw, Vector3d* n_rw,
                 Vector3d* a_rw,
                 Uint &Nrw, const double ds_min,
-                const bool do_output_all, Interpol &intp,
+                const bool do_output_all,
+                Interpol *intp,
                 const double U0, const int int_order,
                 const double curv_refine_factor){
   if (faces.size() > 0){

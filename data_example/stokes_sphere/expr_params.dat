@@ -1,0 +1,14 @@
+t_min=0.0
+t_max=10000000.0
+Lx=100.0
+Ly=100.0
+Lz=100.0
+x0=50.0
+y0=50.0
+z0=50.0
+R=10.0
+expression=stokes_sphere
+p_inf=1.0
+u_inf=1.0
+rho=1.0
+mu=1.0
