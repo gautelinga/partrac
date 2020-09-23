@@ -203,7 +203,7 @@ int main(int argc, char* argv[]){
                                  Nrw,
                                  {prm.x0, prm.y0, prm.z0},
                                  prm.La, prm.Lb,
-                                 prm.ds_max,
+                                 prm.ds_max, t0,
                                  intp, gen, edges, faces);
   }
   // Compute edge2faces map
