@@ -113,11 +113,14 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
                                         const double La,
                                         const double Lb,
                                         const double ds,
+                                        const double t0,
                                         Interpol *intp,
                                         std::mt19937 &gen,
                                         EdgesType &edges,
                                         FacesType &faces
                                    ){
+  intp->update(t0);
+
   Vector3d x;
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
@@ -368,6 +371,7 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
         else {
           ww = 1.;
         }
+
         wei.push_back(ww);
         pos.push_back(x);
       }
