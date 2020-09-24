@@ -1,11 +1,11 @@
 #ifndef __EXPR_HPP
 #define __EXPR_HPP
 
-using namespace std;
+//using namespace std;
 
 class Expr {
 public:
-  Expr(map<string, string> &expr_params) {
+  Expr(std::map<std::string, std::string> &expr_params) {
     this->expr_params = expr_params;
   };
   ~Expr() {};
@@ -36,7 +36,7 @@ public:
       0., 0., 0.;
     return Da; };
 protected:
-  map<string, string> expr_params;
+  std::map<std::string, std::string> expr_params;
   bool is_inside = true;
 };
 

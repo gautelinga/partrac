@@ -3,14 +3,14 @@
 #ifndef __INTERPOL_HPP
 #define __INTERPOL_HPP
 
-using namespace std;
+//using namespace std;
 
 class Interpol {  // Abstract base class
 public:
-  Interpol(const string infilename) { this->infilename=infilename; };
+  Interpol(const std::string infilename) { this->infilename=infilename; };
   ~Interpol() {};
-  void set_folder(string folder){ this->folder=folder; };
-  string get_folder(){ return folder; };
+  void set_folder(std::string folder){ this->folder=folder; };
+  std::string get_folder(){ return folder; };
   Vector3d get_u() { return {get_ux(), get_uy(), get_uz()}; };
   Vector3d get_a() { return {get_ax(), get_ay(), get_az()}; };
   double get_Lx() { return Lx; };
@@ -70,8 +70,8 @@ public:
   //
   virtual Matrix3d get_grada() = 0;
 protected:
-  string infilename;
-  string folder;
+  std::string infilename;
+  std::string folder;
   bool is_initialized = false;
   bool verbose = true;
   double Lx = 0;

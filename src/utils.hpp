@@ -10,32 +10,32 @@
 #ifndef __UTILS_HPP
 #define __UTILS_HPP
 
-using namespace std;
+// using namespace std;
 
 typedef size_t Uint;
 
-typedef vector<pair<array<Uint, 2>, double>> EdgesType;
-typedef vector<pair<array<Uint, 3>, double>> FacesType;
-typedef list<Uint> FacesListType;
-typedef list<Uint> EdgesListType;
-typedef vector<FacesListType> Edge2FacesType;
-typedef vector<EdgesListType> Node2EdgesType;
-typedef vector<map<Uint, double>> InteriorAnglesType;
+typedef std::vector<std::pair<std::array<Uint, 2>, double>> EdgesType;
+typedef std::vector<std::pair<std::array<Uint, 3>, double>> FacesType;
+typedef std::list<Uint> FacesListType;
+typedef std::list<Uint> EdgesListType;
+typedef std::vector<FacesListType> Edge2FacesType;
+typedef std::vector<EdgesListType> Node2EdgesType;
+typedef std::vector<std::map<Uint, double>> InteriorAnglesType;
 typedef Eigen::Vector3d Vector3d;
 typedef Eigen::Matrix3d Matrix3d;
 
 class Stamp {
 public:
-  Stamp(const double t_in, const string filename_in) : t(t_in), filename(filename_in) {};
+  Stamp(const double t_in, const std::string filename_in) : t(t_in), filename(filename_in) {};
   ~Stamp() {};
   double t;
-  string filename;
+  std::string filename;
 };
 
 class StampPair {
 public:
-  StampPair(const double t_prev, const string filename_prev,
-	    const double t_next, const string filename_next) :
+  StampPair(const double t_prev, const std::string filename_prev,
+	    const double t_next, const std::string filename_next) :
     prev(t_prev, filename_prev), next(t_next, filename_next) {};
   Stamp prev;
   Stamp next;
@@ -181,25 +181,25 @@ long double area(const Uint iface, Vector3d* x_rw,
   return area(iedge, jedge, x_rw, edges);
 }
 
-vector<size_t> argsort_descending(const vector<double> &v){
-  vector<size_t> idx(v.size());
+std::vector<size_t> argsort_descending(const std::vector<double> &v){
+  std::vector<size_t> idx(v.size());
   iota(idx.begin(), idx.end(), 0);
   stable_sort(idx.begin(), idx.end(),
               [&v](size_t i1, size_t i2) {return v[i1] > v[i2]; });
   return idx;
 }
 
-Uint get_intersection(const array<Uint, 2> &a, const array<Uint, 2> &b){
-  for (array<Uint, 2>::const_iterator ait=a.begin();
+Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
+  for (std::array<Uint, 2>::const_iterator ait=a.begin();
        ait != a.end(); ++ait){
-    for (array<Uint, 2>::const_iterator bit=b.begin();
+    for (std::array<Uint, 2>::const_iterator bit=b.begin();
          bit != b.end(); ++bit){
       if (*ait == *bit){
         return *ait;
       }
     }
   }
-  cout << "Error: found no intersection." << endl;
+  std::cout << "Error: found no intersection." << std::endl;
   exit(0);
   return 0;
 }
@@ -220,18 +220,18 @@ double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
 }
 
 template<typename T>
-bool contains(const set<T>& container, const T &elem){
+bool contains(const std::set<T>& container, const T &elem){
   return container.find(elem) != container.end();
 }
 
 template<typename T1, typename T2>
-bool contains(const map<T1, T2>& container, const T1 &elem){
+bool contains(const std::map<T1, T2>& container, const T1 &elem){
   return container.find(elem) != container.end();
 }
 
 Vector3d vec_repl(const Uint inode,
                   Vector3d* x_rw,
-                  const set<Uint> repl_nodes,
+                  const std::set<Uint> repl_nodes,
                   const Vector3d &x){
   if (contains(repl_nodes, inode))
     return x;
@@ -258,7 +258,7 @@ Vector3d get_normal(const Uint iface,
 Vector3d get_normal(const Uint jedge, const Uint kedge,
                     const EdgesType &edges,
                     Vector3d* x_rw,
-                    const set<Uint> repl_nodes,
+                    const std::set<Uint> repl_nodes,
                     const Vector3d &x){
   Vector3d drj = vec_repl(edges[jedge].first[1], x_rw, repl_nodes, x)
     - vec_repl(edges[jedge].first[0], x_rw, repl_nodes, x);
@@ -267,15 +267,99 @@ Vector3d get_normal(const Uint jedge, const Uint kedge,
   return drj.cross(drk);
 }
 
-double getd(map<string, string> &expr_params, const string key){
+double getd(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stod(expr_params[key]);
   }
   else {
-    cout << "Missing key: " << key << endl;
+    std::cout << "Missing key: " << key << std::endl;
     exit(0);
     return 0.;
   }
+}
+
+double geti(std::map<std::string, std::string> &expr_params, const std::string key){
+  if (expr_params.find(key) != expr_params.end()){
+    return stoi(expr_params[key]);
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+    return 0;
+  }
+}
+
+std::vector<std::string> split_string(const std::string s, const std::string delim){
+  std::vector<std::string> s_;
+  auto start = 0U;
+  auto end = s.find(delim);
+  while (end != std::string::npos){
+    s_.push_back(s.substr(start, end-start));
+    start = end + delim.length();
+    end = s.find(delim, start);
+  }
+  s_.push_back(s.substr(start, end));
+  return s_;
+}
+
+bool contains(const std::string s, const std::string c){
+  return (s.find(c) != std::string::npos);
+}
+
+std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
+                       const std::string key){
+  std::string token = ",";
+  std::vector<double> dvec;
+  if (expr_params.find(key) != expr_params.end()){
+    std::string str = expr_params[key];
+    while (str.size()){
+      Uint index = str.find(token);
+      if (index != std::string::npos){
+        dvec.push_back(stod(str.substr(0, index)));
+        str = str.substr(index+token.size());
+        if (str.size() == 0) {
+          dvec.push_back(stod(str));
+        }
+      }
+      else {
+        dvec.push_back(stod(str));
+        str = "";
+      }
+    }
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+  }
+  return dvec;
+}
+
+std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
+                    const std::string key){
+  std::string token = ",";
+  std::vector<int> ivec;
+  if (expr_params.find(key) != expr_params.end()){
+    std::string str = expr_params[key];
+    while (str.size()){
+      Uint index = str.find(token);
+      if (index != std::string::npos){
+        ivec.push_back(stoi(str.substr(0, index)));
+        str = str.substr(index+token.size());
+        if (str.size() == 0) {
+          ivec.push_back(stoi(str));
+        }
+      }
+      else {
+        ivec.push_back(stoi(str));
+        str = "";
+      }
+    }
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+  }
+  return ivec;
 }
 
 #endif

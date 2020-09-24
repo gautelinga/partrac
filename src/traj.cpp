@@ -5,6 +5,7 @@
 #include "Interpol.hpp"
 #include "StructuredInterpol.hpp"
 #include "AnalyticInterpol.hpp"
+#include "XDMFInterpol.hpp"
 #include "distribute.hpp"
 #include "mesh.hpp"
 #include "stats.hpp"
@@ -22,8 +23,8 @@
 using namespace H5;
 
 void test_interpolation(Uint num_points, Interpol *intp,
-                        const string &newfolder, const double t0,
-                        mt19937 &gen){
+                        const std::string &newfolder, const double t0,
+                        std::mt19937 &gen){
   Uint n = 0;
 
   double Lx = intp->get_Lx();
@@ -32,7 +33,7 @@ void test_interpolation(Uint num_points, Interpol *intp,
 
   intp->update(t0);
 
-  // ofstream nodalfile(newfolder + "/nodal_values.dat");
+  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
   // for (Uint ix=0; ix<intp->get_nx(); ++ix){
   //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
   //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
@@ -41,17 +42,17 @@ void test_interpolation(Uint num_points, Interpol *intp,
   //                  intp->get_nodal_uy(ix, iy, iz),
   //                  intp->get_nodal_uz(ix, iy, iz));
   //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << endl;
+  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;;
   //     }
   //   }
   // }
   // nodalfile.close();
 
-  uniform_real_distribution<> uni_dist_x(0, Lx);
-  uniform_real_distribution<> uni_dist_y(0, Ly);
-  uniform_real_distribution<> uni_dist_z(0, Lz);
+  std::uniform_real_distribution<> uni_dist_x(0, Lx);
+  std::uniform_real_distribution<> uni_dist_y(0, Ly);
+  std::uniform_real_distribution<> uni_dist_z(0, Lz);
 
-  ofstream ofile(newfolder + "/interpolation.dat");
+  std::ofstream ofile(newfolder + "/interpolation.dat");
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
     intp->probe(x);
@@ -64,7 +65,7 @@ void test_interpolation(Uint num_points, Interpol *intp,
       ofile << x[0] << " " << x[1] << " " << x[2] << " "
             << u[0] << " " << u[1] << " " << u[2] << " "
             << rho << " " << p << " " << divu << " "
-            << vortz << endl;
+            << vortz << std::endl;;
     }
     ++n;
   }
@@ -83,23 +84,23 @@ int main(int argc, char* argv[]){
     prm.parse_cmd(argc, argv);
   }
 
-  string infilename = string(argv[1]);
+  std::string infilename = std::string(argv[1]);
 
   Interpol *intp;
-  string mode = prm.mode;
+  std::string mode = prm.mode;
   if (mode == "analytic"){
-    cout << "AnalyticInterpol initiated." << endl;
+    std::cout << "AnalyticInterpol initiated." << std::endl;;
     intp = new AnalyticInterpol(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics"){
-    cout << "FEniCS format is not implemented yet." << endl;
-    exit(0);
+    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;;
+    intp = new XDMFInterpol(infilename);
   }
   else if (mode == "structured" || mode == "lbm"){
     intp = new StructuredInterpol(infilename);
   }
   else {
-    cout << "Mode not supported." << endl;
+    std::cout << "Mode not supported." << std::endl;;
     exit(0);
   }
 
@@ -114,31 +115,31 @@ int main(int argc, char* argv[]){
   double ds_min = prm.ds_min;
   Uint Nrw_max = prm.Nrw_max;
 
-  string folder = intp->get_folder();
-  string rwfolder = create_folder(folder + "/RandomWalkers/");
-  string newfolder;
+  std::string folder = intp->get_folder();
+  std::string rwfolder = create_folder(folder + "/RandomWalkers/");
+  std::string newfolder;
   if (prm.restart_folder != ""){
     newfolder = prm.folder;
   }
   else {
-    ostringstream ss_Dm, ss_dt, ss_Nrw;
+    std::ostringstream ss_Dm, ss_dt, ss_Nrw;
     ss_Dm << std::scientific << std::setprecision(7) << Dm;
     ss_dt << std::scientific << std::setprecision(7) << dt;
     ss_Nrw << Nrw;
     newfolder = create_folder(rwfolder +
-                              "/Dm" + ss_Dm.str() + // "_U" + to_string(prm.U0) +
+                              "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                               "_dt" + ss_dt.str() +
                               "_Nrw" + ss_Nrw.str() + "/");
   }
-  string posfolder = create_folder(newfolder + "Positions/");
-  string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
-  string histfolder = create_folder(newfolder + "Histograms/");
+  std::string posfolder = create_folder(newfolder + "Positions/");
+  std::string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
+  std::string histfolder = create_folder(newfolder + "Histograms/");
   prm.folder = newfolder;
 
   prm.print();
 
-  random_device rd;
-  mt19937 gen(rd());
+  std::random_device rd;
+  std::mt19937 gen(rd());
 
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
@@ -152,8 +153,8 @@ int main(int argc, char* argv[]){
 
   double U02 = U0*U0;
 
-  double t0 = max(intp->get_t_min(), prm.t0);
-  double T = min(intp->get_t_max(), prm.T);
+  double t0 = std::max(intp->get_t_min(), prm.t0);
+  double T = std::min(intp->get_t_max(), prm.T);
   prm.t0 = t0;
   prm.T = T;
 
@@ -161,7 +162,7 @@ int main(int argc, char* argv[]){
     test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
   }
 
-  normal_distribution<double> rnd_normal(0.0, 1.0);
+  std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
   Vector3d* x_rw = new Vector3d[Nrw_max];
 
@@ -179,22 +180,22 @@ int main(int argc, char* argv[]){
   // Second-order terms
   Vector3d* a_rw = new Vector3d[Nrw_max];
   if (prm.int_order > 2){
-    cout << "No support for such high temporal integration order." << endl;
+    std::cout << "No support for such high temporal integration order." << std::endl;;
     exit(0);
   }
 
-  vector<Vector3d> pos_init;
+  std::vector<Vector3d> pos_init;
   EdgesType edges;
   FacesType faces;
 
   if (prm.restart_folder != ""){
-    string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
+    std::string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
     load_positions(posfile, pos_init, Nrw);
-    string facefile = prm.restart_folder + "/Checkpoints/faces.face";
+    std::string facefile = prm.restart_folder + "/Checkpoints/faces.face";
     load_faces(facefile, faces);
-    string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
+    std::string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
     load_edges(edgefile, edges);
-    string colfile = prm.restart_folder + "/Checkpoints/colors.col";
+    std::string colfile = prm.restart_folder + "/Checkpoints/colors.col";
     load_colors(colfile, c_rw, Nrw);
   }
   else {
@@ -235,7 +236,7 @@ int main(int argc, char* argv[]){
   }
   // Initial refinement
   if (refine){
-    cout << "Initial refinement" << endl;
+    std::cout << "Initial refinement" << std::endl;;
 
     bool do_output_all = prm.output_all_props && !prm.minimal_output;
     Uint n_add = refinement(faces, edges,
@@ -262,9 +263,9 @@ int main(int argc, char* argv[]){
                             U0, prm.int_order,
                             prm.curv_refine_factor);
     if (prm.verbose)
-      cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << endl;
+      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;;
 
-    // vector<bool> face_isactive(faces.size(), true);
+    // std::vector<bool> face_isactive(faces.size(), true);
     // for (Uint i=0; i<faces.size(); ++i){
     //   face_isactive[i] = x_rw[edges[faces[i].first[0]].first[0]] < 30.0;
     // }
@@ -275,8 +276,8 @@ int main(int argc, char* argv[]){
   }
   // Initial curvature?
   InteriorAnglesType interior_ang;
-  vector<double> mixed_areas;
-  vector<Vector3d> face_normals;
+  std::vector<double> mixed_areas;
+  std::vector<Vector3d> face_normals;
   compute_interior_prop(interior_ang, mixed_areas, face_normals,
                         faces, edges, edge2faces,
                         x_rw, Nrw);
@@ -306,7 +307,7 @@ int main(int argc, char* argv[]){
   unsigned long int n_accepted = prm.n_accepted;
   unsigned long int n_declined = prm.n_declined;
 
-  H5File* h5f = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+  H5File* h5f = new H5File(newfolder + "/data_from_t" + std::to_string(t) + ".h5", H5F_ACC_TRUNC);
 
   Uint int_stat_intv = int(prm.stat_intv/dt);
   Uint int_dump_intv = int(prm.dump_intv/dt);
@@ -316,16 +317,19 @@ int main(int argc, char* argv[]){
   Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
   Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
 
-  string write_mode = prm.write_mode;
+  bool filter = prm.filter;
+  Uint int_filter_intv = int(prm.filter_intv/dt);
 
-  ofstream statfile(newfolder + "/tdata_from_t" + to_string(t) + ".dat");
+  std::string write_mode = prm.write_mode;
+
+  std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
-  ofstream declinedfile(newfolder + "/declinedpos_from_t" + to_string(t) + ".dat");
+  std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
   while (t <= T){
     intp->update(t);
     // Statistics
     if (it % int_stat_intv == 0){
-      cout << "Time = " << t << endl;
+      std::cout << "Time = " << t << std::endl;;
       bool do_dump_hist = (int_hist_intv > 0 && it % int_hist_intv == 0);
       write_stats(statfile, t,
                   x_rw,
@@ -374,7 +378,7 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        cout << "Added " << n_add << " edges." << endl;
+        std::cout << "Added " << n_add << " edges." << std::endl;;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
@@ -391,13 +395,26 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        cout << "Removed " << n_rem << " edges." << endl;
+        std::cout << "Removed " << n_rem << " edges." << std::endl;;
+    }
+    // Filtering
+    if (filter && it % int_filter_intv == 0){
+      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
+      bool filtered = filtering(faces, edges,
+                                edge2faces, node2edges,
+                                x_rw, u_rw,
+                                rho_rw, p_rw, c_rw,
+                                H_rw, n_rw,
+                                a_rw, Nrw,
+                                do_output_all, prm.int_order, prm.filter_target);
+      if (prm.verbose && filtered)
+        std::cout << "Filtered edges." << std::endl;;
     }
     // Dump detailed data
     if (it % int_dump_intv == 0){
       if (write_mode == "text"){
-        string posfile = posfolder + "xy_t" + to_string(t) + ".pos";
-        ofstream pos_out(posfile);
+        std::string posfile = posfolder + "xy_t" + std::to_string(t) + ".pos";
+        std::ofstream pos_out(posfile);
         posdata2txt(pos_out, x_rw, u_rw, Nrw);
         pos_out.close();
       }
@@ -405,9 +422,9 @@ int main(int argc, char* argv[]){
         // Clear file if it exists, otherwise create
         if (it % int_chunk_intv == 0 && it > 0){
           h5f->close();
-          h5f = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+          h5f = new H5File(newfolder + "/data_from_t" + std::to_string(t) + ".h5", H5F_ACC_TRUNC);
         }
-        string groupname = to_string(t);
+        std::string groupname = std::to_string(t);
         h5f->createGroup(groupname + "/");
 
         if (faces.size() == 0){

@@ -6,11 +6,11 @@
 #define __STRUCTUREDINTERPOL_HPP
 
 using namespace H5;
-using namespace std;
+//using namespace std;
 
 class StructuredInterpol : public Interpol {
 public:
-  StructuredInterpol(const string infilename);
+  StructuredInterpol(const std::string infilename);
   void update(const double t);
   void probe(const Vector3d &x);
   bool inside_domain();
@@ -72,7 +72,7 @@ protected:
   double dw_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
   double dw_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
 
-  map<array<Uint, 3>, vector<array<Uint, 3>>> solid_ids_neigh;
+  std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>> solid_ids_neigh;
   double inside_domain_factor = 0.;
   double inside_domain_factor_x = 0.;
   double inside_domain_factor_y = 0.;
@@ -85,9 +85,9 @@ protected:
   double Az = 0.;
 };
 
-StructuredInterpol::StructuredInterpol(const string infilename) : Interpol(infilename), ts(infilename) {
+StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename), ts(infilename) {
   set_folder(ts.get_folder());
-  string solid_filename = ts.get_is_solid();
+  std::string solid_filename = ts.get_is_solid();
   verify_file_exists(solid_filename);
 
   H5File solid_file(solid_filename, H5F_ACC_RDONLY);
@@ -145,15 +145,37 @@ StructuredInterpol::StructuredInterpol(const string infilename) : Interpol(infil
     }
   }
 
-  Uint nnlist[27][3];
+  Uint nnlist[6][3];
   Uint nnum=0;
+
+  Uint nnnlist[12][3];
+  Uint nnnum=0;
+
+  Uint nnnnlist[8][3];
+  Uint nnnnum=0;
+
   for (int i=-1; i<=1; ++i){
     for (int j=-1; j<=1; ++j){
       for (int k=-1; k<=1; ++k){
-        nnlist[nnum][0] = i;
-        nnlist[nnum][1] = j;
-        nnlist[nnum][2] = k;
-        ++nnum;
+        Uint sumabsijk = abs(i)+abs(j)+abs(k);
+        if (sumabsijk == 1){
+          nnlist[nnum][0] = i;
+          nnlist[nnum][1] = j;
+          nnlist[nnum][2] = k;
+          ++nnum;
+        }
+        else if (sumabsijk == 2){
+          nnnlist[nnnum][0] = i;
+          nnnlist[nnnum][1] = j;
+          nnnlist[nnnum][2] = k;
+          ++nnnum;
+        }
+        else if (sumabsijk == 3){
+          nnnnlist[nnnnum][0] = i;
+          nnnnlist[nnnnum][1] = j;
+          nnnnlist[nnnnum][2] = k;
+          ++nnnnum;
+        }
       }
     }
   }
@@ -165,8 +187,8 @@ StructuredInterpol::StructuredInterpol(const string infilename) : Interpol(infil
       for (Uint iz=0; iz<nz; ++iz){
         levelZ[ix][iy][iz] = -2*isSolid[ix][iy][iz]+1;
         if (isSolid[ix][iy][iz]){
-          vector<array<Uint, 3>> neigh;
-          for (Uint inn=0; inn<27; ++inn){
+          std::vector<std::array<Uint, 3>> neigh;
+          for (Uint inn=0; inn<6; ++inn){
             Uint ix_ = imodulo(ix+nnlist[inn][0], nx);
             Uint iy_ = imodulo(iy+nnlist[inn][1], ny);
             Uint iz_ = imodulo(iz+nnlist[inn][2], nz);
@@ -174,7 +196,27 @@ StructuredInterpol::StructuredInterpol(const string infilename) : Interpol(infil
               neigh.push_back({ix_, iy_, iz_});
             }
           }
-          pair<array<Uint, 3>, vector<array<Uint, 3>>> pp({ix, iy, iz}, neigh);
+          if (neigh.size() == 0){
+            for (Uint innn=0; innn<12; ++innn){
+              Uint ix_ = imodulo(ix+nnnlist[innn][0], nx);
+              Uint iy_ = imodulo(iy+nnnlist[innn][1], ny);
+              Uint iz_ = imodulo(iz+nnnlist[innn][2], nz);
+              if (!isSolid[ix_][iy_][iz_]){
+                neigh.push_back({ix_, iy_, iz_});
+              }
+            }
+          }
+          if (neigh.size() == 0){
+            for (Uint innnn=0; innnn<8; ++innnn){
+              Uint ix_ = imodulo(ix+nnnnlist[innnn][0], nx);
+              Uint iy_ = imodulo(iy+nnnnlist[innnn][1], ny);
+              Uint iz_ = imodulo(iz+nnnnlist[innnn][2], nz);
+              if (!isSolid[ix_][iy_][iz_]){
+                neigh.push_back({ix_, iy_, iz_});
+              }
+            }
+          }
+          std::pair<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>> pp({ix, iy, iz}, neigh);
           solid_ids_neigh.insert(pp);
         }
       }
@@ -184,24 +226,24 @@ StructuredInterpol::StructuredInterpol(const string infilename) : Interpol(infil
 
 void StructuredInterpol::update(const double t){
   StampPair sp = ts.get(t);
-  // cout << sp.prev.filename << " " << sp.next.filename << endl;
+  // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
-    cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << endl;
+    std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
     load_h5(folder + "/" + sp.prev.filename,
             ux_prev, uy_prev, uz_prev, rho_prev, p_prev,
             nx, ny, nz, verbose);
 
-    cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << endl;
+    std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     load_h5(folder + "/" + sp.next.filename,
             ux_next, uy_next, uz_next, rho_next, p_next,
             nx, ny, nz, verbose);
 
     // Extrapolate fields into solid
-    for (map<array<Uint, 3>, vector<array<Uint, 3>>>::iterator it = solid_ids_neigh.begin();
+    for (std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>>::iterator it = solid_ids_neigh.begin();
          it != solid_ids_neigh.end(); ++it){
-      array<Uint, 3> inds = it->first;
-      vector<array<Uint, 3>> neigh = it->second;
+      std::array<Uint, 3> inds = it->first;
+      std::vector<std::array<Uint, 3>> neigh = it->second;
       Uint ix = inds[0];
       Uint iy = inds[1];
       Uint iz = inds[2];
@@ -217,9 +259,9 @@ void StructuredInterpol::update(const double t){
         double rho_next_sum = 0.;
         double p_prev_sum = 0.;
         double p_next_sum = 0.;
-        for (vector<array<Uint, 3>>::iterator vit=neigh.begin();
+        for (std::vector<std::array<Uint, 3>>::iterator vit=neigh.begin();
              vit != neigh.end(); ++vit){
-          array<Uint, 3> other_inds = *vit;
+          std::array<Uint, 3> other_inds = *vit;
           Uint ix_ = other_inds[0];
           Uint iy_ = other_inds[1];
           Uint iz_ = other_inds[2];
@@ -299,7 +341,7 @@ void StructuredInterpol::probe(const Vector3d &x){
 
   // Factor used to determine whether point is in the domain or not
   // and to strictly enforce no-slip boundary conditions
-  inside_domain_factor = max(weighted_sum(levelZ, ind, w), 0.0);
+  inside_domain_factor = std::max(weighted_sum(levelZ, ind, w), 0.0);
   inside_domain_factor_x = weighted_sum(levelZ, ind, dw_x);
   inside_domain_factor_y = weighted_sum(levelZ, ind, dw_y);
   inside_domain_factor_z = weighted_sum(levelZ, ind, dw_z);

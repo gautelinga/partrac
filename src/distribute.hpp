@@ -9,7 +9,7 @@
 #ifndef __DISTRIBUTE_HPP
 #define __DISTRIBUTE_HPP
 
-using namespace std;
+//using namespace std;
 
 struct less_than_op {
   inline bool operator() (const Vector3d &a, const Vector3d &b){
@@ -17,37 +17,37 @@ struct less_than_op {
   }
 };
 
-void load_positions(string input_file,
-                    vector<Vector3d> &pos_init,
+void load_positions(std::string input_file,
+                    std::vector<Vector3d> &pos_init,
                     const Uint Nrw){
-  ifstream infile(input_file);
+  std::ifstream infile(input_file);
   double x, y, z;
   while (infile >> x >> y >> z){
     pos_init.push_back({x, y, z});
   }
   infile.close();
   if (Nrw != pos_init.size()){
-    cout << "Wrong dimensions..." << endl;
+    std::cout << "Wrong dimensions..." << std::endl;
     exit(0);
   }
 }
 
-void dump_positions(string output_file,
+void dump_positions(std::string output_file,
                     Vector3d* x_rw,
                     const Uint Nrw){
-  ofstream outfile(output_file);
+  std::ofstream outfile(output_file);
   for (Uint irw=0; irw<Nrw; ++irw){
     outfile << std::setprecision(12)
             << x_rw[irw][0] << " "
             << x_rw[irw][1] << " "
-            << x_rw[irw][2] << endl;
+            << x_rw[irw][2] << std::endl;
   }
   outfile.close();
 }
 
-void load_faces(string input_file,
+void load_faces(std::string input_file,
                 FacesType& faces){
-  ifstream infile(input_file);
+  std::ifstream infile(input_file);
   Uint first, second, third;
   double fourth;
   while (infile >> first >> second >> third >> fourth){
@@ -56,9 +56,9 @@ void load_faces(string input_file,
   infile.close();
 }
 
-void load_edges(string input_file,
+void load_edges(std::string input_file,
                 EdgesType &edges){
-  ifstream infile(input_file);
+  std::ifstream infile(input_file);
   Uint first, second;
   double third;
   while (infile >> first >> second >> third){
@@ -67,56 +67,56 @@ void load_edges(string input_file,
   infile.close();
 }
 
-void dump_faces(string output_file,
+void dump_faces(std::string output_file,
                 FacesType &faces){
-  ofstream outfile(output_file);
+  std::ofstream outfile(output_file);
   for (FacesType::iterator faceit = faces.begin();
        faceit != faces.end(); ++faceit){
     outfile << faceit->first[0] << " " << faceit->first[1] << " " << faceit->first[2]
-            << " " << faceit->second << endl;
+            << " " << faceit->second << std::endl;
   }
   outfile.close();
 }
 
-void dump_edges(string output_file,
+void dump_edges(std::string output_file,
                 EdgesType &edges){
-  ofstream outfile(output_file);
+  std::ofstream outfile(output_file);
   for (EdgesType::iterator edgeit = edges.begin();
        edgeit != edges.end(); ++edgeit){
-    outfile << edgeit->first[0] << " " << edgeit->first[1] << " " << edgeit->second << endl;
+    outfile << edgeit->first[0] << " " << edgeit->first[1] << " " << edgeit->second << std::endl;
   }
   outfile.close();
 }
 
-void load_colors(string input_file,
+void load_colors(std::string input_file,
                  double* c_rw, const Uint Nrw){
-  ifstream infile(input_file);
+  std::ifstream infile(input_file);
   for (Uint irw=0; irw < Nrw; ++irw){
     infile >> c_rw[irw];
   }
   infile.close();
 }
 
-void dump_colors(string output_file,
+void dump_colors(std::string output_file,
                  double* c_rw, const Uint Nrw){
-  ofstream outfile(output_file);
+  std::ofstream outfile(output_file);
   for (Uint irw=0; irw < Nrw; ++irw){
-    outfile << setprecision(12) << c_rw[irw] << endl;
+    outfile << std::setprecision(12) << c_rw[irw] << std::endl;
   }
   outfile.close();
 }
 
-vector<Vector3d> initial_positions(const string init_mode,
-                                   const string init_weight,
-                                   Uint &Nrw,
-                                   const Vector3d &x0,
-                                   const double La,
-                                   const double Lb,
-                                   const double ds,
-                                   Interpol *intp,
-                                   mt19937 &gen,
-                                   EdgesType &edges,
-                                   FacesType &faces
+std::vector<Vector3d> initial_positions(const std::string init_mode,
+                                        const std::string init_weight,
+                                        Uint &Nrw,
+                                        const Vector3d &x0,
+                                        const double La,
+                                        const double Lb,
+                                        const double ds,
+                                        Interpol *intp,
+                                        std::mt19937 &gen,
+                                        EdgesType &edges,
+                                        FacesType &faces
                                    ){
   Vector3d x;
   double Lx = intp->get_Lx();
@@ -127,25 +127,30 @@ vector<Vector3d> initial_positions(const string init_mode,
   Uint Ny = 1;
   Uint Nz = 1;
 
-  if (init_mode == "sheet_xy" ||
-      init_mode == "sheet_xz" ||
-      init_mode == "sheet_yz"){
-    vector<Vector3d> pos_init;
+  std::vector<std::string> key = split_string(init_mode, "_");
+
+  if (key.size() == 0){
+    std::cout << "init_mode not specified." << std::endl;
+    exit(0);
+  }
+
+  if (key[0] == "sheet"){
+    std::vector<Vector3d> pos_init;
 
     Vector3d n(0., 0., 0.);
     Vector3d ta(0., 0., 0.);
     Vector3d tb(0., 0., 0.);
-    if (init_mode == "sheet_xy"){
+    if (key[1] == "xy"){
       n[2] = 1.0;
       ta[0] = 1.0;
       tb[1] = 1.0;
     }
-    if (init_mode == "sheet_xz"){
+    if (key[1] == "xz"){
       n[1] = 1.0;
       ta[0] = 1.0;
       tb[2] = 1.0;
     }
-    if (init_mode == "sheet_yz"){
+    if (key[1] == "yz"){
       n[0] = 1.0;
       ta[1] = 1.0;
       tb[2] = 1.0;
@@ -180,10 +185,10 @@ vector<Vector3d> initial_positions(const string init_mode,
     intp->probe(x11);
     bool inside_11 = intp->inside_domain();
     if (inside_00 && inside_01 && inside_10 && inside_11){
-      cout << "Sheet inside domain." << endl;
+      std::cout << "Sheet inside domain." << std::endl;
     }
     else {
-      cout << "Sheet not inside domain" << endl;
+      std::cout << "Sheet not inside domain" << std::endl;
       exit(0);
     }
 
@@ -204,83 +209,74 @@ vector<Vector3d> initial_positions(const string init_mode,
     Nrw = pos_init.size();
     return pos_init;
   }
-  else if (init_mode == "pair_xyz" ||
-           init_mode == "pair_xy" ||
-           init_mode == "pair_xz" ||
-           init_mode == "pair_yz" ||
-           init_mode == "pairs_xyz_x" ||
-           init_mode == "pairs_xyz_y" ||
-           init_mode == "pairs_xyz_z" ||
-           init_mode == "pairs_xy_x" ||
-           init_mode == "pairs_xy_y" ||
-           init_mode == "pairs_xy_z" ||
-           init_mode == "pairs_xz_x" ||
-           init_mode == "pairs_xz_y" ||
-           init_mode == "pairs_xz_z" ||
-           init_mode == "pairs_yz_x" ||
-           init_mode == "pairs_yz_y" ||
-           init_mode == "pairs_yz_z"
+  else if (key[0] == "pair" || key[0] == "pairs"
+           // init_mode == "pair_xyz" ||
+           // init_mode == "pair_xy" ||
+           // init_mode == "pair_xz" ||
+           // init_mode == "pair_yz" ||
+           // init_mode == "pairs_xyz_x" ||
+           // init_mode == "pairs_xyz_y" ||
+           // init_mode == "pairs_xyz_z" ||
+           // init_mode == "pairs_xy_x" ||
+           // init_mode == "pairs_xy_y" ||
+           // init_mode == "pairs_xy_z" ||
+           // init_mode == "pairs_xz_x" ||
+           // init_mode == "pairs_xz_y" ||
+           // init_mode == "pairs_xz_z" ||
+           // init_mode == "pairs_yz_x" ||
+           // init_mode == "pairs_yz_y" ||
+           // init_mode == "pairs_yz_z" ||
+           // init_mode == "pairs_xy_xy" ||
+           // init_mode == "pairs_xy_xz" ||
+           // init_mode == "pairs_xy_yz" ||
+           // init_mode == "pairs_xz_xy" ||
+           // init_mode == "pairs_xz_xz" ||
+           // init_mode == "pairs_xz_yz" ||
+           // init_mode == "pairs_yz_xy" ||
+           // init_mode == "pairs_yz_xz" ||
+           // init_mode == "pairs_yz_yz" //||
+           // //init_mode == "pairs_xyz_xy" ||
            ){
-    vector<Vector3d> pos_init;
+    std::vector<Vector3d> pos_init;
 
-    uniform_real_distribution<> uni_dist_x(0, Lx);
-    uniform_real_distribution<> uni_dist_y(0, Ly);
-    uniform_real_distribution<> uni_dist_z(0, Lz);
-    normal_distribution<double> rnd_normal(0.0, 1.0);
+    std::uniform_real_distribution<> uni_dist_x(0, Lx);
+    std::uniform_real_distribution<> uni_dist_y(0, Ly);
+    std::uniform_real_distribution<> uni_dist_z(0, Lz);
+    std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
-    // uniform_real_distribution<> uni_dist_theta(0., 2*M_PI);
-    Uint Npairs = (init_mode == "pair_xyz" ||
-                   init_mode == "pair_xy" ||
-                   init_mode == "pair_xz" ||
-                   init_mode == "pair_yz") ? 1 : Nrw/2;
+    // std::uniform_real_distribution<> uni_dist_theta(0., 2*M_PI);
+    Uint Npairs = (key[0] == "pair") ? 1 : Nrw/2;
 
-    cout << "Npairs = " << Npairs << endl;
+    std::cout << "Npairs = " << Npairs << std::endl;
 
     Vector3d x0_ = x0;
     Uint ipair=0;
     while (ipair < Npairs){
-      if (init_mode == "pairs_xyz_x" ||
-          init_mode == "pairs_xy_x" ||
-          init_mode == "pairs_xz_x" ||
-          init_mode == "pairs_yz_x"){
-        x0_[0] = uni_dist_x(gen);
+      if (key[0] == "pairs" && key.size() == 3){
+        if (contains(key[2], "x")){
+          x0_[0] = uni_dist_x(gen);
+        }
+        if (contains(key[2], "y")){
+          x0_[1] = uni_dist_y(gen);
+        }
+        if (contains(key[2], "z")){
+          x0_[2] = uni_dist_z(gen);
+        }
       }
-      if (init_mode == "pairs_xyz_y" ||
-          init_mode == "pairs_xy_y" ||
-          init_mode == "pairs_xz_y" ||
-          init_mode == "pairs_yz_y"){
-        x0_[0] = uni_dist_y(gen);
-      }
-      if (init_mode == "pairs_xyz_z" ||
-          init_mode == "pairs_xy_z" ||
-          init_mode == "pairs_xz_z" ||
-          init_mode == "pairs_yz_z"){
-        x0_[0] = uni_dist_z(gen);
-      }
-
       Vector3d dx(0., 0., 0.);
-      if (init_mode == "pair_yz" ||
-          init_mode == "pairs_yz_x" ||
-          init_mode == "pairs_yz_y" ||
-          init_mode == "pairs_yz_z"){
+      if (!contains(key[1], "x")){
         dx[0] = 0.;
       }
       else {
         dx[0] = rnd_normal(gen);
       }
-      if (init_mode == "pair_xz" ||
-          init_mode == "pairs_xz_x" ||
-          init_mode == "pairs_xz_y" ||
-          init_mode == "pairs_xz_z"){
+      if (!contains(key[1], "y")){
         dx[1] = 0.;
       }
       else {
         dx[1] = rnd_normal(gen);
       }
-      if (init_mode == "pair_xy" ||
-          init_mode == "pairs_xy_x" ||
-          init_mode == "pairs_xy_y" ||
-          init_mode == "pairs_xy_z"){
+      if (!contains(key[1], "z")){
         dx[2] = 0.;
       }
       else {
@@ -295,20 +291,18 @@ vector<Vector3d> initial_positions(const string init_mode,
       intp->probe(x_b);
       bool inside_b = intp->inside_domain();
       if (inside_a && inside_b){
-        cout << "INSIDE" << endl;
+        std::cout << "INSIDE" << std::endl;
         pos_init.push_back(x_a);
         pos_init.push_back(x_b);
         double ds0 = (x_a-x_b).norm();
         edges.push_back({{2*ipair, 2*ipair+1}, ds0});
         ++ipair;
       }
-      else if (init_mode == "pair_xyz" ||
-               init_mode == "pair_xy" ||
-               init_mode == "pair_xz" ||
-               init_mode == "pair_yz"){
-        cout << "Pair not inside domain" << endl;
+      else if (key[0] == "pair"){
+        std::cout << "Pair not inside domain" << std::endl;
         exit(0);
       }
+      //std::cout << x_a << " " << x_b << std::endl;
     }
     Nrw = 2*Npairs;
     return pos_init;
@@ -347,8 +341,8 @@ vector<Vector3d> initial_positions(const string init_mode,
 
   double ww;
 
-  vector<double> wei;
-  vector<Vector3d> pos;
+  std::vector<double> wei;
+  std::vector<Vector3d> pos;
   for (Uint ix=0; ix<Nx; ++ix){
     for (Uint iy=0; iy<Ny; ++iy){
       for (Uint iz=0; iz<Nz; ++iz){
@@ -379,12 +373,12 @@ vector<Vector3d> initial_positions(const string init_mode,
       }
     }
   }
-  uniform_real_distribution<> uni_dist_dx(-0.5*dx, 0.5*dx);
-  uniform_real_distribution<> uni_dist_dy(-0.5*dy, 0.5*dy);
-  uniform_real_distribution<> uni_dist_dz(-0.5*dz, 0.5*dz);
-  discrete_distribution<Uint> discrete_dist(wei.begin(), wei.end());
+  std::uniform_real_distribution<> uni_dist_dx(-0.5*dx, 0.5*dx);
+  std::uniform_real_distribution<> uni_dist_dy(-0.5*dy, 0.5*dy);
+  std::uniform_real_distribution<> uni_dist_dz(-0.5*dz, 0.5*dz);
+  std::discrete_distribution<Uint> discrete_dist(wei.begin(), wei.end());
 
-  vector<Vector3d> pos_init;
+  std::vector<Vector3d> pos_init;
   for (Uint irw=0; irw<Nrw; ++irw){
     do {
       Uint ind = discrete_dist(gen);

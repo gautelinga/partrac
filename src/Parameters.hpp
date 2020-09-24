@@ -1,18 +1,40 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <boost/algorithm/string.hpp>
 #include "io.hpp"
 
 #ifndef __PARAMETERS_HPP
 #define __PARAMETERS_HPP
 
-using namespace std;
+//using namespace std;
 
-bool stobool(const string val){
+double stodouble(const std::string val){
+  std::stringstream ss(val);
+  double d;
+  ss >> d;
+  if (ss.fail()){
+    std::cout << "Unable to format " + val + " as a double." << std::endl;
+    exit(0);
+  }
+  return d;
+}
+
+int stoint(const std::string val){
+  double d = stodouble(val);
+  int i = int(d);
+  if (d - i != 0){
+    std::cout << "The value " + val + " is not an int!" << std::endl;
+    exit(0);
+  }
+  return i;
+}
+
+bool stobool(const std::string val){
   return (val == "true" || val == "True") ? true : false;
 }
 
-string bool2string(const bool val){
+std::string bool2string(const bool val){
   return (val ? "true" : "false");
 }
 
@@ -20,15 +42,15 @@ class Parameters {
 public:
   Parameters(int argc, char* argv[]);
   void parse_cmd(int argc, char* argv[]);
-  void parse_file(string infile);
-  void set_param(string key, string val);
+  void parse_file(std::string infile);
+  void set_param(std::string key, std::string val);
   void print();
-  void dump(string folder);
-  void dump(string folder, const double t);
+  void dump(std::string folder);
+  void dump(std::string folder, const double t);
   // Default parameters
-  string mode = "structured";
-  string folder = "";
-  string restart_folder = "";
+  std::string mode = "structured";
+  std::string folder = "";
+  std::string restart_folder = "";
   double Dm = 1.0;
   double t0 = 0.;
   double t = 0.;
@@ -39,7 +61,7 @@ public:
   double checkpoint_intv = 1000.0;
   int dump_chunk_size = 50;
   bool verbose = false;
-  double U0 = 1.0; 
+  double U0 = 1.0;
   //
   double x0 = 0.0;
   double y0 = 0.0;
@@ -54,11 +76,16 @@ public:
   int nx = 0;
   int ny = 0;
   int nz = 0;
+  //
+  bool filter = false;
+  double filter_intv = 0.0;
+  int filter_target = 0;
+  //
   double dt = 1.0;
   int int_order = 1;
-  string init_mode = "line_x";  // what else?
-  string init_weight = "none";
-  string write_mode = "hdf5";  // or text
+  std::string init_mode = "line_x";  // what else?
+  std::string init_weight = "none";
+  std::string write_mode = "hdf5";  // or text
   int interpolation_test = 0;
   long int n_accepted = 0;
   long int n_declined = 0;
@@ -74,7 +101,7 @@ public:
   bool output_all_props = true;
   bool minimal_output = false;
 private:
-  void write_params_to_file(string);
+  void write_params_to_file(std::string);
 };
 
 Parameters::Parameters(int argc, char* argv[]){
@@ -83,11 +110,11 @@ Parameters::Parameters(int argc, char* argv[]){
 
 void Parameters::parse_cmd(int argc, char* argv[]){
   size_t found;
-  string argstr, key, val;
+  std::string argstr, key, val;
   for (int iarg=2; iarg < argc; ++iarg){
     argstr = argv[iarg];
     found = argstr.find('=');
-    if (found != string::npos){
+    if (found != std::string::npos){
       key = argstr.substr(0, found);
       val = argstr.substr(found+1);
       boost::trim(key);
@@ -95,22 +122,22 @@ void Parameters::parse_cmd(int argc, char* argv[]){
       set_param(key, val);
     }
   }
-  dump_intv = max(dump_intv, dt);
-  stat_intv = max(stat_intv, dt);
-  Nrw_max = max(Nrw_max, Nrw);
+  dump_intv = std::max(dump_intv, dt);
+  stat_intv = std::max(stat_intv, dt);
+  Nrw_max = std::max(Nrw_max, Nrw);
 }
 
-void Parameters::parse_file(string infile){
-  ifstream input(infile);
+void Parameters::parse_file(std::string infile){
+  std::ifstream input(infile);
   if (!input){
-    cout << "File " << infile <<" doesn't exist." << endl;
+    std::cout << "File " << infile <<" doesn't exist." << std::endl;
     exit(0);
   }
   size_t found;
-  string key, val;
-  for (string line; getline(input, line); ){
+  std::string key, val;
+  for (std::string line; getline(input, line); ){
     found = line.find('=');
-    if (found != string::npos){
+    if (found != std::string::npos){
       key = line.substr(0, found);
       val = line.substr(found+1);
       boost::trim(key);
@@ -120,46 +147,50 @@ void Parameters::parse_file(string infile){
   }
 }
 
-void Parameters::set_param(string key, string val){
-  if (key == "Dm") Dm = stod(val);
-  if (key == "t0") t0 = stod(val);
-  if (key == "T") T = stod(val);
-  if (key == "dt") dt = stod(val);
-  if (key == "Nrw") Nrw = stoi(val);
-  if (key == "dump_intv") dump_intv = stod(val);
-  if (key == "stat_intv") stat_intv = stod(val);
-  if (key == "checkpoint_intv") checkpoint_intv = stod(val);
+void Parameters::set_param(std::string key, std::string val){
+  if (key == "Dm") Dm = stodouble(val);
+  if (key == "t0") t0 = stodouble(val);
+  if (key == "T") T = stodouble(val);
+  if (key == "dt") dt = stodouble(val);
+  if (key == "Nrw") Nrw = stoint(val);
+  if (key == "dump_intv") dump_intv = stodouble(val);
+  if (key == "stat_intv") stat_intv = stodouble(val);
+  if (key == "checkpoint_intv") checkpoint_intv = stodouble(val);
   if (key == "verbose") verbose = stobool(val);
-  if (key == "U") U0 = stod(val);
-  if (key == "x0") x0 = stod(val);
-  if (key == "y0") y0 = stod(val);
-  if (key == "z0") z0 = stod(val);
-  if (key == "La") La = stod(val);
-  if (key == "Lb") Lb = stod(val);
-  if (key == "int_order") int_order = stoi(val);
+  if (key == "U") U0 = stodouble(val);
+  if (key == "x0") x0 = stodouble(val);
+  if (key == "y0") y0 = stodouble(val);
+  if (key == "z0") z0 = stodouble(val);
+  if (key == "La") La = stodouble(val);
+  if (key == "Lb") Lb = stodouble(val);
+  if (key == "int_order") int_order = stoint(val);
   if (key == "init_mode") init_mode = val;
   if (key == "init_weight") init_weight = val;
   if (key == "dump_mode") write_mode = val;
-  if (key == "interpolation_test") interpolation_test = stoi(val);
-  if (key == "dump_chunk_size") dump_chunk_size = stoi(val);
-  if (key == "n_accepted") n_accepted = stoi(val);  // may be too large?
-  if (key == "n_declined") n_declined = stoi(val);
+  if (key == "interpolation_test") interpolation_test = stoint(val);
+  if (key == "dump_chunk_size") dump_chunk_size = stoint(val);
+  if (key == "n_accepted") n_accepted = stoint(val);  // may be too large?
+  if (key == "n_declined") n_declined = stoint(val);
   if (key == "restart_folder") restart_folder = val;
   if (key == "mode") mode = val;
   if (key == "folder") folder = val;
-  if (key == "t") t = stod(val);
+  if (key == "t") t = stodouble(val);
 
   if (key == "refine") refine = stobool(val);
-  if (key == "refine_intv") refine_intv = stod(val);
+  if (key == "refine_intv") refine_intv = stodouble(val);
   if (key == "coarsen") coarsen = stobool(val);
-  if (key == "coarsen_intv") coarsen_intv = stod(val);
-  if (key == "hist_chunk_size") hist_chunk_size = stoi(val);
-  if (key == "ds_max") ds_max = stod(val);
-  if (key == "ds_min") ds_min = stod(val);
-  if (key == "Nrw_max") Nrw_max = stoi(val);
-  if (key == "curv_refine_factor") curv_refine_factor = stod(val);
+  if (key == "coarsen_intv") coarsen_intv = stodouble(val);
+  if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
+  if (key == "ds_max") ds_max = stodouble(val);
+  if (key == "ds_min") ds_min = stodouble(val);
+  if (key == "Nrw_max") Nrw_max = stoint(val);
+  if (key == "curv_refine_factor") curv_refine_factor = stodouble(val);
   if (key == "output_all_props") output_all_props = stobool(val);
   if (key == "minimal_output") minimal_output = stobool(val);
+
+  if (key == "filter") filter = stobool(val);
+  if (key == "filter_intv") filter_intv = stodouble(val);
+  if (key == "filter_target") filter_target = stoint(val);
 }
 
 void Parameters::print(){
@@ -198,21 +229,25 @@ void Parameters::print(){
     print_param("curv_refine_factor", curv_refine_factor);
     print_param("output_all_props  ", bool2string(output_all_props));
     print_param("minimal_output    ", bool2string(minimal_output));
+
+    print_param("filter            ", bool2string(filter));
+    print_param("filter_intv       ", filter_intv);
+    print_param("filter_target     ", filter_target);
   }
 }
 
-void Parameters::dump(string dumpfolder){
-  string filename = dumpfolder + "/params.dat";
+void Parameters::dump(std::string dumpfolder){
+  std::string filename = dumpfolder + "/params.dat";
   write_params_to_file(filename);
 }
 
-void Parameters::dump(string dumpfolder, const double t){
-  string filename = dumpfolder + "/params_from_t" + to_string(t) + ".dat";
+void Parameters::dump(std::string dumpfolder, const double t){
+  std::string filename = dumpfolder + "/params_from_t" + std::to_string(t) + ".dat";
   write_params_to_file(filename);
 }
 
-void Parameters::write_params_to_file(string filename){
-  ofstream paramsfile(filename);
+void Parameters::write_params_to_file(std::string filename){
+  std::ofstream paramsfile(filename);
   write_param(paramsfile, "Dm", Dm);
   write_param(paramsfile, "t0", t0);
   write_param(paramsfile, "t", t);
@@ -258,6 +293,10 @@ void Parameters::write_params_to_file(string filename){
   write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
   write_param(paramsfile, "output_all_props", bool2string(output_all_props));
   write_param(paramsfile, "minimal_output", bool2string(minimal_output));
+
+  write_param(paramsfile, "filter", bool2string(filter));
+  write_param(paramsfile, "filter_intv", filter_intv);
+  write_param(paramsfile, "filter_target", filter_target);
 
   paramsfile.close();
 }
