@@ -11,14 +11,15 @@ public:
   ~Interpol() {};
   void set_folder(std::string folder){ this->folder=folder; };
   std::string get_folder(){ return folder; };
+  void set_int_order(const int int_order){ this->int_order=int_order; };
+  //
   Vector3d get_u() { return {get_ux(), get_uy(), get_uz()}; };
   Vector3d get_a() { return {get_ax(), get_ay(), get_az()}; };
-  double get_Lx() { return Lx; };
-  double get_Ly() { return Ly; };
-  double get_Lz() { return Lz; };
-  Uint get_nx() { return nx; };
-  Uint get_ny() { return ny; };
-  Uint get_nz() { return nz; };
+  double get_Lx() { return x_max[0]-x_min[0]; };
+  double get_Ly() { return x_max[1]-x_min[1]; };
+  double get_Lz() { return x_max[2]-x_min[2]; };
+  Vector3d get_x_min() const { return x_min; };
+  Vector3d get_x_max() const { return x_max; };
   double get_divu() { return get_uxx()+get_uyy()+get_uzz(); };
   double get_vortx() { return get_uzy()-get_uyz(); };
   double get_vorty() { return get_uxz()-get_uzx(); };
@@ -69,17 +70,18 @@ public:
   virtual double get_uzz() = 0;
   //
   virtual Matrix3d get_grada() = 0;
+  //
 protected:
   std::string infilename;
   std::string folder;
   bool is_initialized = false;
   bool verbose = true;
-  double Lx = 0;
-  double Ly = 0;
-  double Lz = 0;
-  Uint nx = 0;
-  Uint ny = 0;
-  Uint nz = 0;
+  //double Lx = 0;
+  //double Ly = 0;
+  //double Lz = 0;
+  Vector3d x_min;
+  Vector3d x_max;
+  int int_order = 1;
 };
 
 #endif

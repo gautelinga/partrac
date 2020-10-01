@@ -1,5 +1,5 @@
 # A continuous P2 vector element
 #
-# Compile this form with FFC: ffc -l dolfin P2_3.ufl
+# Compile this form with FFC: ffc -l dolfin vP2_3.ufl
 
 element = VectorElement("Lagrange", tetrahedron, 2)

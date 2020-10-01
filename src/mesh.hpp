@@ -4,7 +4,10 @@
 #define __MESH_HPP
 
 // using namespace std;
+// Declarations
+void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
 
+// Definitions
 void print_mesh(const FacesType& faces, const EdgesType& edges,
                 const Edge2FacesType& edge2faces,
                 Vector3d* x_rw, const Uint Nrw){
@@ -384,43 +387,45 @@ Uint sheet_refinement(FacesType &faces,
       bool added = append_new_node(inode, jnode, x_rw, u_rw,
                                    rho_rw, p_rw, c_rw, H_rw, n_rw,
                                    a_rw, Nrw, do_output_all, intp, U0, int_order);
-      if (added) ++n_add;
-      //
-      edges[iedge].first[1] = new_inode;
-      Uint new_iedge = edges.size();
-      edges.push_back({{new_inode, jnode}, ds0/2});
-      edge2faces.push_back({});
-      // Append new node to node2edges list
-      node2edges.push_back({iedge, new_iedge});
-      // Modify existing entry
-      std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
-
-      for (FacesListType::iterator itface = edge2faces[iedge].begin();
-           itface != edge2faces[iedge].end(); ++itface){
-        Uint jedge = faces[*itface].first[0];
-        Uint kedge = faces[*itface].first[1];
-        Uint ledge = faces[*itface].first[2];
-        double dA0 = faces[*itface].second;
-        Uint new_jedge = edges.size();
-        std::array<Uint, 3> close_entities = get_close_entities(iedge, jedge, kedge, ledge, edges);
-        Uint knode = close_entities[0];
-        Uint medge = close_entities[1];
-        Uint nedge = close_entities[2];
-        edges.push_back({{new_inode, knode}, ds0/2});  // ds0/2 - or what else?
-        edge2faces.push_back({});
-
-        Uint new_iface = faces.size();
-        faces[*itface] = {{iedge, new_jedge, medge}, dA0/2};
-        faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2});
-
-        edge2faces[nedge].remove(*itface);
-        edge2faces[nedge].push_back(new_iface);
-        edge2faces[new_iedge].push_back(new_iface);
-        edge2faces[new_jedge].push_back(*itface);
-        edge2faces[new_jedge].push_back(new_iface);
+      if (added){
+        ++n_add;
         //
-        node2edges[new_inode].push_back(new_jedge);
-        node2edges[knode].push_back(new_jedge);
+        edges[iedge].first[1] = new_inode;
+        Uint new_iedge = edges.size();
+        edges.push_back({{new_inode, jnode}, ds0/2});
+        edge2faces.push_back({});
+        // Append new node to node2edges list
+        node2edges.push_back({iedge, new_iedge});
+        // Modify existing entry
+        std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
+
+        for (FacesListType::iterator itface = edge2faces[iedge].begin();
+             itface != edge2faces[iedge].end(); ++itface){
+          Uint jedge = faces[*itface].first[0];
+          Uint kedge = faces[*itface].first[1];
+          Uint ledge = faces[*itface].first[2];
+          double dA0 = faces[*itface].second;
+          Uint new_jedge = edges.size();
+          std::array<Uint, 3> close_entities = get_close_entities(iedge, jedge, kedge, ledge, edges);
+          Uint knode = close_entities[0];
+          Uint medge = close_entities[1];
+          Uint nedge = close_entities[2];
+          edges.push_back({{new_inode, knode}, ds0/2});  // ds0/2 - or what else?
+          edge2faces.push_back({});
+
+          Uint new_iface = faces.size();
+          faces[*itface] = {{iedge, new_jedge, medge}, dA0/2};
+          faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2});
+
+          edge2faces[nedge].remove(*itface);
+          edge2faces[nedge].push_back(new_iface);
+          edge2faces[new_iedge].push_back(new_iface);
+          edge2faces[new_jedge].push_back(*itface);
+          edge2faces[new_jedge].push_back(new_iface);
+          //
+          node2edges[new_inode].push_back(new_jedge);
+          node2edges[knode].push_back(new_jedge);
+        }
       }
     }
   } while (changed);
@@ -446,21 +451,29 @@ Uint strip_refinement(EdgesType &edges,
     double ds0 = edges[iedge].second;
     double ds = dist(inode, jnode, x_rw);
     //double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
-    double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
-    double ds_max_loc = ds_max/(1.0 + curv_refine_factor*kappa);
+    //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
+    double ds_max_loc = ds_max/(1.0);  // + curv_refine_factor*kappa);
     if (ds > ds_max_loc && Nrw < Nrw_max){
-      edges[iedge].first[1] = Nrw;
-      edges[iedge].second = ds0/2;
-      Uint new_iedge = edges.size();
-      edges.push_back({{Nrw, jnode}, ds0/2});
-
-      node2edges.push_back({iedge, new_iedge});
-      std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
-
+      Uint new_inode = Nrw;
       bool added = append_new_node(inode, jnode, x_rw, u_rw,
                                    rho_rw, p_rw, c_rw, H_rw, n_rw,
                                    a_rw, Nrw, do_output_all, intp, U0, int_order);
-      if (added) ++n_add;
+      if (added){
+        //std::cout << "before: " << edges[iedge].first[0] << " " << edges[iedge].first[1] << std::endl;
+        edges[iedge].first[1] = new_inode;
+        edges[iedge].second = ds0/2;
+        Uint new_iedge = edges.size();
+        edges.push_back({{new_inode, jnode}, ds0/2});
+        //std::cout << "after:  " << edges[iedge].first[0] << " " << edges[iedge].first[1] << std::endl;
+        //std::cout << "...and: " << edges[new_iedge].first[0] << " " << edges[new_iedge].first[1] << std::endl;
+
+        node2edges.push_back({iedge, new_iedge});
+        std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
+
+        //compute_node2edges(node2edges, edges, new_inode);
+
+        ++n_add;
+      }
     }
   }
   return n_add;

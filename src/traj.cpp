@@ -5,7 +5,9 @@
 #include "Interpol.hpp"
 #include "StructuredInterpol.hpp"
 #include "AnalyticInterpol.hpp"
+#ifdef USE_DOLFIN
 #include "XDMFInterpol.hpp"
+#endif
 #include "distribute.hpp"
 #include "mesh.hpp"
 #include "stats.hpp"
@@ -26,10 +28,16 @@ void test_interpolation(Uint num_points, Interpol *intp,
                         const std::string &newfolder, const double t0,
                         std::mt19937 &gen){
   Uint n = 0;
+  Uint n_inside = 0;
+
+  Vector3d x_min = intp->get_x_min();
+  Vector3d x_max = intp->get_x_max();
 
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
   double Lz = intp->get_Lz();
+
+  std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
 
   intp->update(t0);
 
@@ -42,33 +50,43 @@ void test_interpolation(Uint num_points, Interpol *intp,
   //                  intp->get_nodal_uy(ix, iy, iz),
   //                  intp->get_nodal_uz(ix, iy, iz));
   //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;;
+  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
   //     }
   //   }
   // }
   // nodalfile.close();
 
-  std::uniform_real_distribution<> uni_dist_x(0, Lx);
-  std::uniform_real_distribution<> uni_dist_y(0, Ly);
-  std::uniform_real_distribution<> uni_dist_z(0, Lz);
+  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
 
-  std::ofstream ofile(newfolder + "/interpolation.dat");
+  std::ofstream ofile(newfolder + "/interpolation.txt");
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
+    //std::cout << x << std::endl;
     intp->probe(x);
     if (intp->inside_domain()){
+      std::string sep = ",";
       Vector3d u = intp->get_u();
       double rho = intp->get_rho();
       double p = intp->get_p();
       double divu = intp->get_divu();
       double vortz = intp->get_vortz();
-      ofile << x[0] << " " << x[1] << " " << x[2] << " "
-            << u[0] << " " << u[1] << " " << u[2] << " "
-            << rho << " " << p << " " << divu << " "
-            << vortz << std::endl;;
+      ofile << x[0] << sep << x[1] << sep << x[2] << sep
+            << u[0] << sep << u[1] << sep << u[2] << sep
+            << rho << sep << p << sep << divu << sep
+            << vortz << sep
+            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
+            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
+            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
+            << std::endl;
+      ++n_inside;
     }
     ++n;
   }
+  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
+  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
+  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
   ofile.close();
 }
 
@@ -89,18 +107,23 @@ int main(int argc, char* argv[]){
   Interpol *intp;
   std::string mode = prm.mode;
   if (mode == "analytic"){
-    std::cout << "AnalyticInterpol initiated." << std::endl;;
+    std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics"){
-    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;;
+    #ifdef USE_DOLFIN
+    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;
     intp = new XDMFInterpol(infilename);
+    #else
+    std::cout << "You have to compile with PARTRAC_ENABLE_FENICS=ON." << std::endl;
+    exit(0);
+    #endif
   }
   else if (mode == "structured" || mode == "lbm"){
     intp = new StructuredInterpol(infilename);
   }
   else {
-    std::cout << "Mode not supported." << std::endl;;
+    std::cout << "Mode not supported." << std::endl;
     exit(0);
   }
 
@@ -147,9 +170,9 @@ int main(int argc, char* argv[]){
   prm.Lx = Lx;
   prm.Ly = Ly;
   prm.Lz = Lz;
-  prm.nx = intp->get_nx();
-  prm.ny = intp->get_ny();
-  prm.nz = intp->get_nz();
+  //prm.nx = intp->get_nx();
+  //prm.ny = intp->get_ny();
+  //prm.nz = intp->get_nz();
 
   double U02 = U0*U0;
 
@@ -159,8 +182,11 @@ int main(int argc, char* argv[]){
   prm.T = T;
 
   if (prm.interpolation_test > 0){
+    std::cout << "Testing interpolation..." << std::endl;
+    intp->set_int_order(2);
     test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
   }
+  intp->set_int_order(prm.int_order);
 
   std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
@@ -180,7 +206,7 @@ int main(int argc, char* argv[]){
   // Second-order terms
   Vector3d* a_rw = new Vector3d[Nrw_max];
   if (prm.int_order > 2){
-    std::cout << "No support for such high temporal integration order." << std::endl;;
+    std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
   }
 
@@ -207,6 +233,9 @@ int main(int argc, char* argv[]){
                                  prm.ds_max, t0,
                                  intp, gen, edges, faces);
   }
+
+  std::cout << "aaa" << std::endl;
+
   // Compute edge2faces map
   Edge2FacesType edge2faces;
   compute_edge2faces(edge2faces, faces, edges);
@@ -236,7 +265,7 @@ int main(int argc, char* argv[]){
   }
   // Initial refinement
   if (refine){
-    std::cout << "Initial refinement" << std::endl;;
+    std::cout << "Initial refinement" << std::endl;
 
     bool do_output_all = prm.output_all_props && !prm.minimal_output;
     Uint n_add = refinement(faces, edges,
@@ -263,7 +292,7 @@ int main(int argc, char* argv[]){
                             U0, prm.int_order,
                             prm.curv_refine_factor);
     if (prm.verbose)
-      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;;
+      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
 
     // std::vector<bool> face_isactive(faces.size(), true);
     // for (Uint i=0; i<faces.size(); ++i){
@@ -329,7 +358,7 @@ int main(int argc, char* argv[]){
     intp->update(t);
     // Statistics
     if (it % int_stat_intv == 0){
-      std::cout << "Time = " << t << std::endl;;
+      std::cout << "Time = " << t << std::endl;
       bool do_dump_hist = (int_hist_intv > 0 && it % int_hist_intv == 0);
       write_stats(statfile, t,
                   x_rw,
@@ -378,7 +407,7 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        std::cout << "Added " << n_add << " edges." << std::endl;;
+        std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
@@ -395,7 +424,7 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        std::cout << "Removed " << n_rem << " edges." << std::endl;;
+        std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
     // Filtering
     if (filter && it % int_filter_intv == 0){
@@ -408,7 +437,7 @@ int main(int argc, char* argv[]){
                                 a_rw, Nrw,
                                 do_output_all, prm.int_order, prm.filter_target);
       if (prm.verbose && filtered)
-        std::cout << "Filtered edges." << std::endl;;
+        std::cout << "Filtered edges." << std::endl;
     }
     // Dump detailed data
     if (it % int_dump_intv == 0){

@@ -1,0 +1,5 @@
+# A continuous P3 vector element
+#
+# Compile this form with FFC: ffc -l dolfin vP3_3.ufl
+
+element = VectorElement("Lagrange", tetrahedron, 3)

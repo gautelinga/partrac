@@ -1,4 +1,4 @@
-# A continuous P1 vector element
+# A continuous P1 element
 #
 # Compile this form with FFC: ffc -l dolfin P1_2.ufl
 

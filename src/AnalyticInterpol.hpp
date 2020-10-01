@@ -66,12 +66,8 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
   set_folder(infilename.substr(0, botDirPos));
 
   this->t = get_t_min();
-  this->nx = 0;
-  this->ny = 0;
-  this->nz = 0;
-  Lx = getd(expr_params, "Lx");
-  Ly = getd(expr_params, "Ly");
-  Lz = getd(expr_params, "Lz");
+  this->x_min << getd(expr_params, "x_min"), getd(expr_params, "y_min"), getd(expr_params, "z_min");
+  this->x_max << getd(expr_params, "x_max"), getd(expr_params, "y_max"), getd(expr_params, "z_max");
 
   if (expr_params["expression"] == "stokes_sphere" || expr_params["expression"] == "StokesSphere"){
     std::cout << "StokesSphere selected" << std::endl;

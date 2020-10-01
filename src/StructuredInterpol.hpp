@@ -14,6 +14,9 @@ public:
   void update(const double t);
   void probe(const Vector3d &x);
   bool inside_domain();
+  Uint get_nx() { return nx; };
+  Uint get_ny() { return ny; };
+  Uint get_nz() { return nz; };
   double get_ux();
   double get_uy();
   double get_uz();
@@ -51,6 +54,11 @@ protected:
   double t_prev = 0.;
   double t_next = 0.;
   double alpha_t;
+
+  Uint nx = 0;
+  Uint ny = 0;
+  Uint nz = 0;
+
   int*** isSolid;
   double*** levelZ;
   double*** ux_prev;
@@ -83,6 +91,9 @@ protected:
   double Ax = 0.;
   double Ay = 0.;
   double Az = 0.;
+  //double Lx = 0.;
+  //double Ly = 0.;
+  //double Lz = 0.;
 };
 
 StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename), ts(infilename) {
@@ -99,9 +110,11 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
   this->nx = dims[0];
   this->ny = dims[1];
   this->nz = dims[2];
-  Lx = nx;
-  Ly = ny;
-  Lz = nz;
+  //this->Lx = nx;
+  //this->Ly = ny;
+  //this->Lz = nz;
+  this->x_min << 0., 0., 0.;
+  this->x_max << nx, ny, nz;
 
   // Create arrays
   isSolid = new int**[nx];
@@ -297,9 +310,9 @@ void StructuredInterpol::update(const double t){
 }
 
 void StructuredInterpol::probe(const Vector3d &x){
-  double dx = Lx/nx;
-  double dy = Ly/ny;
-  double dz = Lz/nz;
+  double dx = this->get_Lx()/nx;
+  double dy = this->get_Ly()/ny;
+  double dz = this->get_Lz()/nz;
 
   int ix_fl = floor(x[0]/dx);
   int iy_fl = floor(x[1]/dy);

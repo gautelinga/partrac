@@ -125,6 +125,8 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
   double Lz = intp->get_Lz();
+  Vector3d x_min = intp->get_x_min();
+  Vector3d x_max = intp->get_x_max();
 
   Uint Nx = 1;
   Uint Ny = 1;
@@ -242,9 +244,9 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
            ){
     std::vector<Vector3d> pos_init;
 
-    std::uniform_real_distribution<> uni_dist_x(0, Lx);
-    std::uniform_real_distribution<> uni_dist_y(0, Ly);
-    std::uniform_real_distribution<> uni_dist_z(0, Lz);
+    std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+    std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+    std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
     std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
     // std::uniform_real_distribution<> uni_dist_theta(0., 2*M_PI);
@@ -334,10 +336,37 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
     init_rand_z = true;
   }
 
-  double dx_est = pow(Lx*Ly*Lz/10000000, 1./3);
-  if (init_rand_x) Nx = Lx/dx_est;
-  if (init_rand_y) Ny = Ly/dx_est;
-  if (init_rand_z) Nz = Lz/dx_est;
+  double tol = 1e-12;
+  Uint N_est = 1000000;
+  double dx_est;
+  if (Lx > tol && Ly > tol && Lz > tol){
+    dx_est = pow(Lx*Ly*Lz/N_est, 1./3);
+  }
+  else if (Lx > tol && Ly > tol){
+    dx_est = pow(Lx*Ly/N_est, 1./2);
+  }
+  else if (Lx > tol && Lz > tol){
+    dx_est = pow(Lx*Lz/N_est, 1./2);
+  }
+  else if (Ly > tol && Lz > tol){
+    dx_est = pow(Ly*Lz/N_est, 1./2);
+  }
+  else if (Lx > tol){
+    dx_est = Lx/N_est;
+  }
+  else if (Ly > tol){
+    dx_est = Ly/N_est;
+  }
+  else if (Lz > tol){
+    dx_est = Lz/N_est;
+  }
+  else {
+    std::cout << "Something is wrong with the domain!" << std::endl;
+    exit(0);
+  }
+  if (init_rand_x) Nx = Lx/dx_est+1;
+  if (init_rand_y) Ny = Ly/dx_est+1;
+  if (init_rand_z) Nz = Lz/dx_est+1;
   double dx = Lx/Nx;
   double dy = Ly/Ny;
   double dz = Lz/Nz;
@@ -350,9 +379,9 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
     for (Uint iy=0; iy<Ny; ++iy){
       for (Uint iz=0; iz<Nz; ++iz){
         x = x0;
-        if (init_rand_x) x[0] = (ix+0.5)*dx;
-        if (init_rand_y) x[1] = (iy+0.5)*dy;
-        if (init_rand_z) x[2] = (iz+0.5)*dz;
+        if (init_rand_x) x[0] = x_min[0]+(ix+0.5)*dx;
+        if (init_rand_y) x[1] = x_min[1]+(iy+0.5)*dy;
+        if (init_rand_z) x[2] = x_min[2]+(iz+0.5)*dz;
         intp->probe(x);
         if (init_weight == "ux"){
           ww = abs(intp->get_ux());
@@ -391,6 +420,7 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
       if (init_rand_y) x[1] += uni_dist_dy(gen);
       if (init_rand_z) x[2] += uni_dist_dz(gen);
       intp->probe(x);
+      //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
     } while (!intp->inside_domain());
     pos_init.push_back(x);
   }
@@ -399,7 +429,7 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
 
   for (Uint irw=1; irw < Nrw; ++irw){
     double ds0 = dist(pos_init[irw-1], pos_init[irw]);
-    if (ds0 < 2)  // 2 lattice units
+    if (ds0 < 10*ds)  // 2 lattice units (before) --> 10 x ds_max (now)
       edges.push_back({{irw-1, irw}, ds0});
     // Needs customization for 2D/3D applications
   }
