@@ -30,6 +30,12 @@ mesh_edge = """
         <Geometry GeometryType="XYZ">
           <DataItem Dimensions="{num_nodes} 3" Format="HDF">{filename}:{nodes_loc}</DataItem>
         </Geometry>"""
+mesh_vert = """
+        <Topology TopologyType="Polyvertex" NodesPerElement="{num_nodes}">
+        </Topology>
+        <Geometry GeometryType="XYZ">
+          <DataItem Dimensions="{num_nodes} 3" Format="HDF">{filename}:{nodes_loc}</DataItem>
+        </Geometry>"""
 
 timestamp = """
         <Time Value="{time}" />"""
@@ -134,6 +140,9 @@ for it, t in enumerate(ts):
     elif has_edges:
         text += mesh_edge.format(num_edges=len(edges), num_nodes=len(nodes),
                                  filename=posftrel, edges_loc=grp+"/edges",
+                                 nodes_loc=grp+"/points")
+    else:
+        text += mesh_vert.format(num_nodes=len(nodes), filename=posftrel,
                                  nodes_loc=grp+"/points")
     text += timestamp.format(time=t)
     for field, vtype, vloc in fields:

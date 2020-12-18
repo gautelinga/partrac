@@ -8,7 +8,7 @@ cmake_policy(SET CMP0004 NEW)
 
 #set(CMAKE_BUILD_TYPE "Developer" CACHE STRING "Choose build type, options are: Developer" FORCE)
 
-set(CMAKE_CXX_COMPILER g++-9)
+set(CMAKE_CXX_COMPILER g++-10)
 set(CMAKE_CXX_STANDARD 17)
 #set(CMAKE_CXX_FLAGS "-pedantic-errors -Wall -Wextra -Werror -O3 -ffast-math -fconcepts -lstdc++")
 #set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -ffast-math -L/usr/lib -Iinclude/ -lstdc++ -lm ${CMAKE_CXX_FLAGS}")
@@ -48,3 +48,5 @@ endif()
 target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
   ${HDF5_HL_LIBRARIES} Eigen3::Eigen)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+
+install(TARGETS ${PROJECT_NAME} DESTINATION /usr/bin/)

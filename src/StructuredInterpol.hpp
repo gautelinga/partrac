@@ -94,6 +94,7 @@ protected:
   //double Lx = 0.;
   //double Ly = 0.;
   //double Lz = 0.;
+  bool boundary_fix = true;
 };
 
 StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename), ts(infilename) {
@@ -193,44 +194,55 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
     }
   }
 
-  // Smooth solid-liquid interface
   load_int_field(solid_file, isSolid, "is_solid", nx, ny, nz);
-  for (Uint ix=0; ix<nx; ++ix){
-    for (Uint iy=0; iy<ny; ++iy){
-      for (Uint iz=0; iz<nz; ++iz){
-        levelZ[ix][iy][iz] = -2*isSolid[ix][iy][iz]+1;
-        if (isSolid[ix][iy][iz]){
-          std::vector<std::array<Uint, 3>> neigh;
-          for (Uint inn=0; inn<6; ++inn){
-            Uint ix_ = imodulo(ix+nnlist[inn][0], nx);
-            Uint iy_ = imodulo(iy+nnlist[inn][1], ny);
-            Uint iz_ = imodulo(iz+nnlist[inn][2], nz);
-            if (!isSolid[ix_][iy_][iz_]){
-              neigh.push_back({ix_, iy_, iz_});
-            }
-          }
-          if (neigh.size() == 0){
-            for (Uint innn=0; innn<12; ++innn){
-              Uint ix_ = imodulo(ix+nnnlist[innn][0], nx);
-              Uint iy_ = imodulo(iy+nnnlist[innn][1], ny);
-              Uint iz_ = imodulo(iz+nnnlist[innn][2], nz);
+  // Smooth solid-liquid interface
+  if (boundary_fix){
+    for (Uint ix=0; ix<nx; ++ix){
+      for (Uint iy=0; iy<ny; ++iy){
+        for (Uint iz=0; iz<nz; ++iz){
+          levelZ[ix][iy][iz] = -2*isSolid[ix][iy][iz]+1;
+          if (isSolid[ix][iy][iz]){
+            std::vector<std::array<Uint, 3>> neigh;
+            for (Uint inn=0; inn<6; ++inn){
+              Uint ix_ = imodulo(ix+nnlist[inn][0], nx);
+              Uint iy_ = imodulo(iy+nnlist[inn][1], ny);
+              Uint iz_ = imodulo(iz+nnlist[inn][2], nz);
               if (!isSolid[ix_][iy_][iz_]){
                 neigh.push_back({ix_, iy_, iz_});
               }
             }
-          }
-          if (neigh.size() == 0){
-            for (Uint innnn=0; innnn<8; ++innnn){
-              Uint ix_ = imodulo(ix+nnnnlist[innnn][0], nx);
-              Uint iy_ = imodulo(iy+nnnnlist[innnn][1], ny);
-              Uint iz_ = imodulo(iz+nnnnlist[innnn][2], nz);
-              if (!isSolid[ix_][iy_][iz_]){
-                neigh.push_back({ix_, iy_, iz_});
+            if (neigh.size() == 0){
+              for (Uint innn=0; innn<12; ++innn){
+                Uint ix_ = imodulo(ix+nnnlist[innn][0], nx);
+                Uint iy_ = imodulo(iy+nnnlist[innn][1], ny);
+                Uint iz_ = imodulo(iz+nnnlist[innn][2], nz);
+                if (!isSolid[ix_][iy_][iz_]){
+                  neigh.push_back({ix_, iy_, iz_});
+                }
               }
             }
+            if (neigh.size() == 0){
+              for (Uint innnn=0; innnn<8; ++innnn){
+                Uint ix_ = imodulo(ix+nnnnlist[innnn][0], nx);
+                Uint iy_ = imodulo(iy+nnnnlist[innnn][1], ny);
+                Uint iz_ = imodulo(iz+nnnnlist[innnn][2], nz);
+                if (!isSolid[ix_][iy_][iz_]){
+                  neigh.push_back({ix_, iy_, iz_});
+                }
+              }
+            }
+            std::pair<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>> pp({ix, iy, iz}, neigh);
+            solid_ids_neigh.insert(pp);
           }
-          std::pair<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>> pp({ix, iy, iz}, neigh);
-          solid_ids_neigh.insert(pp);
+        }
+      }
+    }
+  }
+  else {
+    for (Uint ix=0; ix<nx; ++ix){
+      for (Uint iy=0; iy<ny; ++iy){
+        for (Uint iz=0; iz<nz; ++iz){
+          levelZ[ix][iy][iz] = 1.0-isSolid[ix][iy][iz];
         }
       }
     }
@@ -253,52 +265,55 @@ void StructuredInterpol::update(const double t){
             nx, ny, nz, verbose);
 
     // Extrapolate fields into solid
-    for (std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>>::iterator it = solid_ids_neigh.begin();
-         it != solid_ids_neigh.end(); ++it){
-      std::array<Uint, 3> inds = it->first;
-      std::vector<std::array<Uint, 3>> neigh = it->second;
-      Uint ix = inds[0];
-      Uint iy = inds[1];
-      Uint iz = inds[2];
-      Uint num_neigh = neigh.size();
-      if (num_neigh > 0){
-        double ux_prev_sum = 0.;
-        double uy_prev_sum = 0.;
-        double uz_prev_sum = 0.;
-        double ux_next_sum = 0.;
-        double uy_next_sum = 0.;
-        double uz_next_sum = 0.;
-        double rho_prev_sum = 0.;
-        double rho_next_sum = 0.;
-        double p_prev_sum = 0.;
-        double p_next_sum = 0.;
-        for (std::vector<std::array<Uint, 3>>::iterator vit=neigh.begin();
-             vit != neigh.end(); ++vit){
-          std::array<Uint, 3> other_inds = *vit;
-          Uint ix_ = other_inds[0];
-          Uint iy_ = other_inds[1];
-          Uint iz_ = other_inds[2];
-          ux_prev_sum += ux_prev[ix_][iy_][iz_];
-          uy_prev_sum += uy_prev[ix_][iy_][iz_];
-          uz_prev_sum += uz_prev[ix_][iy_][iz_];
-          ux_next_sum += ux_next[ix_][iy_][iz_];
-          uy_next_sum += uy_next[ix_][iy_][iz_];
-          uz_next_sum += uz_next[ix_][iy_][iz_];
-          rho_prev_sum += rho_prev[ix_][iy_][iz_];
-          rho_next_sum += rho_next[ix_][iy_][iz_];
-          p_prev_sum += p_prev[ix_][iy_][iz_];
-          p_next_sum += p_next[ix_][iy_][iz_];
+    if (boundary_fix){
+      for (std::map<std::array<Uint, 3>,
+             std::vector<std::array<Uint, 3>>>::iterator it = solid_ids_neigh.begin();
+           it != solid_ids_neigh.end(); ++it){
+        std::array<Uint, 3> inds = it->first;
+        std::vector<std::array<Uint, 3>> neigh = it->second;
+        Uint ix = inds[0];
+        Uint iy = inds[1];
+        Uint iz = inds[2];
+        Uint num_neigh = neigh.size();
+        if (num_neigh > 0){
+          double ux_prev_sum = 0.;
+          double uy_prev_sum = 0.;
+          double uz_prev_sum = 0.;
+          double ux_next_sum = 0.;
+          double uy_next_sum = 0.;
+          double uz_next_sum = 0.;
+          double rho_prev_sum = 0.;
+          double rho_next_sum = 0.;
+          double p_prev_sum = 0.;
+          double p_next_sum = 0.;
+          for (std::vector<std::array<Uint, 3>>::iterator vit=neigh.begin();
+               vit != neigh.end(); ++vit){
+            std::array<Uint, 3> other_inds = *vit;
+            Uint ix_ = other_inds[0];
+            Uint iy_ = other_inds[1];
+            Uint iz_ = other_inds[2];
+            ux_prev_sum += ux_prev[ix_][iy_][iz_];
+            uy_prev_sum += uy_prev[ix_][iy_][iz_];
+            uz_prev_sum += uz_prev[ix_][iy_][iz_];
+            ux_next_sum += ux_next[ix_][iy_][iz_];
+            uy_next_sum += uy_next[ix_][iy_][iz_];
+            uz_next_sum += uz_next[ix_][iy_][iz_];
+            rho_prev_sum += rho_prev[ix_][iy_][iz_];
+            rho_next_sum += rho_next[ix_][iy_][iz_];
+            p_prev_sum += p_prev[ix_][iy_][iz_];
+            p_next_sum += p_next[ix_][iy_][iz_];
+          }
+          ux_prev[ix][iy][iz] = ux_prev_sum/num_neigh;
+          uy_prev[ix][iy][iz] = uy_prev_sum/num_neigh;
+          uz_prev[ix][iy][iz] = uz_prev_sum/num_neigh;
+          ux_next[ix][iy][iz] = ux_next_sum/num_neigh;
+          uy_next[ix][iy][iz] = uy_next_sum/num_neigh;
+          uz_next[ix][iy][iz] = uz_next_sum/num_neigh;
+          rho_prev[ix][iy][iz] = rho_prev_sum/num_neigh;
+          rho_next[ix][iy][iz] = rho_next_sum/num_neigh;
+          p_prev[ix][iy][iz] = p_prev_sum/num_neigh;
+          p_next[ix][iy][iz] = p_next_sum/num_neigh;
         }
-        ux_prev[ix][iy][iz] = ux_prev_sum/num_neigh;
-        uy_prev[ix][iy][iz] = uy_prev_sum/num_neigh;
-        uz_prev[ix][iy][iz] = uz_prev_sum/num_neigh;
-        ux_next[ix][iy][iz] = ux_next_sum/num_neigh;
-        uy_next[ix][iy][iz] = uy_next_sum/num_neigh;
-        uz_next[ix][iy][iz] = uz_next_sum/num_neigh;
-        rho_prev[ix][iy][iz] = rho_prev_sum/num_neigh;
-        rho_next[ix][iy][iz] = rho_next_sum/num_neigh;
-        p_prev[ix][iy][iz] = p_prev_sum/num_neigh;
-        p_next[ix][iy][iz] = p_next_sum/num_neigh;
       }
     }
 
@@ -354,10 +369,15 @@ void StructuredInterpol::probe(const Vector3d &x){
 
   // Factor used to determine whether point is in the domain or not
   // and to strictly enforce no-slip boundary conditions
-  inside_domain_factor = std::max(weighted_sum(levelZ, ind, w), 0.0);
-  inside_domain_factor_x = weighted_sum(levelZ, ind, dw_x);
-  inside_domain_factor_y = weighted_sum(levelZ, ind, dw_y);
-  inside_domain_factor_z = weighted_sum(levelZ, ind, dw_z);
+  if (boundary_fix){
+    inside_domain_factor = std::max(weighted_sum(levelZ, ind, w), 0.0);
+    inside_domain_factor_x = weighted_sum(levelZ, ind, dw_x);
+    inside_domain_factor_y = weighted_sum(levelZ, ind, dw_y);
+    inside_domain_factor_z = weighted_sum(levelZ, ind, dw_z);
+  }
+  else {
+    inside_domain_factor = weighted_sum(levelZ, ind, w) > 0.0 ? 1.0 : 0.0;
+  }
 
   // Precompute velocities
   double Ux_prev = weighted_sum(ux_prev, ind, w);

@@ -96,10 +96,19 @@ public:
   int hist_chunk_size = 10;
   double ds_max = 1.0;
   double ds_min = 0.1;
+  double ds_init = 1.0;
   int Nrw_max = -1;
   double curv_refine_factor = 0.0;
   bool output_all_props = true;
   bool minimal_output = false;
+  bool inject = false;
+  double inject_intv = 0.0;
+  double T_inject = 1e10;
+  bool inject_edges = true;
+  //
+  bool clear_initial_edges = false;
+  //
+  int seed = 0;
 private:
   void write_params_to_file(std::string);
 };
@@ -183,6 +192,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
   if (key == "ds_max") ds_max = stodouble(val);
   if (key == "ds_min") ds_min = stodouble(val);
+  if (key == "ds_init") ds_init = stodouble(val);
   if (key == "Nrw_max") Nrw_max = stoint(val);
   if (key == "curv_refine_factor") curv_refine_factor = stodouble(val);
   if (key == "output_all_props") output_all_props = stobool(val);
@@ -191,48 +201,65 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "filter") filter = stobool(val);
   if (key == "filter_intv") filter_intv = stodouble(val);
   if (key == "filter_target") filter_target = stoint(val);
+
+  if (key == "inject") inject = stobool(val);
+  if (key == "inject_intv") inject_intv = stodouble(val);
+  if (key == "T_inject") T_inject = stodouble(val);
+  if (key == "inject_edges") inject_edges = stobool(val);
+
+  if (key == "clear_initial_edges") clear_initial_edges = stobool(val);
+  if (key == "seed") seed = stoint(val);
 }
 
 void Parameters::print(){
   if (verbose){
-    print_param("Dm                ", Dm);
-    print_param("t0                ", t0);
-    print_param("T                 ", T);
-    print_param("dt                ", dt);
-    print_param("Nrw               ", Nrw);
-    print_param("dump_intv         ", dump_intv);
-    print_param("stat_intv         ", stat_intv);
-    print_param("checkpoint_intv   ", checkpoint_intv);
-    print_param("verbose           ", bool2string(verbose));
-    print_param("U                 ", U0);
-    print_param("x0                ", x0);
-    print_param("y0                ", y0);
-    print_param("z0                ", z0);
-    print_param("La                ", La);
-    print_param("Lb                ", Lb);
-    print_param("int_order         ", int_order);
-    print_param("init_mode         ", init_mode);
-    print_param("init_weight       ", init_weight);
-    print_param("dump_mode         ", write_mode);
-    print_param("restart_folder    ", restart_folder);
-    print_param("mode              ", mode);
-    print_param("folder            ", folder);
+    print_param("Dm                 ", Dm);
+    print_param("t0                 ", t0);
+    print_param("T                  ", T);
+    print_param("dt                 ", dt);
+    print_param("Nrw                ", Nrw);
+    print_param("dump_intv          ", dump_intv);
+    print_param("stat_intv          ", stat_intv);
+    print_param("checkpoint_intv    ", checkpoint_intv);
+    print_param("verbose            ", bool2string(verbose));
+    print_param("U                  ", U0);
+    print_param("x0                 ", x0);
+    print_param("y0                 ", y0);
+    print_param("z0                 ", z0);
+    print_param("La                 ", La);
+    print_param("Lb                 ", Lb);
+    print_param("int_order          ", int_order);
+    print_param("init_mode          ", init_mode);
+    print_param("init_weight        ", init_weight);
+    print_param("dump_mode          ", write_mode);
+    print_param("restart_folder     ", restart_folder);
+    print_param("mode               ", mode);
+    print_param("folder             ", folder);
 
-    print_param("refine            ", bool2string(refine));
-    print_param("refine_intv       ", refine_intv);
-    print_param("coarsen           ", bool2string(coarsen));
-    print_param("coarsen_intv      ", coarsen_intv);
-    print_param("hist_chunk_size   ", hist_chunk_size);
-    print_param("ds_max            ", ds_max);
-    print_param("ds_min            ", ds_min);
-    print_param("Nrw_max           ", Nrw_max);
-    print_param("curv_refine_factor", curv_refine_factor);
-    print_param("output_all_props  ", bool2string(output_all_props));
-    print_param("minimal_output    ", bool2string(minimal_output));
+    print_param("refine             ", bool2string(refine));
+    print_param("refine_intv        ", refine_intv);
+    print_param("coarsen            ", bool2string(coarsen));
+    print_param("coarsen_intv       ", coarsen_intv);
+    print_param("hist_chunk_size    ", hist_chunk_size);
+    print_param("ds_max             ", ds_max);
+    print_param("ds_min             ", ds_min);
+    print_param("ds_init            ", ds_init);
+    print_param("Nrw_max            ", Nrw_max);
+    print_param("curv_refine_factor ", curv_refine_factor);
+    print_param("output_all_props   ", bool2string(output_all_props));
+    print_param("minimal_output     ", bool2string(minimal_output));
 
-    print_param("filter            ", bool2string(filter));
-    print_param("filter_intv       ", filter_intv);
-    print_param("filter_target     ", filter_target);
+    print_param("filter             ", bool2string(filter));
+    print_param("filter_intv        ", filter_intv);
+    print_param("filter_target      ", filter_target);
+
+    print_param("inject             ", bool2string(inject));
+    print_param("inject_intv        ", inject_intv);
+    print_param("T_inject           ", T_inject);
+    print_param("inject_edges       ", bool2string(inject_edges));
+
+    print_param("clear_initial_edges", bool2string(clear_initial_edges));
+    print_param("seed               ", seed);
   }
 }
 
@@ -289,6 +316,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
   write_param(paramsfile, "ds_max", ds_max);
   write_param(paramsfile, "ds_min", ds_min);
+  write_param(paramsfile, "ds_init", ds_init);
   write_param(paramsfile, "Nrw_max", Nrw_max);
   write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
   write_param(paramsfile, "output_all_props", bool2string(output_all_props));
@@ -297,6 +325,14 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "filter", bool2string(filter));
   write_param(paramsfile, "filter_intv", filter_intv);
   write_param(paramsfile, "filter_target", filter_target);
+
+  write_param(paramsfile, "inject", bool2string(inject));
+  write_param(paramsfile, "inject_intv", inject_intv);
+  write_param(paramsfile, "T_inject", T_inject);
+  write_param(paramsfile, "inject_edges", bool2string(inject_edges));
+
+  write_param(paramsfile, "clear_initial_edges", bool2string(clear_initial_edges));
+  write_param(paramsfile, "seed", seed);
 
   paramsfile.close();
 }

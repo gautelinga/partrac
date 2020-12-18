@@ -104,8 +104,8 @@ void write_stats(std::ofstream &statfile,
           s_ += (*lit)[1];
           s0_ += (*lit)[2];
           logelongfile << (*lit)[0] << " "
-                      << (*lit)[1] << " " << s_ << " " << s_/s << " "
-                      << (*lit)[2] << " " << s0_ << " " << s0_/s0 << " "
+                       << (*lit)[1] << " " << s_ << " " << s_/s << " "
+                       << (*lit)[2] << " " << s0_ << " " << s0_/s0 << " "
                        << std::endl;
         }
         logelongfile.close();

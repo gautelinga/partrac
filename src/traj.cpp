@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include "io.hpp"
 #include "utils.hpp"
@@ -24,71 +25,6 @@
 
 using namespace H5;
 
-void test_interpolation(Uint num_points, Interpol *intp,
-                        const std::string &newfolder, const double t0,
-                        std::mt19937 &gen){
-  Uint n = 0;
-  Uint n_inside = 0;
-
-  Vector3d x_min = intp->get_x_min();
-  Vector3d x_max = intp->get_x_max();
-
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-
-  std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
-
-  intp->update(t0);
-
-  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
-  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
-  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
-  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
-  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
-  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
-  //                  intp->get_nodal_uy(ix, iy, iz),
-  //                  intp->get_nodal_uz(ix, iy, iz));
-  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
-  //     }
-  //   }
-  // }
-  // nodalfile.close();
-
-  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
-  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
-  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
-
-  std::ofstream ofile(newfolder + "/interpolation.txt");
-  while (n < num_points){
-    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    //std::cout << x << std::endl;
-    intp->probe(x);
-    if (intp->inside_domain()){
-      std::string sep = ",";
-      Vector3d u = intp->get_u();
-      double rho = intp->get_rho();
-      double p = intp->get_p();
-      double divu = intp->get_divu();
-      double vortz = intp->get_vortz();
-      ofile << x[0] << sep << x[1] << sep << x[2] << sep
-            << u[0] << sep << u[1] << sep << u[2] << sep
-            << rho << sep << p << sep << divu << sep
-            << vortz << sep
-            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
-            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
-            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
-            << std::endl;
-      ++n_inside;
-    }
-    ++n;
-  }
-  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
-  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
-  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
-  ofile.close();
-}
 
 int main(int argc, char* argv[]){
   // Input parameters
@@ -145,14 +81,17 @@ int main(int argc, char* argv[]){
     newfolder = prm.folder;
   }
   else {
-    std::ostringstream ss_Dm, ss_dt, ss_Nrw;
+    std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
     ss_Dm << std::scientific << std::setprecision(7) << Dm;
     ss_dt << std::scientific << std::setprecision(7) << dt;
     ss_Nrw << Nrw;
+    ss_seed << prm.seed;
     newfolder = create_folder(rwfolder +
                               "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                               "_dt" + ss_dt.str() +
-                              "_Nrw" + ss_Nrw.str() + "/");
+                              "_Nrw" + ss_Nrw.str() +
+                              "_seed" + ss_seed.str() +
+                              "/");
   }
   std::string posfolder = create_folder(newfolder + "Positions/");
   std::string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
@@ -161,6 +100,7 @@ int main(int argc, char* argv[]){
 
   prm.print();
 
+  srand(prm.seed);
   std::random_device rd;
   std::mt19937 gen(rd());
 
@@ -203,6 +143,11 @@ int main(int argc, char* argv[]){
   double* rho_rw = new double[Nrw_max];
   double* p_rw = new double[Nrw_max];
 
+  if (prm.inject && prm.filter){
+    std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
+    exit(0);
+  }
+
   // Second-order terms
   Vector3d* a_rw = new Vector3d[Nrw_max];
   if (prm.int_order > 2){
@@ -214,6 +159,11 @@ int main(int argc, char* argv[]){
   EdgesType edges;
   FacesType faces;
 
+  std::vector<Vector3d> pos_inj;
+  EdgesType edges_inj;
+  EdgesListType edges_inlet;
+  NodesListType nodes_inlet;
+
   if (prm.restart_folder != ""){
     std::string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
     load_positions(posfile, pos_init, Nrw);
@@ -223,6 +173,16 @@ int main(int argc, char* argv[]){
     load_edges(edgefile, edges);
     std::string colfile = prm.restart_folder + "/Checkpoints/colors.col";
     load_colors(colfile, c_rw, Nrw);
+    if (prm.inject){
+      std::string posinjfile = prm.restart_folder + "/Checkpoints/positions_inj.pos";
+      load_positions(posinjfile, pos_inj);
+      std::string edgesinjfile = prm.restart_folder + "/Checkpoints/edges_inj.edge";
+      load_edges(edgesinjfile, edges_inj);
+      std::string edgesinletfile = prm.restart_folder + "/Checkpoints/edges_inlet.list";
+      std::string nodesinletfile = prm.restart_folder + "/Checkpoints/nodes_inlet.list";
+      load_list(edgesinletfile, edges_inlet);
+      load_list(nodesinletfile, nodes_inlet);
+    }
   }
   else {
     pos_init = initial_positions(prm.init_mode,
@@ -230,11 +190,36 @@ int main(int argc, char* argv[]){
                                  Nrw,
                                  {prm.x0, prm.y0, prm.z0},
                                  prm.La, prm.Lb,
-                                 prm.ds_max, t0,
+                                 prm.ds_init, t0,
                                  intp, gen, edges, faces);
+    if (prm.clear_initial_edges){
+      std::cout << "Clearing initial edges!" << std::endl;
+      edges.clear();
+      faces.clear();
+    }
+    if (prm.inject){
+      pos_inj = pos_init;
+      edges_inj = edges;
+      for (Uint i=0; i<pos_init.size(); ++i){
+        nodes_inlet.push_back(i);
+      }
+      for (Uint i=0; i<edges.size(); ++i){
+        edges_inlet.push_back(i);
+      }
+    }
   }
 
-  std::cout << "aaa" << std::endl;
+  if (prm.inject){
+    std::vector<std::string> key = split_string(prm.init_mode, "_");
+    if (key[0] == "uniform"){
+      std::cout << "Injection activated!" << std::endl;
+    }
+    else {
+      std::cout << "init_mode " << prm.init_mode << " incompatible with injection." << std::endl;
+      exit(0);
+    }
+  }
+  // std::cout << "aaa" << std::endl;
 
   // Compute edge2faces map
   Edge2FacesType edge2faces;
@@ -244,32 +229,20 @@ int main(int argc, char* argv[]){
   Node2EdgesType node2edges;
   compute_node2edges(node2edges, edges, Nrw);
 
-  for (Uint irw=0; irw < Nrw; ++irw){
-    // Assign initial position
-    x_rw[irw] = pos_init[irw];
+  intp->update(t0);
+  add_particles(pos_init, intp,
+                x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                U0, prm.restart_folder, prm.int_order, 0);
+  // Nrw = pos_init.size();
 
-    if (prm.restart_folder == ""){
-      c_rw[irw] = double(irw)/(Nrw-1);
-    }
-    intp->update(t0);
-    intp->probe(x_rw[irw]);
-    u_rw[irw] = U0*intp->get_u();
-
-    rho_rw[irw] = intp->get_rho();
-    p_rw[irw] = intp->get_p();
-
-    // Second-order terms
-    if (prm.int_order >= 2){
-      a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
-    }
-  }
   // Initial refinement
-  if (refine){
+  if (refine && !prm.inject && edges.size() > 0){
     std::cout << "Initial refinement" << std::endl;
 
     bool do_output_all = prm.output_all_props && !prm.minimal_output;
     Uint n_add = refinement(faces, edges,
                             edge2faces, node2edges,
+                            edges_inlet,
                             x_rw,
                             u_rw,
                             rho_rw, p_rw, c_rw,
@@ -282,6 +255,7 @@ int main(int argc, char* argv[]){
 
     Uint n_rem = coarsening(faces, edges,
                             edge2faces, node2edges,
+                            edges_inlet, nodes_inlet,
                             x_rw,
                             u_rw,
                             rho_rw, p_rw, c_rw,
@@ -345,6 +319,7 @@ int main(int argc, char* argv[]){
   Uint int_refine_intv = int(prm.refine_intv/dt);
   Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
   Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
+  Uint int_inject_intv = int(prm.inject_intv/dt);
 
   bool filter = prm.filter;
   Uint int_filter_intv = int(prm.filter_intv/dt);
@@ -380,6 +355,103 @@ int main(int argc, char* argv[]){
        dump_faces(checkpointsfolder + "/faces.face", faces);
        dump_edges(checkpointsfolder + "/edges.edge", edges);
        dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+       if (prm.inject){
+         dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+         dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+         dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+         dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+       }
+    }
+    // Injection
+    if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
+      if (Nrw + pos_inj.size() <= Nrw_max){
+        Uint irw0 = Nrw;
+        Uint iedge0 = edges.size();
+        Uint iface0 = faces.size();
+        add_particles(pos_inj, intp,
+                      x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                      U0, prm.restart_folder, prm.int_order, irw0);
+        for (Uint irw=0; irw < pos_inj.size(); ++irw){
+          node2edges.push_back({});
+        }
+        Nrw += pos_inj.size();
+        if (prm.verbose){
+          std::cout << "Added " << pos_inj.size() << " nodes." << std::endl;
+          /*
+          std::cout << "at ..." << std::endl;
+          for (Uint irw=irw0; irw<Nrw; ++irw){
+            std::cout << x_rw[irw][0] << " " << x_rw[irw][1] << " " << x_rw[irw][2] << std::endl;
+          }
+          */
+        }
+        if (prm.inject_edges){
+          Uint iedge = iedge0;
+          for (EdgesType::const_iterator edgeit = edges_inj.begin();
+               edgeit != edges_inj.end(); ++edgeit){
+            Uint inode = irw0 + edgeit->first[0];
+            Uint jnode = irw0 + edgeit->first[1];
+            edges.push_back({{inode, jnode}, edgeit->second});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            ++iedge;
+          }
+          // Straight edges
+          for (Uint irw=0; irw < pos_inj.size(); ++irw){
+            Uint inode = irw0+irw; // New node
+            Uint jnode = *std::next(nodes_inlet.begin(), irw); // Old node. do better
+            double ds0 = dist(inode, jnode, x_rw);
+            edges.push_back({{inode, jnode}, ds0});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            ++iedge;
+          }
+          // Diagonal edges
+          Uint iface = iface0;
+          for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
+            Uint kedge = *std::next(edges_inlet.begin(), jedge); // do better!
+            Uint ledge = iedge0+jedge;
+            Uint inode = edges[ledge].first[0]; // New edge
+            Uint lnode = edges[ledge].first[1]; //
+            Uint jnode = edges[kedge].first[1]; // Old edge
+            Uint knode = edges[kedge].first[0]; //
+            double ds0 = dist(inode, jnode, x_rw);
+            edges.push_back({{inode, jnode}, ds0});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            long double dA01 = area(iedge, kedge, x_rw, edges);
+            Uint medge = get_common_entry(node2edges[knode], node2edges[inode]);
+            faces.push_back({{iedge, kedge, medge}, dA01});
+            edge2faces[iedge].push_back(iface);
+            edge2faces[kedge].push_back(iface);
+            edge2faces[medge].push_back(iface);
+            ++iface;
+            long double dA02 = area(iedge, ledge, x_rw, edges);
+            Uint nedge = get_common_entry(node2edges[lnode], node2edges[jnode]);
+            faces.push_back({{iedge, ledge, nedge}, dA02});
+            edge2faces[iedge].push_back(iface);
+            edge2faces[ledge].push_back(iface);
+            edge2faces[nedge].push_back(iface);
+            ++iface;
+            ++iedge;
+          }
+          assert(iedge == edges.size());
+          if (prm.verbose){
+            std::cout << "Added " << iedge-iedge0 << " edges." << std::endl;
+            std::cout << "Added " << faces.size()-iface0 << " faces." << std::endl;
+          }
+          edges_inlet.clear();
+          for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
+            edges_inlet.push_back({iedge0+jedge});
+          }
+        }
+        nodes_inlet.clear();
+        for (Uint irw=0; irw < pos_inj.size(); ++irw){
+          nodes_inlet.push_back(irw0+irw);
+        }
+      }
     }
     // Curvature computation
     if ((refine && it % int_refine_intv == 0) || // Consider other interval
@@ -394,9 +466,9 @@ int main(int argc, char* argv[]){
     }
 
     // Refinement
-    if (refine && it % int_refine_intv == 0){
+    if (refine && it % int_refine_intv == 0 && it > 0){
       bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
-      Uint n_add = refinement(faces, edges, edge2faces, node2edges,
+      Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               x_rw,
                               u_rw,
                               rho_rw, p_rw, c_rw,
@@ -414,6 +486,7 @@ int main(int argc, char* argv[]){
       bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
       Uint n_rem = coarsening(faces, edges,
                               edge2faces, node2edges,
+                              edges_inlet, nodes_inlet,
                               x_rw,
                               u_rw,
                               rho_rw, p_rw, c_rw,
@@ -544,6 +617,12 @@ int main(int argc, char* argv[]){
   dump_faces(checkpointsfolder + "/faces.face", faces);
   dump_edges(checkpointsfolder + "/edges.edge", edges);
   dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+  if (prm.inject){
+    dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+    dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+    dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+    dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+  }
 
   // Close files
   statfile.close();
