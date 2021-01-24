@@ -6,13 +6,23 @@ project(partrac)
 # Set CMake behavior
 cmake_policy(SET CMP0004 NEW)
 
-#set(CMAKE_BUILD_TYPE "Developer" CACHE STRING "Choose build type, options are: Developer" FORCE)
+set(CMAKE_BUILD_TYPE "Developer" CACHE STRING "Choose build type, options are: Developer" FORCE)
 
 set(CMAKE_CXX_COMPILER g++-10)
 set(CMAKE_CXX_STANDARD 17)
 #set(CMAKE_CXX_FLAGS "-pedantic-errors -Wall -Wextra -Werror -O3 -ffast-math -fconcepts -lstdc++")
 #set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -ffast-math -L/usr/lib -Iinclude/ -lstdc++ -lm ${CMAKE_CXX_FLAGS}")
-set(CMAKE_CXX_FLAGS "-Wextra -O3 -ffast-math -fconcepts -lstdc++ -lm -std=c++17")
+#set(CMAKE_CXX_FLAGS "-Wextra -O3 -fconcepts -lstdc++ -lm -std=c++17")
+#set(CMAKE_CXX_FLAGS "-pedantic-errors -Wextra -O3 -ggdb3 -fconcepts -lstdc++ -lm -std=c++17 -march=native")
+set(CMAKE_CXX_FLAGS "-lm -ggdb3 -fsanitize=address")
+
+#set(CMAKE_EXE_LINKER_FLAGS "/usr/lib/x86_64-linux-gnu/libprofiler.so.0")
+set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address") #-static-libasan
+
+#find_package(coz-profiler)
+add_definitions(-DDEBUG)
+
+
 
 #set(ENABLE_DOLFIN "true" CACHE STRING "Set to true to enable Dolfin import.")
 include(FeatureSummary)

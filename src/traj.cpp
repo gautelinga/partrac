@@ -1,4 +1,3 @@
-
 #include <iostream>
 #include "io.hpp"
 #include "utils.hpp"
@@ -7,7 +6,8 @@
 #include "StructuredInterpol.hpp"
 #include "AnalyticInterpol.hpp"
 #ifdef USE_DOLFIN
-#include "XDMFInterpol.hpp"
+#include "DolfInterpol.hpp"
+#include "TetInterpol.hpp"
 #endif
 #include "distribute.hpp"
 #include "mesh.hpp"
@@ -18,7 +18,7 @@
 #include <fstream>
 #include <sstream>
 #include <random>
-#include <math.h>
+#include <cmath>
 #include <set>
 #include <iterator>
 #include "H5Cpp.h"
@@ -46,14 +46,21 @@ int main(int argc, char* argv[]){
     std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
   }
-  else if (mode == "unstructured" || mode == "fenics"){
-    #ifdef USE_DOLFIN
+  else if (mode == "unstructured" || mode == "fenics" || mode == "tet"){
+#ifdef USE_DOLFIN
     std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;
-    intp = new XDMFInterpol(infilename);
-    #else
+    if (mode == "tet")
+      intp = new TetInterpol(infilename);
+    else if (mode == "fenics")
+      intp = new DolfInterpol(infilename);
+    else {
+      std::cout << "mode should be fenics or tet" << std::endl;
+      exit(1);
+    }
+#else
     std::cout << "You have to compile with PARTRAC_ENABLE_FENICS=ON." << std::endl;
     exit(0);
-    #endif
+#endif
   }
   else if (mode == "structured" || mode == "lbm"){
     intp = new StructuredInterpol(infilename);
@@ -130,18 +137,18 @@ int main(int argc, char* argv[]){
 
   std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
-  Vector3d* x_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> x_rw(Nrw_max);
 
-  double* c_rw = new double[Nrw_max];
-  double* e_rw = new double[Nrw_max];
-  double* H_rw = new double[Nrw_max];
+  std::vector<double> c_rw(Nrw_max);
+  std::vector<double> e_rw(Nrw_max);
+  std::vector<double> H_rw(Nrw_max);
 
-  Vector3d* n_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> n_rw(Nrw_max);
 
-  Vector3d* u_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> u_rw(Nrw_max);
 
-  double* rho_rw = new double[Nrw_max];
-  double* p_rw = new double[Nrw_max];
+  std::vector<double> rho_rw(Nrw_max);
+  std::vector<double> p_rw(Nrw_max);
 
   if (prm.inject && prm.filter){
     std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
@@ -149,7 +156,7 @@ int main(int argc, char* argv[]){
   }
 
   // Second-order terms
-  Vector3d* a_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> a_rw(Nrw_max);
   if (prm.int_order > 2){
     std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
@@ -198,7 +205,7 @@ int main(int argc, char* argv[]){
       faces.clear();
     }
     if (prm.inject){
-      pos_inj = pos_init;
+     pos_inj = pos_init;
       edges_inj = edges;
       for (Uint i=0; i<pos_init.size(); ++i){
         nodes_inlet.push_back(i);
@@ -362,7 +369,7 @@ int main(int argc, char* argv[]){
          dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
        }
     }
-    // Injection
+   // Injection
     if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
       if (Nrw + pos_inj.size() <= Nrw_max){
         Uint irw0 = Nrw;
@@ -465,7 +472,7 @@ int main(int argc, char* argv[]){
                         interior_ang, mixed_areas, face_normals);
     }
 
-    // Refinement
+   // Refinement
     if (refine && it % int_refine_intv == 0 && it > 0){
       bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
       Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
@@ -580,7 +587,7 @@ int main(int argc, char* argv[]){
         dx_rw += sqrt2Dmdt*eta;
       }
       intp->probe(x_rw[irw]+dx_rw);
-      if (intp->inside_domain()){
+     if (intp->inside_domain()){
         x_rw[irw] += dx_rw;
         u_rw[irw] = U0*intp->get_u();
 
@@ -607,7 +614,7 @@ int main(int argc, char* argv[]){
     it += 1;
   }
 
-  // Final checkpoint
+ // Final checkpoint
   prm.t = t;
   prm.n_accepted = n_accepted;
   prm.n_declined = n_declined;
@@ -631,5 +638,6 @@ int main(int argc, char* argv[]){
     h5f->close();
   }
 
+  delete intp;
   return 0;
 }

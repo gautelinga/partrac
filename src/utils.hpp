@@ -1,5 +1,8 @@
+#ifndef __UTILS_HPP
+#define __UTILS_HPP
+
 #include <iostream>
-#include <math.h>
+#include <cmath>
 #include <numeric>
 #include <algorithm>
 #include <vector>
@@ -10,11 +13,6 @@
 #include <fstream>
 #include "typedefs.hpp"
 #include "Interpol.hpp"
-
-#ifndef __UTILS_HPP
-#define __UTILS_HPP
-
-// using namespace std;
 
 class Stamp {
 public:
@@ -35,7 +33,7 @@ public:
   double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 
-double modulox(const double x, const double L){
+static double modulox(const double x, const double L){
   if (x > 0){
     return fmod(x, L);
   }
@@ -44,11 +42,11 @@ double modulox(const double x, const double L){
   }
 }
 
-Uint imodulo(const int a, const int b) {
+static Uint imodulo(const int a, const int b) {
   return ((a % b) + b) % b;
 }
 
-double interpolate(const double x,
+static double interpolate(const double x,
 		   const double y,
 		   const double z,
 		   double*** C,
@@ -109,7 +107,7 @@ double interpolate(const double x,
   return f;
 }
 
-double weighted_sum(double*** C,
+static double weighted_sum(double*** C,
                     const Uint ind[3][2],
                     const double w[2][2][2]){
   double f = 0.0;
@@ -123,57 +121,57 @@ double weighted_sum(double*** C,
   return f;
 }
 
-double norm(const double x, const double y, const double z){
+static double norm(const double x, const double y, const double z){
   return sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
 }
 
-double norm(const Vector3d &r){
+static double norm(const Vector3d &r){
   return r.norm();
 }
 
-double dist(const Uint i1, const Uint i2, Vector3d* x_rw){
+static double dist(const Uint i1, const Uint i2, std::vector<Vector3d>& x_rw){
   Vector3d dr = x_rw[i1]-x_rw[i2];
   return dr.norm();
 }
 
-double dist(const Vector3d &pta, const Vector3d &ptb){
+static double dist(const Vector3d &pta, const Vector3d &ptb){
   Vector3d dr = pta-ptb;
   return dr.norm();
 }
 
-double dot(const Vector3d &a, const Vector3d &b){
+static double dot(const Vector3d &a, const Vector3d &b){
   return a.dot(b);
 }
 
-Vector3d diff(const Vector3d &a, const Vector3d &b){
+static Vector3d diff(const Vector3d &a, const Vector3d &b){
   return a-b;
 }
 
-Vector3d cross(const Vector3d &a, const Vector3d &b){
+static Vector3d cross(const Vector3d &a, const Vector3d &b){
   return a.cross(b);
 }
 
-double get_abs_angle(const Vector3d &a, const Vector3d &b){
+static double get_abs_angle(const Vector3d &a, const Vector3d &b){
   double costheta = a.dot(b)/(a.norm()*b.norm());
   return acos(costheta);
 }
 
-long double area(const Uint iedge, const Uint jedge,
-                 Vector3d* x_rw,
+static long double area(const Uint iedge, const Uint jedge,
+                 std::vector<Vector3d>& x_rw,
                  const EdgesType& edges){
   Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
   Vector3d b = x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]];
   return a.cross(b).norm()/2;
 }
 
-long double area(const Uint iface, Vector3d* x_rw,
+static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
                  const FacesType& faces, const EdgesType& edges){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return area(iedge, jedge, x_rw, edges);
 }
 
-std::vector<size_t> argsort_descending(const std::vector<double> &v){
+static std::vector<size_t> argsort_descending(const std::vector<double> &v){
   std::vector<size_t> idx(v.size());
   iota(idx.begin(), idx.end(), 0);
   stable_sort(idx.begin(), idx.end(),
@@ -181,7 +179,7 @@ std::vector<size_t> argsort_descending(const std::vector<double> &v){
   return idx;
 }
 
-Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
+static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
   for (std::array<Uint, 2>::const_iterator ait=a.begin();
        ait != a.end(); ++ait){
     for (std::array<Uint, 2>::const_iterator bit=b.begin();
@@ -196,14 +194,14 @@ Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b
   return 0;
 }
 
-Uint get_other(const Uint i, const Uint j, const Uint k){
+static Uint get_other(const Uint i, const Uint j, const Uint k){
   if (i==k)
     return j;
   assert(j==k);
   return i;
 }
 
-double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
+static double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
   Vector3d D((B-A).cross(C-A));
   double b = (A-C).norm();
   double c = (A-B).norm();
@@ -221,8 +219,8 @@ bool contains(const std::map<T1, T2>& container, const T1 &elem){
   return container.find(elem) != container.end();
 }
 
-Vector3d vec_repl(const Uint inode,
-                  Vector3d* x_rw,
+static Vector3d vec_repl(const Uint inode,
+                  std::vector<Vector3d>& x_rw,
                   const std::set<Uint> repl_nodes,
                   const Vector3d &x){
   if (contains(repl_nodes, inode))
@@ -230,10 +228,10 @@ Vector3d vec_repl(const Uint inode,
   return x_rw[inode];
 }
 
-Vector3d get_normal(const Uint iface,
+static Vector3d get_normal(const Uint iface,
                     const FacesType &faces,
                     const EdgesType &edges,
-                    Vector3d* x_rw){
+                    std::vector<Vector3d>& x_rw){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   Uint i00 = edges[iedge].first[0];
@@ -247,9 +245,9 @@ Vector3d get_normal(const Uint iface,
   return crossprod/crossprod.norm();
 }
 
-Vector3d get_normal(const Uint jedge, const Uint kedge,
+static Vector3d get_normal(const Uint jedge, const Uint kedge,
                     const EdgesType &edges,
-                    Vector3d* x_rw,
+                    std::vector<Vector3d>& x_rw,
                     const std::set<Uint> repl_nodes,
                     const Vector3d &x){
   Vector3d drj = vec_repl(edges[jedge].first[1], x_rw, repl_nodes, x)
@@ -259,7 +257,7 @@ Vector3d get_normal(const Uint jedge, const Uint kedge,
   return drj.cross(drk);
 }
 
-double getd(std::map<std::string, std::string> &expr_params, const std::string key){
+static double getd(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stod(expr_params[key]);
   }
@@ -270,7 +268,7 @@ double getd(std::map<std::string, std::string> &expr_params, const std::string k
   }
 }
 
-double geti(std::map<std::string, std::string> &expr_params, const std::string key){
+static double geti(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stoi(expr_params[key]);
   }
@@ -281,7 +279,7 @@ double geti(std::map<std::string, std::string> &expr_params, const std::string k
   }
 }
 
-std::vector<std::string> split_string(const std::string s, const std::string delim){
+static std::vector<std::string> split_string(const std::string s, const std::string delim){
   std::vector<std::string> s_;
   auto start = 0U;
   auto end = s.find(delim);
@@ -294,11 +292,11 @@ std::vector<std::string> split_string(const std::string s, const std::string del
   return s_;
 }
 
-bool contains(const std::string s, const std::string c){
+static bool contains(const std::string s, const std::string c){
   return (s.find(c) != std::string::npos);
 }
 
-std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
+static std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
                        const std::string key){
   std::string token = ",";
   std::vector<double> dvec;
@@ -326,7 +324,7 @@ std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
   return dvec;
 }
 
-std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
+static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
                     const std::string key){
   std::string token = ",";
   std::vector<int> ivec;
@@ -354,7 +352,7 @@ std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
   return ivec;
 }
 
-void test_interpolation(Uint num_points, Interpol *intp,
+static void test_interpolation(Uint num_points, Interpol *intp,
                         const std::string &newfolder, const double t0,
                         std::mt19937 &gen){
   Uint n = 0;

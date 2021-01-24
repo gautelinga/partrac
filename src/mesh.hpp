@@ -1,7 +1,8 @@
-#include "utils.hpp"
-
 #ifndef __MESH_HPP
 #define __MESH_HPP
+
+#include <map>
+#include "utils.hpp"
 
 // using namespace std;
 // Declarations
@@ -9,7 +10,7 @@ void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
 
 // Definitions
 void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
-                   Vector3d* x_rw, Vector3d* u_rw, double* c_rw, double* rho_rw, double* p_rw, Vector3d* a_rw,
+                   std::vector<Vector3d>& x_rw, std::vector<Vector3d>& u_rw, std::vector<double>& c_rw, std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<Vector3d>& a_rw,
                    const double U0, const std::string &restart_folder, const int int_order,
                    const Uint irw0){
   Uint Nrw = pos_init.size();
@@ -35,7 +36,7 @@ void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
 
 void print_mesh(const FacesType& faces, const EdgesType& edges,
                 const Edge2FacesType& edge2faces,
-                Vector3d* x_rw, const Uint Nrw){
+                std::vector<Vector3d>& x_rw, const Uint Nrw){
   std::cout << "==================" << std::endl;
   std::cout << "nodes" << std::endl;
   for (Uint irw=0; irw < Nrw; ++irw){
@@ -76,7 +77,7 @@ void print_mesh(const FacesType& faces, const EdgesType& edges,
 
 void dump_mesh(const FacesType& faces, const EdgesType& edges,
                const Edge2FacesType& edge2faces,
-               Vector3d* x_rw, const Uint Nrw){
+               std::vector<Vector3d>& x_rw, const Uint Nrw){
   std::ofstream nodesf("mesh.node");
   for (Uint irw=0; irw < Nrw; ++irw){
     nodesf << x_rw[irw][0] << " "
@@ -110,8 +111,8 @@ void dump_mesh(const FacesType& faces, const EdgesType& edges,
 }
 
 void posdata2txt(std::ofstream &pos_out,
-                 Vector3d* x_rw,
-                 Vector3d* u_rw,
+                 std::vector<Vector3d>& x_rw,
+                 std::vector<Vector3d>& u_rw,
                  const Uint Nrw){
   for (Uint irw=0; irw < Nrw; ++irw){
     pos_out << irw << " "
@@ -125,15 +126,15 @@ void posdata2txt(std::ofstream &pos_out,
 }
 
 void tensor2hdf5(H5File* h5f, const std::string dsetname,
-                 double* axx_rw, double* axy_rw, double* axz_rw,
-                 double* ayx_rw, double* ayy_rw, double* ayz_rw,
-                 double* azx_rw, double* azy_rw, double* azz_rw,
+                 std::vector<double>& axx_rw, std::vector<double>& axy_rw, std::vector<double>& axz_rw,
+                 std::vector<double>& ayx_rw, std::vector<double>& ayy_rw, std::vector<double>& ayz_rw,
+                 std::vector<double>& azx_rw, std::vector<double>& azy_rw, std::vector<double>& azz_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3*3;
   DataSpace dspace(2, dims);
-  double* data = new double[Nrw*3*3];
+  std::vector<double> data(Nrw*3*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw*3*3+0] = axx_rw[irw];
     data[irw*3*3+1] = axy_rw[irw];
@@ -148,17 +149,17 @@ void tensor2hdf5(H5File* h5f, const std::string dsetname,
   DataSet dset = h5f->createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data, PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
 void vector2hdf5(H5File* h5f, const std::string dsetname,
-                 double* ax_rw, double* ay_rw, double* az_rw,
+                 std::vector<double>& ax_rw, std::vector<double>& ay_rw, std::vector<double>& az_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3;
   DataSpace dspace(2, dims);
-  double* data = new double[Nrw*3];
+  std::vector<double> data(Nrw*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw*3+0] = ax_rw[irw];
     data[irw*3+1] = ay_rw[irw];
@@ -167,16 +168,16 @@ void vector2hdf5(H5File* h5f, const std::string dsetname,
   DataSet dset = h5f->createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data, PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
 void vector2hdf5(H5File* h5f, const std::string dsetname,
-                 Vector3d* a_rw, const Uint Nrw){
+                 std::vector<Vector3d>& a_rw, const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3;
   DataSpace dspace(2, dims);
-  double* data = new double[Nrw*3];
+  std::vector<double> data(Nrw*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     for (Uint d=0; d<3; ++d){
       data[irw*3+d] = a_rw[irw][d];
@@ -185,28 +186,28 @@ void vector2hdf5(H5File* h5f, const std::string dsetname,
   DataSet dset = h5f->createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data, PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
 
-void scalar2hdf5(H5File* h5f, const std::string dsetname, double* c_rw,
+void scalar2hdf5(H5File* h5f, const std::string dsetname, std::vector<double>& c_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 1;
   DataSpace dspace(2, dims);
-  double* data = new double[Nrw];
+  std::vector<double> data(Nrw);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw] = c_rw[irw];
   }
   DataSet dset = h5f->createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data, PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
 void mesh2hdf(H5File* h5f, const std::string groupname,
-              Vector3d* x_rw,
+              std::vector<Vector3d>& x_rw,
               const FacesType& faces, const EdgesType& edges){
   // Faces
   if (faces.size() > 0){
@@ -214,10 +215,10 @@ void mesh2hdf(H5File* h5f, const std::string groupname,
     faces_dims[0] = faces.size();
     faces_dims[1] = 3;
     DataSpace faces_dspace(2, faces_dims);
-    Uint* faces_arr = new Uint[faces_dims[0]*faces_dims[1]];
+    std::vector<Uint> faces_arr(faces_dims[0]*faces_dims[1]);
 
-    double* dA = new double[faces_dims[0]];
-    double* dA0 = new double[faces_dims[0]];
+    std::vector<double> dA(faces_dims[0]);
+    std::vector<double> dA0(faces_dims[0]);
     for (Uint iface=0; iface < faces_dims[0]; ++iface){
       std::set<Uint> unique_nodes;
       for (Uint i=0; i<3; ++i){
@@ -239,7 +240,7 @@ void mesh2hdf(H5File* h5f, const std::string groupname,
     DataSet faces_dset = h5f->createDataSet(groupname + "/faces",
                                              PredType::NATIVE_ULONG,
                                              faces_dspace);
-    faces_dset.write(faces_arr, PredType::NATIVE_ULONG);
+    faces_dset.write(faces_arr.data(), PredType::NATIVE_ULONG);
 
     scalar2hdf5(h5f, groupname + "/dA", dA, faces_dims[0]);
     scalar2hdf5(h5f, groupname + "/dA0", dA0, faces_dims[0]);
@@ -250,10 +251,10 @@ void mesh2hdf(H5File* h5f, const std::string groupname,
     edges_dims[0] = edges.size();
     edges_dims[1] = 2;
     DataSpace edges_dspace(2, edges_dims);
-    Uint* edges_arr = new Uint[edges_dims[0]*edges_dims[1]];
+    std::vector<Uint> edges_arr(edges_dims[0]*edges_dims[1]);
 
-    double* dl = new double[edges_dims[0]];
-    double* dl0 = new double[edges_dims[0]];
+    std::vector<double> dl(edges_dims[0]);
+    std::vector<double> dl0(edges_dims[0]);
     for (Uint iedge=0; iedge < edges_dims[0]; ++iedge){
       for (Uint j=0; j<2; ++j){
         edges_arr[iedge*edges_dims[1] + j] = edges[iedge].first[j];
@@ -265,7 +266,7 @@ void mesh2hdf(H5File* h5f, const std::string groupname,
     DataSet edges_dset = h5f->createDataSet(groupname + "/edges",
                                              PredType::NATIVE_ULONG,
                                              edges_dspace);
-    edges_dset.write(edges_arr, PredType::NATIVE_ULONG);
+    edges_dset.write(edges_arr.data(), PredType::NATIVE_ULONG);
 
     scalar2hdf5(h5f, groupname + "/dl", dl, edges_dims[0]);
     scalar2hdf5(h5f, groupname + "/dl0", dl0, edges_dims[0]);
@@ -329,11 +330,11 @@ std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint 
 }
 
 bool append_new_node(const Uint inode, const Uint jnode,
-                     Vector3d* x_rw,
-                     Vector3d* u_rw,
-                     double* rho_rw, double* p_rw, double* c_rw,
-                     double* H_rw, Vector3d* n_rw,
-                     Vector3d* a_rw,
+                     std::vector<Vector3d>& x_rw,
+                     std::vector<Vector3d>& u_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                     std::vector<Vector3d>& a_rw,
                      Uint& Nrw, const bool do_output_all,
                      Interpol *intp,
                      const double U0, const int int_order){
@@ -346,7 +347,7 @@ bool append_new_node(const Uint inode, const Uint jnode,
     Vector3d n0 = u_rw[inode]+u_rw[jnode];
     n0 /= -n0.norm();
     intp->probe(x_rw_new + dx0*n0);
-    exit(0);
+    //exit(0);
     if (!intp->inside_domain()){
       std::cout << n0 << std::endl;
       std::cout << dx0 << std::endl;
@@ -402,11 +403,11 @@ Uint sheet_refinement(FacesType &faces,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
                       EdgesListType &edges_inlet,
-                      Vector3d* x_rw,
-                      Vector3d* u_rw,
-                      double* rho_rw, double* p_rw, double* c_rw,
-                      double* H_rw, Vector3d* n_rw,
-                      Vector3d* a_rw,
+                      std::vector<Vector3d>& x_rw,
+                      std::vector<Vector3d>& u_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                      std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
                       const bool do_output_all,
                       Interpol *intp,
@@ -507,11 +508,11 @@ Uint sheet_refinement(FacesType &faces,
 
 Uint strip_refinement(EdgesType &edges,
                       Node2EdgesType &node2edges,
-                      Vector3d* x_rw,
-                      Vector3d* u_rw,
-                      double* rho_rw, double* p_rw, double* c_rw,
-                      double* H_rw, Vector3d* n_rw,
-                      Vector3d* a_rw,
+                      std::vector<Vector3d>& x_rw,
+                      std::vector<Vector3d>& u_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                      std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
                       const bool do_output_all,
                       Interpol *intp,
@@ -564,11 +565,11 @@ Uint refinement(FacesType &faces,
                 Edge2FacesType &edge2faces,
                 Node2EdgesType &node2edges,
                 EdgesListType &edges_inlet,
-                Vector3d* x_rw,
-                Vector3d* u_rw,
-                double* rho_rw, double* p_rw, double* c_rw,
-                double* H_rw, Vector3d* n_rw,
-                Vector3d* a_rw,
+                std::vector<Vector3d>& x_rw,
+                std::vector<Vector3d>& u_rw,
+                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                std::vector<Vector3d>& a_rw,
                 Uint &Nrw, const Uint Nrw_max, const double ds_max,
                 const bool do_output_all,
                 Interpol *intp,
@@ -712,7 +713,7 @@ bool is_border_node(const Uint inode,
 }
 
 bool get_new_pos(Vector3d &xi,
-                 Vector3d* x_rw,
+                 std::vector<Vector3d>& x_rw,
                  const Uint iedge,
                  const EdgesType &edges,
                  const Edge2FacesType &edge2faces,
@@ -744,7 +745,7 @@ bool get_new_pos(Vector3d &xi,
 
 bool normals_are_ok(const Uint iedge,
                     const Vector3d &x,
-                    Vector3d* x_rw,
+                    std::vector<Vector3d>& x_rw,
                     const std::set<Uint> &jfaces,
                     const FacesType &faces,
                     const EdgesType &edges){
@@ -795,7 +796,7 @@ std::vector<Uint> get_incident_faces(const Uint iedge,
 }
 
 std::vector<double> areas(const std::vector<Uint> &kfaces,
-                          Vector3d* x_rw,
+                          std::vector<Vector3d>& x_rw,
                           const FacesType &faces, const EdgesType &edges){
   std::vector<double> a;
   for (std::vector<Uint>::const_iterator faceit=kfaces.begin();
@@ -813,11 +814,11 @@ bool collapse_edge(const Uint iedge,
                    std::vector<bool> &face_isactive,
                    std::vector<bool> &edge_isactive,
                    std::vector<bool> &node_isactive,
-                   Vector3d* x_rw,
-                   Vector3d* u_rw,
-                   double* rho_rw, double* p_rw, double* c_rw,
-                   double* H_rw, Vector3d* n_rw,
-                   Vector3d* a_rw,
+                   std::vector<Vector3d>& x_rw,
+                   std::vector<Vector3d>& u_rw,
+                   std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                   std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                   std::vector<Vector3d>& a_rw,
                    const bool do_output_all,
                    Interpol *intp,
                    const double U0, const int int_order){
@@ -1080,11 +1081,11 @@ void remove_edges(FacesType &faces, EdgesType &edges,
 
 void remove_nodes(EdgesType& edges,
                   NodesListType& nodes_inlet,
-                  Vector3d* x_rw,
-                  Vector3d* u_rw,
-                  double* rho_rw, double* p_rw, double* c_rw,
-                  double* H_rw, Vector3d* n_rw,
-                  Vector3d* a_rw,
+                  std::vector<Vector3d>& x_rw,
+                  std::vector<Vector3d>& u_rw,
+                  std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                  std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                  std::vector<Vector3d>& a_rw,
                   Uint& Nrw,
                   const std::vector<bool> &node_isactive,
                   const bool do_output_all,
@@ -1150,11 +1151,11 @@ void remove_unused_edges(FacesType &faces, EdgesType &edges, EdgesListType &edge
 
 void remove_unused_nodes(EdgesType &edges,
                          NodesListType &nodes_inlet,
-                         Vector3d* x_rw,
-                         Vector3d* u_rw,
-                         double* rho_rw, double* p_rw, double* c_rw,
-                         double* H_rw, Vector3d* n_rw,
-                         Vector3d* a_rw,
+                         std::vector<Vector3d>& x_rw,
+                         std::vector<Vector3d>& u_rw,
+                         std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                         std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                         std::vector<Vector3d>& a_rw,
                          Uint &Nrw,
                          const bool do_output_all,
                          const int int_order){
@@ -1184,11 +1185,11 @@ Uint sheet_coarsening(FacesType &faces,
                       Node2EdgesType &node2edges,
                       EdgesListType& edges_inlet,
                       NodesListType& nodes_inlet,
-                      Vector3d* x_rw,
-                      Vector3d* u_rw,
-                      double* rho_rw, double* p_rw, double* c_rw,
-                      double* H_rw, Vector3d* n_rw,
-                      Vector3d* a_rw,
+                      std::vector<Vector3d>& x_rw,
+                      std::vector<Vector3d>& u_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                      std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const double ds_min,
                       const bool do_output_all, Interpol *intp,
                       const double U0, const int int_order,
@@ -1270,11 +1271,11 @@ Uint sheet_coarsening(FacesType &faces,
 Uint strip_coarsening(EdgesType &edges,
                       Node2EdgesType &node2edges,
                       NodesListType &nodes_inlet,
-                      Vector3d* x_rw,
-                      Vector3d* u_rw,
-                      double* rho_rw, double* p_rw, double* c_rw,
-                      double* H_rw, Vector3d* n_rw,
-                      Vector3d* a_rw,
+                      std::vector<Vector3d>& x_rw,
+                      std::vector<Vector3d>& u_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                      std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const double ds_min,
                       const bool do_output_all, Interpol *intp,
                       const double U0, const int int_order,
@@ -1387,17 +1388,17 @@ Uint coarsening(FacesType &faces,
                 Node2EdgesType &node2edges,
                 EdgesListType& edges_inlet,
                 NodesListType& nodes_inlet,
-                Vector3d* x_rw,
-                Vector3d* u_rw,
-                double* rho_rw, double* p_rw, double* c_rw,
-                double* H_rw, Vector3d* n_rw,
-                Vector3d* a_rw,
+                std::vector<Vector3d>& x_rw,
+                std::vector<Vector3d>& u_rw,
+                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                std::vector<Vector3d>& a_rw,
                 Uint &Nrw, const double ds_min,
                 const bool do_output_all,
                 Interpol *intp,
                 const double U0, const int int_order,
                 const double curv_refine_factor){
-  if (faces.size() > 0){ // TODO: better requirement for injection?
+ if (faces.size() > 0){ // TODO: better requirement for injection?
     return sheet_coarsening(faces, edges,
                             edge2faces, node2edges,
                             edges_inlet, nodes_inlet,
@@ -1420,11 +1421,11 @@ Uint coarsening(FacesType &faces,
 
 bool strip_filtering(EdgesType &edges,
                      Node2EdgesType &node2edges,
-                     Vector3d* x_rw,
-                     Vector3d* u_rw,
-                     double* rho_rw, double* p_rw, double* c_rw,
-                     double* H_rw, Vector3d* n_rw,
-                     Vector3d* a_rw,
+                     std::vector<Vector3d>& x_rw,
+                     std::vector<Vector3d>& u_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                     std::vector<Vector3d>& a_rw,
                      Uint &Nrw,
                      const bool do_output_all,
                      const int int_order,
@@ -1451,11 +1452,11 @@ bool sheet_filtering(FacesType &faces,
                      EdgesType &edges,
                      Edge2FacesType &edge2faces,
                      Node2EdgesType &node2edges,
-                     Vector3d* x_rw,
-                     Vector3d* u_rw,
-                     double* rho_rw, double* p_rw, double* c_rw,
-                     double* H_rw, Vector3d* n_rw,
-                     Vector3d* a_rw,
+                     std::vector<Vector3d>& x_rw,
+                     std::vector<Vector3d>& u_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+                     std::vector<Vector3d>& a_rw,
                      Uint &Nrw,
                      const bool do_output_all,
                      const int int_order,
@@ -1494,11 +1495,11 @@ bool filtering(FacesType &faces,
                EdgesType &edges,
                Edge2FacesType &edge2faces,
                Node2EdgesType &node2edges,
-               Vector3d* x_rw,
-               Vector3d* u_rw,
-               double* rho_rw, double* p_rw, double* c_rw,
-               double* H_rw, Vector3d* n_rw,
-               Vector3d* a_rw,
+               std::vector<Vector3d>& x_rw,
+               std::vector<Vector3d>& u_rw,
+               std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+               std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
+               std::vector<Vector3d>& a_rw,
                Uint &Nrw,
                const bool do_output_all,
                const int int_order,
@@ -1558,7 +1559,7 @@ void compute_interior_prop(InteriorAnglesType &interior_ang,
                            const FacesType &faces,
                            const EdgesType &edges,
                            const Edge2FacesType &edge2faces,
-                           Vector3d* x_rw,
+                           std::vector<Vector3d>& x_rw,
                            const Uint Nrw){
   interior_ang.clear();
   mixed_areas.clear();
@@ -1623,13 +1624,13 @@ void compute_interior_prop(InteriorAnglesType &interior_ang,
   }
 }
 
-void compute_sheet_curv(double* H_rw,
-                        Vector3d* n_rw,
+void compute_sheet_curv(std::vector<double>& H_rw,
+                        std::vector<Vector3d>& n_rw,
                         const FacesType &faces,
                         const EdgesType &edges,
                         const Edge2FacesType &edge2faces,
                         const Node2EdgesType &node2edges,
-                        Vector3d* x_rw,
+                        std::vector<Vector3d>& x_rw,
                         const Uint Nrw,
                         const InteriorAnglesType &interior_ang,
                         const std::vector<double> &mixed_areas,
@@ -1681,11 +1682,11 @@ void compute_sheet_curv(double* H_rw,
   }
 }
 
-void compute_strip_curv(double* H_rw,
-                        Vector3d* n_rw,
+void compute_strip_curv(std::vector<double>& H_rw,
+                        std::vector<Vector3d>& n_rw,
                         const EdgesType &edges,
                         const Node2EdgesType &node2edges,
-                        Vector3d* x_rw, const Uint Nrw){
+                        std::vector<Vector3d>& x_rw, const Uint Nrw){
   for (Uint inode=0; inode<Nrw; ++inode){
     H_rw[inode] = 0.;
     n_rw[inode] = {1., 0., 0.};
@@ -1708,13 +1709,13 @@ void compute_strip_curv(double* H_rw,
   }
 }
 
-void compute_mean_curv(double* H_rw,
-                       Vector3d* n_rw,
+void compute_mean_curv(std::vector<double>& H_rw,
+                       std::vector<Vector3d>& n_rw,
                        const FacesType &faces,
                        const EdgesType &edges,
                        const Edge2FacesType &edge2faces,
                        const Node2EdgesType &node2edges,
-                       Vector3d* x_rw,
+                       std::vector<Vector3d>& x_rw,
                        const Uint Nrw,
                        const InteriorAnglesType &interior_ang,
                        const std::vector<double> &mixed_areas,

@@ -1,3 +1,6 @@
+#ifndef __DISTRIBUTE_HPP
+#define __DISTRIBUTE_HPP
+
 #include <iomanip>
 #include <vector>
 #include <random>
@@ -6,10 +9,6 @@
 #include "Interpol.hpp"
 #include "utils.hpp"
 
-#ifndef __DISTRIBUTE_HPP
-#define __DISTRIBUTE_HPP
-
-//using namespace std;
 
 struct less_than_op {
   inline bool operator() (const Vector3d &a, const Vector3d &b){
@@ -43,7 +42,7 @@ void load_positions(std::string input_file,
 }
 
 void dump_positions(std::string output_file,
-                    Vector3d* x_rw,
+                    std::vector<Vector3d>& x_rw,
                     const Uint Nrw){
   std::ofstream outfile(output_file);
   for (Uint irw=0; irw<Nrw; ++irw){
@@ -132,7 +131,7 @@ void dump_edges(std::string output_file,
 }
 
 void load_colors(std::string input_file,
-                 double* c_rw, const Uint Nrw){
+                 std::vector<double>& c_rw, const Uint Nrw){
   std::ifstream infile(input_file);
   for (Uint irw=0; irw < Nrw; ++irw){
     infile >> c_rw[irw];
@@ -141,7 +140,7 @@ void load_colors(std::string input_file,
 }
 
 void dump_colors(std::string output_file,
-                 double* c_rw, const Uint Nrw){
+                 std::vector<double>& c_rw, const Uint Nrw){
   std::ofstream outfile(output_file);
   for (Uint irw=0; irw < Nrw; ++irw){
     outfile << std::setprecision(12) << c_rw[irw] << std::endl;

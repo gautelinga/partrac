@@ -1,14 +1,15 @@
-#include "io.hpp"
-
 #ifndef __INTERPOL_HPP
 #define __INTERPOL_HPP
+
+#include "io.hpp"
+#include "typedefs.hpp"
 
 //using namespace std;
 
 class Interpol {  // Abstract base class
 public:
   Interpol(const std::string infilename) { this->infilename=infilename; };
-  ~Interpol() {};
+  virtual ~Interpol() = default;
   void set_folder(std::string folder){ this->folder=folder; };
   std::string get_folder(){ return folder; };
   void set_int_order(const int int_order){ this->int_order=int_order; };

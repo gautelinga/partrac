@@ -1,11 +1,11 @@
+#ifndef __PARAMETERS_HPP
+#define __PARAMETERS_HPP
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <boost/algorithm/string.hpp>
 #include "io.hpp"
-
-#ifndef __PARAMETERS_HPP
-#define __PARAMETERS_HPP
 
 //using namespace std;
 

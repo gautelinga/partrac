@@ -1,14 +1,13 @@
-#include "utils.hpp"
-
 #ifndef __STATS_HPP
 #define __STATS_HPP
 
-//using namespace std;
+#include "utils.hpp"
+
 
 void write_stats(std::ofstream &statfile,
                  const double t,
-                 Vector3d* x_rw,
-                 Vector3d* u_rw,
+                 std::vector<Vector3d>& x_rw,
+                 std::vector<Vector3d>& u_rw,
                  const Uint Nrw,
                  FacesType &faces,
                  EdgesType &edges,

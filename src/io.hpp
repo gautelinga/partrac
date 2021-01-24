@@ -1,11 +1,12 @@
+#ifndef __IO_HPP
+#define __IO_HPP
+
 #include <iostream>
 #include <vector>
 #include <map>
 
 #include "H5Cpp.h"
 
-#ifndef __IO_HPP
-#define __IO_HPP
 
 //using namespace std;
 using namespace H5;
