@@ -148,7 +148,7 @@ void TetInterpol::probe(const Vector3d &x)
   if (inside)
   {
     // Compute P2-P1 basis at x
-    double r,s,t,u, x,y,z;
+    double r,s,t,u;
     tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r,s,t,u);
     std::array<double, 10> N10;
     std::array<double, 4> N4;
@@ -209,6 +209,7 @@ void TetInterpol::probe(const Vector3d &x)
     //   gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
     //   gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
     // }
+    //std::cout<<x[0]<<' '<<x[1]<<' '<<x[2]<<"   "<<x_loc[0]<<' '<<x_loc[1]<<' '<<x_loc[2]<<"    "<<id<<' '<<inside<<"   "<<P_prev<<' '<<P_next<<"    "<<U_prev[0]<<' '<<U_prev[1]<<' '<<U_prev[2]<<"   "<<U_next[0]<<' '<<U_next[1]<<' '<<U_next[2]<<"   "<<alpha_t<<std::endl;
   }
 
 }

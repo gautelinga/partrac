@@ -416,6 +416,7 @@ void DolfInterpol::probe(const Vector3d &x){
     //std::cout << U << std::endl;
     //std::cout << A << std::endl;
     //std::cout << "U_prev_b = " << U_prev[0] << " " << U_prev[1] << " " << U_prev[2] << std::endl;
+    //std::cout<<x[0]<<' '<<x[1]<<' '<<x[2]<<"   "<<x_loc[0]<<' '<<x_loc[1]<<' '<<x_loc[2]<<"    "<<id<<' '<<inside<<"   "<<P_prev<<' '<<P_next<<"    "<<U_prev[0]<<' '<<U_prev[1]<<' '<<U_prev[2]<<"   "<<U_next[0]<<' '<<U_next[1]<<' '<<U_next[2]<<"   "<<alpha_t<<std::endl;
   }
 }
 
