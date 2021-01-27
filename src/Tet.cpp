@@ -96,12 +96,12 @@ void Tet::quadbasis(double r,
   N[1] = s*(2*s-1);
   N[2] = t*(2*t-1);
   N[3] = u*(2*u-1);
-  N[4] = 4*r*s;
-  N[5] = 4*s*t;
-  N[6] = 4*r*t;
-  N[7] = 4*r*u;
-  N[8] = 4*s*u;
-  N[9] = 4*t*u;
+  N[perm_[4]] = 4*r*s;
+  N[perm_[5]] = 4*s*t;
+  N[perm_[6]] = 4*r*t;
+  N[perm_[7]] = 4*r*u;
+  N[perm_[8]] = 4*s*u;
+  N[perm_[9]] = 4*t*u;
 }
 
 void Tet::quadderiv(double r,
@@ -121,33 +121,32 @@ void Tet::quadderiv(double r,
   Nx[1] = b*g2x_;
   Nx[2] = c*g3x_;
   Nx[3] = d*g4x_;
-  Nx[4] = 4*(r*g2x_+s*g1x_);
-  Nx[5] = 4*(s*g3x_+t*g2x_);
-  Nx[6] = 4*(t*g1x_+r*g3x_);
-  Nx[7] = 4*(r*g4x_+u*g1x_);
-  Nx[8] = 4*(s*g4x_+u*g2x_);
-  Nx[9] = 4*(t*g4x_+u*g3x_);
-
+  Nx[perm_[4]] = 4*(r*g2x_+s*g1x_);
+  Nx[perm_[5]] = 4*(s*g3x_+t*g2x_);
+  Nx[perm_[6]] = 4*(t*g1x_+r*g3x_);
+  Nx[perm_[7]] = 4*(r*g4x_+u*g1x_);
+  Nx[perm_[8]] = 4*(s*g4x_+u*g2x_);
+  Nx[perm_[9]] = 4*(t*g4x_+u*g3x_);
 
   Ny[0] = a*g1y_;
   Ny[1] = b*g2y_;
   Ny[2] = c*g3y_;
   Ny[3] = d*g4y_;
-  Ny[4] = 4*(r*g2y_+s*g1y_);
-  Ny[5] = 4*(s*g3y_+t*g2y_);
-  Ny[6] = 4*(t*g1y_+r*g3y_);
-  Ny[7] = 4*(r*g4y_+u*g1y_);
-  Ny[8] = 4*(s*g4y_+u*g2y_);
-  Ny[9] = 4*(t*g4y_+u*g3y_);
+  Ny[perm_[4]] = 4*(r*g2y_+s*g1y_);
+  Ny[perm_[5]] = 4*(s*g3y_+t*g2y_);
+  Ny[perm_[6]] = 4*(t*g1y_+r*g3y_);
+  Ny[perm_[7]] = 4*(r*g4y_+u*g1y_);
+  Ny[perm_[8]] = 4*(s*g4y_+u*g2y_);
+  Ny[perm_[9]] = 4*(t*g4y_+u*g3y_);
 
   Nz[0] = a*g1z_;
   Nz[1] = b*g2z_;
   Nz[2] = c*g3z_;
   Nz[3] = d*g4z_;
-  Nz[4] = 4*(r*g2z_+s*g1z_);
-  Nz[5] = 4*(s*g3z_+t*g2z_);
-  Nz[6] = 4*(t*g1z_+r*g3z_);
-  Nz[7] = 4*(r*g4z_+u*g1z_);
-  Nz[8] = 4*(s*g4z_+u*g2z_);
-  Nz[9] = 4*(t*g4z_+u*g3z_);
+  Nz[perm_[4]] = 4*(r*g2z_+s*g1z_);
+  Nz[perm_[5]] = 4*(s*g3z_+t*g2z_);
+  Nz[perm_[6]] = 4*(t*g1z_+r*g3z_);
+  Nz[perm_[7]] = 4*(r*g4z_+u*g1z_);
+  Nz[perm_[8]] = 4*(s*g4z_+u*g2z_);
+  Nz[perm_[9]] = 4*(t*g4z_+u*g3z_);
 }

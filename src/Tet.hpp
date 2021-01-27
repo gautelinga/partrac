@@ -39,6 +39,7 @@ private:
   double g3x_,g3y_,g3z_;
   double g4x_,g4y_,g4z_;
 
+  static constexpr std::array<int, 10> perm_ = {-1,-1,-1,-1, 9,6,8,7,5,4};
 };
 
 #endif

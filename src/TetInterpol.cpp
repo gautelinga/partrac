@@ -184,32 +184,47 @@ void TetInterpol::probe(const Vector3d &x)
     double P_prev = std::inner_product(N4.begin(), N4.end(), p_prev_coefficients.begin(), 0.0);
     double P_next = std::inner_product(N4.begin(), N4.end(), p_next_coefficients.begin(), 0.0);
 
-    Vector3d U_prev = {0., 0., 0.};
-    Vector3d U_next = {0., 0., 0.};
-    // for (std::size_t i = 0, idx = 0; i < 10; ++i)
-    //   for (std::size_t j = 0; j < 3; ++j, ++idx)
-    //   {
-    //     U_prev[j] += u_prev_coefficients[idx]*N10[i];
-    //     U_next[j] += u_next_coefficients[idx]*N10[i];
-    //   }
-    for (std::size_t j = 0, idx = 0; j < 3; ++j)
-      for (std::size_t i = 0; i < 10; ++i, ++idx)
-      {
-        U_prev[j] += u_prev_coefficients[idx]*N10[i];
-        U_next[j] += u_next_coefficients[idx]*N10[i];
-      }
-    assert(true);
-    assert(false);
+    Vector3d U_prev = {std::inner_product(N10.begin(), N10.end(), u_prev_coefficients.begin(), 0.0),
+      std::inner_product(N10.begin(), N10.end(), &u_prev_coefficients[10], 0.0),
+      std::inner_product(N10.begin(), N10.end(), &u_prev_coefficients[20], 0.0) };
+    Vector3d U_next = {std::inner_product(N10.begin(), N10.end(), u_next_coefficients.begin(), 0.0),
+      std::inner_product(N10.begin(), N10.end(), &u_next_coefficients[10], 0.0),
+      std::inner_product(N10.begin(), N10.end(), &u_next_coefficients[20], 0.0) };
+
     // Update
     U = alpha_t * U_next + (1-alpha_t) * U_prev;
     A = (U_next-U_prev)/(t_next-t_prev);
     P = alpha_t * P_next + (1-alpha_t) * P_prev;
-    assert(this->int_order == 1);
-    // if (this->int_order > 1){
-    //   gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
-    //   gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
-    // }
-    //std::cout<<x[0]<<' '<<x[1]<<' '<<x[2]<<"   "<<x_loc[0]<<' '<<x_loc[1]<<' '<<x_loc[2]<<"    "<<id<<' '<<inside<<"   "<<P_prev<<' '<<P_next<<"    "<<U_prev[0]<<' '<<U_prev[1]<<' '<<U_prev[2]<<"   "<<U_next[0]<<' '<<U_next[1]<<' '<<U_next[2]<<"   "<<alpha_t<<std::endl;
+
+    if (this->int_order > 1){
+      std::array<double, 10> Nx, Ny, Nz;
+      tets_[id].quadderiv(r,s,t,u, Nx,Ny,Nz);
+      Matrix3d gradU_prev;
+      gradU_prev << std::inner_product(Nx.begin(), Nx.end(), u_prev_coefficients.begin(), 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), u_prev_coefficients.begin(), 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), u_prev_coefficients.begin(), 0.0),
+        std::inner_product(Nx.begin(), Nx.end(), &u_prev_coefficients[10], 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), &u_prev_coefficients[10], 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), &u_prev_coefficients[10], 0.0),
+        std::inner_product(Nx.begin(), Nx.end(), &u_prev_coefficients[20], 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), &u_prev_coefficients[20], 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), &u_prev_coefficients[20], 0.0);
+      Matrix3d gradU_next;
+      gradU_next << std::inner_product(Nx.begin(), Nx.end(), u_next_coefficients.begin(), 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), u_next_coefficients.begin(), 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), u_next_coefficients.begin(), 0.0),
+        std::inner_product(Nx.begin(), Nx.end(), &u_next_coefficients[10], 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), &u_next_coefficients[10], 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), &u_next_coefficients[10], 0.0),
+        std::inner_product(Nx.begin(), Nx.end(), &u_next_coefficients[20], 0.0),
+        std::inner_product(Ny.begin(), Ny.end(), &u_next_coefficients[20], 0.0),
+        std::inner_product(Nz.begin(), Nz.end(), &u_next_coefficients[20], 0.0);
+
+      gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
+      gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+    }
+    // std::cout<<x[0]<<' '<<x[1]<<' '<<x[2]<<"   "<<x_loc[0]<<' '<<x_loc[1]<<' '<<x_loc[2]<<"    "<<id<<' '<<inside<<"   "<<P_prev<<' '<<P_next<<"    "<<U_prev[0]<<' '<<U_prev[1]<<' '<<U_prev[2]<<"   "<<U_next[0]<<' '<<U_next[1]<<' '<<U_next[2]<<"   "<<alpha_t<<"    "<<gradU<<std::endl;
+    // exit(0);
   }
 
 }
