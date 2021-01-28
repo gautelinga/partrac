@@ -86,20 +86,28 @@ TetInterpol::TetInterpol(const std::string infilename)
   // Precompute all tets Taylor-Hood P2-P1
   // FIXME compute on the fly and save
   tets_.resize(mesh->num_cells());
+  dolfin_cells_.resize(mesh->num_cells());
+  ufc_cells_.resize(mesh->num_cells());
+  coordinate_dofs_.resize(mesh->num_cells());
 
   for (std::size_t i = 0; i < mesh->num_cells(); ++i)
   {
-    tets_[i] = Tet(dolfin::Cell(*mesh, i));
+    dolfin::Cell dolfin_cell(*mesh, i);
+    dolfin_cell.get_coordinate_dofs(coordinate_dofs_[i]);
+
+    tets_[i] = Tet(dolfin_cell);
+    dolfin_cells_[i] = dolfin_cell;
+    dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
 
   auto constrained_domain = std::make_shared<PBC>(periodic, x_min, x_max, dim);
-  u_space = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
-  p_space = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+  u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
+  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
 
-  u_prev_ = std::make_shared<dolfin::Function>(u_space);
-  u_next_ = std::make_shared<dolfin::Function>(u_space);
-  p_prev_ = std::make_shared<dolfin::Function>(p_space);
-  p_next_ = std::make_shared<dolfin::Function>(p_space);
+  u_prev_ = std::make_shared<dolfin::Function>(u_space_);
+  u_next_ = std::make_shared<dolfin::Function>(u_space_);
+  p_prev_ = std::make_shared<dolfin::Function>(p_space_);
+  p_next_ = std::make_shared<dolfin::Function>(p_space_);
 
 }
 
@@ -150,46 +158,29 @@ void TetInterpol::probe(const Vector3d &x)
     // Compute P2-P1 basis at x
     double r,s,t,u;
     tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r,s,t,u);
-    std::array<double, 10> N10;
-    std::array<double, 4> N4;
-    tets_[id].quadbasis(r,s,t,u, N10);
-    tets_[id].linearbasis(r,s,t,u, N4);
+    tets_[id].quadbasis(r,s,t,u, N10_);
+    tets_[id].linearbasis(r,s,t,u, N4_);
 
     // Restrict solution to cell
-    const dolfin::Cell dolfin_cell(*mesh, id);
-    ufc::cell ufc_cell;
-    dolfin_cell.get_cell_data(ufc_cell);
-    std::vector<double> coordinate_dofs;
-    dolfin_cell.get_coordinate_dofs(coordinate_dofs);
-
-    const dolfin::FiniteElement u_element = *u_space->element();
-    const dolfin::FiniteElement p_element = *p_space->element();
-    std::size_t u_dim = u_element.space_dimension();
-    std::size_t p_dim = p_element.space_dimension();
-    std::vector<double> u_prev_coefficients(u_dim);
-    std::vector<double> u_next_coefficients(u_dim);
-    std::vector<double> p_prev_coefficients(p_dim);
-    std::vector<double> p_next_coefficients(p_dim);
-
-    u_prev_->restrict(u_prev_coefficients.data(), u_element, dolfin_cell,
-                      coordinate_dofs.data(), ufc_cell);
-    u_next_->restrict(u_next_coefficients.data(), u_element, dolfin_cell,
-                      coordinate_dofs.data(), ufc_cell);
-    p_prev_->restrict(p_prev_coefficients.data(), p_element, dolfin_cell,
-                      coordinate_dofs.data(), ufc_cell);
-    p_next_->restrict(p_next_coefficients.data(), p_element, dolfin_cell,
-                      coordinate_dofs.data(), ufc_cell);
+    u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+    u_next_->restrict(u_next_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+    p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+    p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
 
     // Evaluate
-    double P_prev = std::inner_product(N4.begin(), N4.end(), p_prev_coefficients.begin(), 0.0);
-    double P_next = std::inner_product(N4.begin(), N4.end(), p_next_coefficients.begin(), 0.0);
+    double P_prev = std::inner_product(N4_.begin(), N4_.end(), p_prev_coefficients_.begin(), 0.0);
+    double P_next = std::inner_product(N4_.begin(), N4_.end(), p_next_coefficients_.begin(), 0.0);
 
-    Vector3d U_prev = {std::inner_product(N10.begin(), N10.end(), u_prev_coefficients.begin(), 0.0),
-      std::inner_product(N10.begin(), N10.end(), &u_prev_coefficients[10], 0.0),
-      std::inner_product(N10.begin(), N10.end(), &u_prev_coefficients[20], 0.0) };
-    Vector3d U_next = {std::inner_product(N10.begin(), N10.end(), u_next_coefficients.begin(), 0.0),
-      std::inner_product(N10.begin(), N10.end(), &u_next_coefficients[10], 0.0),
-      std::inner_product(N10.begin(), N10.end(), &u_next_coefficients[20], 0.0) };
+    Vector3d U_prev = {std::inner_product(N10_.begin(), N10_.end(), u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(N10_.begin(), N10_.end(), &u_prev_coefficients_[10], 0.0),
+      std::inner_product(N10_.begin(), N10_.end(), &u_prev_coefficients_[20], 0.0) };
+    Vector3d U_next = {std::inner_product(N10_.begin(), N10_.end(), u_next_coefficients_.begin(), 0.0),
+      std::inner_product(N10_.begin(), N10_.end(), &u_next_coefficients_[10], 0.0),
+      std::inner_product(N10_.begin(), N10_.end(), &u_next_coefficients_[20], 0.0) };
 
     // Update
     U = alpha_t * U_next + (1-alpha_t) * U_prev;
@@ -197,28 +188,27 @@ void TetInterpol::probe(const Vector3d &x)
     P = alpha_t * P_next + (1-alpha_t) * P_prev;
 
     if (this->int_order > 1){
-      std::array<double, 10> Nx, Ny, Nz;
-      tets_[id].quadderiv(r,s,t,u, Nx,Ny,Nz);
+      tets_[id].quadderiv(r,s,t,u, Nx_,Ny_,Nz_);
       Matrix3d gradU_prev;
-      gradU_prev << std::inner_product(Nx.begin(), Nx.end(), u_prev_coefficients.begin(), 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), u_prev_coefficients.begin(), 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), u_prev_coefficients.begin(), 0.0),
-        std::inner_product(Nx.begin(), Nx.end(), &u_prev_coefficients[10], 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), &u_prev_coefficients[10], 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), &u_prev_coefficients[10], 0.0),
-        std::inner_product(Nx.begin(), Nx.end(), &u_prev_coefficients[20], 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), &u_prev_coefficients[20], 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), &u_prev_coefficients[20], 0.0);
+      gradU_prev << std::inner_product(Nx_.begin(), Nx_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[10], 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[10], 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), &u_prev_coefficients_[10], 0.0),
+        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[20], 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[20], 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), &u_prev_coefficients_[20], 0.0);
       Matrix3d gradU_next;
-      gradU_next << std::inner_product(Nx.begin(), Nx.end(), u_next_coefficients.begin(), 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), u_next_coefficients.begin(), 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), u_next_coefficients.begin(), 0.0),
-        std::inner_product(Nx.begin(), Nx.end(), &u_next_coefficients[10], 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), &u_next_coefficients[10], 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), &u_next_coefficients[10], 0.0),
-        std::inner_product(Nx.begin(), Nx.end(), &u_next_coefficients[20], 0.0),
-        std::inner_product(Ny.begin(), Ny.end(), &u_next_coefficients[20], 0.0),
-        std::inner_product(Nz.begin(), Nz.end(), &u_next_coefficients[20], 0.0);
+      gradU_next << std::inner_product(Nx_.begin(), Nx_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[10], 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[10], 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), &u_next_coefficients_[10], 0.0),
+        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[20], 0.0),
+        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[20], 0.0),
+        std::inner_product(Nz_.begin(), Nz_.end(), &u_next_coefficients_[20], 0.0);
 
       gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
       gradA = (gradU_next-gradU_prev)/(t_next-t_prev);

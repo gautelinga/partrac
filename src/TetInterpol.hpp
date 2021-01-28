@@ -67,8 +67,8 @@ protected:
   std::shared_ptr<dolfin::Mesh> mesh;
   Uint dim;
 
-  std::shared_ptr<dolfin::FunctionSpace> u_space;
-  std::shared_ptr<dolfin::FunctionSpace> p_space;
+  std::shared_ptr<dolfin::FunctionSpace> u_space_;
+  std::shared_ptr<dolfin::FunctionSpace> p_space_;
 
   std::shared_ptr<dolfin::Function> u_prev_;
   std::shared_ptr<dolfin::Function> u_next_;
@@ -76,6 +76,18 @@ protected:
   std::shared_ptr<dolfin::Function> p_next_;
 
   std::vector<Tet> tets_;
+  std::vector<dolfin::Cell> dolfin_cells_;
+  std::vector<ufc::cell> ufc_cells_;
+
+  std::vector<std::vector<double>> coordinate_dofs_;
+
+  std::array<double, 30> u_prev_coefficients_;
+  std::array<double, 30> u_next_coefficients_;
+  std::array<double, 4> p_prev_coefficients_;
+  std::array<double, 4> p_next_coefficients_;
+
+  std::array<double, 10> N10_, Nx_, Ny_, Nz_;
+  std::array<double, 4> N4_;
 };
 
 #endif
