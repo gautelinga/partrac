@@ -109,6 +109,8 @@ public:
   bool clear_initial_edges = false;
   //
   int seed = 0;
+  //
+  std::string tag = "";
 private:
   void write_params_to_file(std::string);
 };
@@ -209,6 +211,8 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "clear_initial_edges") clear_initial_edges = stobool(val);
   if (key == "seed") seed = stoint(val);
+
+  if (key == "tag") tag = val;
 }
 
 void Parameters::print(){
@@ -260,6 +264,8 @@ void Parameters::print(){
 
     print_param("clear_initial_edges", bool2string(clear_initial_edges));
     print_param("seed               ", seed);
+
+    print_param("tag                ", tag);
   }
 }
 
@@ -333,6 +339,8 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "clear_initial_edges", bool2string(clear_initial_edges));
   write_param(paramsfile, "seed", seed);
+
+  write_param(paramsfile, "tag", tag);
 
   paramsfile.close();
 }
