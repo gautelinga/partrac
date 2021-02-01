@@ -114,7 +114,7 @@ int main(int argc, char* argv[]){
     gen.seed(rd());
   }
   else {
-    std::seed_seq rd{0};
+    std::seed_seq rd{prm.seed};
     gen.seed(rd);
   }
   
