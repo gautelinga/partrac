@@ -111,6 +111,8 @@ public:
   int seed = 0;
   //
   std::string tag = "";
+  //
+  bool random = true;
 private:
   void write_params_to_file(std::string);
 };
@@ -213,6 +215,8 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "seed") seed = stoint(val);
 
   if (key == "tag") tag = val;
+
+  if (key == "random") random = stobool(val);
 }
 
 void Parameters::print(){
@@ -266,6 +270,7 @@ void Parameters::print(){
     print_param("seed               ", seed);
 
     print_param("tag                ", tag);
+    print_param("random             ", bool2string(random));
   }
 }
 
@@ -341,6 +346,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "seed", seed);
 
   write_param(paramsfile, "tag", tag);
+  write_param(paramsfile, "random", bool2string(random));
 
   paramsfile.close();
 }

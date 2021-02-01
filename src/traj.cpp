@@ -108,10 +108,16 @@ int main(int argc, char* argv[]){
 
   prm.print();
 
-  srand(prm.seed);
-  std::random_device rd;
-  std::mt19937 gen(rd());
-
+  std::mt19937 gen;
+  if (prm.random) {
+    std::random_device rd;
+    gen.seed(rd());
+  }
+  else {
+    std::seed_seq rd{0};
+    gen.seed(rd);
+  }
+  
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
   double Lz = intp->get_Lz();
