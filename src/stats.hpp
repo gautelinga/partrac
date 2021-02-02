@@ -14,8 +14,8 @@ void write_stats(std::ofstream &statfile,
                  const double ds_max,
                  const bool do_dump_hist,
                  const std::string histfolder,
-                 const unsigned long int n_accepted,
-                 const unsigned long int n_declined
+                 const Uint n_accepted,
+                 const Uint n_declined
                  ){
   double x_mean = 0.;
   double y_mean = 0.;

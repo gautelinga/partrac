@@ -4,6 +4,7 @@
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 #include "Tet.hpp"
+#include "Parameters.hpp"
 
 class TetInterpol
   : public Interpol
@@ -22,14 +23,7 @@ public:
   double get_az() { return A[2];};
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
-  double get_rho() {
-    if (contains(dolfin_params, std::string("rho")))
-      return stod(dolfin_params["rho"]);
-    else {
-      std::cout << "dolfin_params does not contain \"rho\"" << std::endl;
-      exit(0);
-    }
-  };
+  double get_rho() { return dolfin_params_.getd("rho"); }
   double get_p() { return P;};
   double get_uxx() { return gradU(0, 0); };
   double get_uxy() { return gradU(0, 1); };
@@ -62,7 +56,8 @@ protected:
 
   bool inside;
 
-  std::map<std::string, std::string> dolfin_params;
+  //std::map<std::string, std::string> dolfin_params;
+  Parameters dolfin_params_;
 
   std::shared_ptr<dolfin::Mesh> mesh;
   Uint dim;

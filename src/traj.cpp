@@ -33,15 +33,16 @@ int main(int argc, char* argv[]){
     return 0;
   }
   Parameters prm(argc, argv);
-  if (prm.restart_folder != ""){
-    prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
+  prm.set_traj_defaults();
+  if (prm.getstr("restart_folder") != ""){
+    prm.parse_file(prm.getstr("restart_folder") + "/Checkpoints/params.dat");
     prm.parse_cmd(argc, argv);
   }
 
   std::string infilename = std::string(argv[1]);
 
   Interpol *intp;
-  std::string mode = prm.mode;
+  const std::string mode = prm.getstr("mode");
   if (mode == "analytic"){
     std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
@@ -70,77 +71,77 @@ int main(int argc, char* argv[]){
     exit(0);
   }
 
-  double Dm = prm.Dm;
-  double dt = prm.dt;
-  Uint Nrw = prm.Nrw;
-  double U0 = prm.U0;
+  double Dm = prm.getd("Dm");
+  double dt = prm.getd("dt");
+  Uint Nrw = prm.getui("Nrw");
+  double U0 = prm.getd("U0");
 
-  bool refine = prm.refine;
-  bool coarsen = prm.coarsen;
-  double ds_max = prm.ds_max;
-  double ds_min = prm.ds_min;
-  Uint Nrw_max = prm.Nrw_max;
+  bool refine = prm.getb("refine");
+  bool coarsen = prm.getb("coarsen");
+  double ds_max = prm.getd("ds_max");
+  double ds_min = prm.getd("ds_min");
+  Uint Nrw_max = prm.getui("Nrw_max");
 
   std::string folder = intp->get_folder();
   std::string rwfolder = create_folder(folder + "/RandomWalkers/");
   std::string newfolder;
-  if (prm.restart_folder != ""){
-    newfolder = prm.folder;
+  if (prm.getstr("restart_folder") != ""){
+    newfolder = prm.getstr("folder");
   }
   else {
     std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
     ss_Dm << std::scientific << std::setprecision(7) << Dm;
     ss_dt << std::scientific << std::setprecision(7) << dt;
     ss_Nrw << Nrw;
-    ss_seed << prm.seed;
+    ss_seed << prm.geti("seed");
     newfolder = create_folder(rwfolder +
                               "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                               "_dt" + ss_dt.str() +
                               "_Nrw" + ss_Nrw.str() +
                               "_seed" + ss_seed.str() +
-                              "_tag" + prm.tag + 
+                              "_tag" + prm.getstr("tag") +
                               "/");
   }
   std::string posfolder = create_folder(newfolder + "Positions/");
   std::string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
   std::string histfolder = create_folder(newfolder + "Histograms/");
-  prm.folder = newfolder;
+  prm.set("folder", newfolder);
 
   prm.print();
 
   std::mt19937 gen;
-  if (prm.random) {
+  if (prm.geti("random")) {
     std::random_device rd;
     gen.seed(rd());
   }
   else {
-    std::seed_seq rd{prm.seed};
+    std::seed_seq rd{prm.geti("seed")};
     gen.seed(rd);
   }
-  
+
   double Lx = intp->get_Lx();
   double Ly = intp->get_Ly();
   double Lz = intp->get_Lz();
-  prm.Lx = Lx;
-  prm.Ly = Ly;
-  prm.Lz = Lz;
+  prm.set("Lx", Lx);
+  prm.set("Ly", Ly);
+  prm.set("Lz", Lz);
   //prm.nx = intp->get_nx();
   //prm.ny = intp->get_ny();
   //prm.nz = intp->get_nz();
 
   double U02 = U0*U0;
 
-  double t0 = std::max(intp->get_t_min(), prm.t0);
-  double T = std::min(intp->get_t_max(), prm.T);
-  prm.t0 = t0;
-  prm.T = T;
+  double t0 = std::max(intp->get_t_min(), prm.getd("t0"));
+  double T = std::min(intp->get_t_max(), prm.getd("T"));
+  prm.set("t0", t0);
+  prm.set("T", T);
 
-  if (prm.interpolation_test > 0){
+  if (prm.geti("interpolation_test") > 0){
     std::cout << "Testing interpolation..." << std::endl;
     intp->set_int_order(2);
-    test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
+    test_interpolation(prm.geti("interpolation_test"), intp, newfolder, t0, gen);
   }
-  intp->set_int_order(prm.int_order);
+  intp->set_int_order(prm.geti("int_order"));
 
   std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
@@ -157,14 +158,14 @@ int main(int argc, char* argv[]){
   std::vector<double> rho_rw(Nrw_max);
   std::vector<double> p_rw(Nrw_max);
 
-  if (prm.inject && prm.filter){
+  if (prm.getb("inject") && prm.getb("filter")){
     std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
   // Second-order terms
   std::vector<Vector3d> a_rw(Nrw_max);
-  if (prm.int_order > 2){
+  if (prm.geti("int_order") > 2){
     std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
   }
@@ -178,41 +179,41 @@ int main(int argc, char* argv[]){
   EdgesListType edges_inlet;
   NodesListType nodes_inlet;
 
-  if (prm.restart_folder != ""){
-    std::string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
+  if (prm.getstr("restart_folder") != ""){
+    std::string posfile = prm.getstr("restart_folder") + "/Checkpoints/positions.pos";
     load_positions(posfile, pos_init, Nrw);
-    std::string facefile = prm.restart_folder + "/Checkpoints/faces.face";
+    std::string facefile = prm.getstr("restart_folder") + "/Checkpoints/faces.face";
     load_faces(facefile, faces);
-    std::string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
+    std::string edgefile = prm.getstr("restart_folder") + "/Checkpoints/edges.edge";
     load_edges(edgefile, edges);
-    std::string colfile = prm.restart_folder + "/Checkpoints/colors.col";
+    std::string colfile = prm.getstr("restart_folder") + "/Checkpoints/colors.col";
     load_colors(colfile, c_rw, Nrw);
-    if (prm.inject){
-      std::string posinjfile = prm.restart_folder + "/Checkpoints/positions_inj.pos";
+    if (prm.getb("inject")){
+      std::string posinjfile = prm.getstr("restart_folder") + "/Checkpoints/positions_inj.pos";
       load_positions(posinjfile, pos_inj);
-      std::string edgesinjfile = prm.restart_folder + "/Checkpoints/edges_inj.edge";
+      std::string edgesinjfile = prm.getstr("restart_folder") + "/Checkpoints/edges_inj.edge";
       load_edges(edgesinjfile, edges_inj);
-      std::string edgesinletfile = prm.restart_folder + "/Checkpoints/edges_inlet.list";
-      std::string nodesinletfile = prm.restart_folder + "/Checkpoints/nodes_inlet.list";
+      std::string edgesinletfile = prm.getstr("restart_folder") + "/Checkpoints/edges_inlet.list";
+      std::string nodesinletfile = prm.getstr("restart_folder") + "/Checkpoints/nodes_inlet.list";
       load_list(edgesinletfile, edges_inlet);
       load_list(nodesinletfile, nodes_inlet);
     }
   }
   else {
-    pos_init = initial_positions(prm.init_mode,
-                                 prm.init_weight,
+    pos_init = initial_positions(prm.getstr("init_mode"),
+                                 prm.getstr("init_weight"),
                                  Nrw,
-                                 {prm.x0, prm.y0, prm.z0},
-                                 prm.La, prm.Lb,
-                                 prm.ds_init, t0,
+                                 {prm.getd("x0"), prm.getd("y0"), prm.getd("z0")},
+                                 prm.getd("La"), prm.getd("Lb"),
+                                 prm.getd("ds_init"), t0,
                                  intp, gen, edges, faces);
-    if (prm.clear_initial_edges){
+    if (prm.getb("clear_initial_edges")){
       std::cout << "Clearing initial edges!" << std::endl;
       edges.clear();
       faces.clear();
     }
-    if (prm.inject){
-     pos_inj = pos_init;
+    if (prm.getb("inject")){
+      pos_inj = pos_init;
       edges_inj = edges;
       for (Uint i=0; i<pos_init.size(); ++i){
         nodes_inlet.push_back(i);
@@ -223,13 +224,13 @@ int main(int argc, char* argv[]){
     }
   }
 
-  if (prm.inject){
-    std::vector<std::string> key = split_string(prm.init_mode, "_");
+  if (prm.getb("inject")){
+    std::vector<std::string> key = split_string(prm.getstr("init_mode"), "_");
     if (key[0] == "uniform"){
       std::cout << "Injection activated!" << std::endl;
     }
     else {
-      std::cout << "init_mode " << prm.init_mode << " incompatible with injection." << std::endl;
+      std::cout << "init_mode " << prm.getstr("init_mode") << " incompatible with injection." << std::endl;
       exit(0);
     }
   }
@@ -246,14 +247,14 @@ int main(int argc, char* argv[]){
   intp->update(t0);
   add_particles(pos_init, intp,
                 x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
-                U0, prm.restart_folder, prm.int_order, 0);
+                U0, prm.getstr("restart_folder"), prm.geti("int_order"), 0);
   // Nrw = pos_init.size();
 
   // Initial refinement
-  if (refine && !prm.inject && edges.size() > 0){
+  if (refine && !prm.getb("inject") && edges.size() > 0){
     std::cout << "Initial refinement" << std::endl;
 
-    bool do_output_all = prm.output_all_props && !prm.minimal_output;
+    bool do_output_all = prm.getb("output_all_props") && !prm.getb("minimal_output");
     Uint n_add = refinement(faces, edges,
                             edge2faces, node2edges,
                             edges_inlet,
@@ -264,8 +265,8 @@ int main(int argc, char* argv[]){
                             a_rw,
                             Nrw, Nrw_max, ds_max,
                             do_output_all, intp,
-                            U0, prm.int_order,
-                            prm.curv_refine_factor);
+                            U0, prm.geti("int_order"),
+                            prm.getd("curv_refine_factor"));
 
     Uint n_rem = coarsening(faces, edges,
                             edge2faces, node2edges,
@@ -277,9 +278,9 @@ int main(int argc, char* argv[]){
                             a_rw,
                             Nrw, ds_min,
                             do_output_all, intp,
-                            U0, prm.int_order,
-                            prm.curv_refine_factor);
-    if (prm.verbose)
+                            U0, prm.geti("int_order"),
+                            prm.getd("curv_refine_factor"));
+    if (prm.getb("verbose"))
       std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
 
     // std::vector<bool> face_isactive(faces.size(), true);
@@ -309,36 +310,36 @@ int main(int argc, char* argv[]){
   double dt2 = dt*dt;
 
   double sqrt2Dmdt = sqrt(2*Dm*dt);
-  if (prm.verbose){
+  if (prm.getb("verbose")){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
     print_param("U*dt         ", U0*dt);
   }
 
   double t = t0;
-  if (prm.restart_folder != ""){
-    t = prm.t;
+  if (prm.getstr("restart_folder") != ""){
+    t = prm.getd("t");
   }
 
   prm.dump(newfolder, t);
 
-  unsigned long int n_accepted = prm.n_accepted;
-  unsigned long int n_declined = prm.n_declined;
+  Uint n_accepted = prm.getui("n_accepted");
+  Uint n_declined = prm.getui("n_declined");
 
   H5File* h5f = new H5File(newfolder + "/data_from_t" + std::to_string(t) + ".h5", H5F_ACC_TRUNC);
 
-  Uint int_stat_intv = int(prm.stat_intv/dt);
-  Uint int_dump_intv = int(prm.dump_intv/dt);
-  Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
-  Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
-  Uint int_refine_intv = int(prm.refine_intv/dt);
-  Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
-  Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
-  Uint int_inject_intv = int(prm.inject_intv/dt);
+  Uint int_stat_intv = Uint(prm.getd("stat_intv")/dt);
+  Uint int_dump_intv = Uint(prm.getd("dump_intv")/dt);
+  Uint int_checkpoint_intv = Uint(prm.getd("checkpoint_intv")/dt);
+  Uint int_chunk_intv = int_dump_intv*prm.geti("dump_chunk_size");
+  Uint int_refine_intv = Uint(prm.getd("refine_intv")/dt);
+  Uint int_coarsen_intv = Uint(prm.getd("coarsen_intv")/dt);
+  Uint int_hist_intv = int_stat_intv*prm.geti("hist_chunk_size");
+  Uint int_inject_intv = Uint(prm.getd("inject_intv")/dt);
 
-  bool filter = prm.filter;
-  Uint int_filter_intv = int(prm.filter_intv/dt);
+  bool filter = prm.getb("filter");
+  Uint int_filter_intv = int(prm.getd("filter_intv")/dt);
 
-  std::string write_mode = prm.write_mode;
+  std::string write_mode = prm.getstr("write_mode");
 
   std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
@@ -360,45 +361,45 @@ int main(int argc, char* argv[]){
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
-       prm.t = t;
-       prm.n_accepted = n_accepted;
-       prm.n_declined = n_declined;
-       prm.Nrw = Nrw;
-       prm.dump(checkpointsfolder);
-       dump_positions(checkpointsfolder + "/positions.pos", x_rw, Nrw);
-       dump_faces(checkpointsfolder + "/faces.face", faces);
-       dump_edges(checkpointsfolder + "/edges.edge", edges);
-       dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
-       if (prm.inject){
-         dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
-         dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
-         dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
-         dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
-       }
+      prm.set("t", t);
+      prm.set("n_accepted", n_accepted);
+      prm.set("n_declined", n_declined);
+      prm.set("Nrw", Nrw);
+      prm.dump(checkpointsfolder);
+      dump_positions(checkpointsfolder + "/positions.pos", x_rw, Nrw);
+      dump_faces(checkpointsfolder + "/faces.face", faces);
+      dump_edges(checkpointsfolder + "/edges.edge", edges);
+      dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+      if (prm.getb("inject")){
+        dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+        dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+        dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+        dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+      }
     }
-   // Injection
-    if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
+    // Injection
+    if (prm.getb("inject") && it > 0 && it % int_inject_intv == 0 && t <= prm.getd("T_inject")){
       if (Nrw + pos_inj.size() <= Nrw_max){
         Uint irw0 = Nrw;
         Uint iedge0 = edges.size();
         Uint iface0 = faces.size();
         add_particles(pos_inj, intp,
                       x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
-                      U0, prm.restart_folder, prm.int_order, irw0);
+                      U0, prm.getstr("restart_folder"), prm.geti("int_order"), irw0);
         for (Uint irw=0; irw < pos_inj.size(); ++irw){
           node2edges.push_back({});
         }
         Nrw += pos_inj.size();
-        if (prm.verbose){
+        if (prm.getb("verbose")){
           std::cout << "Added " << pos_inj.size() << " nodes." << std::endl;
           /*
-          std::cout << "at ..." << std::endl;
-          for (Uint irw=irw0; irw<Nrw; ++irw){
+            std::cout << "at ..." << std::endl;
+            for (Uint irw=irw0; irw<Nrw; ++irw){
             std::cout << x_rw[irw][0] << " " << x_rw[irw][1] << " " << x_rw[irw][2] << std::endl;
-          }
+            }
           */
         }
-        if (prm.inject_edges){
+        if (prm.getb("inject_edges")) {
           Uint iedge = iedge0;
           for (EdgesType::const_iterator edgeit = edges_inj.begin();
                edgeit != edges_inj.end(); ++edgeit){
@@ -452,7 +453,7 @@ int main(int argc, char* argv[]){
             ++iedge;
           }
           assert(iedge == edges.size());
-          if (prm.verbose){
+          if (prm.getb("verbose")){
             std::cout << "Added " << iedge-iedge0 << " edges." << std::endl;
             std::cout << "Added " << faces.size()-iface0 << " faces." << std::endl;
           }
@@ -479,9 +480,9 @@ int main(int argc, char* argv[]){
                         interior_ang, mixed_areas, face_normals);
     }
 
-   // Refinement
+    // Refinement
     if (refine && it % int_refine_intv == 0 && it > 0){
-      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
+      bool do_output_all = prm.getb("output_all_props") && !prm.getb("minimal_output") && it % int_dump_intv == 0;
       Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               x_rw,
                               u_rw,
@@ -490,14 +491,14 @@ int main(int argc, char* argv[]){
                               a_rw,
                               Nrw, Nrw_max, ds_max,
                               do_output_all, intp,
-                              U0, prm.int_order,
-                              prm.curv_refine_factor);
-      if (prm.verbose)
+                              U0, prm.geti("int_order"),
+                              prm.getd("curv_refine_factor"));
+      if (prm.getb("verbose"))
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
-      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
+      bool do_output_all = prm.getb("output_all_props") && !prm.getb("minimal_output") && it % int_dump_intv == 0;
       Uint n_rem = coarsening(faces, edges,
                               edge2faces, node2edges,
                               edges_inlet, nodes_inlet,
@@ -508,22 +509,22 @@ int main(int argc, char* argv[]){
                               a_rw,
                               Nrw, ds_min,
                               do_output_all, intp,
-                              U0, prm.int_order,
-                              prm.curv_refine_factor);
-      if (prm.verbose)
+                              U0, prm.geti("int_order"),
+                              prm.getd("curv_refine_factor"));
+      if (prm.getb("verbose"))
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
     // Filtering
     if (filter && it % int_filter_intv == 0){
-      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
+      bool do_output_all = prm.getb("output_all_props") && !prm.getb("minimal_output") && it % int_dump_intv == 0;
       bool filtered = filtering(faces, edges,
                                 edge2faces, node2edges,
                                 x_rw, u_rw,
                                 rho_rw, p_rw, c_rw,
                                 H_rw, n_rw,
                                 a_rw, Nrw,
-                                do_output_all, prm.int_order, prm.filter_target);
-      if (prm.verbose && filtered)
+                                do_output_all, prm.geti("int_order"), prm.geti("filter_target"));
+      if (prm.getb("verbose") && filtered)
         std::cout << "Filtered edges." << std::endl;
     }
     // Dump detailed data
@@ -559,17 +560,17 @@ int main(int argc, char* argv[]){
         }
 
         vector2hdf5(h5f, groupname + "/points", x_rw, Nrw);
-        if (!prm.minimal_output)
+        if (!prm.getb("minimal_output"))
           vector2hdf5(h5f, groupname + "/u", u_rw, Nrw);
-        if (prm.output_all_props && !prm.minimal_output){
+        if (prm.getb("output_all_props") && !prm.getb("minimal_output")){
           scalar2hdf5(h5f, groupname + "/rho", rho_rw, Nrw);
           scalar2hdf5(h5f, groupname + "/p", p_rw, Nrw);
         }
-        if (!prm.minimal_output)
+        if (!prm.getb("minimal_output"))
           scalar2hdf5(h5f, groupname + "/c", c_rw, Nrw);
-        if (!prm.minimal_output && edges.size() > 0)
+        if (!prm.getb("minimal_output") && edges.size() > 0)
           scalar2hdf5(h5f, groupname + "/H", H_rw, Nrw);
-        if (!prm.minimal_output && faces.size() > 0)
+        if (!prm.getb("minimal_output") && faces.size() > 0)
           vector2hdf5(h5f, groupname + "/n", n_rw, Nrw);
         if (faces.size() == 0)
           scalar2hdf5(h5f, groupname + "/e", e_rw, Nrw);
@@ -584,17 +585,17 @@ int main(int argc, char* argv[]){
       e_rw[irw] = 0.;
 
       // Second-order terms
-      if (prm.int_order >= 2){
+      if (prm.geti("int_order") >= 2){
         dx_rw += 0.5*a_rw[irw]*dt2;
       }
       if (Dm > 0.0){
         Vector3d eta = {rnd_normal(gen),
-                        rnd_normal(gen),
-                        rnd_normal(gen)};
+          rnd_normal(gen),
+          rnd_normal(gen)};
         dx_rw += sqrt2Dmdt*eta;
       }
       intp->probe(x_rw[irw]+dx_rw);
-     if (intp->inside_domain()){
+      if (intp->inside_domain()){
         x_rw[irw] += dx_rw;
         u_rw[irw] = U0*intp->get_u();
 
@@ -604,7 +605,7 @@ int main(int argc, char* argv[]){
         }
 
         // Second-order terms
-        if (prm.int_order >= 2){
+        if (prm.geti("int_order") >= 2){
           a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
         }
         n_accepted++;
@@ -621,17 +622,17 @@ int main(int argc, char* argv[]){
     it += 1;
   }
 
- // Final checkpoint
-  prm.t = t;
-  prm.n_accepted = n_accepted;
-  prm.n_declined = n_declined;
-  prm.Nrw = Nrw;
+  // Final checkpoint
+  prm.set("t", t);
+  prm.set("n_accepted", n_accepted);
+  prm.set("n_declined", n_declined);
+  prm.set("Nrw", Nrw);
   prm.dump(checkpointsfolder);
   dump_positions(checkpointsfolder + "/positions.pos", x_rw, Nrw);
   dump_faces(checkpointsfolder + "/faces.face", faces);
   dump_edges(checkpointsfolder + "/edges.edge", edges);
   dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
-  if (prm.inject){
+  if (prm.getb("inject")){
     dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
     dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
     dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);

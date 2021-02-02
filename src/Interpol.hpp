@@ -3,6 +3,7 @@
 
 #include "io.hpp"
 #include "typedefs.hpp"
+#include <boost/algorithm/string.hpp>
 
 //using namespace std;
 

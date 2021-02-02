@@ -1,11 +1,12 @@
 #include "TetInterpol.hpp"
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
-#include <boost/algorithm/string.hpp>
+// #include <boost/algorithm/string.hpp>
 #include <cassert>
 #include "dolfin_elements/P1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "PBC.hpp"
+#include "Parameters.hpp"
 
 using namespace H5;
 //using namespace std;
@@ -15,48 +16,51 @@ using namespace H5;
 TetInterpol::TetInterpol(const std::string infilename)
   : Interpol(infilename)
 {
-  std::ifstream input(infilename);
-  if (!input){
-    std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
-  }
-  size_t found;
-  std::string key, val;
-  for (std::string line; getline(input, line); ){
-    found = line.find('=');
-    if (found != std::string::npos){
-      key = line.substr(0, found);
-      val = line.substr(found+1);
-      boost::algorithm::trim(key);
-      boost::algorithm::trim(val);
-      dolfin_params[key] = val;
-    }
-  }
+  // std::ifstream input(infilename);
+  // if (!input){
+  //   std::cout << "File " << infilename <<" doesn't exist." << std::endl;
+  //   exit(0);
+  // }
+  // size_t found;
+  // std::string key, val;
+  // for (std::string line; getline(input, line); ){
+  //   found = line.find('=');
+  //   if (found != std::string::npos){
+  //     key = line.substr(0, found);
+  //     val = line.substr(found+1);
+  //     // boost::algorithm::trim(key);
+  //     // boost::algorithm::trim(val);
+  //     Parameters::trim(key);
+  //     Parameters::trim(val);
+  //     dolfin_params_[key] = val;
+  //   }
+  // }
+  dolfin_params_.parse_file(infilename);
 
   std::size_t botDirPos = infilename.find_last_of("/");
   set_folder(infilename.substr(0, botDirPos));
 
-  ts.initialize(get_folder() + "/" + dolfin_params["timestamps"]);
+  ts.initialize(get_folder() + "/" + dolfin_params_.getstr("timestamps"));
 
-  if (dolfin_params["periodic_x"] == "true"){
+  if (dolfin_params_.getb("periodic_x") == true){
     periodic[0] = true;
   }
-  if (dolfin_params["periodic_y"] == "true"){
+  if (dolfin_params_.getb("periodic_y") == true){
     periodic[1] = true;
   }
-  if (dolfin_params["periodic_z"] == "true"){
+  if (dolfin_params_.getb("periodic_z") == true){
     periodic[2] = true;
   }
 
-  //std::cout << dolfin_params["velocity"] << std::endl;
+  //std::cout << dolfin_params_["velocity"] << std::endl;
 
-  //std::string xdmffname = get_folder() + "/" + dolfin_params["velocity"];
+  //std::string xdmffname = get_folder() + "/" + dolfin_params_["velocity"];
   //dolfin::BasicFile xdmff(MPI_COMM_WORLD, xdmffname);
   //std::string h5filename = get_folder() + "/" + ts.get(0).prev.filename;
   //std::cout << h5filename << std::endl;
   //MPI_Comm mpi_comm;
 
-  std::string meshfilename = get_folder() + "/" + dolfin_params["mesh"];
+  std::string meshfilename = get_folder() + "/" + dolfin_params_.getstr("mesh");
   dolfin::HDF5File meshfile(MPI_COMM_WORLD, meshfilename, "r");
 
   dolfin::Mesh mesh_in;
