@@ -73,9 +73,6 @@ public:
   double Lx = 0.0;
   double Ly = 0.0;
   double Lz = 0.0;
-  int nx = 0;
-  int ny = 0;
-  int nz = 0;
   //
   bool filter = false;
   double filter_intv = 0.0;
@@ -305,9 +302,6 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "Lx", Lx);
   write_param(paramsfile, "Ly", Ly);
   write_param(paramsfile, "Lz", Lz);
-  write_param(paramsfile, "nx", nx);
-  write_param(paramsfile, "ny", ny);
-  write_param(paramsfile, "nz", nz);
   write_param(paramsfile, "int_order", int_order);
   write_param(paramsfile, "init_mode", init_mode);
   write_param(paramsfile, "init_weight", init_weight);
