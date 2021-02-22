@@ -1,3 +1,4 @@
+#ifdef USE_DOLFIN
 #include "Tet.hpp"
 
 Tet::Tet(const dolfin::Cell& cell)
@@ -150,3 +151,4 @@ void Tet::quadderiv(double r,
   Nz[perm_[8]] = 4*(s*g4z_+u*g2z_);
   Nz[perm_[9]] = 4*(t*g4z_+u*g3z_);
 }
+#endif

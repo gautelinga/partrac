@@ -1,3 +1,4 @@
+#ifdef USE_DOLFIN
 #ifndef __TETINTERPOL_HPP
 #define __TETINTERPOL_HPP
 
@@ -90,4 +91,5 @@ protected:
   std::array<double, 4> N4_;
 };
 
+#endif
 #endif

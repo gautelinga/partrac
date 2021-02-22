@@ -1,3 +1,4 @@
+#ifdef USE_DOLFIN
 #include "TetInterpol.hpp"
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
@@ -215,3 +216,4 @@ void TetInterpol::probe(const Vector3d &x)
   }
 
 }
+#endif

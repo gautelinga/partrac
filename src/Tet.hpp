@@ -1,3 +1,4 @@
+#ifdef USE_DOLFIN
 #ifndef TET_HPP
 #define TET_HPP
 
@@ -42,4 +43,5 @@ private:
   static constexpr std::array<int, 10> perm_ = {-1,-1,-1,-1, 9,6,8,7,5,4};
 };
 
+#endif
 #endif
