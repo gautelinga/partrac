@@ -29,6 +29,7 @@ void Timestamps::initialize(std::string infilename){
 }
 
 void Timestamps::update(const double){
+  std::cout << "Timestamps::update not implemented" <<std::endl;
   exit(0);
 }
 

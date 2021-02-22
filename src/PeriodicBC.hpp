@@ -1,12 +1,12 @@
-#ifndef PBC_HPP
-#define PBC_HPP
+#ifndef PeriodicBC_HPP
+#define PeriodicBC_HPP
 
 #include <dolfin.h>
 
 
-class PBC : public dolfin::SubDomain {
+class PeriodicBC : public dolfin::SubDomain {
 public:
-  PBC(const std::vector<bool> &periodic,
+  PeriodicBC(const std::vector<bool> &periodic,
       const Vector3d &x_min, const Vector3d &x_max, const Uint dim) {
     periodic_x = periodic[0] && dim > 0;
     periodic_y = periodic[1] && dim > 1;

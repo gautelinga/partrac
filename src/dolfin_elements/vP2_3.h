@@ -707,7 +707,6 @@ public:
                       const ufc::coordinate_mapping * cm=nullptr
                       ) const final override
   {
-    std::cout <<__FUNCTION__<<' '<<__LINE__<<' ' << i <<' '  << std::endl;
     double X[3] = {};
     double J[9];
     double detJ;
@@ -736,14 +735,10 @@ public:
     double ref_values[10];
     evaluate_reference_basis(ref_values, 1, X);
     // Push forward
-    //double physical_values[10];
-    std::array<double, 10> physical_values;
-    transform_reference_basis_derivatives(&physical_values[0], 0, 1, ref_values, X, J, &detJ, K, cell_orientation);
+    double physical_values[10];
+    transform_reference_basis_derivatives(physical_values, 0, 1, ref_values, X, J, &detJ, K, cell_orientation);
     for (std::size_t k = 0; k < 1; ++k)
-    {
-      std::cout <<__FUNCTION__<<' '<<__LINE__<<' ' << i <<' '  << k << std::endl;
-      values[k] = physical_values.at(i + k);
-    }
+        values[k] = physical_values[i + k];
   }
 
   void evaluate_basis_all(double * values,

@@ -1398,7 +1398,7 @@ Uint coarsening(FacesType &faces,
                 Interpol *intp,
                 const double U0, const int int_order,
                 const double curv_refine_factor){
- if (faces.size() > 0){ // TODO: better requirement for injection?
+  if (faces.size() > 0){ // TODO: better requirement for injection?
     return sheet_coarsening(faces, edges,
                             edge2faces, node2edges,
                             edges_inlet, nodes_inlet,

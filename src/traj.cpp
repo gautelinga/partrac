@@ -337,11 +337,7 @@ int main(int argc, char* argv[])
 
   std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
-  std::ofstream declinedfile;
-  // if (prm.compress)
-  //   declinedfile.open(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat.gz", std::ios_base::out | std::ios_base::binary);
-  // else
-  declinedfile.open(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
+  std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
   while (t <= T){
     intp->update(t);
     // Statistics
@@ -355,25 +351,25 @@ int main(int argc, char* argv[])
                   ds_max,
                   do_dump_hist,
                   histfolder,
-                  n_accepted, n_declined, prm.compress);
+                  n_accepted, n_declined);
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
-      prm.t = t;
-      prm.n_accepted = n_accepted;
-      prm.n_declined = n_declined;
-      prm.Nrw = Nrw;
-      prm.dump(checkpointsfolder);
-      dump_positions(checkpointsfolder + "/positions.pos", x_rw, Nrw);
-      dump_faces(checkpointsfolder + "/faces.face", faces);
-      dump_edges(checkpointsfolder + "/edges.edge", edges);
-      dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
-      if (prm.inject){
-        dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
-        dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
-        dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
-        dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
-      }
+       prm.t = t;
+       prm.n_accepted = n_accepted;
+       prm.n_declined = n_declined;
+       prm.Nrw = Nrw;
+       prm.dump(checkpointsfolder);
+       dump_positions(checkpointsfolder + "/positions.pos", x_rw, Nrw);
+       dump_faces(checkpointsfolder + "/faces.face", faces);
+       dump_edges(checkpointsfolder + "/edges.edge", edges);
+       dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+       if (prm.inject){
+         dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+         dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+         dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+         dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+       }
     }
     // Injection
     if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
@@ -391,10 +387,10 @@ int main(int argc, char* argv[])
         if (prm.verbose){
           std::cout << "Added " << pos_inj.size() << " nodes." << std::endl;
           /*
-            std::cout << "at ..." << std::endl;
-            for (Uint irw=irw0; irw<Nrw; ++irw){
+          std::cout << "at ..." << std::endl;
+          for (Uint irw=irw0; irw<Nrw; ++irw){
             std::cout << x_rw[irw][0] << " " << x_rw[irw][1] << " " << x_rw[irw][2] << std::endl;
-            }
+          }
           */
         }
         if (prm.inject_edges){
@@ -492,7 +488,7 @@ int main(int argc, char* argv[])
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        std::cout << "Added " << n_add << " edges. " << "edges: " << edges.size()<<" faces: "<< faces.size() << " Nrw: " << Nrw <<  std::endl;
+        std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
@@ -610,17 +606,10 @@ int main(int argc, char* argv[])
       }
       else {
         n_declined++;
-
-        std::stringstream ss;
-        ss << t << " "
-           << x_rw[irw][0]+dx_rw[0] << " "
-           << x_rw[irw][1]+dx_rw[1] << " "
-           << x_rw[irw][2]+dx_rw[2] << std::endl;
-
-        // if (prm.compress)
-        //   declinedfile << compress(ss.str());
-        // else
-        declinedfile << ss.str();
+        declinedfile << t << " "
+                     << x_rw[irw][0]+dx_rw[0] << " "
+                     << x_rw[irw][1]+dx_rw[1] << " "
+                     << x_rw[irw][2]+dx_rw[2] << std::endl;
       }
     }
     t += dt;
@@ -646,7 +635,7 @@ int main(int argc, char* argv[])
 
   // Close files
   statfile.close();
-  //declinedfile.close();
+  declinedfile.close();
   if (write_mode == "hdf5"){
     h5f->close();
   }

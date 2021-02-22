@@ -5,12 +5,9 @@
 #include <cassert>
 #include "dolfin_elements/P1_3.h"
 #include "dolfin_elements/vP2_3.h"
-#include "PBC.hpp"
+#include "PeriodicBC.hpp"
 
 using namespace H5;
-//using namespace std;
-//using namespace dolfin;
-
 
 TetInterpol::TetInterpol(const std::string infilename)
   : Interpol(infilename)
@@ -100,7 +97,7 @@ TetInterpol::TetInterpol(const std::string infilename)
     dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
 
-  auto constrained_domain = std::make_shared<PBC>(periodic, x_min, x_max, dim);
+  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
   u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
   p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
 

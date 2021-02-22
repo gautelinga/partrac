@@ -27,7 +27,7 @@
 #include "dolfin_elements/P1_3.h"
 #include "dolfin_elements/P2_3.h"
 #include "dolfin_elements/P3_3.h"
-#include "PBC.hpp"
+#include "PeriodicBC.hpp"
 
 
 using namespace H5;
@@ -172,7 +172,7 @@ DolfInterpol::DolfInterpol(const std::string infilename) : Interpol(infilename) 
   //this->Ly = x_max[1]-x_min[1];
   //this->Lz = x_max[2]-x_min[2];
 
-  auto constrained_domain = std::make_shared<PBC>(periodic, x_min, x_max, dim);
+  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
 
   std::string u_el = dolfin_params["velocity_space"];
   std::string p_el = dolfin_params["pressure_space"];
