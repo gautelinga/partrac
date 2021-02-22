@@ -7,8 +7,6 @@
 #include <boost/algorithm/string.hpp>
 #include "io.hpp"
 
-//using namespace std;
-
 double stodouble(const std::string val){
   std::stringstream ss(val);
   double d;
@@ -110,6 +108,7 @@ public:
   std::string tag = "";
   //
   bool random = true;
+  bool compress = false;
 private:
   void write_params_to_file(std::string);
 };
@@ -214,6 +213,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "tag") tag = val;
 
   if (key == "random") random = stobool(val);
+  if (key == "compress") compress = stobool(val);
 }
 
 void Parameters::print(){
@@ -268,6 +268,7 @@ void Parameters::print(){
 
     print_param("tag                ", tag);
     print_param("random             ", bool2string(random));
+    print_param("compress           ", bool2string(compress));
   }
 }
 
@@ -341,6 +342,7 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "tag", tag);
   write_param(paramsfile, "random", bool2string(random));
+  write_param(paramsfile, "compress", bool2string(compress));
 
   paramsfile.close();
 }

@@ -15,8 +15,9 @@ void write_stats(std::ofstream &statfile,
                  const bool do_dump_hist,
                  const std::string histfolder,
                  const unsigned long int n_accepted,
-                 const unsigned long int n_declined
-                 ){
+                 const unsigned long int n_declined,
+                 const bool do_compress)
+{
   double x_mean = 0.;
   double y_mean = 0.;
   double z_mean = 0.;
@@ -153,15 +154,24 @@ void write_stats(std::ofstream &statfile,
     double A0_ = 0.;
     if (do_dump_hist){
       std::sort(logelong_vec.begin(), logelong_vec.end());
-      std::ofstream logelongfile(histfolder + "/logelong_t" + std::to_string(t) + ".hist");
+      std::ofstream logelongfile;
+      if (do_compress)
+        logelongfile.open(histfolder + "/logelong_t" + std::to_string(t) + ".hist.gz", std::ios_base::out | std::ios_base::binary);
+      else
+        logelongfile.open(histfolder + "/logelong_t" + std::to_string(t) + ".hist");
       for (std::vector<std::array<double, 3>>::const_iterator lit=logelong_vec.begin();
            lit != logelong_vec.end(); ++lit){
         A_ += (*lit)[1];
         A0_ += (*lit)[2];
-        logelongfile << (*lit)[0] << " "
-                         << (*lit)[1] << " " << A_ << " " << A_/A << " "
-                         << (*lit)[2] << " " << A0_ << " " << A0_/A0 << " "
-                     << std::endl;
+        std::stringstream ss;
+        ss << (*lit)[0] << " "
+           << (*lit)[1] << " " << A_ << " " << A_/A << " "
+           << (*lit)[2] << " " << A0_ << " " << A0_/A0 << " "
+           << std::endl;
+        // if (do_compress)
+        //   logelongfile << compress(ss.str());
+        // else
+        logelongfile << ss.str();
       }
       logelongfile.close();
     }

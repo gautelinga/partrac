@@ -14,6 +14,12 @@
 #include "typedefs.hpp"
 #include "Interpol.hpp"
 
+// #include <sstream>
+// #include <boost/iostreams/filtering_streambuf.hpp>
+// #include <boost/iostreams/copy.hpp>
+// #include <boost/iostreams/filter/gzip.hpp>
+
+
 class Stamp {
 public:
   Stamp(const double t_in, const std::string filename_in) : t(t_in), filename(filename_in) {};
@@ -417,5 +423,19 @@ static void test_interpolation(Uint num_points, Interpol *intp,
   std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
   ofile.close();
 }
+
+// static std::string compress(const std::string& s)
+// {
+//   std::stringstream compressed;
+//   std::stringstream origin(s);
+
+//   namespace bio = boost::iostreams;
+//   bio::filtering_streambuf<bio::input> out;
+//   out.push(bio::gzip_compressor());
+//   out.push(origin);
+//   bio::copy(out, compressed);
+
+//   return compressed.str();
+// }
 
 #endif
