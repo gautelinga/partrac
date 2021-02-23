@@ -1,0 +1,15 @@
+t_min=0.0
+t_max=10000000.0
+Lx=10.0
+Ly=10.0
+Lz=10.0
+expression=batchelor_vortex
+p_inf=1.0
+u0=1.0
+R1=1.0
+R2=1.0
+q=1.0
+rho=1.0
+x0=5.0
+y0=5.0
+z0=5.0

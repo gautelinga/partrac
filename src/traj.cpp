@@ -5,6 +5,10 @@
 #include "Interpol.hpp"
 #include "StructuredInterpol.hpp"
 #include "AnalyticInterpol.hpp"
+#ifdef USE_DOLFIN
+#include "DolfInterpol.hpp"
+#include "TetInterpol.hpp"
+#endif
 #include "distribute.hpp"
 #include "mesh.hpp"
 #include "stats.hpp"
@@ -14,64 +18,16 @@
 #include <fstream>
 #include <sstream>
 #include <random>
-#include <math.h>
+#include <cmath>
 #include <set>
 #include <iterator>
 #include "H5Cpp.h"
 
 using namespace H5;
 
-void test_interpolation(Uint num_points, Interpol *intp,
-                        const string &newfolder, const double t0,
-                        mt19937 &gen){
-  Uint n = 0;
 
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-
-  intp->update(t0);
-
-  // ofstream nodalfile(newfolder + "/nodal_values.dat");
-  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
-  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
-  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
-  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
-  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
-  //                  intp->get_nodal_uy(ix, iy, iz),
-  //                  intp->get_nodal_uz(ix, iy, iz));
-  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << endl;
-  //     }
-  //   }
-  // }
-  // nodalfile.close();
-
-  uniform_real_distribution<> uni_dist_x(0, Lx);
-  uniform_real_distribution<> uni_dist_y(0, Ly);
-  uniform_real_distribution<> uni_dist_z(0, Lz);
-
-  ofstream ofile(newfolder + "/interpolation.dat");
-  while (n < num_points){
-    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    intp->probe(x);
-    if (intp->inside_domain()){
-      Vector3d u = intp->get_u();
-      double rho = intp->get_rho();
-      double p = intp->get_p();
-      double divu = intp->get_divu();
-      double vortz = intp->get_vortz();
-      ofile << x[0] << " " << x[1] << " " << x[2] << " "
-            << u[0] << " " << u[1] << " " << u[2] << " "
-            << rho << " " << p << " " << divu << " "
-            << vortz << endl;
-    }
-    ++n;
-  }
-  ofile.close();
-}
-
-int main(int argc, char* argv[]){
+int main(int argc, char* argv[])
+{
   // Input parameters
   if (argc < 2) {
     std::cout << "Specify an input timestamps file." << std::endl;
@@ -83,23 +39,35 @@ int main(int argc, char* argv[]){
     prm.parse_cmd(argc, argv);
   }
 
-  string infilename = string(argv[1]);
+  std::string infilename = std::string(argv[1]);
 
   Interpol *intp;
-  string mode = prm.mode;
+  std::string mode = prm.mode;
   if (mode == "analytic"){
-    cout << "AnalyticInterpol initiated." << endl;
+    std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
   }
-  else if (mode == "unstructured" || mode == "fenics"){
-    cout << "FEniCS format is not implemented yet." << endl;
+  else if (mode == "unstructured" || mode == "fenics" || mode == "tet"){
+#ifdef USE_DOLFIN
+    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;
+    if (mode == "tet")
+      intp = new TetInterpol(infilename);
+    else if (mode == "fenics")
+      intp = new DolfInterpol(infilename);
+    else {
+      std::cout << "mode should be fenics or tet" << std::endl;
+      exit(1);
+    }
+#else
+    std::cout << "You have to compile with PARTRAC_ENABLE_FENICS=ON." << std::endl;
     exit(0);
+#endif
   }
   else if (mode == "structured" || mode == "lbm"){
     intp = new StructuredInterpol(infilename);
   }
   else {
-    cout << "Mode not supported." << endl;
+    std::cout << "Mode not supported." << std::endl;
     exit(0);
   }
 
@@ -114,88 +82,116 @@ int main(int argc, char* argv[]){
   double ds_min = prm.ds_min;
   Uint Nrw_max = prm.Nrw_max;
 
-  string folder = intp->get_folder();
-  string rwfolder = create_folder(folder + "/RandomWalkers/");
-  string newfolder;
+  std::string folder = intp->get_folder();
+  std::string rwfolder = create_folder(folder + "/RandomWalkers/");
+  std::string newfolder;
   if (prm.restart_folder != ""){
     newfolder = prm.folder;
   }
   else {
-    ostringstream ss_Dm, ss_dt, ss_Nrw;
+    std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
     ss_Dm << std::scientific << std::setprecision(7) << Dm;
     ss_dt << std::scientific << std::setprecision(7) << dt;
     ss_Nrw << Nrw;
+    ss_seed << prm.seed;
     newfolder = create_folder(rwfolder +
-                              "/Dm" + ss_Dm.str() + // "_U" + to_string(prm.U0) +
+                              "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                               "_dt" + ss_dt.str() +
-                              "_Nrw" + ss_Nrw.str() + "/");
+                              "_Nrw" + ss_Nrw.str() +
+                              "_seed" + ss_seed.str() +
+							  prm.tag + 
+                              "/");
   }
-  string posfolder = create_folder(newfolder + "Positions/");
-  string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
-  string histfolder = create_folder(newfolder + "Histograms/");
+  std::string posfolder = create_folder(newfolder + "Positions/");
+  std::string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
+  std::string histfolder = create_folder(newfolder + "Histograms/");
   prm.folder = newfolder;
 
   prm.print();
 
-  random_device rd;
-  mt19937 gen(rd());
+  std::mt19937 gen;
+  if (prm.random) {
+    std::random_device rd;
+    gen.seed(rd());
+  }
+  else {
+    std::seed_seq rd{prm.seed};
+    gen.seed(rd);
+  }
 
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-  prm.Lx = Lx;
-  prm.Ly = Ly;
-  prm.Lz = Lz;
-  prm.nx = intp->get_nx();
-  prm.ny = intp->get_ny();
-  prm.nz = intp->get_nz();
+  prm.Lx = intp->get_Lx();
+  prm.Ly = intp->get_Ly();
+  prm.Lz = intp->get_Lz();
 
   double U02 = U0*U0;
 
-  double t0 = max(intp->get_t_min(), prm.t0);
-  double T = min(intp->get_t_max(), prm.T);
+  double t0 = std::max(intp->get_t_min(), prm.t0);
+  double T = std::min(intp->get_t_max(), prm.T);
   prm.t0 = t0;
   prm.T = T;
 
   if (prm.interpolation_test > 0){
+    std::cout << "Testing interpolation..." << std::endl;
+    intp->set_int_order(2);
     test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
   }
+  intp->set_int_order(prm.int_order);
 
-  normal_distribution<double> rnd_normal(0.0, 1.0);
+  std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
-  Vector3d* x_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> x_rw(Nrw_max);
 
-  double* c_rw = new double[Nrw_max];
-  double* e_rw = new double[Nrw_max];
-  double* H_rw = new double[Nrw_max];
+  std::vector<double> c_rw(Nrw_max);
+  std::vector<double> e_rw(Nrw_max);
+  std::vector<double> H_rw(Nrw_max);
 
-  Vector3d* n_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> n_rw(Nrw_max);
 
-  Vector3d* u_rw = new Vector3d[Nrw_max];
+  std::vector<Vector3d> u_rw(Nrw_max);
 
-  double* rho_rw = new double[Nrw_max];
-  double* p_rw = new double[Nrw_max];
+  std::vector<double> rho_rw(Nrw_max);
+  std::vector<double> p_rw(Nrw_max);
 
-  // Second-order terms
-  Vector3d* a_rw = new Vector3d[Nrw_max];
-  if (prm.int_order > 2){
-    cout << "No support for such high temporal integration order." << endl;
+  if (prm.inject && prm.filter){
+    std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
-  vector<Vector3d> pos_init;
+  // Second-order terms
+  std::vector<Vector3d> a_rw(Nrw_max);
+  if (prm.int_order > 2){
+    std::cout << "No support for such high temporal integration order." << std::endl;
+    exit(0);
+  }
+
+  std::vector<Vector3d> pos_init;
   EdgesType edges;
   FacesType faces;
 
+  std::vector<Vector3d> pos_inj;
+  EdgesType edges_inj;
+  EdgesListType edges_inlet;
+  NodesListType nodes_inlet;
+
   if (prm.restart_folder != ""){
-    string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
+    std::string posfile = prm.restart_folder + "/Checkpoints/positions.pos";
     load_positions(posfile, pos_init, Nrw);
-    string facefile = prm.restart_folder + "/Checkpoints/faces.face";
+    std::string facefile = prm.restart_folder + "/Checkpoints/faces.face";
     load_faces(facefile, faces);
-    string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
+    std::string edgefile = prm.restart_folder + "/Checkpoints/edges.edge";
     load_edges(edgefile, edges);
-    string colfile = prm.restart_folder + "/Checkpoints/colors.col";
+    std::string colfile = prm.restart_folder + "/Checkpoints/colors.col";
     load_colors(colfile, c_rw, Nrw);
+    if (prm.inject){
+      std::string posinjfile = prm.restart_folder + "/Checkpoints/positions_inj.pos";
+      load_positions(posinjfile, pos_inj);
+      std::string edgesinjfile = prm.restart_folder + "/Checkpoints/edges_inj.edge";
+      load_edges(edgesinjfile, edges_inj);
+      std::string edgesinletfile = prm.restart_folder + "/Checkpoints/edges_inlet.list";
+      std::string nodesinletfile = prm.restart_folder + "/Checkpoints/nodes_inlet.list";
+      load_list(edgesinletfile, edges_inlet);
+      load_list(nodesinletfile, nodes_inlet);
+    }
   }
   else {
     pos_init = initial_positions(prm.init_mode,
@@ -203,9 +199,37 @@ int main(int argc, char* argv[]){
                                  Nrw,
                                  {prm.x0, prm.y0, prm.z0},
                                  prm.La, prm.Lb,
-                                 prm.ds_max, t0,
+                                 prm.ds_init, t0,
                                  intp, gen, edges, faces);
+    if (prm.clear_initial_edges){
+      std::cout << "Clearing initial edges!" << std::endl;
+      edges.clear();
+      faces.clear();
+    }
+    if (prm.inject){
+      pos_inj = pos_init;
+      edges_inj = edges;
+      for (Uint i=0; i<pos_init.size(); ++i){
+        nodes_inlet.push_back(i);
+      }
+      for (Uint i=0; i<edges.size(); ++i){
+        edges_inlet.push_back(i);
+      }
+    }
   }
+
+  if (prm.inject){
+    std::vector<std::string> key = split_string(prm.init_mode, "_");
+    if (key[0] == "uniform"){
+      std::cout << "Injection activated!" << std::endl;
+    }
+    else {
+      std::cout << "init_mode " << prm.init_mode << " incompatible with injection." << std::endl;
+      exit(0);
+    }
+  }
+  // std::cout << "aaa" << std::endl;
+
   // Compute edge2faces map
   Edge2FacesType edge2faces;
   compute_edge2faces(edge2faces, faces, edges);
@@ -214,32 +238,20 @@ int main(int argc, char* argv[]){
   Node2EdgesType node2edges;
   compute_node2edges(node2edges, edges, Nrw);
 
-  for (Uint irw=0; irw < Nrw; ++irw){
-    // Assign initial position
-    x_rw[irw] = pos_init[irw];
+  intp->update(t0);
+  add_particles(pos_init, intp,
+                x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                U0, prm.restart_folder, prm.int_order, 0);
+  // Nrw = pos_init.size();
 
-    if (prm.restart_folder == ""){
-      c_rw[irw] = double(irw)/(Nrw-1);
-    }
-    intp->update(t0);
-    intp->probe(x_rw[irw]);
-    u_rw[irw] = U0*intp->get_u();
-
-    rho_rw[irw] = intp->get_rho();
-    p_rw[irw] = intp->get_p();
-
-    // Second-order terms
-    if (prm.int_order >= 2){
-      a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
-    }
-  }
   // Initial refinement
-  if (refine){
-    cout << "Initial refinement" << endl;
+  if (refine && !prm.inject && edges.size() > 0){
+    std::cout << "Initial refinement" << std::endl;
 
     bool do_output_all = prm.output_all_props && !prm.minimal_output;
     Uint n_add = refinement(faces, edges,
                             edge2faces, node2edges,
+                            edges_inlet,
                             x_rw,
                             u_rw,
                             rho_rw, p_rw, c_rw,
@@ -252,6 +264,7 @@ int main(int argc, char* argv[]){
 
     Uint n_rem = coarsening(faces, edges,
                             edge2faces, node2edges,
+                            edges_inlet, nodes_inlet,
                             x_rw,
                             u_rw,
                             rho_rw, p_rw, c_rw,
@@ -262,9 +275,9 @@ int main(int argc, char* argv[]){
                             U0, prm.int_order,
                             prm.curv_refine_factor);
     if (prm.verbose)
-      cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << endl;
+      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
 
-    // vector<bool> face_isactive(faces.size(), true);
+    // std::vector<bool> face_isactive(faces.size(), true);
     // for (Uint i=0; i<faces.size(); ++i){
     //   face_isactive[i] = x_rw[edges[faces[i].first[0]].first[0]] < 30.0;
     // }
@@ -275,8 +288,8 @@ int main(int argc, char* argv[]){
   }
   // Initial curvature?
   InteriorAnglesType interior_ang;
-  vector<double> mixed_areas;
-  vector<Vector3d> face_normals;
+  std::vector<double> mixed_areas;
+  std::vector<Vector3d> face_normals;
   compute_interior_prop(interior_ang, mixed_areas, face_normals,
                         faces, edges, edge2faces,
                         x_rw, Nrw);
@@ -306,7 +319,7 @@ int main(int argc, char* argv[]){
   unsigned long int n_accepted = prm.n_accepted;
   unsigned long int n_declined = prm.n_declined;
 
-  H5File* h5f = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+  H5File* h5f = new H5File(newfolder + "/data_from_t" + std::to_string(t) + ".h5", H5F_ACC_TRUNC);
 
   Uint int_stat_intv = int(prm.stat_intv/dt);
   Uint int_dump_intv = int(prm.dump_intv/dt);
@@ -315,17 +328,21 @@ int main(int argc, char* argv[]){
   Uint int_refine_intv = int(prm.refine_intv/dt);
   Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
   Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
+  Uint int_inject_intv = int(prm.inject_intv/dt);
 
-  string write_mode = prm.write_mode;
+  bool filter = prm.filter;
+  Uint int_filter_intv = int(prm.filter_intv/dt);
 
-  ofstream statfile(newfolder + "/tdata_from_t" + to_string(t) + ".dat");
+  std::string write_mode = prm.write_mode;
+
+  std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
-  ofstream declinedfile(newfolder + "/declinedpos_from_t" + to_string(t) + ".dat");
+  std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
   while (t <= T){
     intp->update(t);
     // Statistics
     if (it % int_stat_intv == 0){
-      cout << "Time = " << t << endl;
+      std::cout << "Time = " << t << std::endl;
       bool do_dump_hist = (int_hist_intv > 0 && it % int_hist_intv == 0);
       write_stats(statfile, t,
                   x_rw,
@@ -347,6 +364,103 @@ int main(int argc, char* argv[]){
        dump_faces(checkpointsfolder + "/faces.face", faces);
        dump_edges(checkpointsfolder + "/edges.edge", edges);
        dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+       if (prm.inject){
+         dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+         dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+         dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+         dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+       }
+    }
+    // Injection
+    if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
+      if (Nrw + pos_inj.size() <= Nrw_max){
+        Uint irw0 = Nrw;
+        Uint iedge0 = edges.size();
+        Uint iface0 = faces.size();
+        add_particles(pos_inj, intp,
+                      x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                      U0, prm.restart_folder, prm.int_order, irw0);
+        for (Uint irw=0; irw < pos_inj.size(); ++irw){
+          node2edges.push_back({});
+        }
+        Nrw += pos_inj.size();
+        if (prm.verbose){
+          std::cout << "Added " << pos_inj.size() << " nodes." << std::endl;
+          /*
+          std::cout << "at ..." << std::endl;
+          for (Uint irw=irw0; irw<Nrw; ++irw){
+            std::cout << x_rw[irw][0] << " " << x_rw[irw][1] << " " << x_rw[irw][2] << std::endl;
+          }
+          */
+        }
+        if (prm.inject_edges){
+          Uint iedge = iedge0;
+          for (EdgesType::const_iterator edgeit = edges_inj.begin();
+               edgeit != edges_inj.end(); ++edgeit){
+            Uint inode = irw0 + edgeit->first[0];
+            Uint jnode = irw0 + edgeit->first[1];
+            edges.push_back({{inode, jnode}, edgeit->second});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            ++iedge;
+          }
+          // Straight edges
+          for (Uint irw=0; irw < pos_inj.size(); ++irw){
+            Uint inode = irw0+irw; // New node
+            Uint jnode = *std::next(nodes_inlet.begin(), irw); // Old node. do better
+            double ds0 = dist(inode, jnode, x_rw);
+            edges.push_back({{inode, jnode}, ds0});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            ++iedge;
+          }
+          // Diagonal edges
+          Uint iface = iface0;
+          for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
+            Uint kedge = *std::next(edges_inlet.begin(), jedge); // do better!
+            Uint ledge = iedge0+jedge;
+            Uint inode = edges[ledge].first[0]; // New edge
+            Uint lnode = edges[ledge].first[1]; //
+            Uint jnode = edges[kedge].first[1]; // Old edge
+            Uint knode = edges[kedge].first[0]; //
+            double ds0 = dist(inode, jnode, x_rw);
+            edges.push_back({{inode, jnode}, ds0});
+            edge2faces.push_back({});
+            node2edges[inode].push_back(iedge);
+            node2edges[jnode].push_back(iedge);
+            long double dA01 = area(iedge, kedge, x_rw, edges);
+            Uint medge = get_common_entry(node2edges[knode], node2edges[inode]);
+            faces.push_back({{iedge, kedge, medge}, dA01});
+            edge2faces[iedge].push_back(iface);
+            edge2faces[kedge].push_back(iface);
+            edge2faces[medge].push_back(iface);
+            ++iface;
+            long double dA02 = area(iedge, ledge, x_rw, edges);
+            Uint nedge = get_common_entry(node2edges[lnode], node2edges[jnode]);
+            faces.push_back({{iedge, ledge, nedge}, dA02});
+            edge2faces[iedge].push_back(iface);
+            edge2faces[ledge].push_back(iface);
+            edge2faces[nedge].push_back(iface);
+            ++iface;
+            ++iedge;
+          }
+          assert(iedge == edges.size());
+          if (prm.verbose){
+            std::cout << "Added " << iedge-iedge0 << " edges." << std::endl;
+            std::cout << "Added " << faces.size()-iface0 << " faces." << std::endl;
+          }
+          edges_inlet.clear();
+          for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
+            edges_inlet.push_back({iedge0+jedge});
+          }
+        }
+        nodes_inlet.clear();
+        for (Uint irw=0; irw < pos_inj.size(); ++irw){
+          nodes_inlet.push_back(irw0+irw);
+        }
+      }
     }
     // Curvature computation
     if ((refine && it % int_refine_intv == 0) || // Consider other interval
@@ -361,9 +475,9 @@ int main(int argc, char* argv[]){
     }
 
     // Refinement
-    if (refine && it % int_refine_intv == 0){
+    if (refine && it % int_refine_intv == 0 && it > 0){
       bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
-      Uint n_add = refinement(faces, edges, edge2faces, node2edges,
+      Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               x_rw,
                               u_rw,
                               rho_rw, p_rw, c_rw,
@@ -374,13 +488,14 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        cout << "Added " << n_add << " edges." << endl;
+        std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
       bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
       Uint n_rem = coarsening(faces, edges,
                               edge2faces, node2edges,
+                              edges_inlet, nodes_inlet,
                               x_rw,
                               u_rw,
                               rho_rw, p_rw, c_rw,
@@ -391,13 +506,26 @@ int main(int argc, char* argv[]){
                               U0, prm.int_order,
                               prm.curv_refine_factor);
       if (prm.verbose)
-        cout << "Removed " << n_rem << " edges." << endl;
+        std::cout << "Removed " << n_rem << " edges." << std::endl;
+    }
+    // Filtering
+    if (filter && it % int_filter_intv == 0){
+      bool do_output_all = prm.output_all_props && !prm.minimal_output && it % int_dump_intv == 0;
+      bool filtered = filtering(faces, edges,
+                                edge2faces, node2edges,
+                                x_rw, u_rw,
+                                rho_rw, p_rw, c_rw,
+                                H_rw, n_rw,
+                                a_rw, Nrw,
+                                do_output_all, prm.int_order, prm.filter_target);
+      if (prm.verbose && filtered)
+        std::cout << "Filtered edges." << std::endl;
     }
     // Dump detailed data
     if (it % int_dump_intv == 0){
       if (write_mode == "text"){
-        string posfile = posfolder + "xy_t" + to_string(t) + ".pos";
-        ofstream pos_out(posfile);
+        std::string posfile = posfolder + "xy_t" + std::to_string(t) + ".pos";
+        std::ofstream pos_out(posfile);
         posdata2txt(pos_out, x_rw, u_rw, Nrw);
         pos_out.close();
       }
@@ -405,9 +533,9 @@ int main(int argc, char* argv[]){
         // Clear file if it exists, otherwise create
         if (it % int_chunk_intv == 0 && it > 0){
           h5f->close();
-          h5f = new H5File(newfolder + "/data_from_t" + to_string(t) + ".h5", H5F_ACC_TRUNC);
+          h5f = new H5File(newfolder + "/data_from_t" + std::to_string(t) + ".h5", H5F_ACC_TRUNC);
         }
-        string groupname = to_string(t);
+        std::string groupname = std::to_string(t);
         h5f->createGroup(groupname + "/");
 
         if (faces.size() == 0){
@@ -498,6 +626,12 @@ int main(int argc, char* argv[]){
   dump_faces(checkpointsfolder + "/faces.face", faces);
   dump_edges(checkpointsfolder + "/edges.edge", edges);
   dump_colors(checkpointsfolder + "/colors.col", c_rw, Nrw);
+  if (prm.inject){
+    dump_positions(checkpointsfolder + "/positions_inj.pos", pos_inj);
+    dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
+    dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
+    dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
+  }
 
   // Close files
   statfile.close();
@@ -506,5 +640,6 @@ int main(int argc, char* argv[]){
     h5f->close();
   }
 
+  delete intp;
   return 0;
 }

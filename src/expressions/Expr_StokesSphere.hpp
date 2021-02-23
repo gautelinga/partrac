@@ -3,11 +3,11 @@
 #ifndef __EXPR_STOKESSPHERE_HPP
 #define __EXPR_STOKESSPHERE_HPP
 
-using namespace std;
+//using namespace std;
 
 class Expr_StokesSphere : public Expr {
 public:
-  Expr_StokesSphere(map<string, string> &expr_params) : Expr(expr_params) {
+  Expr_StokesSphere(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R = getd(expr_params, "R");
     mu = getd(expr_params, "mu");
     x0 = {getd(expr_params, "x0"),

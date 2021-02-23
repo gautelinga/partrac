@@ -76,8 +76,8 @@ for t in ts:
         col = np.array(h5f[grp + "/c"])
 
     eps = 0
-    if t == ts[0]:
-        eps = 1e-2*np.random.rand(len(pos[:, 1]))
+    #if t == ts[0]:
+    #    eps = 1e-2*np.random.rand(len(pos[:, 1]))
 
     fig, ax = plt.subplots(figsize=(args.size_x, args.size_y))
     x1 = np.remainder(pos[:, pax[0]], L[pax[0]])
@@ -117,9 +117,9 @@ for t in ts:
         order = np.argsort(x1)
         np.savetxt(os.path.join(
             posfolder,
-            "pos_{:06}.pos".format(int(t))),
+            "pos_{:06.6f}.pos".format(t)),
                    np.vstack((x1[order], x2[order], c[order])).T)
     plt.savefig(os.path.join(
         imgfolder,
-        "pos_{:06d}.png".format(int(t))))
+        "pos_{:06.6f}.png".format(t)))
     plt.close()

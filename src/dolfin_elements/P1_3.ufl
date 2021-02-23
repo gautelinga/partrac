@@ -1,0 +1,5 @@
+# A continuous P1 element
+#
+# Compile this form with FFC: ffc -l dolfin P1_3.ufl
+
+element = FiniteElement("Lagrange", tetrahedron, 1)

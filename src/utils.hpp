@@ -1,41 +1,31 @@
+#ifndef __UTILS_HPP
+#define __UTILS_HPP
+
 #include <iostream>
-#include <math.h>
+#include <cmath>
 #include <numeric>
 #include <algorithm>
 #include <vector>
 #include <list>
 #include <set>
 #include <Eigen/Dense>
-
-#ifndef __UTILS_HPP
-#define __UTILS_HPP
-
-using namespace std;
-
-typedef size_t Uint;
-
-typedef vector<pair<array<Uint, 2>, double>> EdgesType;
-typedef vector<pair<array<Uint, 3>, double>> FacesType;
-typedef list<Uint> FacesListType;
-typedef list<Uint> EdgesListType;
-typedef vector<FacesListType> Edge2FacesType;
-typedef vector<EdgesListType> Node2EdgesType;
-typedef vector<map<Uint, double>> InteriorAnglesType;
-typedef Eigen::Vector3d Vector3d;
-typedef Eigen::Matrix3d Matrix3d;
+#include <random>
+#include <fstream>
+#include "typedefs.hpp"
+#include "Interpol.hpp"
 
 class Stamp {
 public:
-  Stamp(const double t_in, const string filename_in) : t(t_in), filename(filename_in) {};
+  Stamp(const double t_in, const std::string filename_in) : t(t_in), filename(filename_in) {};
   ~Stamp() {};
   double t;
-  string filename;
+  std::string filename;
 };
 
 class StampPair {
 public:
-  StampPair(const double t_prev, const string filename_prev,
-	    const double t_next, const string filename_next) :
+  StampPair(const double t_prev, const std::string filename_prev,
+	    const double t_next, const std::string filename_next) :
     prev(t_prev, filename_prev), next(t_next, filename_next) {};
   Stamp prev;
   Stamp next;
@@ -43,7 +33,7 @@ public:
   double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 
-double modulox(const double x, const double L){
+static double modulox(const double x, const double L){
   if (x > 0){
     return fmod(x, L);
   }
@@ -52,11 +42,11 @@ double modulox(const double x, const double L){
   }
 }
 
-Uint imodulo(const int a, const int b) {
+static Uint imodulo(const int a, const int b) {
   return ((a % b) + b) % b;
 }
 
-double interpolate(const double x,
+static double interpolate(const double x,
 		   const double y,
 		   const double z,
 		   double*** C,
@@ -117,7 +107,7 @@ double interpolate(const double x,
   return f;
 }
 
-double weighted_sum(double*** C,
+static double weighted_sum(double*** C,
                     const Uint ind[3][2],
                     const double w[2][2][2]){
   double f = 0.0;
@@ -131,87 +121,87 @@ double weighted_sum(double*** C,
   return f;
 }
 
-double norm(const double x, const double y, const double z){
+static double norm(const double x, const double y, const double z){
   return sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
 }
 
-double norm(const Vector3d &r){
+static double norm(const Vector3d &r){
   return r.norm();
 }
 
-double dist(const Uint i1, const Uint i2, Vector3d* x_rw){
+static double dist(const Uint i1, const Uint i2, std::vector<Vector3d>& x_rw){
   Vector3d dr = x_rw[i1]-x_rw[i2];
   return dr.norm();
 }
 
-double dist(const Vector3d &pta, const Vector3d &ptb){
+static double dist(const Vector3d &pta, const Vector3d &ptb){
   Vector3d dr = pta-ptb;
   return dr.norm();
 }
 
-double dot(const Vector3d &a, const Vector3d &b){
+static double dot(const Vector3d &a, const Vector3d &b){
   return a.dot(b);
 }
 
-Vector3d diff(const Vector3d &a, const Vector3d &b){
+static Vector3d diff(const Vector3d &a, const Vector3d &b){
   return a-b;
 }
 
-Vector3d cross(const Vector3d &a, const Vector3d &b){
+static Vector3d cross(const Vector3d &a, const Vector3d &b){
   return a.cross(b);
 }
 
-double get_abs_angle(const Vector3d &a, const Vector3d &b){
+static double get_abs_angle(const Vector3d &a, const Vector3d &b){
   double costheta = a.dot(b)/(a.norm()*b.norm());
   return acos(costheta);
 }
 
-long double area(const Uint iedge, const Uint jedge,
-                 Vector3d* x_rw,
+static long double area(const Uint iedge, const Uint jedge,
+                 std::vector<Vector3d>& x_rw,
                  const EdgesType& edges){
   Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
   Vector3d b = x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]];
   return a.cross(b).norm()/2;
 }
 
-long double area(const Uint iface, Vector3d* x_rw,
+static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
                  const FacesType& faces, const EdgesType& edges){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return area(iedge, jedge, x_rw, edges);
 }
 
-vector<size_t> argsort_descending(const vector<double> &v){
-  vector<size_t> idx(v.size());
+static std::vector<size_t> argsort_descending(const std::vector<double> &v){
+  std::vector<size_t> idx(v.size());
   iota(idx.begin(), idx.end(), 0);
   stable_sort(idx.begin(), idx.end(),
               [&v](size_t i1, size_t i2) {return v[i1] > v[i2]; });
   return idx;
 }
 
-Uint get_intersection(const array<Uint, 2> &a, const array<Uint, 2> &b){
-  for (array<Uint, 2>::const_iterator ait=a.begin();
+static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
+  for (std::array<Uint, 2>::const_iterator ait=a.begin();
        ait != a.end(); ++ait){
-    for (array<Uint, 2>::const_iterator bit=b.begin();
+    for (std::array<Uint, 2>::const_iterator bit=b.begin();
          bit != b.end(); ++bit){
       if (*ait == *bit){
         return *ait;
       }
     }
   }
-  cout << "Error: found no intersection." << endl;
+  std::cout << "Error: found no intersection." << std::endl;
   exit(0);
   return 0;
 }
 
-Uint get_other(const Uint i, const Uint j, const Uint k){
+static Uint get_other(const Uint i, const Uint j, const Uint k){
   if (i==k)
     return j;
   assert(j==k);
   return i;
 }
 
-double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
+static double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
   Vector3d D((B-A).cross(C-A));
   double b = (A-C).norm();
   double c = (A-B).norm();
@@ -220,28 +210,28 @@ double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
 }
 
 template<typename T>
-bool contains(const set<T>& container, const T &elem){
+bool contains(const std::set<T>& container, const T &elem){
   return container.find(elem) != container.end();
 }
 
 template<typename T1, typename T2>
-bool contains(const map<T1, T2>& container, const T1 &elem){
+bool contains(const std::map<T1, T2>& container, const T1 &elem){
   return container.find(elem) != container.end();
 }
 
-Vector3d vec_repl(const Uint inode,
-                  Vector3d* x_rw,
-                  const set<Uint> repl_nodes,
+static Vector3d vec_repl(const Uint inode,
+                  std::vector<Vector3d>& x_rw,
+                  const std::set<Uint> repl_nodes,
                   const Vector3d &x){
   if (contains(repl_nodes, inode))
     return x;
   return x_rw[inode];
 }
 
-Vector3d get_normal(const Uint iface,
+static Vector3d get_normal(const Uint iface,
                     const FacesType &faces,
                     const EdgesType &edges,
-                    Vector3d* x_rw){
+                    std::vector<Vector3d>& x_rw){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   Uint i00 = edges[iedge].first[0];
@@ -255,10 +245,10 @@ Vector3d get_normal(const Uint iface,
   return crossprod/crossprod.norm();
 }
 
-Vector3d get_normal(const Uint jedge, const Uint kedge,
+static Vector3d get_normal(const Uint jedge, const Uint kedge,
                     const EdgesType &edges,
-                    Vector3d* x_rw,
-                    const set<Uint> repl_nodes,
+                    std::vector<Vector3d>& x_rw,
+                    const std::set<Uint> repl_nodes,
                     const Vector3d &x){
   Vector3d drj = vec_repl(edges[jedge].first[1], x_rw, repl_nodes, x)
     - vec_repl(edges[jedge].first[0], x_rw, repl_nodes, x);
@@ -267,15 +257,165 @@ Vector3d get_normal(const Uint jedge, const Uint kedge,
   return drj.cross(drk);
 }
 
-double getd(map<string, string> &expr_params, const string key){
+static double getd(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stod(expr_params[key]);
   }
   else {
-    cout << "Missing key: " << key << endl;
+    std::cout << "Missing key: " << key << std::endl;
     exit(0);
     return 0.;
   }
+}
+
+static double geti(std::map<std::string, std::string> &expr_params, const std::string key){
+  if (expr_params.find(key) != expr_params.end()){
+    return stoi(expr_params[key]);
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+    return 0;
+  }
+}
+
+static std::vector<std::string> split_string(const std::string s, const std::string delim){
+  std::vector<std::string> s_;
+  auto start = 0U;
+  auto end = s.find(delim);
+  while (end != std::string::npos){
+    s_.push_back(s.substr(start, end-start));
+    start = end + delim.length();
+    end = s.find(delim, start);
+  }
+  s_.push_back(s.substr(start, end));
+  return s_;
+}
+
+static bool contains(const std::string s, const std::string c){
+  return (s.find(c) != std::string::npos);
+}
+
+static std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
+                       const std::string key){
+  std::string token = ",";
+  std::vector<double> dvec;
+  if (expr_params.find(key) != expr_params.end()){
+    std::string str = expr_params[key];
+    while (str.size()){
+      Uint index = str.find(token);
+      if (index != std::string::npos){
+        dvec.push_back(stod(str.substr(0, index)));
+        str = str.substr(index+token.size());
+        if (str.size() == 0) {
+          dvec.push_back(stod(str));
+        }
+      }
+      else {
+        dvec.push_back(stod(str));
+        str = "";
+      }
+    }
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+  }
+  return dvec;
+}
+
+static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
+                    const std::string key){
+  std::string token = ",";
+  std::vector<int> ivec;
+  if (expr_params.find(key) != expr_params.end()){
+    std::string str = expr_params[key];
+    while (str.size()){
+      Uint index = str.find(token);
+      if (index != std::string::npos){
+        ivec.push_back(stoi(str.substr(0, index)));
+        str = str.substr(index+token.size());
+        if (str.size() == 0) {
+          ivec.push_back(stoi(str));
+        }
+      }
+      else {
+        ivec.push_back(stoi(str));
+        str = "";
+      }
+    }
+  }
+  else {
+    std::cout << "Missing key: " << key << std::endl;
+    exit(0);
+  }
+  return ivec;
+}
+
+static void test_interpolation(Uint num_points, Interpol *intp,
+                        const std::string &newfolder, const double t0,
+                        std::mt19937 &gen){
+  Uint n = 0;
+  Uint n_inside = 0;
+
+  Vector3d x_min = intp->get_x_min();
+  Vector3d x_max = intp->get_x_max();
+
+  double Lx = intp->get_Lx();
+  double Ly = intp->get_Ly();
+  double Lz = intp->get_Lz();
+
+  std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
+
+  intp->update(t0);
+
+  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
+  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
+  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
+  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
+  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
+  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
+  //                  intp->get_nodal_uy(ix, iy, iz),
+  //                  intp->get_nodal_uz(ix, iy, iz));
+  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
+  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
+  //     }
+  //   }
+  // }
+  // nodalfile.close();
+
+  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
+
+  std::ofstream ofile(newfolder + "/interpolation.txt");
+  while (n < num_points){
+    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
+    //std::cout << x << std::endl;
+    intp->probe(x);
+    if (intp->inside_domain()){
+      std::string sep = ",";
+      Vector3d u = intp->get_u();
+      double rho = intp->get_rho();
+      double p = intp->get_p();
+      double divu = intp->get_divu();
+      double vortz = intp->get_vortz();
+      ofile << x[0] << sep << x[1] << sep << x[2] << sep
+            << u[0] << sep << u[1] << sep << u[2] << sep
+            << rho << sep << p << sep << divu << sep
+            << vortz << sep
+            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
+            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
+            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
+            << std::endl;
+      ++n_inside;
+    }
+    ++n;
+  }
+  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
+  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
+  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
+  ofile.close();
 }
 
 #endif

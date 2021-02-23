@@ -1,23 +1,22 @@
-#include "utils.hpp"
-
 #ifndef __STATS_HPP
 #define __STATS_HPP
 
-using namespace std;
+#include "utils.hpp"
 
-void write_stats(ofstream &statfile,
+
+void write_stats(std::ofstream &statfile,
                  const double t,
-                 Vector3d* x_rw,
-                 Vector3d* u_rw,
+                 std::vector<Vector3d>& x_rw,
+                 std::vector<Vector3d>& u_rw,
                  const Uint Nrw,
                  FacesType &faces,
                  EdgesType &edges,
                  const double ds_max,
                  const bool do_dump_hist,
-                 const string histfolder,
+                 const std::string histfolder,
                  const unsigned long int n_accepted,
-                 const unsigned long int n_declined
-                 ){
+                 const unsigned long int n_declined)
+{
   double x_mean = 0.;
   double y_mean = 0.;
   double z_mean = 0.;
@@ -63,7 +62,7 @@ void write_stats(ofstream &statfile,
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
     double s0 = 0.;
-    vector<array<double, 3>> logelong_vec;
+    std::vector<std::array<double, 3>> logelong_vec;
     for (EdgesType::const_iterator edgeit = edges.begin();
          edgeit != edges.end(); ++edgeit){
       int inode = edgeit->first[0];
@@ -87,7 +86,7 @@ void write_stats(ofstream &statfile,
     if (faces.size() == 0){
       double logelong_wvar = 0.;
       double logelong_w0var = 0.;
-      for (vector<array<double, 3>>::const_iterator lit = logelong_vec.begin();
+      for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
            lit != logelong_vec.end(); ++lit){
         logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
         logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
@@ -97,16 +96,16 @@ void write_stats(ofstream &statfile,
       double s_ = 0.;
       double s0_ = 0.;
       if (do_dump_hist){
-        sort(logelong_vec.begin(), logelong_vec.end());
-        ofstream logelongfile(histfolder + "/logelong_t" + to_string(t) + ".hist");
-        for (vector<array<double, 3>>::const_iterator lit = logelong_vec.begin();
+        std::sort(logelong_vec.begin(), logelong_vec.end());
+        std::ofstream logelongfile(histfolder + "/logelong_t" + std::to_string(t) + ".hist");
+        for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
              lit != logelong_vec.end(); ++lit){
           s_ += (*lit)[1];
           s0_ += (*lit)[2];
           logelongfile << (*lit)[0] << " "
-                      << (*lit)[1] << " " << s_ << " " << s_/s << " "
-                      << (*lit)[2] << " " << s0_ << " " << s0_/s0 << " "
-                      << endl;
+                       << (*lit)[1] << " " << s_ << " " << s_/s << " "
+                       << (*lit)[2] << " " << s0_ << " " << s0_/s0 << " "
+                       << std::endl;
         }
         logelongfile.close();
       }
@@ -124,7 +123,7 @@ void write_stats(ofstream &statfile,
     double A0 = 0.;
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
-    vector<array<double, 3>> logelong_vec;
+    std::vector<std::array<double, 3>> logelong_vec;
     for (FacesType::const_iterator faceit = faces.begin();
          faceit != faces.end(); ++faceit){
       Uint iedge = faceit->first[0];
@@ -143,7 +142,7 @@ void write_stats(ofstream &statfile,
     logelong_w0mean /= A0;
     double logelong_wvar = 0.;
     double logelong_w0var = 0.;
-    for (vector<array<double, 3>>::const_iterator lit = logelong_vec.begin();
+    for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
          lit != logelong_vec.end(); ++lit){
       logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
       logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[1];
@@ -153,16 +152,16 @@ void write_stats(ofstream &statfile,
     double A_ = 0.;
     double A0_ = 0.;
     if (do_dump_hist){
-      sort(logelong_vec.begin(), logelong_vec.end());
-      ofstream logelongfile(histfolder + "/logelong_t" + to_string(t) + ".hist");
-      for (vector<array<double, 3>>::const_iterator lit=logelong_vec.begin();
+      std::sort(logelong_vec.begin(), logelong_vec.end());
+      std::ofstream logelongfile(histfolder + "/logelong_t" + std::to_string(t) + ".hist");
+      for (std::vector<std::array<double, 3>>::const_iterator lit=logelong_vec.begin();
            lit != logelong_vec.end(); ++lit){
         A_ += (*lit)[1];
         A0_ += (*lit)[2];
         logelongfile << (*lit)[0] << " "
                          << (*lit)[1] << " " << A_ << " " << A_/A << " "
                          << (*lit)[2] << " " << A0_ << " " << A0_/A0 << " "
-                         << endl;
+                     << std::endl;
       }
       logelongfile.close();
     }
@@ -176,7 +175,7 @@ void write_stats(ofstream &statfile,
   statfile << std::endl;
 }
 
-void write_stats_header(ofstream &statfile,
+void write_stats_header(std::ofstream &statfile,
                         const FacesType &faces,
                         const EdgesType &edges){
   statfile << "# t" << "\t"                   //  1
@@ -211,7 +210,7 @@ void write_stats_header(ofstream &statfile,
              << "logelong_w0mean" << "\t" // 19
              << "logelong_w0var" << "\t"; // 20
   }
-  statfile << endl;
+  statfile << std::endl;
 }
 
 #endif

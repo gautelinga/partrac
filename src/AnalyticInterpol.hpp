@@ -1,16 +1,19 @@
 #include "Interpol.hpp"
 #include "utils.hpp"
 #include "expressions/Expr_StokesSphere.hpp"
+#include "expressions/Expr_SineFlow.hpp"
+#include "expressions/Expr_BatchelorVortex.hpp"
+#include "expressions/Expr_ABCFlow.hpp"
 #include <fstream>
 
 #ifndef __ANALYTICINTERPOL_HPP
 #define __ANALYTICINTERPOL_HPP
 
-using namespace std;
+//using namespace std;
 
 class AnalyticInterpol : public Interpol {
 public:
-  AnalyticInterpol(const string infilename);
+  AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t=t; };
   void probe(const Vector3d &x) { expr->eval(x, t); };
   bool inside_domain() { return expr->inside(); };
@@ -36,21 +39,21 @@ public:
   Matrix3d get_grada() { return expr->grada(); };
 protected:
   double t;
-  map<string, string> expr_params;
+  std::map<std::string, std::string> expr_params;
   Expr* expr;
 };
 
-AnalyticInterpol::AnalyticInterpol(const string infilename) : Interpol(infilename) {
-  ifstream input(infilename);
+AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infilename) {
+  std::ifstream input(infilename);
   if (!input){
-    cout << "File " << infilename <<" doesn't exist." << endl;
+    std::cout << "File " << infilename <<" doesn't exist." << std::endl;
     exit(0);
   }
   size_t found;
-  string key, val;
-  for (string line; getline(input, line); ){
+  std::string key, val;
+  for (std::string line; getline(input, line); ){
     found = line.find('=');
-    if (found != string::npos){
+    if (found != std::string::npos){
       key = line.substr(0, found);
       val = line.substr(found+1);
       boost::trim(key);
@@ -63,19 +66,30 @@ AnalyticInterpol::AnalyticInterpol(const string infilename) : Interpol(infilenam
   set_folder(infilename.substr(0, botDirPos));
 
   this->t = get_t_min();
-  this->nx = 0;
-  this->ny = 0;
-  this->nz = 0;
-  Lx = getd(expr_params, "Lx");
-  Ly = getd(expr_params, "Ly");
-  Lz = getd(expr_params, "Lz");
+  this->x_min << getd(expr_params, "x_min"), getd(expr_params, "y_min"), getd(expr_params, "z_min");
+  this->x_max << getd(expr_params, "x_max"), getd(expr_params, "y_max"), getd(expr_params, "z_max");
 
   if (expr_params["expression"] == "stokes_sphere" || expr_params["expression"] == "StokesSphere"){
-    cout << "StokesSphere selected" << endl;
+    std::cout << "StokesSphere selected" << std::endl;
     expr = new Expr_StokesSphere(expr_params);
   }
+  else if (expr_params["expression"] == "sine_flow" ||
+           expr_params["expression"] == "SineFlow"){
+    std::cout << "SineFlow selected" << std::endl;
+    expr = new Expr_SineFlow(expr_params);
+  }
+  else if (expr_params["expression"] == "batchelor_vortex" ||
+           expr_params["expression"] == "BatchelorVortex"){
+    std::cout << "BatchelorVortex selected" << std::endl;
+    expr = new Expr_BatchelorVortex(expr_params);
+  }
+  else if (expr_params["expression"] == "abc_flow" ||
+           expr_params["expression"] == "ABCFlow"){
+    std::cout << "ABC Flow selected" << std::endl;
+    expr = new Expr_ABCFlow(expr_params);
+  }
   else {
-    cout << "Could not find expression: " << expr_params[""] << endl;
+    std::cout << "Could not find expression: " << expr_params[""] << std::endl;
     exit(0);
   }
 }

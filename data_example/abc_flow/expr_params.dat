@@ -1,0 +1,15 @@
+t_min=0.0
+t_max=10000000.0
+Lx=10.0
+Ly=10.0
+Lz=10.0
+expression=abc_flow
+p_inf=0.0
+rho=1.0
+A=1.0
+B=1.0
+C=1.0
+L=10
+x0=5.0
+y0=5.0
+z0=5.0
