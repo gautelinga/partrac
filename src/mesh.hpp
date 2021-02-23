@@ -349,6 +349,7 @@ bool append_new_node(const Uint inode, const Uint jnode,
     intp->probe(x_rw_new + dx0*n0);
     //exit(0);
     if (!intp->inside_domain()){
+      std::cout << "Insertion failed! Information:" << std::endl;
       std::cout << n0 << std::endl;
       std::cout << dx0 << std::endl;
       std::cout << x_rw_new << std::endl;
