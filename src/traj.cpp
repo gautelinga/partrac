@@ -8,6 +8,7 @@
 #ifdef USE_DOLFIN
 #include "DolfInterpol.hpp"
 #include "TetInterpol.hpp"
+#include "TriangleInterpol.hpp"
 #endif
 #include "distribute.hpp"
 #include "mesh.hpp"
@@ -22,6 +23,7 @@
 #include <set>
 #include <iterator>
 #include "H5Cpp.h"
+#include <ctime>
 
 using namespace H5;
 
@@ -47,15 +49,21 @@ int main(int argc, char* argv[])
     std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
   }
-  else if (mode == "unstructured" || mode == "fenics" || mode == "tet"){
+  else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
+           mode == "tet" || mode == "triangle"){
 #ifdef USE_DOLFIN
-    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;
     if (mode == "tet")
       intp = new TetInterpol(infilename);
+    else if (mode == "triangle")
+      intp = new TriangleInterpol(infilename);
     else if (mode == "fenics")
       intp = new DolfInterpol(infilename);
+    else if (mode == "xdmf"){
+      std::cout << "XDMF format is not implemented yet." << std::endl;
+      exit(0);
+    }
     else {
-      std::cout << "mode should be fenics or tet" << std::endl;
+      std::cout << "mode should be fenics, tet or triangle" << std::endl;
       exit(1);
     }
 #else
@@ -338,6 +346,9 @@ int main(int argc, char* argv[])
   std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
   std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
+
+  // Simulation start
+  std::clock_t clock_0 = std::clock();
   while (t <= T){
     intp->update(t);
     // Statistics
@@ -615,6 +626,9 @@ int main(int argc, char* argv[])
     t += dt;
     it += 1;
   }
+  std::clock_t clock_1 = std::clock();
+  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
+  std::cout << "Total simulation time: " << duration << std::endl;
 
   // Final checkpoint
   prm.t = t;

@@ -1,5 +1,5 @@
-#ifndef __DOLFININTERPOL_HPP
-#define __DOLFININTERPOL_HPP
+#ifndef __DOLFINTERPOL_HPP
+#define __DOLFINTERPOL_HPP
 
 #include <memory>
 #include "Interpol.hpp"
