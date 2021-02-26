@@ -181,6 +181,18 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
     exit(0);
   }
 
+  if (key[0] == "point"){
+    std::vector<Vector3d> pos_init;
+    intp->probe(x0);
+    for (Uint irw=0; irw < Nrw; ++irw){
+      if (intp->inside_domain()){
+        pos_init.push_back(x0);
+      }
+    }
+    edges.clear();
+    return pos_init;
+  }
+
   if (key[0] == "uniform"){
     std::vector<Vector3d> pos_init;
 
