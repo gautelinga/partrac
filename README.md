@@ -1,5 +1,11 @@
 # partrac
-**partrac** is a **par**ticle **trac**ker that uses trilinear interpolation of cubically ordered velocity data to advect passive (possibly diffusive) particles. The typical input for **partrac** is the output of the Lattice Boltzmann code FELBM, but any other data can be used as input by a suitable conversion. It is written in C++.
+**partrac** is a **par**ticle **trac**ker that can advect passive (possibly diffusive) particles in time-dependent velocity fields. On top of this, stretching of lines and sheets with automatic refinement/coarsening is possible. We plan to fully implement the diffusive strip/method on top of this. It is written in C++.
+
+## Input modes
+* `structured/lbm`: Uses trilinear interpolation of cubically ordered velocity data. The typical input for **partrac** is the output of the Lattice Boltzmann code FELBM, but any other data can be used as input by a suitable conversion.
+* `fenics`: Uses unstructured meshes, in the form of Fenics/Dolfin HDF5 files.
+* `triangle/tet`: Better and faster implementation of `fenics`.
+* `analytic`: Analytic input
 
 ## Conversion from FELBM output
 `parse_xdmf.py` translates from FELBM output XDMF file to **partrac** input. This is run by:
@@ -8,7 +14,11 @@ This creates a file `timestamps.dat` in the same folder as `output.xdmf` that is
 
 ## Compilation
 Straightforward:
-`make clean && make`
+```
+cmake .
+make
+sudo make install
+```
 
 ## Running
 Passive tracers example:
