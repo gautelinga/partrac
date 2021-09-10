@@ -5,6 +5,7 @@
 #include <boost/algorithm/string.hpp>
 #include <cassert>
 #include "dolfin_elements/P1_3.h"
+#include "dolfin_elements/P2_3.h"
 #include "dolfin_elements/vP1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "PeriodicBC.hpp"
@@ -125,6 +126,10 @@ TetInterpol::TetInterpol(const std::string infilename)
     p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
     ncoeffs_p = 4;
   }
+  else if (p_el == "P2"){
+    p_space_ = std::make_shared<P2_3::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_p = 10;
+  }
   else {
     std::cout << "Unrecognized pressure element: " << p_el << std::endl;
     exit(0);
@@ -204,7 +209,16 @@ void TetInterpol::probe(const Vector3d &x)
       std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
       exit(0);
     }
-    tets_[id].linearbasis(r, s, t, u, Np_);
+    if (ncoeffs_p == 4){
+      tets_[id].linearbasis(r, s, t, u, Np_);
+    }
+    else if (ncoeffs_p == 10){
+      tets_[id].quadbasis(r, s, t, u, Np_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
+      exit(0);
+    }
 
     // Restrict solution to cell
     u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
