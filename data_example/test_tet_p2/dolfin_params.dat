@@ -6,3 +6,4 @@ periodic_x=true
 periodic_y=true
 periodic_z=true
 rho=1.0
+ignore_pressure=true

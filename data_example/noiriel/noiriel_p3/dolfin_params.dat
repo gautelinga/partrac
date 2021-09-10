@@ -1,0 +1,10 @@
+velocity_space=P1
+pressure_space=P1
+timestamps=timestamps.dat
+velocity_field=velocity
+mesh=noiriel_p3_fluid.hdf5
+periodic_x=false
+periodic_y=false
+periodic_z=false
+rho=1.0
+ignore_pressure=true

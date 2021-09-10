@@ -65,6 +65,8 @@ protected:
 
   std::map<std::string, std::string> dolfin_params;
 
+  bool include_pressure = true;
+
   std::shared_ptr<dolfin::Mesh> mesh;
   Uint dim;
 
