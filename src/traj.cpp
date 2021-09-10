@@ -107,7 +107,7 @@ int main(int argc, char* argv[])
                               "_dt" + ss_dt.str() +
                               "_Nrw" + ss_Nrw.str() +
                               "_seed" + ss_seed.str() +
-							  prm.tag + 
+							  prm.tag +
                               "/");
   }
   std::string posfolder = create_folder(newfolder + "Positions/");

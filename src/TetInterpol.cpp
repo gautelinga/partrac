@@ -5,6 +5,7 @@
 #include <boost/algorithm/string.hpp>
 #include <cassert>
 #include "dolfin_elements/P1_3.h"
+#include "dolfin_elements/vP1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "PeriodicBC.hpp"
 
@@ -99,14 +100,51 @@ TetInterpol::TetInterpol(const std::string infilename)
   }
 
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
-  u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
-  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+
+  // u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
+  // p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+
+  std::string u_el = dolfin_params["velocity_space"];
+  std::string p_el = dolfin_params["pressure_space"];
+
+  // Velocity
+  if (u_el == "P1"){
+    u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_u = 4;
+  }
+  else if (u_el == "P2"){
+    u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_u = 10;
+  }
+  else {
+    std::cout << "Unrecognized velocity element: " << u_el << std::endl;
+    exit(0);
+  }
+  // Pressure
+  if (p_el == "P1"){
+    p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_p = 4;
+  }
+  else {
+    std::cout << "Unrecognized pressure element: " << p_el << std::endl;
+    exit(0);
+  }
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
   p_prev_ = std::make_shared<dolfin::Function>(p_space_);
   p_next_ = std::make_shared<dolfin::Function>(p_space_);
 
+  u_prev_coefficients_.resize(3*ncoeffs_u);
+  u_next_coefficients_.resize(3*ncoeffs_u);
+  p_prev_coefficients_.resize(ncoeffs_p);
+  p_next_coefficients_.resize(ncoeffs_p);
+
+  Nu_.resize(ncoeffs_u);
+  Nux_.resize(ncoeffs_u);
+  Nuy_.resize(ncoeffs_u);
+  Nuz_.resize(ncoeffs_u);
+  Np_.resize(ncoeffs_p);
 }
 
 void TetInterpol::update(const double t)
@@ -154,10 +192,19 @@ void TetInterpol::probe(const Vector3d &x)
   if (inside)
   {
     // Compute P2-P1 basis at x
-    double r,s,t,u;
-    tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r,s,t,u);
-    tets_[id].quadbasis(r,s,t,u, N10_);
-    tets_[id].linearbasis(r,s,t,u, N4_);
+    double r, s, t, u;
+    tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r, s, t, u);
+    if (ncoeffs_u == 4){
+      tets_[id].linearbasis(r, s, t, u, Nu_);
+    }
+    else if (ncoeffs_u == 10){
+      tets_[id].quadbasis(r, s, t, u, Nu_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+      exit(0);
+    }
+    tets_[id].linearbasis(r, s, t, u, Np_);
 
     // Restrict solution to cell
     u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
@@ -170,15 +217,17 @@ void TetInterpol::probe(const Vector3d &x)
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
 
     // Evaluate
-    double P_prev = std::inner_product(N4_.begin(), N4_.end(), p_prev_coefficients_.begin(), 0.0);
-    double P_next = std::inner_product(N4_.begin(), N4_.end(), p_next_coefficients_.begin(), 0.0);
+    double P_prev = std::inner_product(Np_.begin(), Np_.end(), p_prev_coefficients_.begin(), 0.0);
+    double P_next = std::inner_product(Np_.begin(), Np_.end(), p_next_coefficients_.begin(), 0.0);
+    // else unrecognized element
 
-    Vector3d U_prev = {std::inner_product(N10_.begin(), N10_.end(), u_prev_coefficients_.begin(), 0.0),
-      std::inner_product(N10_.begin(), N10_.end(), &u_prev_coefficients_[10], 0.0),
-      std::inner_product(N10_.begin(), N10_.end(), &u_prev_coefficients_[20], 0.0) };
-    Vector3d U_next = {std::inner_product(N10_.begin(), N10_.end(), u_next_coefficients_.begin(), 0.0),
-      std::inner_product(N10_.begin(), N10_.end(), &u_next_coefficients_[10], 0.0),
-      std::inner_product(N10_.begin(), N10_.end(), &u_next_coefficients_[20], 0.0) };
+    Vector3d U_prev = {std::inner_product(Nu_.begin(), Nu_.end(), u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0)};
+    Vector3d U_next = {std::inner_product(Nu_.begin(), Nu_.end(), u_next_coefficients_.begin(), 0.0),
+      std::inner_product(Nu_.begin(), Nu_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nu_.begin(), Nu_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0)};
+    // else unrecognized element
 
     // Update
     U = alpha_t * U_next + (1-alpha_t) * U_prev;
@@ -186,27 +235,36 @@ void TetInterpol::probe(const Vector3d &x)
     P = alpha_t * P_next + (1-alpha_t) * P_prev;
 
     if (this->int_order > 1){
-      tets_[id].quadderiv(r,s,t,u, Nx_,Ny_,Nz_);
+      if (ncoeffs_u == 4){
+        tets_[id].linearderiv(r, s, t, u, Nux_, Nuy_, Nuz_);
+      }
+      else if (ncoeffs_u == 10){
+        tets_[id].quadderiv(r, s, t, u, Nux_, Nuy_, Nuz_);
+      }
+      else {
+        std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+        exit(0);
+      }
       Matrix3d gradU_prev;
-      gradU_prev << std::inner_product(Nx_.begin(), Nx_.end(), u_prev_coefficients_.begin(), 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), u_prev_coefficients_.begin(), 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), u_prev_coefficients_.begin(), 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[10], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[10], 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), &u_prev_coefficients_[10], 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[20], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[20], 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), &u_prev_coefficients_[20], 0.0);
+      gradU_prev << std::inner_product(Nux_.begin(), Nux_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0);
       Matrix3d gradU_next;
-      gradU_next << std::inner_product(Nx_.begin(), Nx_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[10], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[10], 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), &u_next_coefficients_[10], 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[20], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[20], 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), &u_next_coefficients_[20], 0.0);
+      gradU_next << std::inner_product(Nux_.begin(), Nux_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
+        std::inner_product(Nuz_.begin(), Nuz_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0);
 
       gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
       gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
