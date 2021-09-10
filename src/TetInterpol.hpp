@@ -82,13 +82,22 @@ protected:
 
   std::vector<std::vector<double>> coordinate_dofs_;
 
-  std::array<double, 30> u_prev_coefficients_;
-  std::array<double, 30> u_next_coefficients_;
-  std::array<double, 4> p_prev_coefficients_;
-  std::array<double, 4> p_next_coefficients_;
+  // std::array<double, 30> u_prev_coefficients_;
+  // std::array<double, 30> u_next_coefficients_;
+  // std::array<double, 4> p_prev_coefficients_;
+  // std::array<double, 4> p_next_coefficients_;
+  std::vector<double> u_prev_coefficients_;
+  std::vector<double> u_next_coefficients_;
+  std::vector<double> p_prev_coefficients_;
+  std::vector<double> p_next_coefficients_;
 
-  std::array<double, 10> N10_, Nx_, Ny_, Nz_;
-  std::array<double, 4> N4_;
+  // std::array<double, 10> N10_, Nx_, Ny_, Nz_;
+  // std::array<double, 4> N4_;
+  std::vector<double> Nu_, Nux_, Nuy_, Nuz_;
+  std::vector<double> Np_;
+
+  Uint ncoeffs_u;
+  Uint ncoeffs_p;
 };
 
 #endif
