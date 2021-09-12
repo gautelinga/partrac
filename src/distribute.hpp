@@ -9,6 +9,7 @@
 #include "Interpol.hpp"
 #include "utils.hpp"
 
+// TODO: Massive cleanup!
 
 struct less_than_op {
   inline bool operator() (const Vector3d &a, const Vector3d &b){
@@ -404,6 +405,7 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
     init_rand_z = true;
   }
 
+  // TODO: Factor out position generation
   double tol = 1e-12;
   Uint N_est = 1000000;
   double dx_est;
