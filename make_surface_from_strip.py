@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser(description="Make xdmf surface from strip")
 parser.add_argument("folder", type=str, help="Folder")
 parser.add_argument("-t_min", type=float, default=0.0, help="t_min")
 parser.add_argument("-t_max", type=float, default=np.inf, help="t_max")
+parser.add_argument("-skip", type=int, default=0, help="Skip timesteps")
 args = parser.parse_args()
 
 params = Params(args.folder)
@@ -31,9 +32,11 @@ for file in files:
             pass
 
 ts = []
-for t in list(sorted(posf.keys())):
+for t in list(sorted(posf.keys())[::(args.skip+1)]):
     if t >= args.t_min and t <= args.t_max:
         ts.append(t)
+
+print("Found timesteps")
 
 possible_fields = [["u", "Vector", "Node"],
                    ["c", "Scalar", "Node"],
