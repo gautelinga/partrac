@@ -111,7 +111,7 @@ int main(int argc, char* argv[])
                               "_dt" + ss_dt.str() +
                               "_Nrw" + ss_Nrw.str() +
                               "_seed" + ss_seed.str() +
-							  prm.tag +
+                              prm.tag +
                               "/");
   }
   std::string posfolder = create_folder(newfolder + "Positions/");
@@ -281,7 +281,8 @@ int main(int argc, char* argv[])
                             Nrw, Nrw_max, ds_max,
                             do_output_all, intp,
                             U0, prm.int_order,
-                            prm.curv_refine_factor);
+                            prm.curv_refine_factor,
+                            prm.cut_if_stuck);
 
     Uint n_rem = coarsening(faces, edges,
                             edge2faces, node2edges,
@@ -525,7 +526,7 @@ int main(int argc, char* argv[])
                               Nrw, Nrw_max, ds_max,
                               do_output_all, intp,
                               U0, prm.int_order,
-                              prm.curv_refine_factor);
+                              prm.curv_refine_factor, prm.cut_if_stuck);
       if (prm.verbose)
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
@@ -658,8 +659,15 @@ int main(int argc, char* argv[])
     }
     else {
       double dtau;
+      double u_abs;
+      std::set<Uint> nodes_to_remove;
       for (Uint irw=0; irw < Nrw; ++irw){
-        dtau = dl_max/(u_rw[irw].norm()+prm.u_eps);
+        u_abs = u_rw[irw].norm();
+        if (u_abs < prm.u_eps){
+          //
+          nodes_to_remove.insert(irw);
+        }
+        dtau = dl_max/(u_abs+prm.u_eps);
         tau_rw[irw] += dtau;
         dx_rw = u_rw[irw]*dtau;
 
@@ -682,6 +690,30 @@ int main(int argc, char* argv[])
           n_declined++;
           //log??
         }
+      }
+      if (nodes_to_remove.size() > 0){
+        if (!prm.cut_if_stuck){
+          std::cout << "Node is stuck! Turn on cut_if_stuck to continue." << std::endl;
+          exit(0);
+        }
+        bool do_output_all = prm.output_all_props && !prm.minimal_output && (it+1) % int_dump_intv == 0;
+        std::vector<bool> node_isactive(Nrw, true);
+        for (std::set<Uint>::const_iterator sit = nodes_to_remove.begin();
+             sit != nodes_to_remove.end(); ++sit){
+          node_isactive[*sit] = false;
+        }
+        remove_nodes_safely(faces, edges,
+                            edge2faces, node2edges,
+                            edges_inlet, nodes_inlet,
+                            node_isactive,
+                            x_rw,
+                            u_rw,
+                            rho_rw, p_rw,
+                            c_rw, tau_rw,
+                            H_rw, n_rw,
+                            a_rw, Nrw,
+                            do_output_all,
+                            prm.int_order);
       }
     }
     t += dt;

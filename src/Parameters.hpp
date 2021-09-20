@@ -81,6 +81,7 @@ public:
   double dl_max = 1.0;
   double u_eps = 1e-7;
   double t_frozen = 0.;
+  bool cut_if_stuck = true;
   //
   double dt = 1.0;
   int int_order = 1;
@@ -212,6 +213,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "dl_max") dl_max = stodouble(val);
   if (key == "u_eps") u_eps = stodouble(val);
   if (key == "t_frozen") t_frozen = stodouble(val);
+  if (key == "cut_if_stuck") cut_if_stuck = stobool(val);
 
   if (key == "inject") inject = stobool(val);
   if (key == "inject_intv") inject_intv = stodouble(val);
@@ -273,6 +275,7 @@ void Parameters::print(){
     print_param("dl_max             ", dl_max);
     print_param("u_eps              ", u_eps);
     print_param("t_frozen           ", t_frozen);
+    print_param("cut_if_stuck", bool2string(cut_if_stuck));
 
     print_param("inject             ", bool2string(inject));
     print_param("inject_intv        ", inject_intv);
@@ -352,6 +355,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "dl_max", dl_max);
   write_param(paramsfile, "u_eps", u_eps);
   write_param(paramsfile, "t_frozen", t_frozen);
+  write_param(paramsfile, "cut_if_stuck", bool2string(cut_if_stuck));
 
   write_param(paramsfile, "inject", bool2string(inject));
   write_param(paramsfile, "inject_intv", inject_intv);

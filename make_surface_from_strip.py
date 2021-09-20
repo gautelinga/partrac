@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import os
 import matplotlib.pyplot as plt
@@ -94,7 +95,8 @@ for c1_, c2_, nc1, nc2 in zip(data_["c"][:-1], data_["c"][1:], node_count_[:-1],
     for i1, c1 in enumerate(c1_):
         i2 = next((k for k, l in enumerate(c2_[i1:]) if l==c1), None)
         # print(i1+nc1, i2+nc2)
-        node2next[i1+nc1] = i1+i2+nc2
+        if i2 is not None:
+            node2next[i1+nc1] = i1+i2+nc2
 
 #along_edges = np.zeros((node_count_[-2], 2), dtype=int)
 #for i, (v1, v2) in enumerate(node2next.items()):
@@ -120,7 +122,7 @@ for edge in edges:
 
 faces = []
 for i0 in range(len(nodes)):
-    if i0 in node2next and i0 in node2r:
+    if i0 in node2next and i0 in node2r and node2r[i0] in node2next:
         i1 = node2r[i0]
         i2 = node2next[i1]
         i3 = node2next[i0]

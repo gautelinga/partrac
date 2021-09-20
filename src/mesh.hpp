@@ -2,18 +2,31 @@
 #define __MESH_HPP
 
 #include <map>
+#include "typedefs.hpp"
 #include "utils.hpp"
 
 // using namespace std;
 // Declarations
 void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
+void remove_edges(FacesType&, EdgesType&, const std::vector<bool>&, EdgesListType&);
+void remove_unused_edges(FacesType&, EdgesType&, EdgesListType&);
+void remove_unused_nodes(EdgesType&, NodesListType&,
+                         std::vector<Vector3d>&,
+                         std::vector<Vector3d>&,
+                         std::vector<double>&, std::vector<double>&,
+                         std::vector<double>&, std::vector<double>&,
+                         std::vector<double>&, std::vector<Vector3d>&,
+                         std::vector<Vector3d>&, Uint&,
+                         const bool, const int);
 
 // Definitions
 void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
-                   std::vector<Vector3d>& x_rw, std::vector<Vector3d>& u_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
-                   std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<Vector3d>& a_rw,
-                   const double U0, const std::string &restart_folder, const int int_order,
-                   const Uint irw0){
+                   std::vector<Vector3d> &x_rw, std::vector<Vector3d> &u_rw,
+                   std::vector<double> &c_rw, std::vector<double> &tau_rw,
+                   std::vector<double> &rho_rw, std::vector<double> &p_rw,
+                   std::vector<Vector3d> &a_rw, const double U0,
+                   const std::string &restart_folder, const int int_order,
+                   const Uint irw0) {
   Uint Nrw = pos_init.size();
   for (Uint irw=irw0; irw < irw0+Nrw; ++irw){
     // Assign initial position
@@ -357,7 +370,7 @@ bool append_new_node(const Uint inode, const Uint jnode,
       std::cout << dx0 << std::endl;
       std::cout << x_rw_new << std::endl;
       std::cout << x_rw_new + dx0*n0 << std::endl;
-      exit(0);
+      // exit(0);
 
       return false;
     }
@@ -506,6 +519,10 @@ Uint sheet_refinement(FacesType &faces,
           node2edges[knode].push_back(new_jedge);
         }
       }
+      else {
+        std::cout << "Here we should remove this edge." << std::endl;
+        exit(0);
+      }
     }
   } while (changed);
   return n_add;
@@ -522,9 +539,11 @@ Uint strip_refinement(EdgesType &edges,
                       const bool do_output_all,
                       Interpol *intp,
                       const double U0, const int int_order,
-                      const double curv_refine_factor){
+                      const double curv_refine_factor,
+                      const bool cut_if_stuck){
   Uint n_add = 0;
   Uint iedge=0;
+  std::set<Uint> edges_to_remove;
   while (iedge < edges.size()){
     Uint inode = edges[iedge].first[0];
     Uint jnode = edges[iedge].first[1];
@@ -555,12 +574,32 @@ Uint strip_refinement(EdgesType &edges,
         ++n_add;
       }
       else {
+        // exit(0);
+        edges_to_remove.insert(iedge);
         ++iedge;
       }
     }
     else {
       ++iedge;
     }
+  }
+  if (edges_to_remove.size() > 0){
+    if (!cut_if_stuck){
+      std::cout << "Edge is stuck! Turn on cut_if_stuck to continue in such cases." << std::endl;
+    }
+    std::vector<bool> edge_isactive(edges.size(), true);
+    for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
+         sit != edges_to_remove.end(); ++sit){
+      edge_isactive[*sit] = false;
+    }
+    FacesType faces_dummy;
+    NodesListType nodes_inlet_dummy;
+    EdgesListType edges_inlet_dummy;
+    remove_edges(faces_dummy, edges, edge_isactive, edges_inlet_dummy);
+    remove_unused_nodes(edges, nodes_inlet_dummy, x_rw, u_rw, rho_rw, p_rw, c_rw,
+                        tau_rw, H_rw, n_rw, a_rw, Nrw, do_output_all,
+                        int_order);
+    compute_node2edges(node2edges, edges, Nrw);
   }
   return n_add;
 }
@@ -579,7 +618,8 @@ Uint refinement(FacesType &faces,
                 const bool do_output_all,
                 Interpol *intp,
                 const double U0, const int int_order,
-                const double curv_refine_factor){
+                const double curv_refine_factor,
+                const bool cut_if_stuck){
   Uint n_add = 0;
   if (faces.size() > 0){
     n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet,
@@ -601,7 +641,8 @@ Uint refinement(FacesType &faces,
                              Nrw, Nrw_max, ds_max,
                              do_output_all, intp,
                              U0, int_order,
-                             curv_refine_factor);
+                             curv_refine_factor,
+                             cut_if_stuck);
   }
   return n_add;
 }
@@ -1185,6 +1226,61 @@ void remove_unused_nodes(EdgesType &edges,
   }
   exit(0);
 }*/
+
+void remove_nodes_safely(FacesType &faces, EdgesType &edges,
+                         Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
+                         EdgesListType &edges_inlet, NodesListType &nodes_inlet,
+                         const std::vector<bool> &node_isactive,
+                         std::vector<Vector3d> &x_rw,
+                         std::vector<Vector3d> &u_rw,
+                         std::vector<double> &rho_rw, std::vector<double> &p_rw,
+                         std::vector<double> &c_rw, std::vector<double> &tau_rw,
+                         std::vector<double> &H_rw, std::vector<Vector3d> &n_rw,
+                         std::vector<Vector3d> &a_rw, Uint &Nrw,
+                         const bool do_output_all,
+                         const int int_order) {
+  assert(Nrw == node_isactive.size());
+  std::vector<bool> edge_isactive(edges.size(), true);
+  for (Uint i=0; i<Nrw; ++i){
+    if (!node_isactive[i]){
+      for (EdgesListType::const_iterator edgeit = node2edges[i].begin();
+           edgeit != node2edges[i].end(); ++edgeit){
+        edge_isactive[*edgeit] = false;
+      }
+    }
+  }
+  if (faces.size() > 0){
+    std::cout << "WARNING: remove_nodes_safely is NOT TESTED for sheets!" << std::endl;
+    exit(0);
+    // Remove node from sheet (cut hole)
+    std::vector<bool> face_isactive(faces.size(), true);
+    for (Uint iedge=0; iedge<edges.size(); ++iedge){
+      if (!edge_isactive[iedge]){
+        for (FacesListType::const_iterator faceit = edge2faces[iedge].begin();
+             faceit != edge2faces[iedge].end(); ++faceit){
+          face_isactive[*faceit] = false;
+        }
+      }
+    }
+    remove_faces(faces, face_isactive);
+    remove_unused_edges(faces, edges, edges_inlet);
+    remove_unused_nodes(edges, nodes_inlet, x_rw, u_rw, rho_rw, p_rw, c_rw,
+                        tau_rw, H_rw, n_rw, a_rw, Nrw, do_output_all,
+                        int_order);
+
+    compute_edge2faces(edge2faces, faces, edges);
+    compute_node2edges(node2edges, edges, Nrw);
+  }
+  else {
+    // Remove node from strip (cut hole)
+    EdgesListType edges_inlet_dummy;
+    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
+    remove_unused_nodes(edges, nodes_inlet, x_rw, u_rw, rho_rw, p_rw, c_rw,
+                        tau_rw, H_rw, n_rw, a_rw, Nrw, do_output_all,
+                        int_order);
+    compute_node2edges(node2edges, edges, Nrw);
+  }
+}
 
 Uint sheet_coarsening(FacesType &faces,
                       EdgesType &edges,

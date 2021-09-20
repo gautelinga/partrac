@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import os
 import matplotlib.pyplot as plt
