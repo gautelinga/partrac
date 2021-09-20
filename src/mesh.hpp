@@ -10,7 +10,8 @@ void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
 
 // Definitions
 void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
-                   std::vector<Vector3d>& x_rw, std::vector<Vector3d>& u_rw, std::vector<double>& c_rw, std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<Vector3d>& a_rw,
+                   std::vector<Vector3d>& x_rw, std::vector<Vector3d>& u_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
+                   std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<Vector3d>& a_rw,
                    const double U0, const std::string &restart_folder, const int int_order,
                    const Uint irw0){
   Uint Nrw = pos_init.size();
@@ -21,6 +22,8 @@ void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
     if (restart_folder == ""){
       c_rw[irw] = double(irw)/(Nrw-1);
     }
+    tau_rw[irw] = 0.;  // anything else?
+
     intp->probe(x_rw[irw]);
     u_rw[irw] = U0*intp->get_u();
 
@@ -332,7 +335,7 @@ std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint 
 bool append_new_node(const Uint inode, const Uint jnode,
                      std::vector<Vector3d>& x_rw,
                      std::vector<Vector3d>& u_rw,
-                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                      std::vector<Vector3d>& a_rw,
                      Uint& Nrw, const bool do_output_all,
@@ -377,6 +380,7 @@ bool append_new_node(const Uint inode, const Uint jnode,
   x_rw[Nrw] = x_rw_new;
 
   c_rw[Nrw] = 0.5*(c_rw[inode]+c_rw[jnode]);
+  tau_rw[Nrw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
   H_rw[Nrw] = 0.5*(H_rw[inode]+H_rw[jnode]);
 
   n_rw[Nrw] = 0.5*(n_rw[inode]+n_rw[jnode]);
@@ -406,7 +410,7 @@ Uint sheet_refinement(FacesType &faces,
                       EdgesListType &edges_inlet,
                       std::vector<Vector3d>& x_rw,
                       std::vector<Vector3d>& u_rw,
-                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                       std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                       std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
@@ -460,7 +464,7 @@ Uint sheet_refinement(FacesType &faces,
       Uint new_inode = Nrw;
       // Add point
       bool added = append_new_node(inode, jnode, x_rw, u_rw,
-                                   rho_rw, p_rw, c_rw, H_rw, n_rw,
+                                   rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                                    a_rw, Nrw, do_output_all, intp, U0, int_order);
       if (added){
         ++n_add;
@@ -511,7 +515,7 @@ Uint strip_refinement(EdgesType &edges,
                       Node2EdgesType &node2edges,
                       std::vector<Vector3d>& x_rw,
                       std::vector<Vector3d>& u_rw,
-                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                       std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                       std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const Uint Nrw_max, const double ds_max,
@@ -532,7 +536,7 @@ Uint strip_refinement(EdgesType &edges,
     if (ds > ds_max_loc && Nrw < Nrw_max){
       Uint new_inode = Nrw;
       bool added = append_new_node(inode, jnode, x_rw, u_rw,
-                                   rho_rw, p_rw, c_rw, H_rw, n_rw,
+                                   rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                                    a_rw, Nrw, do_output_all, intp, U0, int_order);
       if (added){
         //std::cout << "before: " << edges[iedge].first[0] << " " << edges[iedge].first[1] << std::endl;
@@ -568,7 +572,7 @@ Uint refinement(FacesType &faces,
                 EdgesListType &edges_inlet,
                 std::vector<Vector3d>& x_rw,
                 std::vector<Vector3d>& u_rw,
-                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                 std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                 std::vector<Vector3d>& a_rw,
                 Uint &Nrw, const Uint Nrw_max, const double ds_max,
@@ -581,7 +585,7 @@ Uint refinement(FacesType &faces,
     n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                              x_rw,
                              u_rw,
-                             rho_rw, p_rw, c_rw, H_rw, n_rw,
+                             rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                              a_rw,
                              Nrw, Nrw_max, ds_max,
                              do_output_all, intp,
@@ -592,7 +596,7 @@ Uint refinement(FacesType &faces,
                              node2edges,
                              x_rw,
                              u_rw,
-                             rho_rw, p_rw, c_rw, H_rw, n_rw,
+                             rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                              a_rw,
                              Nrw, Nrw_max, ds_max,
                              do_output_all, intp,
@@ -817,7 +821,7 @@ bool collapse_edge(const Uint iedge,
                    std::vector<bool> &node_isactive,
                    std::vector<Vector3d>& x_rw,
                    std::vector<Vector3d>& u_rw,
-                   std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                   std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                    std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                    std::vector<Vector3d>& a_rw,
                    const bool do_output_all,
@@ -903,6 +907,7 @@ bool collapse_edge(const Uint iedge,
       a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
     }
     c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
+    tau_rw[irw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
     H_rw[irw] = 0.5*(H_rw[inode]+H_rw[jnode]);
     n_rw[irw] = 0.5*(n_rw[inode]+n_rw[jnode]);
   }
@@ -1084,7 +1089,7 @@ void remove_nodes(EdgesType& edges,
                   NodesListType& nodes_inlet,
                   std::vector<Vector3d>& x_rw,
                   std::vector<Vector3d>& u_rw,
-                  std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                  std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                   std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                   std::vector<Vector3d>& a_rw,
                   Uint& Nrw,
@@ -1110,6 +1115,7 @@ void remove_nodes(EdgesType& edges,
       p_rw[i] = p_rw[j];
     }
     c_rw[i] = c_rw[j];
+    tau_rw[i] = tau_rw[j];
     H_rw[i] = H_rw[j];
     n_rw[i] = n_rw[j];
 
@@ -1154,7 +1160,7 @@ void remove_unused_nodes(EdgesType &edges,
                          NodesListType &nodes_inlet,
                          std::vector<Vector3d>& x_rw,
                          std::vector<Vector3d>& u_rw,
-                         std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                         std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                          std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                          std::vector<Vector3d>& a_rw,
                          Uint &Nrw,
@@ -1167,7 +1173,7 @@ void remove_unused_nodes(EdgesType &edges,
     }
   }
   remove_nodes(edges, nodes_inlet, x_rw, u_rw,
-               rho_rw, p_rw, c_rw, H_rw, n_rw, a_rw, Nrw,
+               rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw, a_rw, Nrw,
                node_isactive, do_output_all, int_order);
 }
 
@@ -1188,7 +1194,7 @@ Uint sheet_coarsening(FacesType &faces,
                       NodesListType& nodes_inlet,
                       std::vector<Vector3d>& x_rw,
                       std::vector<Vector3d>& u_rw,
-                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                       std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                       std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const double ds_min,
@@ -1234,7 +1240,7 @@ Uint sheet_coarsening(FacesType &faces,
                                   node_isactive,
                                   x_rw,
                                   u_rw,
-                                  rho_rw, p_rw, c_rw, H_rw, n_rw,
+                                  rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                                   a_rw,
                                   do_output_all, intp,
                                   U0, int_order);
@@ -1260,7 +1266,7 @@ Uint sheet_coarsening(FacesType &faces,
   remove_unused_edges(faces, edges, edges_inlet);
   remove_unused_nodes(edges, nodes_inlet, x_rw,
                       u_rw,
-                      rho_rw, p_rw, c_rw, H_rw, n_rw,
+                      rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                       a_rw,
                       Nrw, do_output_all, int_order);
 
@@ -1274,7 +1280,7 @@ Uint strip_coarsening(EdgesType &edges,
                       NodesListType &nodes_inlet,
                       std::vector<Vector3d>& x_rw,
                       std::vector<Vector3d>& u_rw,
-                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                      std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                       std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                       std::vector<Vector3d>& a_rw,
                       Uint &Nrw, const double ds_min,
@@ -1354,6 +1360,7 @@ Uint strip_coarsening(EdgesType &edges,
             p_rw[new_inode] = intp->get_p();
           }
           c_rw[new_inode] = 0.5*(c_rw[inode]+c_rw[jnode]);
+          tau_rw[new_inode] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
           H_rw[new_inode] = 0.5*(H_rw[inode]+H_rw[jnode]);
           n_rw[new_inode] = 0.5*(n_rw[inode]+n_rw[jnode]);
           n_rw[new_inode] /= n_rw[new_inode].norm();
@@ -1374,9 +1381,8 @@ Uint strip_coarsening(EdgesType &edges,
   EdgesListType edges_inlet_dummy;
   remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
   remove_unused_nodes(edges, nodes_inlet, x_rw,
-
                       u_rw,
-                      rho_rw, p_rw, c_rw, H_rw, n_rw,
+                      rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                       a_rw,
                       Nrw, do_output_all, int_order);
   compute_node2edges(node2edges, edges, Nrw);
@@ -1391,7 +1397,7 @@ Uint coarsening(FacesType &faces,
                 NodesListType& nodes_inlet,
                 std::vector<Vector3d>& x_rw,
                 std::vector<Vector3d>& u_rw,
-                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                 std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                 std::vector<Vector3d>& a_rw,
                 Uint &Nrw, const double ds_min,
@@ -1404,7 +1410,7 @@ Uint coarsening(FacesType &faces,
                             edge2faces, node2edges,
                             edges_inlet, nodes_inlet,
                             x_rw, u_rw,
-                            rho_rw, p_rw, c_rw, H_rw, n_rw,
+                            rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                             a_rw, Nrw, ds_min,
                             do_output_all, intp,
                             U0, int_order, curv_refine_factor);
@@ -1412,7 +1418,7 @@ Uint coarsening(FacesType &faces,
   else if (edges_inlet.size() == 0){ // Omits first steps of injection which might have no faces
     return strip_coarsening(edges, node2edges,
                             nodes_inlet,
-                            x_rw, u_rw, rho_rw, p_rw, c_rw, H_rw, n_rw,
+                            x_rw, u_rw, rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                             a_rw, Nrw, ds_min,
                             do_output_all, intp,
                             U0, int_order, curv_refine_factor);
@@ -1424,7 +1430,7 @@ bool strip_filtering(EdgesType &edges,
                      Node2EdgesType &node2edges,
                      std::vector<Vector3d>& x_rw,
                      std::vector<Vector3d>& u_rw,
-                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                      std::vector<Vector3d>& a_rw,
                      Uint &Nrw,
@@ -1442,7 +1448,7 @@ bool strip_filtering(EdgesType &edges,
   }
   NodesListType nodes_inlet_dummy; // Not compatible with injection (yet)
   remove_unused_nodes(edges, nodes_inlet_dummy, x_rw, u_rw,
-                      rho_rw, p_rw, c_rw, H_rw, n_rw, a_rw,
+                      rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw, a_rw,
                       Nrw, do_output_all, int_order);
   compute_node2edges(node2edges, edges, Nrw);
 
@@ -1455,7 +1461,7 @@ bool sheet_filtering(FacesType &faces,
                      Node2EdgesType &node2edges,
                      std::vector<Vector3d>& x_rw,
                      std::vector<Vector3d>& u_rw,
-                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                      std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                      std::vector<Vector3d>& a_rw,
                      Uint &Nrw,
@@ -1482,7 +1488,7 @@ bool sheet_filtering(FacesType &faces,
   remove_unused_edges(faces, edges, edges_inlet_dummy);
   remove_unused_nodes(edges, nodes_inlet_dummy, x_rw,
                       u_rw,
-                      rho_rw, p_rw, c_rw, H_rw, n_rw,
+                      rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                       a_rw,
                       Nrw, do_output_all, int_order);
 
@@ -1498,7 +1504,7 @@ bool filtering(FacesType &faces,
                Node2EdgesType &node2edges,
                std::vector<Vector3d>& x_rw,
                std::vector<Vector3d>& u_rw,
-               std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw,
+               std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
                std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
                std::vector<Vector3d>& a_rw,
                Uint &Nrw,
@@ -1507,12 +1513,12 @@ bool filtering(FacesType &faces,
                const Uint filter_target){
   if (faces.size() > 0){
     return sheet_filtering(faces, edges, edge2faces, node2edges,
-                           x_rw, u_rw, rho_rw, p_rw, c_rw, H_rw, n_rw,
+                           x_rw, u_rw, rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                            a_rw, Nrw, do_output_all, int_order, filter_target);
   }
   else{
     return strip_filtering(edges, node2edges,
-                           x_rw, u_rw, rho_rw, p_rw, c_rw, H_rw, n_rw,
+                           x_rw, u_rw, rho_rw, p_rw, c_rw, tau_rw, H_rw, n_rw,
                            a_rw, Nrw, do_output_all, int_order, filter_target);
   }
 }

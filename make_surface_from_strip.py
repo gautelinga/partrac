@@ -40,6 +40,7 @@ print("Found timesteps")
 
 possible_fields = [["u", "Vector", "Node"],
                    ["c", "Scalar", "Node"],
+                   ["tau", "Scalar", "Node"],
                    ["p", "Scalar", "Node"],
                    ["rho", "Scalar", "Node"],
                    ["H", "Scalar", "Node"],

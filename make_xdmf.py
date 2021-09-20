@@ -115,6 +115,7 @@ if __name__ == "__main__":
                        ["p", "Scalar", "Node"],
                        ["rho", "Scalar", "Node"],
                        ["H", "Scalar", "Node"],
+                       ["tau", "Scalar", "Node"],
                        ["n", "Vector", "Node"],
                        ["dA", "Scalar", "Face"],
                        ["dA0", "Scalar", "Face"],
