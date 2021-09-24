@@ -127,7 +127,7 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
   set_folder(infilename.substr(0, botDirPos));
   ts.initialize(get_folder() + "/" + felbm_params["timestamps"]);
 
-  std::string solid_filename = felbm_params["is_solid_file"];
+  std::string solid_filename = get_folder() + "/" + felbm_params["is_solid_file"];
   verify_file_exists(solid_filename);
 
   H5File solid_file(solid_filename, H5F_ACC_RDONLY);
