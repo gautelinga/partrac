@@ -5,6 +5,7 @@
 #include <boost/algorithm/string.hpp>
 #include <cassert>
 #include "dolfin_elements/P1_3.h"
+#include "dolfin_elements/P2_3.h"
 #include "dolfin_elements/vP1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "PeriodicBC.hpp"
@@ -19,6 +20,13 @@ TetInterpol::TetInterpol(const std::string infilename)
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
     exit(0);
   }
+
+  // Default parameters
+  dolfin_params["velocity_field"] = "u";
+  dolfin_params["pressure_field"] = "p";
+  dolfin_params["ignore_pressure"] = "false";
+
+  // Overload from file
   size_t found;
   std::string key, val;
   for (std::string line; getline(input, line); ){
@@ -45,6 +53,9 @@ TetInterpol::TetInterpol(const std::string infilename)
   }
   if (dolfin_params["periodic_z"] == "true"){
     periodic[2] = true;
+  }
+  if (dolfin_params["ignore_pressure"] == "true"){
+    include_pressure = false;
   }
 
   //std::cout << dolfin_params["velocity"] << std::endl;
@@ -121,30 +132,44 @@ TetInterpol::TetInterpol(const std::string infilename)
     exit(0);
   }
   // Pressure
-  if (p_el == "P1"){
-    p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
-    ncoeffs_p = 4;
+  if (include_pressure){
+    if (p_el == "P1"){
+      p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+      ncoeffs_p = 4;
+    }
+    else if (p_el == "P2"){
+      p_space_ = std::make_shared<P2_3::FunctionSpace>(mesh, constrained_domain);
+      ncoeffs_p = 10;
+    }
+    else {
+      std::cout << "Unrecognized pressure element: " << p_el << std::endl;
+      exit(0);
+    }
   }
   else {
-    std::cout << "Unrecognized pressure element: " << p_el << std::endl;
-    exit(0);
+    std::cout << "Note: Ignoring pressure." << std::endl;
   }
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
-  p_prev_ = std::make_shared<dolfin::Function>(p_space_);
-  p_next_ = std::make_shared<dolfin::Function>(p_space_);
 
   u_prev_coefficients_.resize(3*ncoeffs_u);
   u_next_coefficients_.resize(3*ncoeffs_u);
-  p_prev_coefficients_.resize(ncoeffs_p);
-  p_next_coefficients_.resize(ncoeffs_p);
 
   Nu_.resize(ncoeffs_u);
   Nux_.resize(ncoeffs_u);
   Nuy_.resize(ncoeffs_u);
   Nuz_.resize(ncoeffs_u);
-  Np_.resize(ncoeffs_p);
+
+  if (include_pressure){
+    p_prev_ = std::make_shared<dolfin::Function>(p_space_);
+    p_next_ = std::make_shared<dolfin::Function>(p_space_);
+
+    p_prev_coefficients_.resize(ncoeffs_p);
+    p_next_coefficients_.resize(ncoeffs_p);
+
+    Np_.resize(ncoeffs_p);
+  }
 }
 
 void TetInterpol::update(const double t)
@@ -156,13 +181,16 @@ void TetInterpol::update(const double t)
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
     std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
     dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-    prevfile.read(*u_prev_, "u");
-    prevfile.read(*p_prev_, "p");
+
+    prevfile.read(*u_prev_, dolfin_params["velocity_field"]);
+    if (include_pressure)
+      prevfile.read(*p_prev_, dolfin_params["pressure_field"]);
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-    nextfile.read(*u_next_, "u");
-    nextfile.read(*p_next_, "p");
+    nextfile.read(*u_next_, dolfin_params["velocity_field"]);
+    if (include_pressure)
+      nextfile.read(*p_next_, dolfin_params["pressure_field"]);
 
     is_initialized = true;
     t_prev = sp.prev.t;
@@ -204,23 +232,26 @@ void TetInterpol::probe(const Vector3d &x)
       std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
       exit(0);
     }
-    tets_[id].linearbasis(r, s, t, u, Np_);
+    if (include_pressure){
+      if (ncoeffs_p == 4){
+        tets_[id].linearbasis(r, s, t, u, Np_);
+      }
+      else if (ncoeffs_p == 10){
+        tets_[id].quadbasis(r, s, t, u, Np_);
+      }
+      else {
+        std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
+        exit(0);
+      }
+    }
 
     // Restrict solution to cell
     u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
     u_next_->restrict(u_next_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
-    p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-                      coordinate_dofs_[id].data(), ufc_cells_[id]);
-    p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-                      coordinate_dofs_[id].data(), ufc_cells_[id]);
 
     // Evaluate
-    double P_prev = std::inner_product(Np_.begin(), Np_.end(), p_prev_coefficients_.begin(), 0.0);
-    double P_next = std::inner_product(Np_.begin(), Np_.end(), p_next_coefficients_.begin(), 0.0);
-    // else unrecognized element
-
     Vector3d U_prev = {std::inner_product(Nu_.begin(), Nu_.end(), u_prev_coefficients_.begin(), 0.0),
       std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
       std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0)};
@@ -232,7 +263,25 @@ void TetInterpol::probe(const Vector3d &x)
     // Update
     U = alpha_t * U_next + (1-alpha_t) * U_prev;
     A = (U_next-U_prev)/(t_next-t_prev);
-    P = alpha_t * P_next + (1-alpha_t) * P_prev;
+
+    if (include_pressure){
+      // Restrict solution to cell
+      p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                        coordinate_dofs_[id].data(), ufc_cells_[id]);
+      p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                        coordinate_dofs_[id].data(), ufc_cells_[id]);
+
+      // Evaluate
+      double P_prev = std::inner_product(Np_.begin(), Np_.end(), p_prev_coefficients_.begin(), 0.0);
+      double P_next = std::inner_product(Np_.begin(), Np_.end(), p_next_coefficients_.begin(), 0.0);
+      // else unrecognized element
+
+      // Update
+      P = alpha_t * P_next + (1-alpha_t) * P_prev;
+    }
+    else {
+      P = 0.;
+    }
 
     if (this->int_order > 1){
       if (ncoeffs_u == 4){
@@ -266,6 +315,7 @@ void TetInterpol::probe(const Vector3d &x)
         std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
         std::inner_product(Nuz_.begin(), Nuz_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0);
 
+      // Update
       gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
       gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
     }

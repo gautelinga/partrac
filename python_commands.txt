@@ -1,0 +1,1 @@
+python3 surface_intersection_with_plane.py ../cyl_arr/steady-stokes-solver/results_oscbcc/rad0.4_tau5.0_nu1.0_fx1.0_fy1.0_fx1.0_dt0.02_res32/RandomWalkers/Dm0.0000000e+00_dt1.0000000e-03_Nrw200_seed0/ -axis 2 -value 3.4

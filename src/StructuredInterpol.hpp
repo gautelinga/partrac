@@ -80,6 +80,8 @@ protected:
   double dw_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
   double dw_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
 
+  std::map<std::string, std::string> felbm_params;
+
   std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>> solid_ids_neigh;
   double inside_domain_factor = 0.;
   double inside_domain_factor_x = 0.;
@@ -97,9 +99,35 @@ protected:
   bool boundary_fix = true;
 };
 
-StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename), ts(infilename) {
-  set_folder(ts.get_folder());
-  std::string solid_filename = ts.get_is_solid();
+StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename) {
+  std::ifstream input(infilename);
+  if (!input){
+    std::cout << "File " << infilename <<" doesn't exist." << std::endl;
+    exit(0);
+  }
+  // Default params
+  felbm_params["timestamps"] = "timestamps.dat";
+  felbm_params["is_solid_file"] = "output_is_solid.h5";
+
+  // Overload from file
+  size_t found;
+  std::string key, val;
+  for (std::string line; getline(input, line); ){
+    found = line.find('=');
+    if (found != std::string::npos){
+      key = line.substr(0, found);
+      val = line.substr(found+1);
+      boost::trim(key);
+      boost::trim(val);
+      felbm_params[key] = val;
+    }
+  }
+
+  std::size_t botDirPos = infilename.find_last_of("/");
+  set_folder(infilename.substr(0, botDirPos));
+  ts.initialize(get_folder() + "/" + felbm_params["timestamps"]);
+
+  std::string solid_filename = get_folder() + "/" + felbm_params["is_solid_file"];
   verify_file_exists(solid_filename);
 
   H5File solid_file(solid_filename, H5F_ACC_RDONLY);

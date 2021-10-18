@@ -1,13 +1,27 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 
 set(PROJECT_NAME partrac)
-project(${PROJECT_NAME})
+project(${PROJECT_NAME}
+  VERSION 0.1
+  DESCRIPTION "Particle tracker"
+  LANGUAGES C CXX
+  )
 
 # Set CMake behavior
 cmake_policy(SET CMP0004 NEW)
 
-set(CMAKE_CXX_COMPILER g++-10)
+#set(CMAKE_CXX_COMPILER g++-10)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(CTest)
+find_package(Doxygen)
+if (Doxygen_FOUND)
+  add_subdirectory(docs)
+else()
+  message(STATUS "Doxygen not found, not building docs.")
+endif()
 
 #set(ENABLE_DOLFIN "true" CACHE STRING "Set to true to enable Dolfin import.")
 include(FeatureSummary)
@@ -45,22 +59,31 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 include_directories(${HDF5_INCLUDE_DIR})
 
-aux_source_directory(src/ SRC_LIST)
+add_subdirectory(src)
 
-add_executable(${PROJECT_NAME} ${SRC_LIST})
+#aux_source_directory(src SRC_LIST)
+
+#message(STATUS ${SRC_LIST})
+#add_library(Src1 ${SRC_LIST})
+#add_executable(${PROJECT_NAME} ${SRC_LIST})
+add_executable(${PROJECT_NAME} src/traj.cpp)
 
 if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${PROJECT_NAME} dolfin)
 endif()
 target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen)
+  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION /usr/bin/)
 
+# FetchContent added in CMake 3.11, downloads during the configure step
 
-
-
+if (BUILD_TESTING)
+  include(FetchContent)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
 
 # # Get DOLFIN configuration data (DOLFINConfig.cmake must be in
 # # DOLFIN_CMAKE_CONFIG_PATH)

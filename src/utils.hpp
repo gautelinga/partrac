@@ -389,12 +389,20 @@ static void test_interpolation(Uint num_points, Interpol *intp,
   std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
 
   std::ofstream ofile(newfolder + "/interpolation.txt");
+  std::string sep = ",";
+  ofile << "x" << sep << "y" << sep << "z" << sep
+        << "ux" << sep << "uy" << sep << "uz" << sep
+        << "rho" << sep << "p" << sep << "divu" << sep
+        << "vortz" << sep
+        << "uxx" << sep << "uxy" << sep << "uxz" << sep
+        << "uyx" << sep << "uyy" << sep << "uyz" << sep
+        << "uzx" << sep << "uzy" << sep << "uzz"
+        << std::endl;
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
     //std::cout << x << std::endl;
     intp->probe(x);
     if (intp->inside_domain()){
-      std::string sep = ",";
       Vector3d u = intp->get_u();
       double rho = intp->get_rho();
       double p = intp->get_p();

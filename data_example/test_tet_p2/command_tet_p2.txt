@@ -1,0 +1,1 @@
+./partrac data_example/test_tet_p2/dolfin_params.dat Dm=0 t0=0 t=0 T=1.0 dt=0.01 Nrw=100 dump_intv=0.1 stat_intv=0.1 checkpoint_intv=100 verbose=true U=1 x0=0.5 y0=0.5 z0=0.5 refine=false refine_intv=10 coarsen=false interpolation_test=100000 mode=tet int_order=2

@@ -14,7 +14,7 @@ public:
   void update(const double);
   std::string get_folder(){ return folder; };
   std::string get_first(){ return folder + "/" + stamps[0]; };
-  std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
+  //  std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
   StampPair get(const double);
   double get_t_min() { return t_min; };
   double get_t_max() { return t_max; };

@@ -76,6 +76,13 @@ public:
   double filter_intv = 0.0;
   int filter_target = 0;
   //
+  bool frozen_fields = false;
+  bool local_dt = false;
+  double dl_max = 1.0;
+  double u_eps = 1e-7;
+  double t_frozen = 0.;
+  bool cut_if_stuck = true;
+  //
   double dt = 1.0;
   int int_order = 1;
   std::string init_mode = "line_x";  // what else?
@@ -201,6 +208,13 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "filter_intv") filter_intv = stodouble(val);
   if (key == "filter_target") filter_target = stoint(val);
 
+  if (key == "frozen_fields") frozen_fields = stobool(val);
+  if (key == "local_dt") local_dt = stobool(val);
+  if (key == "dl_max") dl_max = stodouble(val);
+  if (key == "u_eps") u_eps = stodouble(val);
+  if (key == "t_frozen") t_frozen = stodouble(val);
+  if (key == "cut_if_stuck") cut_if_stuck = stobool(val);
+
   if (key == "inject") inject = stobool(val);
   if (key == "inject_intv") inject_intv = stodouble(val);
   if (key == "T_inject") T_inject = stodouble(val);
@@ -255,6 +269,13 @@ void Parameters::print(){
     print_param("filter             ", bool2string(filter));
     print_param("filter_intv        ", filter_intv);
     print_param("filter_target      ", filter_target);
+
+    print_param("frozen_fields      ", bool2string(frozen_fields));
+    print_param("local_dt           ", bool2string(local_dt));
+    print_param("dl_max             ", dl_max);
+    print_param("u_eps              ", u_eps);
+    print_param("t_frozen           ", t_frozen);
+    print_param("cut_if_stuck", bool2string(cut_if_stuck));
 
     print_param("inject             ", bool2string(inject));
     print_param("inject_intv        ", inject_intv);
@@ -328,6 +349,13 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "filter", bool2string(filter));
   write_param(paramsfile, "filter_intv", filter_intv);
   write_param(paramsfile, "filter_target", filter_target);
+
+  write_param(paramsfile, "frozen_fields", bool2string(frozen_fields));
+  write_param(paramsfile, "local_dt", bool2string(local_dt));
+  write_param(paramsfile, "dl_max", dl_max);
+  write_param(paramsfile, "u_eps", u_eps);
+  write_param(paramsfile, "t_frozen", t_frozen);
+  write_param(paramsfile, "cut_if_stuck", bool2string(cut_if_stuck));
 
   write_param(paramsfile, "inject", bool2string(inject));
   write_param(paramsfile, "inject_intv", inject_intv);

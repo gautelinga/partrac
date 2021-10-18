@@ -9,6 +9,7 @@
 #include "Interpol.hpp"
 #include "utils.hpp"
 
+// TODO: Massive cleanup!
 
 struct less_than_op {
   inline bool operator() (const Vector3d &a, const Vector3d &b){
@@ -179,6 +180,18 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
   if (key.size() == 0){
     std::cout << "init_mode not specified." << std::endl;
     exit(0);
+  }
+
+  if (key[0] == "point"){
+    std::vector<Vector3d> pos_init;
+    intp->probe(x0);
+    for (Uint irw=0; irw < Nrw; ++irw){
+      if (intp->inside_domain()){
+        pos_init.push_back(x0);
+      }
+    }
+    edges.clear();
+    return pos_init;
   }
 
   if (key[0] == "uniform"){
@@ -392,6 +405,7 @@ std::vector<Vector3d> initial_positions(const std::string init_mode,
     init_rand_z = true;
   }
 
+  // TODO: Factor out position generation
   double tol = 1e-12;
   Uint N_est = 1000000;
   double dx_est;

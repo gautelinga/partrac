@@ -8,6 +8,7 @@
 #ifdef USE_DOLFIN
 #include "DolfInterpol.hpp"
 #include "TetInterpol.hpp"
+#include "TriangleInterpol.hpp"
 #endif
 #include "distribute.hpp"
 #include "mesh.hpp"
@@ -22,6 +23,7 @@
 #include <set>
 #include <iterator>
 #include "H5Cpp.h"
+#include <ctime>
 
 using namespace H5;
 
@@ -47,15 +49,21 @@ int main(int argc, char* argv[])
     std::cout << "AnalyticInterpol initiated." << std::endl;
     intp = new AnalyticInterpol(infilename);
   }
-  else if (mode == "unstructured" || mode == "fenics" || mode == "tet"){
+  else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
+           mode == "tet" || mode == "triangle"){
 #ifdef USE_DOLFIN
-    std::cout << "FEniCS/XDMF format is not implemented yet." << std::endl;
     if (mode == "tet")
       intp = new TetInterpol(infilename);
+    else if (mode == "triangle")
+      intp = new TriangleInterpol(infilename);
     else if (mode == "fenics")
       intp = new DolfInterpol(infilename);
+    else if (mode == "xdmf"){
+      std::cout << "XDMF format is not implemented yet." << std::endl;
+      exit(0);
+    }
     else {
-      std::cout << "mode should be fenics or tet" << std::endl;
+      std::cout << "mode should be fenics, tet or triangle" << std::endl;
       exit(1);
     }
 #else
@@ -82,6 +90,10 @@ int main(int argc, char* argv[])
   double ds_min = prm.ds_min;
   Uint Nrw_max = prm.Nrw_max;
 
+  bool frozen_fields = prm.frozen_fields;
+  bool local_dt = prm.local_dt;
+  double dl_max = prm.dl_max;
+
   std::string folder = intp->get_folder();
   std::string rwfolder = create_folder(folder + "/RandomWalkers/");
   std::string newfolder;
@@ -99,7 +111,7 @@ int main(int argc, char* argv[])
                               "_dt" + ss_dt.str() +
                               "_Nrw" + ss_Nrw.str() +
                               "_seed" + ss_seed.str() +
-							  prm.tag +
+                              prm.tag +
                               "/");
   }
   std::string posfolder = create_folder(newfolder + "Positions/");
@@ -127,6 +139,8 @@ int main(int argc, char* argv[])
 
   double t0 = std::max(intp->get_t_min(), prm.t0);
   double T = std::min(intp->get_t_max(), prm.T);
+  if (frozen_fields)
+    T = prm.T;
   prm.t0 = t0;
   prm.T = T;
 
@@ -139,26 +153,26 @@ int main(int argc, char* argv[])
 
   std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
+  // Vector fields
   std::vector<Vector3d> x_rw(Nrw_max);
+  std::vector<Vector3d> u_rw(Nrw_max);
+  std::vector<Vector3d> a_rw(Nrw_max);  // for second order integration
+  std::vector<Vector3d> n_rw(Nrw_max);  // useless?
 
+  // Scalar fields
   std::vector<double> c_rw(Nrw_max);
   std::vector<double> e_rw(Nrw_max);
   std::vector<double> H_rw(Nrw_max);
-
-  std::vector<Vector3d> n_rw(Nrw_max);
-
-  std::vector<Vector3d> u_rw(Nrw_max);
-
   std::vector<double> rho_rw(Nrw_max);
   std::vector<double> p_rw(Nrw_max);
+  std::vector<double> tau_rw(Nrw_max);  // eigentime
 
   if (prm.inject && prm.filter){
     std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
-  // Second-order terms
-  std::vector<Vector3d> a_rw(Nrw_max);
+  // Higher-order time integration?
   if (prm.int_order > 2){
     std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
@@ -191,6 +205,10 @@ int main(int argc, char* argv[])
       std::string nodesinletfile = prm.restart_folder + "/Checkpoints/nodes_inlet.list";
       load_list(edgesinletfile, edges_inlet);
       load_list(nodesinletfile, nodes_inlet);
+    }
+    if (local_dt){
+      std::string taufile = prm.restart_folder + "/Checkpoints/tau.dat";
+      load_colors(taufile, tau_rw, Nrw);
     }
   }
   else {
@@ -238,9 +256,12 @@ int main(int argc, char* argv[])
   Node2EdgesType node2edges;
   compute_node2edges(node2edges, edges, Nrw);
 
-  intp->update(t0);
+  if (frozen_fields)
+    intp->update(prm.t_frozen);
+  else
+    intp->update(t0);
   add_particles(pos_init, intp,
-                x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                x_rw, u_rw, c_rw, tau_rw, rho_rw, p_rw, a_rw,
                 U0, prm.restart_folder, prm.int_order, 0);
   // Nrw = pos_init.size();
 
@@ -254,20 +275,21 @@ int main(int argc, char* argv[])
                             edges_inlet,
                             x_rw,
                             u_rw,
-                            rho_rw, p_rw, c_rw,
+                            rho_rw, p_rw, c_rw, tau_rw,
                             H_rw, n_rw,
                             a_rw,
                             Nrw, Nrw_max, ds_max,
                             do_output_all, intp,
                             U0, prm.int_order,
-                            prm.curv_refine_factor);
+                            prm.curv_refine_factor,
+                            prm.cut_if_stuck);
 
     Uint n_rem = coarsening(faces, edges,
                             edge2faces, node2edges,
                             edges_inlet, nodes_inlet,
                             x_rw,
                             u_rw,
-                            rho_rw, p_rw, c_rw,
+                            rho_rw, p_rw, c_rw, tau_rw,
                             H_rw, n_rw,
                             a_rw,
                             Nrw, ds_min,
@@ -333,13 +355,28 @@ int main(int argc, char* argv[])
   bool filter = prm.filter;
   Uint int_filter_intv = int(prm.filter_intv/dt);
 
+  if (local_dt && !frozen_fields){
+    std::cout << "Error: local_dt=true requires the use of frozen_fields=true!" << std::endl;
+    exit(0);
+  }
+  else if (local_dt && Dm > 0.0){
+    std::cout << "Error: local_dt=true requires the use of Dm=0.0!" << std::endl;
+  }
+  else if (local_dt){
+    std::cout << "Note: Using local time steps. Time t should now be considered as only a parametrizing variable." << std::endl;
+  }
+
   std::string write_mode = prm.write_mode;
 
   std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
   write_stats_header(statfile, faces, edges);
   std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
+
+  // Simulation start
+  std::clock_t clock_0 = std::clock();
   while (t <= T){
-    intp->update(t);
+    if (!frozen_fields)
+      intp->update(t);
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
@@ -370,6 +407,9 @@ int main(int argc, char* argv[])
          dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
          dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
        }
+       if (prm.local_dt){
+         dump_colors(checkpointsfolder + "/tau.dat", tau_rw, Nrw);
+       }
     }
     // Injection
     if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
@@ -378,7 +418,7 @@ int main(int argc, char* argv[])
         Uint iedge0 = edges.size();
         Uint iface0 = faces.size();
         add_particles(pos_inj, intp,
-                      x_rw, u_rw, c_rw, rho_rw, p_rw, a_rw,
+                      x_rw, u_rw, c_rw, tau_rw, rho_rw, p_rw, a_rw,
                       U0, prm.restart_folder, prm.int_order, irw0);
         for (Uint irw=0; irw < pos_inj.size(); ++irw){
           node2edges.push_back({});
@@ -480,13 +520,13 @@ int main(int argc, char* argv[])
       Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               x_rw,
                               u_rw,
-                              rho_rw, p_rw, c_rw,
+                              rho_rw, p_rw, c_rw, tau_rw,
                               H_rw, n_rw,
                               a_rw,
                               Nrw, Nrw_max, ds_max,
                               do_output_all, intp,
                               U0, prm.int_order,
-                              prm.curv_refine_factor);
+                              prm.curv_refine_factor, prm.cut_if_stuck);
       if (prm.verbose)
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
@@ -498,7 +538,7 @@ int main(int argc, char* argv[])
                               edges_inlet, nodes_inlet,
                               x_rw,
                               u_rw,
-                              rho_rw, p_rw, c_rw,
+                              rho_rw, p_rw, c_rw, tau_rw,
                               H_rw, n_rw,
                               a_rw,
                               Nrw, ds_min,
@@ -514,7 +554,7 @@ int main(int argc, char* argv[])
       bool filtered = filtering(faces, edges,
                                 edge2faces, node2edges,
                                 x_rw, u_rw,
-                                rho_rw, p_rw, c_rw,
+                                rho_rw, p_rw, c_rw, tau_rw,
                                 H_rw, n_rw,
                                 a_rw, Nrw,
                                 do_output_all, prm.int_order, prm.filter_target);
@@ -560,7 +600,7 @@ int main(int argc, char* argv[])
           scalar2hdf5(h5f, groupname + "/rho", rho_rw, Nrw);
           scalar2hdf5(h5f, groupname + "/p", p_rw, Nrw);
         }
-        if (!prm.minimal_output)
+        if (!prm.minimal_output || local_dt)
           scalar2hdf5(h5f, groupname + "/c", c_rw, Nrw);
         if (!prm.minimal_output && edges.size() > 0)
           scalar2hdf5(h5f, groupname + "/H", H_rw, Nrw);
@@ -570,51 +610,118 @@ int main(int argc, char* argv[])
           scalar2hdf5(h5f, groupname + "/e", e_rw, Nrw);
         if (edges.size() > 0)
           mesh2hdf(h5f, groupname, x_rw, faces, edges);
+        if (local_dt)
+          scalar2hdf5(h5f, groupname + "/tau", tau_rw, Nrw);
       }
     }
-    for (Uint irw=0; irw < Nrw; ++irw){
-      dx_rw = u_rw[irw]*dt;
+    if (!local_dt){
+      for (Uint irw=0; irw < Nrw; ++irw){
+        dx_rw = u_rw[irw]*dt;
 
-      // Set elongation
-      e_rw[irw] = 0.;
-
-      // Second-order terms
-      if (prm.int_order >= 2){
-        dx_rw += 0.5*a_rw[irw]*dt2;
-      }
-      if (Dm > 0.0){
-        Vector3d eta = {rnd_normal(gen),
-                        rnd_normal(gen),
-                        rnd_normal(gen)};
-        dx_rw += sqrt2Dmdt*eta;
-      }
-      intp->probe(x_rw[irw]+dx_rw);
-      if (intp->inside_domain()){
-        x_rw[irw] += dx_rw;
-        u_rw[irw] = U0*intp->get_u();
-
-        if ((it+1) % int_dump_intv == 0){
-          rho_rw[irw] = intp->get_rho();
-          p_rw[irw] = intp->get_p();
-        }
+        // Set elongation
+        e_rw[irw] = 0.;
 
         // Second-order terms
         if (prm.int_order >= 2){
-          a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
+          dx_rw += 0.5*a_rw[irw]*dt2;
         }
-        n_accepted++;
+        if (Dm > 0.0){
+          Vector3d eta = {
+            rnd_normal(gen),
+            rnd_normal(gen),
+            rnd_normal(gen)};
+          dx_rw += sqrt2Dmdt*eta;
+        }
+        intp->probe(x_rw[irw]+dx_rw);
+        if (intp->inside_domain()){
+          x_rw[irw] += dx_rw;
+          u_rw[irw] = U0*intp->get_u();
+
+          if ((it+1) % int_dump_intv == 0){
+            rho_rw[irw] = intp->get_rho();
+            p_rw[irw] = intp->get_p();
+          }
+
+          // Second-order terms
+          if (prm.int_order >= 2){
+            a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
+          }
+          n_accepted++;
+        }
+        else {
+          n_declined++;
+          declinedfile << t << " "
+                       << x_rw[irw][0]+dx_rw[0] << " "
+                       << x_rw[irw][1]+dx_rw[1] << " "
+                       << x_rw[irw][2]+dx_rw[2] << std::endl;
+        }
       }
-      else {
-        n_declined++;
-        declinedfile << t << " "
-                     << x_rw[irw][0]+dx_rw[0] << " "
-                     << x_rw[irw][1]+dx_rw[1] << " "
-                     << x_rw[irw][2]+dx_rw[2] << std::endl;
+    }
+    else {
+      double dtau;
+      double u_abs;
+      std::set<Uint> nodes_to_remove;
+      for (Uint irw=0; irw < Nrw; ++irw){
+        u_abs = u_rw[irw].norm();
+        if (u_abs < prm.u_eps){
+          //
+          nodes_to_remove.insert(irw);
+        }
+        dtau = dl_max/(u_abs+prm.u_eps);
+        tau_rw[irw] += dtau;
+        dx_rw = u_rw[irw]*dtau;
+
+        e_rw[irw] = 0.; //elongation - why??
+
+        if (prm.int_order >= 2){
+          dx_rw += 0.5 * a_rw[irw] * dtau * dtau;
+        }
+        intp->probe(x_rw[irw]+dx_rw);
+        if (intp->inside_domain()){
+          x_rw[irw] += dx_rw;
+          u_rw[irw] = U0*intp->get_u();
+          // other scalars?
+          if (prm.int_order >= 2){
+            a_rw[irw] = U02*intp->get_Ju() + U0*intp->get_a();
+          }
+          n_accepted++;
+        }
+        else {
+          n_declined++;
+          //log??
+        }
+      }
+      if (nodes_to_remove.size() > 0){
+        if (!prm.cut_if_stuck){
+          std::cout << "Node is stuck! Turn on cut_if_stuck to continue." << std::endl;
+          exit(0);
+        }
+        bool do_output_all = prm.output_all_props && !prm.minimal_output && (it+1) % int_dump_intv == 0;
+        std::vector<bool> node_isactive(Nrw, true);
+        for (std::set<Uint>::const_iterator sit = nodes_to_remove.begin();
+             sit != nodes_to_remove.end(); ++sit){
+          node_isactive[*sit] = false;
+        }
+        remove_nodes_safely(faces, edges,
+                            edge2faces, node2edges,
+                            edges_inlet, nodes_inlet,
+                            node_isactive,
+                            x_rw,
+                            u_rw,
+                            rho_rw, p_rw,
+                            c_rw, tau_rw,
+                            H_rw, n_rw,
+                            a_rw, Nrw,
+                            do_output_all,
+                            prm.int_order);
       }
     }
     t += dt;
     it += 1;
   }
+  std::clock_t clock_1 = std::clock();
+  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
+  std::cout << "Total simulation time: " << duration << std::endl;
 
   // Final checkpoint
   prm.t = t;
