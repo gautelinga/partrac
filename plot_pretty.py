@@ -87,11 +87,15 @@ x, y = np.meshgrid(np.arange(nx), np.arange(ny))
 figsize = (args.size_x, args.size_y)
 
 timestamp_entry = 0
-t_prev = timestamps[0][0]
-t_next = timestamps[1][0]
-with h5py.File(os.path.join(felbm_folder, timestamps[0][1]), "r") as h5f:
+while timestamps[timestamp_entry+1][0] < ts[0]:
+    timestamp_entry += 1
+
+t_prev = timestamps[timestamp_entry][0]
+t_next = timestamps[timestamp_entry+1][0]
+
+with h5py.File(os.path.join(felbm_folder, timestamps[timestamp_entry][1]), "r") as h5f:
     rho_prev = np.array(h5f["density"]).reshape((nz, ny, nx))[nz//2, :, :]
-with h5py.File(os.path.join(felbm_folder, timestamps[1][1]), "r") as h5f:
+with h5py.File(os.path.join(felbm_folder, timestamps[timestamp_entry+1][1]), "r") as h5f:
     rho_next = np.array(h5f["density"]).reshape((nz, ny, nx))[nz//2, :, :]
 
 c_tg = colorConverter.to_rgba("#e6e6e6", alpha=0.0)
