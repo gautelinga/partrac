@@ -72,19 +72,23 @@ Parameters that are also stored in the event of a restart:
 | "plane_xz"    | Nrw particles in the xz plane                                                         | init_weight, y0         |
 | "plane_yz"    | Nrw particles in the yz plane                                                         | init_weight, x0         |
 | "volume"      | Nrw particles in the whole domain                                                     | init_weight        |
-| "pair_xyz"    | Two particles separated by ds_max rotated randomly in 3D                              | x0, y0, z0 |
-| "pair_xy"     | Two particles separated by ds_max rotated randomly in the xy plane                    | x0, y0, z0 |
-| "pair_xz"     | Two particles separated by ds_max rotated randomly in the xz plane                    | x0, y0, z0 |
-| "pair_yz"     | Two particles separated by ds_max rotated randomly in the yz plane                    | x0, y0, z0 |
-| "pairs_xyz_x" | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in 3D           | y0, z0     |
-| "pairs_xyz_y" | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in 3D           | x0, z0     |
-| "pairs_xyz_z" | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in 3D           | x0, y0     |
-| "pairs_xy_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xy plane | y0, z0     |
-| "pairs_xy_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xy plane | x0, z0     |
-| "pairs_xy_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xy plane | x0, y0     |
-| "pairs_xz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xz plane | y0, z0     |
-| "pairs_xz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xz plane | x0, z0     |
-| "pairs_xz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xz plane | x0, y0     |
-| "pairs_yz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the yz plane | y0, z0     |
-| "pairs_yz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the yz plane | x0, z0     |
-| "pairs_yz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the yz plane | x0, y0     |
+| "pair_xyz"    | Two particles separated by ds_max rotated randomly in 3D                              | x0, y0, z0   |
+| "pair_xy"     | Two particles separated by ds_max rotated randomly in the xy plane                    | x0, y0, z0   |
+| "pair_xz"     | Two particles separated by ds_max rotated randomly in the xz plane                    | x0, y0, z0   |
+| "pair_yz"     | Two particles separated by ds_max rotated randomly in the yz plane                    | x0, y0, z0   |
+| "pairs_xyz_x" | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in 3D           | y0, z0       |
+| "pairs_xyz_y" | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in 3D           | x0, z0       |
+| "pairs_xyz_z" | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in 3D           | x0, y0       |
+| "pairs_xy_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xy plane | y0, z0       |
+| "pairs_xy_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xy plane | x0, z0       |
+| "pairs_xy_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xy plane | x0, y0       |
+| "pairs_xz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xz plane | y0, z0       |
+| "pairs_xz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xz plane | x0, z0       |
+| "pairs_xz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xz plane | x0, y0       |
+| "pairs_yz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the yz plane | y0, z0       |
+| "pairs_yz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the yz plane | x0, z0       |
+| "pairs_yz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the yz plane | x0, y0       |
+| `pairs_[xyz]_[xyz]` | Nrw/2 pairs of particles in `[xyz]`(1) space rotated randomly in `[xyz]`(2) space |`[x0, y0, z0]`|
+| "uniform_x"   | Nrw particles separated uniformly along x                                             | y0, z0 |
+| "uniform_y"   | Nrw particles separated uniformly along y                                             | x0, z0 |
+| "uniform_z"   | Nrw particles separated uniformly along z                                             | x0, y0 |
