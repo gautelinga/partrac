@@ -12,6 +12,7 @@ def parse_args():
     parser.add_argument("-axis", type=int, default=0, help="Axis")
     parser.add_argument("--show", action="store_true", help="Show plot")
     parser.add_argument("--phase_by_density", action="store_true", help="Show plot")
+    parser.add_argument("-o", "--output_dir", type=str, default="", help="Output directory")
     args = parser.parse_args()
     return args
 
@@ -39,7 +40,11 @@ if __name__ == "__main__":
     args = parse_args()
 
     felbm_folder = args.folder
-    analysisfolder = os.path.join(felbm_folder, "Analysis")
+    if args.output_dir != "":
+        output_folder = args.output_dir
+    else:
+        output_folder = felbm_folder
+    analysisfolder = os.path.join(output_folder, "Analysis")
     if rank == 0 and not os.path.exists(analysisfolder):
         os.makedirs(analysisfolder)
 
