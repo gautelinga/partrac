@@ -76,17 +76,29 @@ if __name__ == "__main__":
                 plt.show()
 
             #plt.imshow(ux.reshape((ny, nx)))
-            fig2, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2)
-            ax1.imshow(freq)
+            fig1, ax1 = plt.subplots(1, 1, figsize=(20,6))
+
+            fig2, ((ax2, ax3), (ax4, ax5)) = plt.subplots(2, 2, figsize=(20,6))
+
+            im1 = ax1.imshow(freq)
+            fig2.colorbar(im1, ax=ax1)
             ax1.set_title("freq")
-            ax2.imshow(ux)
+            
+            im2 = ax2.imshow(ux)
             ax2.set_title("ux")
-            ax3.imshow(Ax)
+            fig2.colorbar(im2, ax=ax2)
+            
+            im3 = ax3.imshow(Ax)
             ax3.set_title("Ax")
-            ax4.imshow(rho)
+            fig2.colorbar(im3, ax=ax3)
+            
+            im4 = ax4.imshow(rho)
             ax4.set_title("rho")
-            ax5.imshow(du)
+            fig2.colorbar(im4, ax=ax4)
+            
+            im5 = ax5.imshow(du)
             ax5.set_title("du")
+            fig2.colorbar(im5, ax=ax5)
             
             if args.save:
                 plt.savefig(os.path.join(analysisfolder, "spatial.png"))
