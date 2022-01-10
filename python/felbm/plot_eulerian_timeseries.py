@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 def parse_args():
     parser = argparse.ArgumentParser(description="Plot pos")
     parser.add_argument("folder", type=str, help="Folder")
+    parser.add_argument("--save", action="store_true", help="Save figures")
+    parser.add_argument("--show", action="store_true", help="Show figures")
     args = parser.parse_args()
     return args
 
@@ -16,7 +18,7 @@ if __name__ == "__main__":
     analysisfolder = os.path.join(felbm_folder, "Analysis")
 
     if rank==0:
-        try:
+        if True:
             ux = np.loadtxt(os.path.join(analysisfolder, "uxnorm_avg.dat"))
             freq = np.loadtxt(os.path.join(analysisfolder, "freq_avg.dat"))
             rho = np.loadtxt(os.path.join(analysisfolder, "rho_avg.dat"))
@@ -67,7 +69,11 @@ if __name__ == "__main__":
             ax4.set_ylabel("$P(u')$")
             #ax4.set_yscale("log")
 
-            plt.show()
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "pdfs.png"))
+
+            if args.show:
+                plt.show()
 
             #plt.imshow(ux.reshape((ny, nx)))
             fig2, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2)
@@ -81,11 +87,17 @@ if __name__ == "__main__":
             ax4.set_title("rho")
             ax5.imshow(du)
             ax5.set_title("du")
-            plt.show()
-        except:
-            pass
+            
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "spatial.png"))
 
-        try:
+            if args.show:
+                plt.show()
+
+        #except:
+        #    pass
+
+        if True:
             tdata = np.loadtxt(os.path.join(analysisfolder, "tdata.dat"))
             t_ = tdata[0, :]
             uxt = tdata[1, :]
@@ -118,7 +130,12 @@ if __name__ == "__main__":
             ax2.plot(t_, S2t, label="phase2")
             ax2.plot(t_, S2_mean * np.ones_like(t_), label="phase2_mean")
             ax2.legend()
-            plt.show()
 
-        except:
-            pass
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "time_signals.png"))
+
+            if args.show:
+                plt.show()
+
+        # except:
+        #     pass
