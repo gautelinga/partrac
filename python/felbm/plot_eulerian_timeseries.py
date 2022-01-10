@@ -78,11 +78,17 @@ if __name__ == "__main__":
             #plt.imshow(ux.reshape((ny, nx)))
             fig1, ax1 = plt.subplots(1, 1, figsize=(20,6))
 
-            fig2, ((ax2, ax3), (ax4, ax5)) = plt.subplots(2, 2, figsize=(20,6))
-
             im1 = ax1.imshow(freq)
-            fig2.colorbar(im1, ax=ax1)
+            fig1.colorbar(im1, ax=ax1)
             ax1.set_title("freq")
+
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "spatial_freq.png"))
+
+            if args.show:
+                plt.show()
+
+            fig2, ((ax2, ax3), (ax4, ax5)) = plt.subplots(2, 2, figsize=(20,6))
             
             im2 = ax2.imshow(ux)
             ax2.set_title("ux")
