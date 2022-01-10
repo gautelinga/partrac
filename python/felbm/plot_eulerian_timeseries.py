@@ -1,0 +1,124 @@
+from analyze_eulerian_timeseries import *
+import matplotlib.pyplot as plt
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Plot pos")
+    parser.add_argument("folder", type=str, help="Folder")
+    args = parser.parse_args()
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    felbm_folder = args.folder
+    analysisfolder = os.path.join(felbm_folder, "Analysis")
+
+    if rank==0:
+        try:
+            ux = np.loadtxt(os.path.join(analysisfolder, "uxnorm_avg.dat"))
+            freq = np.loadtxt(os.path.join(analysisfolder, "freq_avg.dat"))
+            rho = np.loadtxt(os.path.join(analysisfolder, "rho_avg.dat"))
+            du = np.loadtxt(os.path.join(analysisfolder, "du.dat"))
+            is_fluid_xy = np.array(np.loadtxt(os.path.join(analysisfolder, "is_fluid_xy.dat")), dtype=bool)
+
+            Ax = np.zeros_like(ux)
+            Ax[ux > 0.] = ux[ux > 0.]/freq[ux > 0.]
+
+            freq_mean = freq[is_fluid_xy].mean()
+            ux_mean = ux[is_fluid_xy].mean()
+            Ax_mean = Ax[is_fluid_xy].mean()
+            du_mean = du[is_fluid_xy].mean()
+            print("freq_mean =", freq_mean)
+            print("ux_mean =", ux_mean)
+            print("Ax_mean =", Ax_mean)
+            print("du_mean =", du_mean)
+
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4)
+
+            ax1.hist(freq[is_fluid_xy], bins=256, density=True)
+            ax1.axvline(freq_mean, c="k")
+            #ax1.set_yscale("log")
+            ax1.set_xlabel("$\\bar{f}$")
+            ax1.set_ylabel("$P(\\bar{f})$")
+
+            ax2.hist(ux[is_fluid_xy], bins=256, density=True)
+            ax2.axvline(ux_mean, c="k")
+            ax2.set_yscale("log")
+            ax2.set_xlabel("$\\bar{u}_x$")
+            ax2.set_ylabel("$P(\\bar{u}_x)$")
+            x_ = np.linspace(0., 10*ux_mean, 100)
+            ax2.plot(x_, 1./ux_mean*np.exp(-x_/ux_mean))
+
+            ax3.hist(Ax[is_fluid_xy], bins=256, density=True)
+            ax3.axvline(Ax_mean, c="k")
+            x_ = np.linspace(0., 10*Ax_mean, 100)
+            ax3.plot(x_, 1./Ax_mean*np.exp(-x_/Ax_mean))
+            ax3.set_xlabel("$A_x$")
+            ax3.set_ylabel("$P(A_x)$")
+            ax3.set_yscale("log")
+
+            ax4.hist(du[is_fluid_xy], bins=256, density=True)
+            ax4.axvline(du_mean, c="k")
+            #x_ = np.linspace(0., 10*du_mean, 100)
+            #ax4.plot(x_, 1./du_mean * np.exp(-x_/du_mean))
+            ax4.set_xlabel("$u'$")
+            ax4.set_ylabel("$P(u')$")
+            #ax4.set_yscale("log")
+
+            plt.show()
+
+            #plt.imshow(ux.reshape((ny, nx)))
+            fig2, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2)
+            ax1.imshow(freq)
+            ax1.set_title("freq")
+            ax2.imshow(ux)
+            ax2.set_title("ux")
+            ax3.imshow(Ax)
+            ax3.set_title("Ax")
+            ax4.imshow(rho)
+            ax4.set_title("rho")
+            ax5.imshow(du)
+            ax5.set_title("du")
+            plt.show()
+        except:
+            pass
+
+        try:
+            tdata = np.loadtxt(os.path.join(analysisfolder, "tdata.dat"))
+            t_ = tdata[0, :]
+            uxt = tdata[1, :]
+            uyt = tdata[2, :]
+            S1t = tdata[3, :]
+            S2t = tdata[4, :]
+
+            ux_mean = uxt.mean()
+            uy_mean = uyt.mean()
+            S1_mean = S1t.mean()
+            S2_mean = S2t.mean()
+            print("ux_mean =", ux_mean)
+            print("uy_mean =", uy_mean)
+            print("S1_mean =", S1_mean)
+            print("S2_mean =", S2_mean)
+
+            fig, (ax1, ax2) = plt.subplots(2, 1)
+            ax1.set_ylabel("Mean velocity")
+            ax1.set_xlabel("Time t")
+            ax1.plot(t_, uxt, label="ux")
+            ax1.plot(t_, ux_mean * np.ones_like(t_), label="ux_mean")
+            ax1.plot(t_, uyt, label="uy")
+            ax1.plot(t_, uy_mean * np.ones_like(t_), label="uy_mean")
+            ax1.legend()
+
+            ax2.set_ylabel("Mean cluster size")
+            ax2.set_xlabel("Time t")
+            ax2.plot(t_, S1t, label="phase1")
+            ax2.plot(t_, S1_mean * np.ones_like(t_), label="phase1_mean")
+            ax2.plot(t_, S2t, label="phase2")
+            ax2.plot(t_, S2_mean * np.ones_like(t_), label="phase2_mean")
+            ax2.legend()
+            plt.show()
+
+        except:
+            pass

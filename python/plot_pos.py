@@ -17,6 +17,7 @@ parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
 parser.add_argument("--export", action="store_true", help="Export")
 parser.add_argument("--elong", action="store_true", help="Plot elong")
+parser.add_argument("--nocol", action="store_true", help="Plot no color")
 parser.add_argument("--cbar", action="store_true", help="Colorbar")
 parser.add_argument("-cmax", type=float, default=None, help="cmax")
 parser.add_argument("-cmin", type=float, default=None, help="cmin")
@@ -74,8 +75,12 @@ for t in ts:
     posft, grp = posf[t]
     with h5py.File(posft, "r") as h5f:
         pos = np.array(h5f[grp + "/points"])
-        elong = np.array(h5f[grp + "/e"])
-        col = np.array(h5f[grp + "/c"])
+        if args.nocol:
+            col = np.zeros_like(pos)
+        elif args.elong:
+            elong = np.array(h5f[grp + "/e"])
+        else:
+            col = np.array(h5f[grp + "/c"])
 
     eps = 0
     #if t == ts[0]:
