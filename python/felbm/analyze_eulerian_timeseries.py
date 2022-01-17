@@ -1,4 +1,5 @@
 import argparse
+from meshtools import numpy_to_dolfin
 import numpy as np
 import os
 import h5py
@@ -26,7 +27,7 @@ def parse_args():
 def load_mesh(nx, ny, is_fluid):
     mesh = None
     if rank == 0:
-        nodes = np.array([(i, j) for j, i in itertools.product(range(ny+1), range(nx+1))], dtype=float)
+        nodes = np.array([(i, j) for j,  i in itertools.product(range(ny+1), range(nx+1))], dtype=float)
         elems = np.array([(i + j*(nx+1), i+1 + j*(nx+1), i+1 + (j+1)*(nx+1), i + (j+1)*(nx+1)) 
                           for j, i in itertools.product(range(ny), range(nx))], dtype=int)
         
@@ -40,6 +41,87 @@ def load_mesh(nx, ny, is_fluid):
         mesh = (elems, nodes)
     return mesh
 
+
+class XDMFTimeSeries:
+    def __init__(self, xdmffilename, points, cells):
+        assert(xdmffilename[-5:] == ".xdmf")
+        assert(points.shape[1] == 2)
+        assert(cells.shape[1] == 4)
+        self.xdmffilename = xdmffilename
+        self.h5filename = xdmffilename[:-5] + ".h5"
+        self.h5filename_base = os.path.basename(self.h5filename)
+        self.points = np.array(points)
+        self.cells = np.array(cells)
+
+        self.xdmffile = open(self.xdmffilename, "w")
+        self.h5file = h5py.File(self.h5filename, "w")
+
+        self.xdmffile.write(self._head())
+        self.h5file.create_dataset("mesh/cells", data=self.cells)
+        self.h5file.create_dataset("mesh/points", data=self.points)
+
+        self._COUNT = 0
+
+    def close(self):
+        self.xdmffile.write(self._tail())
+        self.xdmffile.close()
+        self.h5file.close()
+
+    def write(self, cell_datasets, t):
+        self.xdmffile.write(self._body_top(t))
+        for name, cell_data in cell_datasets:
+            assert(cell_data.shape[0] == self.cells.shape[0])
+            if len(cell_data.shape) == 1 or cell_data.shape[1] == 1:
+                self.xdmffile.write(self._body_scalar(self._COUNT, name))
+                self.h5file.create_dataset("{i}/{name}".format(i=self._COUNT, name=name), data=cell_data)
+            elif cell_data.shape[1] == 2:
+                self.xdmffile.write(self._body_vector(self._COUNT, name))
+                self.h5file.create_dataset("{i}/{name}".format(i=self._COUNT, name=name), data=cell_data)
+            else:
+                exit("UNSUPPORTED")
+        self.xdmffile.write(self._body_btm())
+        self._COUNT += 1
+
+    def _head(self):
+        return """<Xdmf xmlns:ns0="http://www.w3.org/2003/XInclude" Version="3.0">
+    <Domain>
+        <Grid Name="TimeSeries_partrac" GridType="Collection" CollectionType="Temporal">"""
+
+    def _body_top(self, t):
+        return """
+            <Grid>
+                <ns0:include xpointer="xpointer(//Grid[@Name=&quot;mesh&quot;]/*[self::Topology or self::Geometry])" />
+                <Time Value="{time}" />""".format(time=t)
+
+    def _body_vector(self, i, name):
+        return """
+                <Attribute Name="{name}" AttributeType="Vector" Center="Cell">
+                    <DataItem DataType="Float" Dimensions="{num_cells} 2" Format="HDF" Precision="8">{h5filename}:/{i}/{name}</DataItem>
+                </Attribute>""".format(name=name, i=i, num_points=len(self.points), num_cells=len(self.cells), h5filename=self.h5filename_base)
+
+    def _body_scalar(self, i, name):
+        return """
+                <Attribute Name="{name}" AttributeType="Scalar" Center="Cell">
+                    <DataItem DataType="Float" Dimensions="{num_cells}" Format="HDF" Precision="8">{h5filename}:/{i}/{name}</DataItem>
+                </Attribute>""".format(name=name, i=i, num_points=len(self.points), num_cells=len(self.cells), h5filename=self.h5filename_base)
+
+    def _body_btm(self):
+        return """
+            </Grid>"""
+
+    def _tail(self):
+        return """
+        </Grid>
+        <Grid Name="mesh" GridType="Uniform">
+            <Geometry GeometryType="XY">
+                <DataItem DataType="Float" Dimensions="{num_points} 2" Format="HDF" Precision="8">{h5filename}:/mesh/points</DataItem>
+            </Geometry>
+            <Topology TopologyType="Quadrilateral" NumberOfElements="843710">
+                <DataItem DataType="Int" Dimensions="{num_cells} 4" Format="HDF" Precision="8">{h5filename}:/mesh/cells</DataItem>
+            </Topology>
+        </Grid>
+    </Domain>
+</Xdmf>""".format(num_points=len(self.points), num_cells=len(self.cells), h5filename=self.h5filename_base)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -104,10 +186,13 @@ if __name__ == "__main__":
 
     t_ = np.array([t for t, _ in timestamps])
 
-    df = 1./(t_[1]-t_[0])
-    Nf = 1 + Nt // 2
+    dt = t_[1]-t_[0]
     
-    f = np.arange(Nf) * df
+    f = np.fft.rfftfreq(Nt, dt)
+    Nf = len(f)
+    assert(Nf == Nt // 2 + 1)
+    df = f[1]-f[0]
+
     if args.fmax > 0:
         ff = f[f <= args.fmax]
         Nff = len(ff)
@@ -227,19 +312,22 @@ if __name__ == "__main__":
             os.path.join(analysisfolder, "data_avg.xdmf"))
 
         pbar2 = tqdm(total=Nff)
-        with meshio.xdmf.TimeSeriesWriter(os.path.join(analysisfolder, "data_f.xdmf")) as writer:
-            writer.write_points_cells(nodes, [("quad", elems)])
-            for i, fi in enumerate(ff):
-                pbar2.update(1)
+        
+        ts = XDMFTimeSeries(os.path.join(analysisfolder, "data_f.xdmf"), nodes, elems)
+        for i, fi in enumerate(ff):
+            pbar2.update(1)
 
-                _Fuxi = Fux[is_fluid, i]
-                _Fuyi = Fuy[is_fluid, i]
-                cell_data = {
-                    "Fu_real": [np.vstack((_Fuxi.real, _Fuyi.real)).T],
-                    "Fu_imag": [np.vstack((_Fuyi.imag, _Fuyi.imag)).T],
-                    "P2": [P2[is_fluid, i]]
-                }
-                writer.write_data(fi, cell_data=cell_data)
+            _Fuxi = Fux[is_fluid, i]
+            _Fuyi = Fuy[is_fluid, i]
+
+            cell_datasets = [
+                ("Fu_real", np.vstack((_Fuxi.real, _Fuyi.real)).T),
+                ("Fu_imag", np.vstack((_Fuyi.imag, _Fuyi.imag)).T),
+                ("P2", P2[is_fluid, i])
+            ]
+            ts.write(cell_datasets, fi)
+
+        ts.close()
         pbar2.close()
 
     if rank == 0:
