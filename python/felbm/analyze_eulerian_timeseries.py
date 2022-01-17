@@ -1,5 +1,4 @@
 import argparse
-from meshtools import numpy_to_dolfin
 import numpy as np
 import os
 import h5py
