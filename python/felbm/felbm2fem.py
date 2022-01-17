@@ -87,20 +87,6 @@ def load_mesh(nx, ny, is_fluid, analysisfolder):
     return mesh
 
 
-def get_fluid_domain(felbm_folder):
-    with h5py.File(os.path.join(felbm_folder, "output_is_solid.h5"), "r") as h5f:
-        is_solid = np.array(h5f["is_solid"])
-        nx, ny, nz = is_solid.shape
-        mpi_print(nx, ny, nz)
-
-    is_solid_xy = is_solid.reshape((nz, ny, nx))[nz // 2, :, :]
-    is_fluid_xy = np.logical_not(is_solid_xy)
-    return is_fluid_xy, (nx, ny, nz)
-
-def make_folder_safe(analysisfolder):
-    if rank == 0 and not os.path.exists(analysisfolder):
-        os.makedirs(analysisfolder)
-
 
 if __name__ == "__main__":
     args = parse_args()
@@ -208,7 +194,7 @@ if __name__ == "__main__":
     xdmff.parameters["flush_output"] = True
     xdmff.parameters["functions_share_mesh"] = True
 
-    print("Test")
+    mpi_print("Test")
 
     t_ = np.array([t for t, _ in timestamps])
 
@@ -243,7 +229,7 @@ if __name__ == "__main__":
     for it, timestamp in timestamps_block:
         t = timestamp[0]
         h5filename = timestamp[1]
-        print(t, h5filename)
+        mpi_print(t, h5filename)
         with h5py.File(os.path.join(felbm_folder, h5filename), "r") as h5f:
             #p[:, :] = np.array(h5f["pressure"]).reshape((nz, ny, nx))[nz // 2, :, :]
             #rho[:, :] = np.array(h5f["density"]).reshape((nz, ny, nx))[nz // 2, :, :]

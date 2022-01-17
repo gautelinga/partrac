@@ -19,6 +19,23 @@ if __name__ == "__main__":
 
     if rank==0:
         if True:
+            P2f = np.loadtxt(os.path.join(analysisfolder, "P2f.dat"))
+            fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+            for i, ax in enumerate(axs):
+                ax.plot(P2f[:, 0], np.sqrt(P2f[:, 1]))
+                ax.set_xlabel("f")
+                ax.set_ylabel("P(f)")
+                if i in [1, 2]:
+                    ax.set_yscale("log")
+                if i in [2]:
+                    ax.set_xscale("log")
+
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "Pf.png"))
+
+            if args.show:
+                plt.show()
+
             ux = np.loadtxt(os.path.join(analysisfolder, "uxnorm_avg.dat"))
             freq = np.loadtxt(os.path.join(analysisfolder, "freq_avg.dat"))
             rho = np.loadtxt(os.path.join(analysisfolder, "rho_avg.dat"))

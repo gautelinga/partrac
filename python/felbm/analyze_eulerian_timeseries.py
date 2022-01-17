@@ -1,23 +1,11 @@
 import argparse
-import sys
-import os
-basedir = os.path.join(os.path.dirname(__file__), "..")
-sys.path.append(basedir)
-from utils import Params, read_timestamps
 import numpy as np
 import os
 import h5py
 from scipy import signal
-import mpi4py.MPI as MPI
 from tqdm import tqdm
-
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
-
-def mpi_print(*args):
-    if rank == 0:
-        print(*args)
+from helpers import mpi_print, MPI, rank, size, comm, select_timestamps, make_folder_safe, get_fluid_domain
+import itertools
 
 
 def parse_args():
@@ -26,6 +14,7 @@ def parse_args():
     parser.add_argument("-t0", type=float, default=None, help="")
     parser.add_argument("-t1", type=float, default=None, help="")
     parser.add_argument("-axis", type=int, default=0, help="Axis")
+    parser.add_argument("-fmax", type=float, default=0, help="Cut-off frequency")
     parser.add_argument("--show", action="store_true", help="Show plot")
     parser.add_argument("--phase_by_density", action="store_true", help="Show plot")
     parser.add_argument("--blocks", type=int, default=1, help="Number of blocks to process")
@@ -34,15 +23,22 @@ def parse_args():
     return args
 
 
-def select_timestamps(felbm_folder, t0, t1):
-    timestamps = read_timestamps(os.path.join(felbm_folder, "timestamps.dat"))
-    timestamps_out = []
-    for timestamp in timestamps:
-        if (t0 is None or timestamp[0] >= t0) and (t1 is None or timestamp[0] <= t1):
-            timestamps_out.append(timestamp)
-    #timestamps = timestamps_out
-    mpi_print(timestamps_out)
-    return timestamps_out
+def load_mesh(nx, ny, is_fluid):
+    mesh = None
+    if rank == 0:
+        nodes = np.array([(i, j) for j, i in itertools.product(range(ny+1), range(nx+1))], dtype=float)
+        elems = np.array([(i + j*(nx+1), i+1 + j*(nx+1), i+1 + (j+1)*(nx+1), i + (j+1)*(nx+1)) 
+                          for j, i in itertools.product(range(ny), range(nx))], dtype=int)
+        
+        elems = elems[is_fluid, :]
+        used_nodes = np.unique(elems)
+        map_ids = np.zeros(used_nodes.max()+1, dtype=int)
+        for i, j in zip(used_nodes, range(len(used_nodes))):
+            map_ids[i] = j
+        nodes = nodes[used_nodes, :]
+        elems = map_ids[elems]
+        mesh = (elems, nodes)
+    return mesh
 
 
 if __name__ == "__main__":
@@ -57,36 +53,35 @@ if __name__ == "__main__":
     else:
         output_folder = felbm_folder
     analysisfolder = os.path.join(output_folder, "Analysis")
-    if rank == 0 and not os.path.exists(analysisfolder):
-        os.makedirs(analysisfolder)
+    make_folder_safe(analysisfolder)
 
     timestamps = select_timestamps(felbm_folder, args.t0, args.t1)
 
-    with h5py.File(os.path.join(felbm_folder, "output_is_solid.h5"), "r") as h5f:
-        is_solid = np.array(h5f["is_solid"])
-        nx, ny, nz = is_solid.shape
-        mpi_print(nx, ny, nz)
-        is_solid = is_solid.reshape((nz, ny, nx))
+    is_fluid_xy, (nx, ny, nz) = get_fluid_domain(felbm_folder)
+    is_fluid = is_fluid_xy.flatten()
+    mesh = load_mesh(nx, ny, is_fluid)
+
 
     #is_solid = is_solid[nz // 2, :, :].flatten()
     #is_fluid = np.logical_not(is_solid)
-    is_fluid = np.logical_not(is_solid)
-    is_plane = np.zeros_like(is_solid, dtype=bool)
-    is_plane[nz // 2, :, :] = True
-    is_domain = np.logical_and(is_plane, is_fluid)
-    is_domain_flat = is_domain.flatten()
-    is_fluid_xy = is_fluid[nz//2, :, :]
-    fluid2xy = np.argwhere(is_fluid_xy.flatten()).flatten()
+    #is_fluid = np.logical_not(is_solid)
+    
+    is_domain_xyz = np.zeros((nz, ny, nx), dtype=bool)
+    is_domain_xyz[nz // 2, :, :] = is_fluid_xy
+    is_domain = is_domain_xyz.flatten()
+    fluid2xy = np.argwhere(is_fluid).flatten()
     mpi_print(len(fluid2xy), fluid2xy[-1])
+
+    Ndofs = int(np.sum(is_domain))
 
     #print(np.sum(is_domain_flat), np.sum(is_fluid_xy_flat))
     #p = np.zeros_like(is_solid, dtype=float)
-    rho = np.zeros_like(is_fluid_xy, dtype=float).flatten()
+    rho = np.zeros_like(is_fluid, dtype=float)
     rho_loc = np.zeros_like(rho)
     #c = np.zeros_like(is_solid, dtype=float)
     #ux = np.zeros_like(is_solid, dtype=float)
     #uy = np.zeros_like(is_solid, dtype=float)
-    ux = np.zeros_like(is_fluid_xy, dtype=float).flatten()
+    ux = np.zeros_like(is_fluid, dtype=float)
     ux_loc = np.zeros_like(ux)
     du = np.zeros_like(rho)
     du_loc = np.zeros_like(du)
@@ -98,7 +93,6 @@ if __name__ == "__main__":
 
     #print(is_domain.shape)
 
-    Ndofs = int(np.sum(is_domain.flatten()))
     mpi_print("porosity={}".format(Ndofs/(nx*ny)))
     mpi_print("Is fluid: {}".format(Ndofs))
     block_size = int(np.ceil(Ndofs / args.blocks))
@@ -110,6 +104,26 @@ if __name__ == "__main__":
 
     t_ = np.array([t for t, _ in timestamps])
 
+    df = 1./(t_[1]-t_[0])
+    Nf = 1 + Nt // 2
+    
+    f = np.arange(Nf) * df
+    if args.fmax > 0:
+        ff = f[f <= args.fmax]
+        Nff = len(ff)
+    else:
+        ff = f
+        Nff = Nf
+    mpi_print("Number of frequencies to keep: {}".format(Nff))
+
+    Fux = np.zeros((len(is_fluid), Nff), dtype=complex)
+    Fuy = np.zeros((len(is_fluid), Nff), dtype=complex)
+    P2 = np.zeros((len(is_fluid), Nff))
+
+    Fux_loc = np.zeros_like(Fux)
+    Fuy_loc = np.zeros_like(Fuy)
+    P2_loc = np.zeros_like(P2)
+
     comm.Barrier()
     if rank == 0:
         pbar = tqdm(total=len(blocks_proc)*len(timestamps))
@@ -117,7 +131,7 @@ if __name__ == "__main__":
     for iblock in blocks_proc:
         istart = iblock * block_size
         istop = min((iblock + 1) * block_size, Ndofs)
-        uxt_block = np.zeros((istop-istart, len(timestamps)))
+        uxt_block = np.zeros((istop-istart, Nt))
         uyt_block = np.zeros_like(uxt_block)
         rho_block = np.zeros_like(uxt_block)
         #Ux = np.zeros((Nt, ny, nx))
@@ -130,35 +144,104 @@ if __name__ == "__main__":
                 #rho[:, :] = np.array(h5f["density"]).reshape((nz, ny, nx))[nz // 2, :, :]
                 #ux[:, :] = np.array(h5f["u_x"]).reshape((nz, ny, nx))[nz // 2, :, :]
                 #uy[:, :] = np.array(h5f["u_y"]).reshape((nz, ny, nx))[nz // 2, :, :]
-                rho_block[:, it] = np.array(h5f["density"]).flatten()[is_domain_flat][istart:istop]
-                uxt_block[:, it] = np.array(h5f["u_x"]).flatten()[is_domain_flat][istart:istop]
-                uyt_block[:, it] = np.array(h5f["u_y"]).flatten()[is_domain_flat][istart:istop]
+                rho_block[:, it] = np.array(h5f["density"]).flatten()[is_domain][istart:istop]
+                uxt_block[:, it] = np.array(h5f["u_x"]).flatten()[is_domain][istart:istop]
+                uyt_block[:, it] = np.array(h5f["u_y"]).flatten()[is_domain][istart:istop]
                 #print(w)
                 if rank == 0:
                     pbar.update(1)
         freq_block = np.zeros(uxt_block.shape[0])
         rhoavg_block = rho_block.mean(axis=1)
+
+        Fux_block = np.zeros((uxt_block.shape[0], Nff), dtype=complex)
+        Fuy_block = np.zeros((uxt_block.shape[0], Nff), dtype=complex)
+        P2_block = np.zeros((uxt_block.shape[0], Nff))
+
         for i in range(uxt_block.shape[0]):
-            f, P2 = signal.welch(uxt_block[i, :], 1./(t_[1]-t_[0]), 'flattop', uxt_block.shape[1], scaling='spectrum')
-            P = np.sqrt(P2)
-            sumP = np.sum(P)
-            freq_block[i] = np.sum(f*P)/sumP if sumP > 0. else 0.
-            #plt.plot(t_, uxt_block[0, :])
-            #plt.plot(f, Pxx_spec)
+            #f_i, P2_i = signal.welch(uxt_block[i, :], df, 'flattop', Nt, scaling='spectrum')
+            #f_i, P2_i = signal.periodogram(uxt_block[i, :], df, nfft=Nt)
+            _Fux = np.fft.rfft(uxt_block[i, :])
+            _Fuy = np.fft.rfft(uyt_block[i, :])
+            P2_i = (np.conjugate(_Fux) * _Fux).real
+            #plt.plot(f_i, P2_i)
+            #plt.plot(f_i, P2_a)
             #plt.show()
+            P_i = np.sqrt(P2_i)
+            sumP = np.sum(P_i)
+            freq_block[i] = np.sum(f*P_i)/sumP if sumP > 0. else 0.
+            #plt.plot(t_, uxt_block[0, :])
+            #if (all(f_i == f)) and False:
+            #    print("f_i:", f_i)
+            #    print("f:  ", f)
+            #    print("uxt:", uxt_block[i, :])
+            #    exit()
+            Fux_block[i, :] = _Fux[:Nff]
+            Fuy_block[i, :] = _Fuy[:Nff]
+            
+            #P2_block[:] += P2
+            P2_block[i, :] += P2_i[:Nff]
+
+
+            #ax.plot(f_i, P2_i)
+        #plt.show()
+
         ids = fluid2xy[istart:istop]
         ux_loc[ids] = np.sqrt(np.mean(uxt_block**2, axis=1))
         freq_loc[ids] = freq_block[:]
         rho_loc[ids] = rhoavg_block[:]
         du_loc[ids] = np.sqrt(np.mean((uxt_block - np.outer(uxt_block.mean(axis=1), np.ones(uxt_block.shape[1])))**2 
                                       + (uyt_block - np.outer(uyt_block.mean(axis=1), np.ones(uyt_block.shape[1])))**2, axis=1))
+        
+        Fux_loc[ids, :] = Fux_block[:, :]
+        Fuy_loc[ids, :] = Fuy_block[:, :]
+        P2_loc[ids, :] = P2_block[:, :]
+
+    if rank == 0:
+        pbar.close()
+
 
     comm.Reduce(ux_loc, ux, op=MPI.SUM, root=0)
     comm.Reduce(freq_loc, freq, op=MPI.SUM, root=0)
     comm.Reduce(rho_loc, rho, op=MPI.SUM, root=0)
     comm.Reduce(du_loc, du, op=MPI.SUM, root=0)
 
+    comm.Reduce(Fux_loc, Fux, op=MPI.SUM, root=0)
+    comm.Reduce(Fuy_loc, Fuy, op=MPI.SUM, root=0)
+    comm.Reduce(P2_loc, P2, op=MPI.SUM, root=0)
+
     comm.Barrier()
+    if rank == 0:
+        cell_data = {
+            "f": [freq[is_fluid]], 
+            "ux": [ux[is_fluid]],
+            "rho": [rho[is_fluid]],
+            "du": [du[is_fluid]]
+        }
+
+        import meshio
+        elems, nodes = mesh
+        m = meshio.Mesh(
+            nodes, [("quad", elems)], cell_data=cell_data
+        )
+        m.write(
+            os.path.join(analysisfolder, "data_avg.xdmf"))
+
+        pbar2 = tqdm(total=Nff)
+        with meshio.xdmf.TimeSeriesWriter(os.path.join(analysisfolder, "data_f.xdmf")) as writer:
+            writer.write_points_cells(nodes, [("quad", elems)])
+            for i, fi in enumerate(ff):
+                pbar2.update(1)
+
+                _Fuxi = Fux[is_fluid, i]
+                _Fuyi = Fuy[is_fluid, i]
+                cell_data = {
+                    "Fu_real": [np.vstack((_Fuxi.real, _Fuyi.real)).T],
+                    "Fu_imag": [np.vstack((_Fuyi.imag, _Fuyi.imag)).T],
+                    "P2": [P2[is_fluid, i]]
+                }
+                writer.write_data(fi, cell_data=cell_data)
+        pbar2.close()
+
     if rank == 0:
         freq = freq.reshape((ny, nx))
         ux = ux.reshape((ny, nx))
@@ -170,3 +253,8 @@ if __name__ == "__main__":
         np.savetxt(os.path.join(analysisfolder, "rho_avg.dat"), rho)
         np.savetxt(os.path.join(analysisfolder, "is_fluid_xy.dat"), is_fluid_xy)
         np.savetxt(os.path.join(analysisfolder, "du.dat"), du)
+
+        P2f = P2[is_fluid, :].sum(axis=0)
+        P2f /= P2f.sum() * df
+        P2fdata = np.vstack((ff, P2f)).T
+        np.savetxt(os.path.join(analysisfolder, "P2f.dat"), P2fdata)
