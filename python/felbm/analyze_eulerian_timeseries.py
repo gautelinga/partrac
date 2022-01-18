@@ -14,7 +14,7 @@ def parse_args():
     parser.add_argument("-t0", type=float, default=None, help="")
     parser.add_argument("-t1", type=float, default=None, help="")
     parser.add_argument("-axis", type=int, default=0, help="Axis")
-    parser.add_argument("-fmax", type=float, default=0, help="Cut-off frequency")
+    parser.add_argument("-fmax", type=float, default=0, help="Cut-off frequency of FFT")
     parser.add_argument("--show", action="store_true", help="Show plot")
     parser.add_argument("--phase_by_density", action="store_true", help="Show plot")
     parser.add_argument("--blocks", type=int, default=1, help="Number of blocks to process")
@@ -124,9 +124,6 @@ class XDMFTimeSeries:
 
 if __name__ == "__main__":
     args = parse_args()
-    #params = Params(args.folder)
-    #t0 = params.get_tmin()
-    #Lx = params.get("Lx", t0)
 
     felbm_folder = args.folder
     if args.output_dir != "":
@@ -141,11 +138,6 @@ if __name__ == "__main__":
     is_fluid_xy, (nx, ny, nz) = get_fluid_domain(felbm_folder)
     is_fluid = is_fluid_xy.flatten()
     mesh = load_mesh(nx, ny, is_fluid)
-
-
-    #is_solid = is_solid[nz // 2, :, :].flatten()
-    #is_fluid = np.logical_not(is_solid)
-    #is_fluid = np.logical_not(is_solid)
     
     is_domain_xyz = np.zeros((nz, ny, nx), dtype=bool)
     is_domain_xyz[nz // 2, :, :] = is_fluid_xy
@@ -155,24 +147,25 @@ if __name__ == "__main__":
 
     Ndofs = int(np.sum(is_domain))
 
-    #print(np.sum(is_domain_flat), np.sum(is_fluid_xy_flat))
-    #p = np.zeros_like(is_solid, dtype=float)
     rho = np.zeros_like(is_fluid, dtype=float)
     rho_loc = np.zeros_like(rho)
-    #c = np.zeros_like(is_solid, dtype=float)
-    #ux = np.zeros_like(is_solid, dtype=float)
-    #uy = np.zeros_like(is_solid, dtype=float)
+
     ux = np.zeros_like(is_fluid, dtype=float)
     ux_loc = np.zeros_like(ux)
+
+    uy = np.zeros_like(is_fluid, dtype=float)
+    uy_loc = np.zeros_like(uy)
+
     du = np.zeros_like(rho)
     du_loc = np.zeros_like(du)
-    # x, y = np.meshgrid(np.arange(nx) + .5, np.arange(ny) + 0.5)
+
     freq = np.zeros_like(ux)
     freq_loc = np.zeros_like(freq)
 
-    Nt = len(timestamps)
+    freqy = np.zeros_like(ux)
+    freqy_loc = np.zeros_like(freqy)
 
-    #print(is_domain.shape)
+    Nt = len(timestamps)
 
     mpi_print("porosity={}".format(Ndofs/(nx*ny)))
     mpi_print("Is fluid: {}".format(Ndofs))
@@ -202,11 +195,14 @@ if __name__ == "__main__":
 
     Fux = np.zeros((len(is_fluid), Nff), dtype=complex)
     Fuy = np.zeros((len(is_fluid), Nff), dtype=complex)
-    P2 = np.zeros((len(is_fluid), Nff))
-
     Fux_loc = np.zeros_like(Fux)
     Fuy_loc = np.zeros_like(Fuy)
-    P2_loc = np.zeros_like(P2)
+    
+    P2ux = np.zeros(Nf)
+    P2ux_loc = np.zeros(Nf)
+
+    P2uy = np.zeros(Nf)
+    P2uy_loc = np.zeros(Nf)
 
     comm.Barrier()
     if rank == 0:
@@ -235,69 +231,71 @@ if __name__ == "__main__":
                 if rank == 0:
                     pbar.update(1)
         freq_block = np.zeros(uxt_block.shape[0])
+        freqy_block = np.zeros(uxt_block.shape[0])
         rhoavg_block = rho_block.mean(axis=1)
 
         Fux_block = np.zeros((uxt_block.shape[0], Nff), dtype=complex)
         Fuy_block = np.zeros((uxt_block.shape[0], Nff), dtype=complex)
-        P2_block = np.zeros((uxt_block.shape[0], Nff))
 
         for i in range(uxt_block.shape[0]):
-            #f_i, P2_i = signal.welch(uxt_block[i, :], df, 'flattop', Nt, scaling='spectrum')
-            #f_i, P2_i = signal.periodogram(uxt_block[i, :], df, nfft=Nt)
             _Fux = np.fft.rfft(uxt_block[i, :])
             _Fuy = np.fft.rfft(uyt_block[i, :])
-            P2_i = (np.conjugate(_Fux) * _Fux).real
-            #plt.plot(f_i, P2_i)
-            #plt.plot(f_i, P2_a)
-            #plt.show()
-            P_i = np.sqrt(P2_i)
-            sumP = np.sum(P_i)
-            freq_block[i] = np.sum(f*P_i)/sumP if sumP > 0. else 0.
-            #plt.plot(t_, uxt_block[0, :])
-            #if (all(f_i == f)) and False:
-            #    print("f_i:", f_i)
-            #    print("f:  ", f)
-            #    print("uxt:", uxt_block[i, :])
-            #    exit()
+            P2ux_i = (np.conjugate(_Fux) * _Fux).real
+            P2uy_i = (np.conjugate(_Fuy) * _Fuy).real
+
+            P2ux_loc[:] += P2ux_i
+            P2uy_loc[:] += P2uy_i
+
+            Pux_i = np.sqrt(P2ux_i)
+            Puy_i = np.sqrt(P2uy_i)
+
+            sumPux = np.sum(Pux_i)
+            sumPuy = np.sum(Puy_i)
+
+            freq_block[i] = np.sum(f*Pux_i)/sumPux if sumPux > 0. else 0.
+            freqy_block[i] = np.sum(f*Puy_i)/sumPuy if sumPuy > 0. else 0.
+
             Fux_block[i, :] = _Fux[:Nff]
             Fuy_block[i, :] = _Fuy[:Nff]
-            
-            #P2_block[:] += P2
-            P2_block[i, :] += P2_i[:Nff]
-
-
-            #ax.plot(f_i, P2_i)
-        #plt.show()
 
         ids = fluid2xy[istart:istop]
         ux_loc[ids] = np.sqrt(np.mean(uxt_block**2, axis=1))
+        uy_loc[ids] = np.sqrt(np.mean(uyt_block**2, axis=1))
         freq_loc[ids] = freq_block[:]
+        freqy_loc[ids] = freqy_block[:]
+
         rho_loc[ids] = rhoavg_block[:]
         du_loc[ids] = np.sqrt(np.mean((uxt_block - np.outer(uxt_block.mean(axis=1), np.ones(uxt_block.shape[1])))**2 
                                       + (uyt_block - np.outer(uyt_block.mean(axis=1), np.ones(uyt_block.shape[1])))**2, axis=1))
         
         Fux_loc[ids, :] = Fux_block[:, :]
         Fuy_loc[ids, :] = Fuy_block[:, :]
-        P2_loc[ids, :] = P2_block[:, :]
 
     if rank == 0:
         pbar.close()
 
 
     comm.Reduce(ux_loc, ux, op=MPI.SUM, root=0)
+    comm.Reduce(uy_loc, uy, op=MPI.SUM, root=0)
     comm.Reduce(freq_loc, freq, op=MPI.SUM, root=0)
+    comm.Reduce(freqy_loc, freqy, op=MPI.SUM, root=0)
+    
     comm.Reduce(rho_loc, rho, op=MPI.SUM, root=0)
     comm.Reduce(du_loc, du, op=MPI.SUM, root=0)
 
     comm.Reduce(Fux_loc, Fux, op=MPI.SUM, root=0)
     comm.Reduce(Fuy_loc, Fuy, op=MPI.SUM, root=0)
-    comm.Reduce(P2_loc, P2, op=MPI.SUM, root=0)
+    
+    comm.Reduce(P2ux_loc, P2ux, op=MPI.SUM, root=0)
+    comm.Reduce(P2uy_loc, P2uy, op=MPI.SUM, root=0)
 
     comm.Barrier()
     if rank == 0:
         cell_data = {
-            "f": [freq[is_fluid]], 
+            "f": [freq[is_fluid]],
+            "fy": [freqy[is_fluid]],
             "ux": [ux[is_fluid]],
+            "uy": [uy[is_fluid]],
             "rho": [rho[is_fluid]],
             "du": [du[is_fluid]]
         }
@@ -321,8 +319,8 @@ if __name__ == "__main__":
 
             cell_datasets = [
                 ("Fu_real", np.vstack((_Fuxi.real, _Fuyi.real)).T),
-                ("Fu_imag", np.vstack((_Fuxi.imag, _Fuyi.imag)).T),
-                ("P2", P2[is_fluid, i])
+                ("Fu_imag", np.vstack((_Fuxi.imag, _Fuyi.imag)).T) #,
+                # ("P2", P2[is_fluid, i])
             ]
             ts.write(cell_datasets, fi)
 
@@ -331,17 +329,23 @@ if __name__ == "__main__":
 
     if rank == 0:
         freq = freq.reshape((ny, nx))
+        freqy = freqy.reshape((ny, nx))
         ux = ux.reshape((ny, nx))
+        uy = uy.reshape((ny, nx))
         rho = rho.reshape((ny, nx))
         du = du.reshape((ny, nx))
 
         np.savetxt(os.path.join(analysisfolder, "uxnorm_avg.dat"), ux)
+        np.savetxt(os.path.join(analysisfolder, "uynorm_avg.dat"), uy)
         np.savetxt(os.path.join(analysisfolder, "freq_avg.dat"), freq)
+        np.savetxt(os.path.join(analysisfolder, "freqy_avg.dat"), freqy)
+
         np.savetxt(os.path.join(analysisfolder, "rho_avg.dat"), rho)
         np.savetxt(os.path.join(analysisfolder, "is_fluid_xy.dat"), is_fluid_xy)
         np.savetxt(os.path.join(analysisfolder, "du.dat"), du)
 
-        P2f = P2[is_fluid, :].sum(axis=0)
-        P2f /= P2f.sum() * df
-        P2fdata = np.vstack((ff, P2f)).T
-        np.savetxt(os.path.join(analysisfolder, "P2f.dat"), P2fdata)
+        #P2ux /= P2ux.sum() * df
+        #P2uy /= P2uy.sum() * df
+        #assert(abs((P2ux*df).sum()-1) < 1e-5)
+        P2f_data = np.vstack((f, P2ux, P2uy)).T
+        np.savetxt(os.path.join(analysisfolder, "P2f.dat"), P2f_data)
