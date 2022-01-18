@@ -321,7 +321,7 @@ if __name__ == "__main__":
 
             cell_datasets = [
                 ("Fu_real", np.vstack((_Fuxi.real, _Fuyi.real)).T),
-                ("Fu_imag", np.vstack((_Fuyi.imag, _Fuyi.imag)).T),
+                ("Fu_imag", np.vstack((_Fuxi.imag, _Fuyi.imag)).T),
                 ("P2", P2[is_fluid, i])
             ]
             ts.write(cell_datasets, fi)
