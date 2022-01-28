@@ -19,6 +19,184 @@ if __name__ == "__main__":
 
     if rank==0:
         if True:
+            tdata = np.loadtxt(os.path.join(analysisfolder, "tdata.dat"))
+            t_ = tdata[0, :]
+            uxt = tdata[1, :]
+            uyt = tdata[2, :]
+            S1t = tdata[3, :]
+            S2t = tdata[4, :]
+
+            with h5py.File(os.path.join(analysisfolder, "pore_data.h5"), "r") as h5f:
+                un = np.array(h5f["un"])
+                n = np.array(h5f["n"])
+                t = np.array(h5f["t"])
+                lp = np.array(h5f["lp"])
+                d = h5f.attrs.get("d")
+            #print(un.shape)
+            print(lp)
+            #for i in range(len(un)// 10000):
+            uy_mean = uyt.mean()
+            print("uy_mean = {}".format(uy_mean))
+            print("d       = {}".format(d))
+            t_adv = d / uy_mean
+            print("t_adv   = {}".format(t_adv))
+
+            # exit()
+
+            unmean = un.mean(axis=1)
+            dun = un - np.outer(unmean, np.ones_like(t))
+            import time
+            from scipy.interpolate import InterpolatedUnivariateSpline
+
+            do_plot = False
+            tol = 1e-14
+
+            ptime0 = time.time()
+            data = [None for _ in range(len(un))]
+            valid = [False for _ in range(len(un))]
+            for i in range(len(un)):
+                if any(abs(dun[i, :-1] - dun[i, 1:]) < tol):
+                    continue
+                valid[i] = True
+                #if True:
+                dup = dun[i, :] > 0
+                change = dup[1:] ^ dup[:-1]
+                t_x = (t[1:] * dun[i, :-1] - t[:-1] * dun[i, 1:]) / (dun[i, :-1] - dun[i, 1:])
+                t_x = t_x[change]
+                tau = t_x[1:] - t_x[:-1]
+
+                fintp = InterpolatedUnivariateSpline(t, dun[i, :], k=1)
+                A = np.zeros_like(tau)
+                for k in range(len(tau)):
+                    A[k] = fintp.integral(t_x[k], t_x[k+1])
+                    #print(A)
+                data[i] = np.vstack((A, tau)).T
+
+                if do_plot:                
+                    plt.plot(t, dun[i, :])
+                    plt.plot(t, 0*t)
+                    for k in range(len(tau)):
+                        un_x = A[k]/tau[k]
+                        plt.plot([t_x[k], t_x[k+1]], [un_x, un_x])
+                    plt.show()
+            tau_ = []
+            A_ = []
+
+            tau_mean = np.zeros(len(data))
+            A_mean = np.zeros_like(tau_mean)
+            dun_mean = np.zeros_like(tau_mean)
+            for i, Atau in enumerate(data):
+                if valid[i] and Atau.shape[0] > 0:
+                    #print(Atau.shape)
+                    tau_.extend(Atau[:, 1].flatten())
+                    A_.extend(Atau[:, 0].flatten())
+                    tau_mean[i] = Atau[:, 1].mean()
+                    A_mean[i] = Atau[:, 0].mean()
+                    dun_mean[i] = (Atau[:, 0]/Atau[:, 1]).mean()
+            theta = np.arcsin((n[valid, 1]))
+
+            A_ = np.array(A_)
+            tau_ = np.array(tau_)
+
+            tau_avg = tau_.mean()
+            A_avg = abs(A_).mean()
+            dun_avg = (abs(A_)/tau_).mean()
+
+            print("tau_avg  = {}".format(tau_avg))
+            print("A_avg    = {}".format(A_avg))
+            print("dun_avg  = {}".format(dun_avg))
+
+            if do_plot:
+                pass
+            else:
+                fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+                ax1.plot(theta, unmean[valid], ',')
+                ax1.set_xlabel("$\\theta$")
+                ax1.set_ylabel("$\\bar{u}_n$")
+                ax2.plot(theta, dun_mean[valid], ',')
+                ax2.set_xlabel("$\\theta$")
+                ax2.set_ylabel("$\\Delta u_n$")
+                ax3.plot(theta, tau_mean[valid], ',')
+                ax3.set_xlabel("$\\theta$")
+                ax3.set_ylabel("$\\bar{\\tau}$")
+                ax4.plot(theta, A_mean[valid], ',')
+                ax4.set_xlabel("$\\theta$")
+                ax4.set_ylabel("$\\bar{A}$")
+                plt.show()
+
+                fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
+                ax1.hist(tau_, bins=100, density=True)
+                ax1.set_yscale("log")
+                ax1.set_xlabel("$\\tau$")
+                ax1.set_ylabel("$P(\\tau)$")
+                x = np.linspace(0., tau_.max(), 1000)
+                ax1.plot(x, 1./tau_avg * np.exp(-x/tau_avg))
+
+                ax2.hist(abs(A_), bins=100, density=True)
+                ax2.set_yscale("log")
+                ax2.set_xlabel("$A$")
+                ax2.set_ylabel("$P(A)$")
+                x = np.linspace(0., abs(A_).max(), 1000)
+                ax2.plot(x, 1./A_avg * np.exp(-x/A_avg))
+                
+                ax3.hist(abs(A_)/tau_, bins=100, density=True)
+                ax3.set_yscale("log")
+                ax3.set_xlabel("$|\Delta u_n|$")
+                ax3.set_ylabel("$P(|\Delta u_n|)$")
+                x = np.linspace(0., (A_/tau_).max(), 1000)
+                ax3.plot(x, 1./dun_avg * np.exp(-x/dun_avg))
+
+                plt.show()
+                
+            nbins = 300
+            dtau = t_adv/100
+            As = [[] for _ in range(nbins)]
+            uns = [[] for _ in range(nbins)]
+            for Ai, taui in zip(A_, tau_):
+                i = int(np.round(taui/dtau))
+                if i < len(As):
+                    As[i].append(abs(Ai))
+                    uns[i].append(abs(Ai/taui))
+            As_mean = []
+            uns_mean = []
+            for i in range(nbins):
+                if len(As[i]) == 0:
+                    break
+                As_mean.append(np.mean(As[i]))
+                uns_mean.append(np.mean(uns[i]))
+            As_mean = np.array(As_mean)
+            uns_mean = np.array(uns_mean)
+            taus = dtau/2 + dtau * np.arange(len(As_mean))
+
+            def fitfunc(xx, u0, tau0):
+                return u0 * (1.0 - np.exp(-xx/tau0)) 
+            dun_ = (abs(A_)/tau_)
+
+            from scipy.optimize import curve_fit
+            popt, pcov = curve_fit(fitfunc, taus, uns_mean, p0=[1., t_adv])
+
+            print("fitted parameters:")
+            print("u0   = {}".format(popt[0]))
+            print("tau0 = {}".format(popt[1]))
+
+            fig, (ax1, ax2) = plt.subplots(1, 2)
+            ax1.plot(tau_, (abs(A_)), ',')
+            ax1.plot(taus, As_mean)
+            ax1.plot(taus, taus * fitfunc(taus, *popt))
+            ax1.set_xlabel("$\\tau$")
+            ax1.set_ylabel("$A$")
+
+            ax2.plot((tau_), dun_, ',')
+            ax2.plot(taus, uns_mean)
+            ax2.plot(taus, fitfunc(taus, *popt))
+            ax2.set_xlabel("$\\tau$")
+            ax2.set_ylabel("$\\Delta u_n$")
+
+            plt.show()
+
+
+    if False:
+        if True:
             print("Time --> Space:")
 
             P2f = np.loadtxt(os.path.join(analysisfolder, "P2f.dat"))
@@ -178,13 +356,6 @@ if __name__ == "__main__":
 
         if True:
             print("Space --> Time:")
-
-            tdata = np.loadtxt(os.path.join(analysisfolder, "tdata.dat"))
-            t_ = tdata[0, :]
-            uxt = tdata[1, :]
-            uyt = tdata[2, :]
-            S1t = tdata[3, :]
-            S2t = tdata[4, :]
 
             ux_mean = uxt.mean()
             uy_mean = uyt.mean()
