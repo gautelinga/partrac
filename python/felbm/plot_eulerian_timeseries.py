@@ -54,6 +54,7 @@ if __name__ == "__main__":
             ptime0 = time.time()
             data = [None for _ in range(len(un))]
             valid = [False for _ in range(len(un))]
+            
             for i in range(len(un)):
                 if any(abs(dun[i, :-1] - dun[i, 1:]) < tol):
                     continue
@@ -72,13 +73,20 @@ if __name__ == "__main__":
                     #print(A)
                 data[i] = np.vstack((A, tau)).T
 
-                if do_plot:                
-                    plt.plot(t, dun[i, :])
-                    plt.plot(t, 0*t)
+                if i < 5:
+                    fig, ax = plt.subplots(1, 1)
+                    ax.plot(t, dun[i, :])
+                    ax.plot(t, 0*t)
                     for k in range(len(tau)):
                         un_x = A[k]/tau[k]
-                        plt.plot([t_x[k], t_x[k+1]], [un_x, un_x])
-                    plt.show()
+                        ax.plot([t_x[k], t_x[k+1]], [un_x, un_x])
+            
+                    if args.save:
+                        plt.savefig(os.path.join(analysisfolder, "example_{}_network.png".format(i)))
+
+                    if args.show:
+                        plt.show()
+
             tau_ = []
             A_ = []
 
@@ -106,9 +114,7 @@ if __name__ == "__main__":
             print("A_avg    = {}".format(A_avg))
             print("dun_avg  = {}".format(dun_avg))
 
-            if do_plot:
-                pass
-            else:
+            if True:
                 fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
                 ax1.plot(theta, unmean[valid], ',')
                 ax1.set_xlabel("$\\theta$")
@@ -122,7 +128,12 @@ if __name__ == "__main__":
                 ax4.plot(theta, A_mean[valid], ',')
                 ax4.set_xlabel("$\\theta$")
                 ax4.set_ylabel("$\\bar{A}$")
-                plt.show()
+
+                if args.save:
+                    plt.savefig(os.path.join(analysisfolder, "angle_dependency_network.png"))
+
+                if args.show:
+                    plt.show()
 
                 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
                 ax1.hist(tau_, bins=100, density=True)
@@ -146,7 +157,11 @@ if __name__ == "__main__":
                 x = np.linspace(0., (A_/tau_).max(), 1000)
                 ax3.plot(x, 1./dun_avg * np.exp(-x/dun_avg))
 
-                plt.show()
+                if args.save:
+                    plt.savefig(os.path.join(analysisfolder, "Pdfs_network.png"))
+
+                if args.show:
+                    plt.show()
                 
             nbins = 300
             dtau = t_adv/100
@@ -192,7 +207,11 @@ if __name__ == "__main__":
             ax2.set_xlabel("$\\tau$")
             ax2.set_ylabel("$\\Delta u_n$")
 
-            plt.show()
+            if args.save:
+                plt.savefig(os.path.join(analysisfolder, "scatterfit_network.png"))
+
+            if args.show:
+                plt.show()
 
 
     if False:
