@@ -5,149 +5,15 @@
 #include <vector>
 #include <random>
 #include <algorithm>
-#include <fstream>
 #include "Interpol.hpp"
 #include "utils.hpp"
 
 // TODO: Massive cleanup!
-
 struct less_than_op {
   inline bool operator() (const Vector3d &a, const Vector3d &b){
     return a[0] < b[0] || (a[0] == b[0] && a[1] < b[1]) || (a[0] == b[0] && a[1] == b[1] && a[2] < b[2]);
   }
 };
-
-void load_positions(std::string input_file,
-                    std::vector<Vector3d> &pos_init){
-  std::ifstream infile(input_file);
-  double x, y, z;
-  while (infile >> x >> y >> z){
-    pos_init.push_back({x, y, z});
-  }
-  infile.close();
-}
-
-void load_positions(std::string input_file,
-                    std::vector<Vector3d> &pos_init,
-                    const Uint Nrw){
-  std::ifstream infile(input_file);
-  double x, y, z;
-  while (infile >> x >> y >> z){
-    pos_init.push_back({x, y, z});
-  }
-  infile.close();
-  if (Nrw != pos_init.size()){
-    std::cout << "Wrong dimensions..." << std::endl;
-    exit(0);
-  }
-}
-
-void dump_positions(std::string output_file,
-                    std::vector<Vector3d>& x_rw,
-                    const Uint Nrw){
-  std::ofstream outfile(output_file);
-  for (Uint irw=0; irw<Nrw; ++irw){
-    outfile << std::setprecision(12)
-            << x_rw[irw][0] << " "
-            << x_rw[irw][1] << " "
-            << x_rw[irw][2] << std::endl;
-  }
-  outfile.close();
-}
-
-void dump_positions(const std::string output_file,
-                    const std::vector<Vector3d> &pos){
-  std::ofstream outfile(output_file);
-  for (std::vector<Vector3d>::const_iterator posit=pos.begin();
-       posit != pos.end(); ++posit){
-    outfile << std::setprecision(12)
-            << (*posit)[0] << " "
-            << (*posit)[1] << " "
-            << (*posit)[2] << std::endl;
-  }
-  outfile.close();
-}
-
-void load_faces(std::string input_file,
-                FacesType& faces){
-  std::ifstream infile(input_file);
-  Uint first, second, third;
-  double fourth;
-  while (infile >> first >> second >> third >> fourth){
-    faces.push_back({{first, second, third}, fourth});
-  }
-  infile.close();
-}
-
-void load_edges(std::string input_file,
-                EdgesType &edges){
-  std::ifstream infile(input_file);
-  Uint first, second;
-  double third;
-  while (infile >> first >> second >> third){
-    edges.push_back({{first, second}, third});
-  }
-  infile.close();
-}
-
-void load_list(std::string input_file,
-               std::list<Uint> &li){
-  std::ifstream infile(input_file);
-  Uint a;
-  while (infile >> a){
-    li.push_back(a);
-  }
-  infile.close();
-}
-
-void dump_list(std::string output_file,
-               const std::list<Uint> &li){
-  std::ofstream outfile(output_file);
-  for (std::list<Uint>::const_iterator lit=li.begin();
-       lit != li.end(); ++lit){
-    outfile << *lit << std::endl;
-  }
-  outfile.close();
-}
-
-void dump_faces(std::string output_file,
-                const FacesType &faces){
-  std::ofstream outfile(output_file);
-  for (FacesType::const_iterator faceit = faces.begin();
-       faceit != faces.end(); ++faceit){
-    outfile << faceit->first[0] << " " << faceit->first[1] << " " << faceit->first[2]
-            << " " << faceit->second << std::endl;
-  }
-  outfile.close();
-}
-
-void dump_edges(std::string output_file,
-                EdgesType &edges){
-  std::ofstream outfile(output_file);
-  for (EdgesType::iterator edgeit = edges.begin();
-       edgeit != edges.end(); ++edgeit){
-    outfile << edgeit->first[0] << " " << edgeit->first[1] << " " << edgeit->second << std::endl;
-  }
-  outfile.close();
-}
-
-void load_colors(std::string input_file,
-                 std::vector<double>& c_rw, const Uint Nrw){
-  std::ifstream infile(input_file);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    infile >> c_rw[irw];
-  }
-  infile.close();
-}
-
-void dump_colors(std::string output_file,
-                 std::vector<double>& c_rw, const Uint Nrw){
-  std::ofstream outfile(output_file);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    outfile << std::setprecision(12) << c_rw[irw] << std::endl;
-  }
-  outfile.close();
-}
 
 std::vector<Vector3d> initial_positions(const std::string init_mode,
                                         const std::string init_weight,

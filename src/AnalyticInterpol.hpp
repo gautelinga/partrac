@@ -14,8 +14,8 @@
 class AnalyticInterpol : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
-  void update(const double t) { this->t=t; };
-  void probe(const Vector3d &x) { expr->eval(x, t); };
+  void update(const double t) { this->t_update=t; };
+  void probe(const Vector3d &x, const double t) { expr->eval(x, t); };
   bool inside_domain() { return expr->inside(); };
   double get_ux() { return expr->ux(); };
   double get_uy() { return expr->uy(); };
@@ -38,7 +38,6 @@ public:
   double get_uzz() { return expr->uzz(); };
   Matrix3d get_grada() { return expr->grada(); };
 protected:
-  double t;
   std::map<std::string, std::string> expr_params;
   Expr* expr;
 };
@@ -65,7 +64,6 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
   std::size_t botDirPos = infilename.find_last_of("/");
   set_folder(infilename.substr(0, botDirPos));
 
-  this->t = get_t_min();
   this->x_min << getd(expr_params, "x_min"), getd(expr_params, "y_min"), getd(expr_params, "z_min");
   this->x_max << getd(expr_params, "x_max"), getd(expr_params, "y_max"), getd(expr_params, "z_max");
 

@@ -6,35 +6,8 @@
 #include <sstream>
 #include <boost/algorithm/string.hpp>
 #include "io.hpp"
-
-double stodouble(const std::string val){
-  std::stringstream ss(val);
-  double d;
-  ss >> d;
-  if (ss.fail()){
-    std::cout << "Unable to format " + val + " as a double." << std::endl;
-    exit(0);
-  }
-  return d;
-}
-
-int stoint(const std::string val){
-  double d = stodouble(val);
-  int i = int(d);
-  if (d - i != 0){
-    std::cout << "The value " + val + " is not an int!" << std::endl;
-    exit(0);
-  }
-  return i;
-}
-
-bool stobool(const std::string val){
-  return (val == "true" || val == "True") ? true : false;
-}
-
-std::string bool2string(const bool val){
-  return (val ? "true" : "false");
-}
+//#include "Parameters.hpp"
+#include "typedefs.hpp"
 
 class Parameters {
 public:
@@ -53,11 +26,11 @@ public:
   double t0 = 0.;
   double t = 0.;
   double T = 10000000.;
-  int Nrw = 100;
+  Uint Nrw = 100;
   double dump_intv = 100.0;
   double stat_intv = 100.0;
   double checkpoint_intv = 1000.0;
-  int dump_chunk_size = 50;
+  int dump_chunk_size = 0;
   bool verbose = false;
   double U0 = 1.0;
   //
@@ -99,7 +72,7 @@ public:
   double ds_max = 1.0;
   double ds_min = 0.1;
   double ds_init = 1.0;
-  int Nrw_max = -1;
+  Uint Nrw_max = -1;
   double curv_refine_factor = 0.0;
   bool output_all_props = true;
   bool minimal_output = false;
@@ -118,6 +91,35 @@ public:
 private:
   void write_params_to_file(std::string);
 };
+
+double stodouble(const std::string val){
+  std::stringstream ss(val);
+  double d;
+  ss >> d;
+  if (ss.fail()){
+    std::cout << "Unable to format " + val + " as a double." << std::endl;
+    exit(0);
+  }
+  return d;
+}
+
+int stoint(const std::string val){
+  double d = stodouble(val);
+  int i = int(d);
+  if (d - i != 0){
+    std::cout << "The value " + val + " is not an int!" << std::endl;
+    exit(0);
+  }
+  return i;
+}
+
+bool stobool(const std::string val){
+  return (val == "true" || val == "True") ? true : false;
+}
+
+std::string bool2string(const bool val){
+  return (val ? "true" : "false");
+}
 
 Parameters::Parameters(int argc, char* argv[]){
   parse_cmd(argc, argv);
@@ -234,7 +236,7 @@ void Parameters::print(){
     print_param("t0                 ", t0);
     print_param("T                  ", T);
     print_param("dt                 ", dt);
-    print_param("Nrw                ", Nrw);
+    print_param("Nrw                ", int(Nrw));
     print_param("dump_intv          ", dump_intv);
     print_param("stat_intv          ", stat_intv);
     print_param("checkpoint_intv    ", checkpoint_intv);
@@ -261,7 +263,7 @@ void Parameters::print(){
     print_param("ds_max             ", ds_max);
     print_param("ds_min             ", ds_min);
     print_param("ds_init            ", ds_init);
-    print_param("Nrw_max            ", Nrw_max);
+    print_param("Nrw_max            ", int(Nrw_max));
     print_param("curv_refine_factor ", curv_refine_factor);
     print_param("output_all_props   ", bool2string(output_all_props));
     print_param("minimal_output     ", bool2string(minimal_output));
@@ -307,7 +309,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "t", t);
   write_param(paramsfile, "T", T);
   write_param(paramsfile, "dt", dt);
-  write_param(paramsfile, "Nrw", Nrw);
+  write_param(paramsfile, "Nrw", int(Nrw));
   write_param(paramsfile, "dump_intv", dump_intv);
   write_param(paramsfile, "stat_intv", stat_intv);
   write_param(paramsfile, "checkpoint_intv", checkpoint_intv);
@@ -341,7 +343,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "ds_max", ds_max);
   write_param(paramsfile, "ds_min", ds_min);
   write_param(paramsfile, "ds_init", ds_init);
-  write_param(paramsfile, "Nrw_max", Nrw_max);
+  write_param(paramsfile, "Nrw_max", int(Nrw_max));
   write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
   write_param(paramsfile, "output_all_props", bool2string(output_all_props));
   write_param(paramsfile, "minimal_output", bool2string(minimal_output));

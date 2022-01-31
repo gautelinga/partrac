@@ -119,11 +119,15 @@ void TriangleInterpol::update(const double t)
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  alpha_t = sp.weight_next(t);
+  //alpha_t = sp.weight_next(t);
+  t_update = t;
 }
 
-void TriangleInterpol::probe(const Vector3d &x)
+void TriangleInterpol::probe(const Vector3d &x, const double t)
 {
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
+
   dolfin::Array<double> x_loc(dim);
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){

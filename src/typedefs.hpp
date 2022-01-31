@@ -6,6 +6,8 @@
 #include <array>
 #include <map>
 #include <Eigen/Dense>
+#include <memory>
+#include "H5Cpp.h"
 
 typedef std::size_t Uint;
 
@@ -19,5 +21,7 @@ typedef std::vector<EdgesListType> Node2EdgesType;
 typedef std::vector<std::map<Uint, double>> InteriorAnglesType;
 typedef Eigen::Vector3d Vector3d;
 typedef Eigen::Matrix3d Matrix3d;
+
+typedef std::shared_ptr<H5::H5File> H5FilePtr;
 
 #endif

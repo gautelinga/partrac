@@ -169,10 +169,13 @@ void DolfInterpol::update(const double t){
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  alpha_t = sp.weight_next(t);
+  // alpha_t = sp.weight_next(t);
+  t_update = t;
 }
 
-void DolfInterpol::probe(const Vector3d &x){
+void DolfInterpol::probe(const Vector3d &x, const double t){
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
   //const double* _x = x.data();
   dolfin::Array<double> x_loc(dim);
   for (Uint i=0; i<dim; ++i){

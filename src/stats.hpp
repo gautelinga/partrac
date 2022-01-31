@@ -3,57 +3,44 @@
 
 #include "utils.hpp"
 
-
 void write_stats(std::ofstream &statfile,
                  const double t,
-                 std::vector<Vector3d>& x_rw,
-                 std::vector<Vector3d>& u_rw,
-                 const Uint Nrw,
-                 FacesType &faces,
-                 EdgesType &edges,
+                 const ParticleSet& ps,
+                 const FacesType &faces,
+                 const EdgesType &edges,
                  const double ds_max,
                  const bool do_dump_hist,
                  const std::string histfolder,
                  const unsigned long int n_accepted,
                  const unsigned long int n_declined)
 {
-  double x_mean = 0.;
-  double y_mean = 0.;
-  double z_mean = 0.;
-  double dx2_mean = 0.;
-  double dy2_mean = 0.;
-  double dz2_mean = 0.;
-  double ux_mean = 0.;
-  double uy_mean = 0.;
-  double uz_mean = 0.;
+  Vector3d x_mean = {0., 0., 0.};
+  Vector3d dx2_mean = {0., 0., 0.};
+  Vector3d u_mean = {0., 0., 0.};
+  Uint Nrw = ps.N();
   for (Uint irw=0; irw < Nrw; ++irw){
     // Sample mean
-    x_mean += x_rw[irw][0]/Nrw;
-    y_mean += x_rw[irw][1]/Nrw;
-    z_mean += x_rw[irw][2]/Nrw;
-    ux_mean += u_rw[irw][0]/Nrw;
-    uy_mean += u_rw[irw][1]/Nrw;
-    uz_mean += u_rw[irw][2]/Nrw;
+    x_mean += ps.x(irw)/Nrw;
+    u_mean += ps.u(irw)/Nrw;
   }
   for (Uint irw=0; irw < Nrw; ++irw){
     // Sample variance
-    dx2_mean += pow(x_rw[irw][0]-x_mean, 2)/(Nrw-1);
-    dy2_mean += pow(x_rw[irw][1]-y_mean, 2)/(Nrw-1);
-    dz2_mean += pow(x_rw[irw][2]-z_mean, 2)/(Nrw-1);
+    Vector3d dx = ps.x(irw)-x_mean;
+    dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
   }
   statfile << t << "\t"                   //  1
-           << x_mean << "\t"              //  2
-           << dx2_mean << "\t"            //  3
-           << y_mean << "\t"              //  4
-           << dy2_mean << "\t"            //  5
-           << z_mean << "\t"              //  6
-           << dz2_mean << "\t"            //  7
-           << ux_mean << "\t"             //  8
-           << uy_mean << "\t"             //  9
-           << uz_mean << "\t"             // 10
+           << x_mean[0] << "\t"           //  2
+           << dx2_mean[0] << "\t"         //  3
+           << x_mean[1] << "\t"           //  4
+           << dx2_mean[1] << "\t"         //  5
+           << x_mean[2] << "\t"           //  6
+           << dx2_mean[2] << "\t"         //  7
+           << u_mean[0] << "\t"           //  8
+           << u_mean[1] << "\t"           //  9
+           << u_mean[2] << "\t"           // 10
            << Nrw << "\t"                 // 11
            << n_accepted << "\t"          // 12
-           << n_declined << "\t";          // 13
+           << n_declined << "\t";         // 13
 
   if (edges.size() > 0){
     // Strip method
@@ -68,7 +55,7 @@ void write_stats(std::ofstream &statfile,
       int inode = edgeit->first[0];
       int jnode = edgeit->first[1];
       double ds0 = edgeit->second;
-      double ds = dist(inode, jnode, x_rw);
+      double ds = ps.dist(inode, jnode);
       if (ds > ds_max){
         ++n_too_long;
       }
@@ -130,7 +117,7 @@ void write_stats(std::ofstream &statfile,
       Uint jedge = faceit->first[1];
       // Uint kedge = faceit->first[2];
       double dA0 = faceit->second;
-      double dA = area(iedge, jedge, x_rw, edges);
+      double dA = ps.triangle_area(iedge, jedge, edges);
       double logelong = log(dA/dA0);
       logelong_wmean += logelong*dA;
       logelong_w0mean += logelong*dA0;
@@ -205,10 +192,10 @@ void write_stats_header(std::ofstream &statfile,
   else {
     statfile << "A" << "\t"                   // 15
              << "A0" << "\t"                  // 16
-             << "logelong_wmean" << "\t"  // 17
-             << "logelong_wvar" << "\t"   // 18
-             << "logelong_w0mean" << "\t" // 19
-             << "logelong_w0var" << "\t"; // 20
+             << "logelong_wmean" << "\t"      // 17
+             << "logelong_wvar" << "\t"       // 18
+             << "logelong_w0mean" << "\t"     // 19
+             << "logelong_w0var" << "\t";     // 20
   }
   statfile << std::endl;
 }

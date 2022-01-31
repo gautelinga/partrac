@@ -13,6 +13,7 @@
 #include <fstream>
 #include "typedefs.hpp"
 #include "Interpol.hpp"
+//#include "Parameters.hpp"
 
 class Stamp {
 public:
@@ -166,6 +167,7 @@ static long double area(const Uint iedge, const Uint jedge,
 
 static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
                  const FacesType& faces, const EdgesType& edges){
+  // To be decommissioned?
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return area(iedge, jedge, x_rw, edges);
@@ -401,7 +403,7 @@ static void test_interpolation(Uint num_points, Interpol *intp,
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
     //std::cout << x << std::endl;
-    intp->probe(x);
+    intp->probe(x, t0);
     if (intp->inside_domain()){
       Vector3d u = intp->get_u();
       double rho = intp->get_rho();
@@ -425,5 +427,18 @@ static void test_interpolation(Uint num_points, Interpol *intp,
   std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
   ofile.close();
 }
+
+/*std::vector<double> areas(const std::vector<Uint> &kfaces,
+                          std::vector<Vector3d>& x_rw,
+                          const FacesType &faces, const EdgesType &edges){
+  // To be decommisioned??
+  
+  std::vector<double> a;
+  for (std::vector<Uint>::const_iterator faceit=kfaces.begin();
+       faceit != kfaces.end(); ++faceit){
+    a.push_back(area(*faceit, x_rw, faces, edges));
+  }
+  return a;
+}*/
 
 #endif

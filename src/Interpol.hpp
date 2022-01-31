@@ -13,41 +13,44 @@ public:
   void set_folder(std::string folder){ this->folder=folder; };
   std::string get_folder(){ return folder; };
   void set_int_order(const int int_order){ this->int_order=int_order; };
+  int get_int_order() { return this->int_order; };
+  void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
   //
-  Vector3d get_u() { return {get_ux(), get_uy(), get_uz()}; };
-  Vector3d get_a() { return {get_ax(), get_ay(), get_az()}; };
+  Vector3d get_u() { return { U0*get_ux(), U0 * get_uy(), U0 * get_uz()}; };
+  Vector3d get_a() { return { U0 * get_ax(), U0 * get_ay(), U0 * get_az()}; };
   double get_Lx() { return x_max[0]-x_min[0]; };
   double get_Ly() { return x_max[1]-x_min[1]; };
   double get_Lz() { return x_max[2]-x_min[2]; };
   Vector3d get_x_min() const { return x_min; };
   Vector3d get_x_max() const { return x_max; };
-  double get_divu() { return get_uxx()+get_uyy()+get_uzz(); };
-  double get_vortx() { return get_uzy()-get_uyz(); };
-  double get_vorty() { return get_uxz()-get_uzx(); };
-  double get_vortz() { return get_uyx()-get_uxy(); };
-  double get_Jux() { return (get_uxx()*get_ux()
+  double get_divu() { return U0 * (get_uxx()+get_uyy()+get_uzz()); };
+  double get_vortx() { return U0 * (get_uzy()-get_uyz()); };
+  double get_vorty() { return U0 * (get_uxz()-get_uzx()); };
+  double get_vortz() { return U0 * (get_uyx()-get_uxy()); };
+  double get_Jux() { return U02 * (get_uxx()*get_ux()
                              + get_uxy()*get_uy()
                              + get_uxz()*get_uz()); };
-  double get_Juy() { return (get_uyx()*get_ux()
+  double get_Juy() { return U02 * (get_uyx()*get_ux()
                              + get_uyy()*get_uy()
                              + get_uyz()*get_uz()); };
-  double get_Juz() { return (get_uzx()*get_ux()
+  double get_Juz() { return U02 * (get_uzx()*get_ux()
                              + get_uzy()*get_uy()
                              + get_uzz()*get_uz()); };
   Vector3d get_Ju() { return {get_Jux(), get_Juy(), get_Juz()}; };
   Matrix3d get_J() {
     Matrix3d J;
     J <<
-      get_uxx(), get_uxy(), get_uxz(),
-      get_uyx(), get_uyy(), get_uyz(),
-      get_uzx(), get_uzy(), get_uzz();
+      U0 * get_uxx(), U0 * get_uxy(), U0 * get_uxz(),
+      U0 * get_uyx(), U0 * get_uyy(), U0 * get_uyz(),
+      U0 * get_uzx(), U0 * get_uzy(), U0 * get_uzz();
     return J; };
+  void probe(const Vector3d &x){ probe(x, t_update); };
   //
   virtual double get_t_min() = 0;
   virtual double get_t_max() = 0;
   //
   virtual void update(const double t) = 0;
-  virtual void probe(const Vector3d &x) = 0;
+  virtual void probe(const Vector3d &x, const double t) = 0;
   //
   virtual bool inside_domain() = 0;
   virtual double get_ux() = 0;
@@ -83,6 +86,9 @@ protected:
   Vector3d x_min;
   Vector3d x_max;
   int int_order = 1;
+  double U0 = 1.0;
+  double U02 = 1.0;
+  double t_update;
 };
 
 #endif

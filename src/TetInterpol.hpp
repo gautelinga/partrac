@@ -13,7 +13,7 @@ public:
 
   TetInterpol(const std::string infilename);
   void update(const double t);
-  void probe(const Vector3d &x);
+  void probe(const Vector3d &x, const double t);
   bool inside_domain() { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
