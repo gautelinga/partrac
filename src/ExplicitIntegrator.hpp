@@ -11,9 +11,7 @@ public:
   ExplicitIntegrator(Interpol* intp, const double Dm, const int int_order, std::mt19937& gen);
   ~ExplicitIntegrator() {};
   Vector3d integrate(const Vector3d& x, const double t, const double dt);
-  Uint get_accepted() { return n_accepted; };
-  Uint get_declined() { return n_declined; };
-private:
+protected:
   double Dm;
   int int_order;
   std::mt19937& gen;
@@ -44,11 +42,13 @@ Vector3d ExplicitIntegrator::integrate(const Vector3d& x, const double t, const 
     }
     intp->probe(x+dx_rw, t+dt);
     if (intp->inside_domain()){
+        stuck = false;
         ++n_accepted;
         return dx_rw;
     }
     else {
         ++n_declined;
+        stuck = true;
         return {0., 0., 0.};
     }
 }

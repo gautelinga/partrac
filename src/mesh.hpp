@@ -9,6 +9,8 @@
 // using namespace std;
 // Declarations
 void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
+void compute_edge2faces(Edge2FacesType&, const FacesType&, const EdgesType&);
+void remove_faces(FacesType&, const std::vector<bool>&);
 void remove_edges(FacesType&, EdgesType&, const std::vector<bool>&, EdgesListType&);
 void remove_unused_edges(FacesType&, EdgesType&, EdgesListType&);
 void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
@@ -145,7 +147,7 @@ Uint get_common_entry(Uint kedge, Uint ledge,
 }
 
 std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint ledge,
-                                 EdgesType &edges){
+                                       EdgesType &edges){
   Uint inode = edges[iedge].first[0];
   Uint knode;
   std::array<Uint, 2> mnedges;
@@ -248,9 +250,12 @@ Uint sheet_refinement(FacesType &faces,
                       EdgesListType &edges_inlet,                
                       ParticleSet& ps,
                       const double ds_max,
-                      const double curv_refine_factor){
+                      const double curv_refine_factor,
+                      const bool cut_if_stuck){
   bool changed;
   Uint n_add = 0;
+  std::set<Uint> edges_to_remove;
+
   do {
     changed = false;
 
@@ -285,7 +290,6 @@ Uint sheet_refinement(FacesType &faces,
       double ds_ratio = ds_ratio_[iedge];
       if (ds_ratio < 1.0)
         break;
-      changed = true;
 
       Uint inode = edges[iedge].first[0];
       Uint jnode = edges[iedge].first[1];
@@ -295,6 +299,7 @@ Uint sheet_refinement(FacesType &faces,
       // Add point
       bool added = ps.insert_node_between(inode, jnode);
       if (added){
+        changed = true;
         ++n_add;
         //
         edges[iedge].first[1] = new_inode;
@@ -336,10 +341,35 @@ Uint sheet_refinement(FacesType &faces,
       }
       else {
         std::cout << "Here we should remove this edge." << std::endl;
-        exit(0);
+        //exit(0);
+        edges_to_remove.insert(iedge);
       }
     }
   } while (changed);
+  if (edges_to_remove.size() > 0){
+    if (!cut_if_stuck){
+      std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
+      exit(0);
+    }
+    std::vector<bool> edge_isactive(edges.size(), true);
+    std::vector<bool> face_isactive(faces.size(), true);
+    for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
+         sit != edges_to_remove.end(); ++sit){
+      edge_isactive[*sit] = false;
+      for (FacesListType::const_iterator jfaceit=edge2faces[*sit].begin();
+           jfaceit != edge2faces[*sit].end(); ++jfaceit){
+          face_isactive[*jfaceit] = false;
+      }
+    }
+    NodesListType nodes_inlet_dummy;
+    EdgesListType edges_inlet_dummy;
+
+    remove_faces(faces, face_isactive);
+    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
+    remove_unused_nodes(edges, nodes_inlet_dummy, ps);
+    compute_edge2faces(edge2faces, faces, edges);
+    compute_node2edges(node2edges, edges, ps.N());
+  }
   return n_add;
 }
 
@@ -396,7 +426,8 @@ Uint strip_refinement(EdgesType &edges,
   }
   if (edges_to_remove.size() > 0){
     if (!cut_if_stuck){
-      std::cout << "Edge is stuck! Turn on cut_if_stuck to continue in such cases." << std::endl;
+      std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
+      exit(0);
     }
     std::vector<bool> edge_isactive(edges.size(), true);
     for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
@@ -424,7 +455,7 @@ Uint refinement(FacesType &faces,
   Uint n_add = 0;
   if (faces.size() > 0){
     n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet,
-                             ps, ds_max, curv_refine_factor);
+                             ps, ds_max, curv_refine_factor, cut_if_stuck);
   }
   else {
     n_add = strip_refinement(edges,
@@ -857,7 +888,7 @@ bool collapse_edge(const Uint iedge,
   return true;
 }
 
-void remove_faces(FacesType &faces, const std::vector<bool> face_isactive){
+void remove_faces(FacesType &faces, const std::vector<bool>& face_isactive){
   assert(faces.size() == face_isactive.size());
   for (int i=int(face_isactive.size())-1; i >= 0; --i){
     if (!face_isactive[i])

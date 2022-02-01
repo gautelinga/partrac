@@ -26,8 +26,8 @@
 #include "Topology.hpp"
 #include "Integrator.hpp"
 #include "ExplicitIntegrator.hpp"
-#include "distribute.hpp"
-#include "stats.hpp"
+#include "RKIntegrator.hpp"
+#include "Initializer.hpp"
 #include "helpers.hpp"
 
 
@@ -145,10 +145,8 @@ int main(int argc, char* argv[])
   }
   if (prm.interpolation_test > 0){
     std::cout << "Testing interpolation..." << std::endl;
-    intp->set_int_order(2);
     test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
   }
-  intp->set_int_order(prm.int_order);
 
   if (frozen_fields)
     intp->update(prm.t_frozen);
@@ -175,29 +173,36 @@ int main(int argc, char* argv[])
     mesh.load_checkpoint(prm.restart_folder + "/Checkpoints", prm);
   }
   else {
-    std::vector<Vector3d> pos_init;
-    pos_init = initial_positions(prm.init_mode,
-                                 prm.init_weight,
-                                 prm.Nrw,
-                                 {prm.x0, prm.y0, prm.z0},
-                                 prm.La, prm.Lb,
-                                 prm.ds_init, t0,
-                                 intp, gen, mesh.edges, mesh.faces);
-    if (prm.clear_initial_edges){
-      std::cout << "Clearing initial edges!" << std::endl;
-      mesh.clear();
+    Initializer* init_state;
+    std::vector<std::string> key = split_string(prm.init_mode, "_");
+    if (key.size() == 0){
+      std::cout << "init_mode not specified." << std::endl;
+      exit(0);
     }
-    if (prm.inject){
-      mesh.pos_inj = pos_init;
-      mesh.edges_inj = mesh.edges;
-      for (Uint i=0; i<pos_init.size(); ++i){
-        mesh.nodes_inlet.push_back(i);
-      }
-      for (Uint i=0; i<mesh.edges.size(); ++i){
-        mesh.edges_inlet.push_back(i);
-      }
+    else if (key[0] == "point"){
+      init_state = new PointInitializer(key, intp, prm);
     }
-    ps.add(pos_init, 0);
+    else if (key[0] == "uniform"){
+      init_state = new UniformInitializer(key, intp, prm);
+    }
+    else if (key[0] == "sheet"){
+      init_state = new SheetInitializer(key, intp, prm);
+    }
+    else if (key[0] == "ellipsoid"){
+      init_state = new EllipsoidInitializer(key, intp, prm);
+    }
+    else if (key[0] == "pair" || key[0] == "pairs"){
+      init_state = new RandomPairsInitializer(key, intp, prm, gen);
+    }
+    else if (key[0] == "points"){
+      init_state = new RandomPointsInitializer(key, intp, prm, gen);
+    }
+    else {
+      std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
+      exit(0);
+    }
+    mesh.load_initial_state(init_state);
+    delete init_state;
   }
 
   // std::cout << "aaa" << std::endl;
@@ -254,14 +259,21 @@ int main(int argc, char* argv[])
   }
 
   Integrator* integrator;
-  integrator = new ExplicitIntegrator(intp, Dm, prm.int_order, gen);
+  if (prm.scheme == "explicit")
+    integrator = new ExplicitIntegrator(intp, Dm, prm.int_order, gen);
+  else if (prm.scheme == "RK4")
+    integrator = new RK4Integrator(intp);
+  else {
+    std::cout << "Unrecognized (ODE integration) scheme: " << prm.scheme << std::endl;
+    exit(0);
+  }
   ps.attach_integrator(integrator);
 
   prm.dump(newfolder, t);
 
   // Should not be taken from parameters
-  Uint n_accepted = prm.n_accepted;
-  Uint n_declined = prm.n_declined;
+  //Uint n_accepted = prm.n_accepted;
+  //Uint n_declined = prm.n_declined;
 
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
   H5FilePtr h5f = std::make_shared<H5::H5File>(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -312,11 +324,7 @@ int main(int argc, char* argv[])
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
       bool do_dump_hist = (int_hist_intv > 0 && it % int_hist_intv == 0);
-      write_stats(statfile, t, ps, mesh.faces, mesh.edges,
-                  prm.ds_max,
-                  do_dump_hist,
-                  histfolder,
-                  n_accepted, n_declined);
+      mesh.write_statistics(statfile, t, prm.ds_max, do_dump_hist, histfolder, integrator);
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
@@ -494,6 +502,9 @@ int main(int argc, char* argv[])
     */
     bool all_inside = ps.integrate(t, dt);
     
+    if (!all_inside)
+      std::cout << "Some nodes are outside." << std::endl;
+
     t += dt;
     it += 1;
   }

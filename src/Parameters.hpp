@@ -86,6 +86,7 @@ public:
   int seed = 0;
   //
   std::string tag = "";
+  std::string scheme = "explicit";
   //
   bool random = true;
 private:
@@ -226,6 +227,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "seed") seed = stoint(val);
 
   if (key == "tag") tag = val;
+  if (key == "scheme") scheme = val;
 
   if (key == "random") random = stobool(val);
 }
@@ -289,6 +291,8 @@ void Parameters::print(){
 
     print_param("tag                ", tag);
     print_param("random             ", bool2string(random));
+
+    print_param("scheme             ", scheme);
   }
 }
 
@@ -369,6 +373,8 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "tag", tag);
   write_param(paramsfile, "random", bool2string(random));
+
+  write_param(paramsfile, "scheme", scheme);
 
   paramsfile.close();
 }

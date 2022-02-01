@@ -3,6 +3,8 @@
 
 #include "typedefs.hpp"
 #include "mesh.hpp"
+#include "Initializer.hpp"
+#include "stats.hpp"
 
 class Topology {
 public:
@@ -30,6 +32,9 @@ public:
   void write_checkpoint(const std::string checkpointsfolder, const double t, Parameters &prm) const;
   void load_checkpoint(const std::string checkpointsfolder, const Parameters &prm);
   void dump_hdf5(H5FilePtr h5f, const std::string groupname);
+  void load_initial_state(Initializer* init_state);
+  void write_statistics(std::ofstream &statfile, const double t, const double ds_max,
+                        const bool do_dump_hist, const std::string histfolder, Integrator* integrator);
 private:
   ParticleSet& ps;
   double ds_min;
@@ -103,10 +108,19 @@ Uint Topology::inject(){
 }
 
 void Topology::compute_interior(){
+  /*
+  remove_unused_edges(faces, edges, edges_inlet);
+  remove_unused_nodes(edges, nodes_inlet, ps);
+
+  compute_edge2faces(edge2faces, faces, edges);
+  compute_node2edges(node2edges, edges, ps.N());
+  */
+
   compute_interior_prop(interior_ang, mixed_areas, face_normals,
                         faces, edges, edge2faces, ps);
   compute_mean_curv(faces, edges, edge2faces, node2edges,
                     ps, interior_ang, mixed_areas, face_normals);
+  /**/
 }
 
 bool Topology::filter(){
@@ -169,4 +183,46 @@ void Topology::dump_hdf5(H5FilePtr h5f, const std::string groupname){
     if (dim() > 0)
         mesh2hdf(h5f, groupname, ps, faces, edges);
 }
+
+void Topology::load_initial_state(Initializer* init_state){
+  /*std::vector<Vector3d> pos_init;
+  pos_init = initial_positions(prm.init_mode,
+                               prm.init_weight,
+                               prm.Nrw,
+                               {prm.x0, prm.y0, prm.z0},
+                               prm.La, prm.Lb,
+                               prm.ds_init, t0,
+                                 intp, gen, mesh.edges, mesh.faces);*/
+  clear();
+
+  edges = init_state->edges;
+  faces = init_state->faces;
+
+  if (init_state->clear_initial_edges){
+    std::cout << "Clearing initial edges!" << std::endl;
+    clear();
+  }
+  if (init_state->inject){
+    pos_inj = init_state->nodes;
+    edges_inj = init_state->edges;
+    for (Uint i=0; i<init_state->nodes.size(); ++i){
+      nodes_inlet.push_back(i);
+    }
+    for (Uint i=0; i<init_state->edges.size(); ++i){
+      edges_inlet.push_back(i);
+    }
+  }
+  ps.add(init_state->nodes, 0);
+}
+
+void Topology::write_statistics(std::ofstream &statfile,
+                           const double t,
+                           const double ds_max,
+                           const bool do_dump_hist,
+                           const std::string histfolder,
+                           Integrator* integrator){
+  write_stats(statfile, t, ps, faces, edges, ds_max, do_dump_hist, histfolder,
+              integrator->get_accepted(), integrator->get_declined());
+}
+
 #endif

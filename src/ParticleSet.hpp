@@ -20,6 +20,7 @@ public:
     void replace_nodes(Vector3d& x, const Uint inode, const Uint jnode);
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
     Vector3d x(const Uint i) const { return x_rw[i]; };
+    void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
     Vector3d u(const Uint i) const { return u_rw[i]; };
     Vector3d facet_normal(const Uint iface,
                           const FacesType &faces,
@@ -42,10 +43,9 @@ public:
     Uint get_declined() { return integrator->get_declined(); };
     void update_fields(const double t, std::map<std::string, bool> &output_fields);
   private:
-    bool do_output_all = false;
+    //bool do_output_all = false;
     Uint Nrw = 0;
     Uint Nrw_max;
-    int int_order;
     Interpol* intp;
     Integrator* integrator;
     // Vector fields
@@ -65,7 +65,6 @@ public:
 ParticleSet::ParticleSet (Interpol* intp, const Uint Nrw_max) {
     this->intp = intp;
     this->Nrw_max = Nrw_max;
-    this->int_order = intp->get_int_order();
     // Vector fields
     this->x_rw.resize(Nrw_max);
     this->u_rw.resize(Nrw_max);
@@ -112,6 +111,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
   intp->probe(x_rw_new);
   if (!intp->inside_domain()){
     std::cout << "Insertion failed! Need something more refined here." << std::endl;
+    return false;
     exit(0);
     Vector3d dx_rw_new = x_rw[inode]-x_rw[jnode];
     double dx0 = dx_rw_new.norm();
@@ -424,13 +424,19 @@ void ParticleSet::dump_hdf5(H5FilePtr h5f, const std::string groupname, std::map
 
 bool ParticleSet::integrate(const double t, const double dt){
     Vector3d dx_rw = {0., 0., 0.};
+    bool all_nodes_are_fine = true;
     for (Uint irw=0; irw < N(); ++irw){
         //dx_rw = u_rw[irw]*dt;
         dx_rw = integrator->integrate(x_rw[irw], t, dt);
 
-        intp->probe(x_rw[irw] + dx_rw, t + dt);
-        assert (intp->inside_domain());
+        //intp->probe(x_rw[irw] + dx_rw, t + dt);
+        //assert (intp->inside_domain());
         x_rw[irw] += dx_rw;
+
+        if (integrator->is_stuck()){
+          all_nodes_are_fine = false;
+
+        }
         /*
         u_rw[irw] = intp->get_u();
         */
@@ -448,7 +454,7 @@ bool ParticleSet::integrate(const double t, const double dt){
         //return true;
         */
     }
-    return true;
+    return all_nodes_are_fine;
 }
 
 #endif

@@ -12,8 +12,6 @@ public:
   virtual ~Interpol() = default;
   void set_folder(std::string folder){ this->folder=folder; };
   std::string get_folder(){ return folder; };
-  void set_int_order(const int int_order){ this->int_order=int_order; };
-  int get_int_order() { return this->int_order; };
   void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
   //
   Vector3d get_u() { return { U0*get_ux(), U0 * get_uy(), U0 * get_uz()}; };
@@ -85,7 +83,6 @@ protected:
   //double Lz = 0;
   Vector3d x_min;
   Vector3d x_max;
-  int int_order = 1;
   double U0 = 1.0;
   double U02 = 1.0;
   double t_update;
