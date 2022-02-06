@@ -8,13 +8,13 @@
 
 class RK4Integrator : public Integrator {
 public:
-  RK4Integrator(Interpol* intp);
+  RK4Integrator(std::shared_ptr<Interpol> intp);
   ~RK4Integrator() {};
   Vector3d integrate(const Vector3d& x, const double t, const double dt);
 protected:
 };
 
-RK4Integrator::RK4Integrator(Interpol* intp) : Integrator(intp) {
+RK4Integrator::RK4Integrator(std::shared_ptr<Interpol> intp) : Integrator(intp) {
     std::cout << "Selecting Runge-Kutta 4 scheme" << std::endl;
 }
 

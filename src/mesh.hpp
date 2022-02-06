@@ -47,7 +47,7 @@ void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
   }
 }*/
 
-void mesh2hdf(H5FilePtr h5f, const std::string groupname,
+void mesh2hdf(H5File& h5f, const std::string groupname,
               const ParticleSet& ps,
               const FacesType& faces, const EdgesType& edges){
   // This function is here because it contains ps. Consider stripping that.
@@ -79,9 +79,9 @@ void mesh2hdf(H5FilePtr h5f, const std::string groupname,
       dA[iface] = ps.triangle_area(iface, faces, edges);
       dA0[iface] = faces[iface].second;
     }
-    DataSet faces_dset = h5f->createDataSet(groupname + "/faces",
-                                             PredType::NATIVE_ULONG,
-                                             faces_dspace);
+    DataSet faces_dset = h5f.createDataSet(groupname + "/faces",
+                                           PredType::NATIVE_ULONG,
+                                           faces_dspace);
     faces_dset.write(faces_arr.data(), PredType::NATIVE_ULONG);
 
     scalar2hdf5(h5f, groupname + "/dA", dA, faces_dims[0]);
@@ -105,7 +105,7 @@ void mesh2hdf(H5FilePtr h5f, const std::string groupname,
       dl0[iedge] = edges[iedge].second;
     }
 
-    DataSet edges_dset = h5f->createDataSet(groupname + "/edges",
+    DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
                                              PredType::NATIVE_ULONG,
                                              edges_dspace);
     edges_dset.write(edges_arr.data(), PredType::NATIVE_ULONG);

@@ -47,81 +47,6 @@ static Uint imodulo(const int a, const int b) {
   return ((a % b) + b) % b;
 }
 
-static double interpolate(const double x,
-		   const double y,
-		   const double z,
-		   double*** C,
-		   const Uint nx,
-		   const Uint ny,
-		   const Uint nz,
-		   const double Lx,
-		   const double Ly,
-		   const double Lz,
-		   const bool verbose
-		   ){
-  int ix_lo, ix_hi, iy_lo, iy_hi, iz_lo, iz_hi;
-  double wx, wy, wz;
-  double f000, f001, f010, f011, f100, f101, f110, f111;
-  double f;
-  double dx = Lx/nx;
-  double dy = Ly/ny;
-  double dz = Lz/nz;
-
-  int ix_est = floor(x/dx);
-  int iy_est = floor(y/dy);
-  int iz_est = floor(z/dz);
-
-  ix_lo = imodulo(ix_est, nx);
-  ix_hi = imodulo(ix_lo + 1, nx);
-  iy_lo = imodulo(iy_est, ny);
-  iy_hi = imodulo(iy_lo + 1, ny);
-  iz_lo = imodulo(iz_est, nz);
-  iz_hi = imodulo(iz_lo + 1, nz);
-
-  wx = (x-dx*ix_est)/dx;
-  wy = (y-dy*iy_est)/dy;
-  wz = (z-dz*iz_est)/dz;
-
-  if (verbose)
-    std::cout << wx << " " << wy << " " << wz << std::endl;
-
-  // Nodal values
-  f000 = C[ix_lo][iy_lo][iz_lo];
-  f001 = C[ix_lo][iy_lo][iz_hi];
-  f010 = C[ix_lo][iy_hi][iz_lo];
-  f011 = C[ix_lo][iy_hi][iz_hi];
-  f100 = C[ix_hi][iy_lo][iz_lo];
-  f101 = C[ix_hi][iy_lo][iz_hi];
-  f110 = C[ix_hi][iy_hi][iz_lo];
-  f111 = C[ix_hi][iy_hi][iz_hi];
-
-  // Trilinear interpolaton
-  f = f000*(1-wx)*(1-wy)*(1-wz)
-    + f001*(1-wx)*(1-wy)*  wz
-    + f010*(1-wx)*  wy  *(1-wz)
-    + f011*(1-wx)*  wy  *  wz
-    + f100*  wx  *(1-wy)*(1-wz)
-    + f101*  wx  *(1-wy)*  wz
-    + f110*  wx  *  wy  *(1-wz)
-    + f111*  wx  *  wy  *  wz;
-
-  return f;
-}
-
-static double weighted_sum(double*** C,
-                    const Uint ind[3][2],
-                    const double w[2][2][2]){
-  double f = 0.0;
-  for (Uint q0=0; q0<2; ++q0){
-    for (Uint q1=0; q1<2; ++q1){
-      for (Uint q2=0; q2<2; ++q2){
-        f += C[ind[0][q0]][ind[1][q1]][ind[2][q2]]*w[q0][q1][q2];
-      }
-    }
-  }
-  return f;
-}
-
 static double norm(const double x, const double y, const double z){
   return sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
 }
@@ -354,7 +279,7 @@ static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
   return ivec;
 }
 
-static void test_interpolation(Uint num_points, Interpol *intp,
+static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
                         const std::string &newfolder, const double t0,
                         std::mt19937 &gen){
   Uint n = 0;

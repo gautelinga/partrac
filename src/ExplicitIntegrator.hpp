@@ -8,7 +8,7 @@
 
 class ExplicitIntegrator : public Integrator {
 public:
-  ExplicitIntegrator(Interpol* intp, const double Dm, const int int_order, std::mt19937& gen);
+  ExplicitIntegrator(std::shared_ptr<Interpol> intp, const double Dm, const int int_order, std::mt19937& gen);
   ~ExplicitIntegrator() {};
   Vector3d integrate(const Vector3d& x, const double t, const double dt);
 protected:
@@ -18,7 +18,7 @@ protected:
   std::normal_distribution<double> rnd_normal;
 };
 
-ExplicitIntegrator::ExplicitIntegrator(Interpol* intp, const double Dm, const int int_order, std::mt19937& gen) : Integrator(intp), gen(gen), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
+ExplicitIntegrator::ExplicitIntegrator(std::shared_ptr<Interpol> intp, const double Dm, const int int_order, std::mt19937& gen) : Integrator(intp), gen(gen), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
 }
 
 Vector3d ExplicitIntegrator::integrate(const Vector3d& x, const double t, const double dt) {

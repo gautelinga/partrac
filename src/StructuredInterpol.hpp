@@ -5,18 +5,15 @@
 #ifndef __STRUCTUREDINTERPOL_HPP
 #define __STRUCTUREDINTERPOL_HPP
 
-using namespace H5;
-//using namespace std;
-
-void fix_boundary(const std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>>& solid_ids_neigh,
-                    double*** ux_next, double*** uy_next, double*** uz_next, double*** rho_next, double*** p_next) {
-  for (auto it = solid_ids_neigh.begin();
-      it != solid_ids_neigh.end(); ++it){
-    std::array<Uint, 3> inds = it->first;
-    std::vector<std::array<Uint, 3>> neigh = it->second;
-    Uint ix = inds[0];
-    Uint iy = inds[1];
-    Uint iz = inds[2];
+static void fix_boundary(const std::map<std::array<Uint, 3>, std::vector<std::array<Uint, 3>>>& solid_ids_neigh,
+                         double*** ux_next,
+                         double*** uy_next,
+                         double*** uz_next,
+                         double*** rho_next,
+                         double*** p_next) {
+  for (auto &el : solid_ids_neigh){
+    auto i = el.first;
+    auto neigh = el.second;
     Uint num_neigh = neigh.size();
     if (num_neigh > 0){
       double ux_next_sum = 0.;
@@ -24,25 +21,102 @@ void fix_boundary(const std::map<std::array<Uint, 3>, std::vector<std::array<Uin
       double uz_next_sum = 0.;
       double rho_next_sum = 0.;
       double p_next_sum = 0.;
-      for (std::vector<std::array<Uint, 3>>::iterator vit=neigh.begin();
-            vit != neigh.end(); ++vit){
-        std::array<Uint, 3> other_inds = *vit;
-        Uint ix_ = other_inds[0];
-        Uint iy_ = other_inds[1];
-        Uint iz_ = other_inds[2];
-        ux_next_sum += ux_next[ix_][iy_][iz_];
-        uy_next_sum += uy_next[ix_][iy_][iz_];
-        uz_next_sum += uz_next[ix_][iy_][iz_];
-        rho_next_sum += rho_next[ix_][iy_][iz_];
-        p_next_sum += p_next[ix_][iy_][iz_];
+      for (auto &i_ : neigh){
+        ux_next_sum += ux_next[i_[0]][i_[1]][i_[2]];
+        uy_next_sum += uy_next[i_[0]][i_[1]][i_[2]];
+        uz_next_sum += uz_next[i_[0]][i_[1]][i_[2]];
+        rho_next_sum += rho_next[i_[0]][i_[1]][i_[2]];
+        p_next_sum += p_next[i_[0]][i_[1]][i_[2]];
       }
-      ux_next[ix][iy][iz] = ux_next_sum/num_neigh;
-      uy_next[ix][iy][iz] = uy_next_sum/num_neigh;
-      uz_next[ix][iy][iz] = uz_next_sum/num_neigh;
-      rho_next[ix][iy][iz] = rho_next_sum/num_neigh;
-      p_next[ix][iy][iz] = p_next_sum/num_neigh;
+      ux_next[i[0]][i[1]][i[2]] = ux_next_sum/num_neigh;
+      uy_next[i[0]][i[1]][i[2]] = uy_next_sum/num_neigh;
+      uz_next[i[0]][i[1]][i[2]] = uz_next_sum/num_neigh;
+      rho_next[i[0]][i[1]][i[2]] = rho_next_sum/num_neigh;
+      p_next[i[0]][i[1]][i[2]] = p_next_sum/num_neigh;
     }
   }
+}
+
+static void load_field(H5::H5File &h5file
+                     , double*** u
+                     , const std::string field
+                     , const int nx, const int ny, const int nz
+                     ){
+  H5::DataSet dset = h5file.openDataSet(field);
+  H5::DataSpace dspace = dset.getSpace();
+  std::vector<double> Uv(nx*ny*nz);
+  dset.read(Uv.data(), PredType::NATIVE_DOUBLE, dspace, dspace);
+  for (int ix=0; ix<nx; ++ix){
+    for (int iy=0; iy<ny; ++iy){
+      for (int iz=0; iz<nz; ++iz){
+  	    u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
+      }
+    }
+  }
+}
+
+static void load_int_field(H5::H5File &h5file
+                         , int*** u
+                         , const std::string field
+                         , const int nx, const int ny, const int nz
+                         )
+{
+  H5::DataSet dset = h5file.openDataSet(field);
+  H5::DataSpace dspace = dset.getSpace();
+  std::vector<int> Uv(nx*ny*nz);
+  dset.read(Uv.data(), PredType::NATIVE_INT, dspace, dspace);
+  for (int ix=0; ix<nx; ++ix){
+    for (int iy=0; iy<ny; ++iy){
+      for (int iz=0; iz<nz; ++iz){
+  	u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
+      }
+    }
+  }
+}
+
+static void load_h5(const std::string h5filename
+                  , double*** ux
+                  , double*** uy
+                  , double*** uz
+                  , double*** rho
+                  , double*** p
+                  , const int nx
+                  , const int ny
+                  , const int nz
+                  , const bool verbose
+                  , const bool ignore_density
+                  , const bool ignore_pressure
+                  , const bool ignore_uz
+       )
+{
+  // Assert that h5 file exists
+  verify_file_exists(h5filename);
+  if (verbose)
+    std::cout << "Opening " << h5filename << std::endl;
+  H5::H5File h5file(h5filename, H5F_ACC_RDONLY);
+  load_field(h5file, ux, "u_x", nx, ny, nz);
+  load_field(h5file, uy, "u_y", nx, ny, nz);
+  if (!ignore_uz)
+    load_field(h5file, uz, "u_z", nx, ny, nz);
+  if (!ignore_density)
+    load_field(h5file, rho, "density", nx, ny, nz);
+  if (!ignore_pressure)
+    load_field(h5file, p, "pressure", nx, ny, nz);
+  h5file.close();
+}
+
+static double weighted_sum(double*** C,
+                           const Uint ind[3][2],
+                           const double w[2][2][2]){  
+  double f = 0.0;
+  for (Uint q0=0; q0<2; ++q0){
+    for (Uint q1=0; q1<2; ++q1){
+      for (Uint q2=0; q2<2; ++q2){
+        f += C[ind[0][q0]][ind[1][q1]][ind[2][q2]]*w[q0][q1][q2];
+      }
+    }
+  }
+  return f;
 }
 
 class StructuredInterpol : public Interpol {
@@ -75,18 +149,6 @@ public:
   double get_uzy();
   double get_uzz();
   Matrix3d get_grada();
-  bool get_nodal_inside(const Uint ix, const Uint iy, const Uint iz){
-    return !isSolid[ix][iy][iz];
-  }
-  double get_nodal_ux(const Uint ix, const Uint iy, const Uint iz){
-    return alpha_t * ux_next[ix][iy][iz] + (1-alpha_t) * ux_prev[ix][iy][iz];
-  }
-  double get_nodal_uy(const Uint ix, const Uint iy, const Uint iz){
-    return alpha_t * uy_next[ix][iy][iz] + (1-alpha_t) * uy_prev[ix][iy][iz];
-  }
-  double get_nodal_uz(const Uint ix, const Uint iy, const Uint iz){
-    return alpha_t * uz_next[ix][iy][iz] + (1-alpha_t) * uz_prev[ix][iy][iz];
-  }
 protected:
   void probe_space(const Vector3d &x);
   void probe_grad();
@@ -95,9 +157,6 @@ protected:
   double t_next = 0.;
   double alpha_t;
 
-  //Uint nx = 0;
-  //Uint ny = 0;
-  //Uint nz = 0;
   Uint n[3] = {0, 0, 0};
   Vector3d dx;
 
@@ -138,10 +197,10 @@ protected:
   double Ax = 0.;
   double Ay = 0.;
   double Az = 0.;
-  //double Lx = 0.;
-  //double Ly = 0.;
-  //double Lz = 0.;
-  bool boundary_fix = true;
+  int boundary_mode = 0; // 0: Rounded extrapolation, 1: Sharp extrapolation, 2: Sharp simple
+  bool ignore_density = false;
+  bool ignore_pressure = false;
+  bool ignore_uz = false;
 };
 
 StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(infilename) {
@@ -153,6 +212,11 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
   // Default params
   felbm_params["timestamps"] = "timestamps.dat";
   felbm_params["is_solid_file"] = "output_is_solid.h5";
+  felbm_params["boundary_mode"] = "rounded";
+
+  felbm_params["ignore_pressure"] = "false";
+  felbm_params["ignore_density"] = "false";
+  felbm_params["ignore_uz"] = "false";
 
   // Overload from file
   size_t found;
@@ -165,7 +229,22 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
       boost::trim(key);
       boost::trim(val);
       felbm_params[key] = val;
+      //std::cout << "--> " << key << ": " << val << std::endl;
     }
+  }
+  std::cout << "Chosen parameters:" << std::endl;
+  for (auto & k : felbm_params) {
+    std::cout << k.first << ": " << k.second << std::endl;
+  }
+
+  if (felbm_params["ignore_pressure"] == "true" || felbm_params["ignore_pressure"] == "True"){
+    ignore_pressure = true;
+  }
+  if (felbm_params["ignore_density"] == "true" || felbm_params["ignore_density"] == "True"){
+    ignore_density = true;
+  }
+  if (felbm_params["ignore_uz"] == "true" || felbm_params["ignore_uz"] == "True"){
+    ignore_uz = true;
   }
 
   std::size_t botDirPos = infilename.find_last_of("/");
@@ -175,21 +254,35 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
   std::string solid_filename = get_folder() + "/" + felbm_params["is_solid_file"];
   verify_file_exists(solid_filename);
 
-  H5File solid_file(solid_filename, H5F_ACC_RDONLY);
-  DataSet dset_solid = solid_file.openDataSet("is_solid");
-  DataSpace dspace_solid = dset_solid.getSpace();
+  if (felbm_params["boundary_mode"] == "rounded"){
+    boundary_mode = 0;
+  }
+  else if (felbm_params["boundary_mode"] == "sharp"){
+    boundary_mode = 1;
+  }
+  else if (felbm_params["boundary_mode"] == "simple"){
+    boundary_mode = 2;
+  }
+  else {
+    std::cout << "StructuredInterpol: Unknown boundary mode." << std::endl;
+    exit(0);
+  }
+
+  H5::H5File solid_file(solid_filename, H5F_ACC_RDONLY);
+  H5::DataSet dset_solid = solid_file.openDataSet("is_solid");
+  H5::DataSpace dspace_solid = dset_solid.getSpace();
 
   hsize_t dims[3];
   dspace_solid.getSimpleExtentDims(dims, NULL);
   for (Uint i=0; i<3; ++i)
-    this->n[i] = dims[i];
-  this->x_min << 0., 0., 0.;
-  this->x_max << n[0], n[1], n[2];
+    n[i] = dims[i];
+  x_min << 0., 0., 0.;
+  x_max << n[0], n[1], n[2];
 
-  this->dx << this->get_Lx()/n[0], this->get_Ly()/n[1], this->get_Lz()/n[2];
+  dx << this->get_Lx()/n[0], this->get_Ly()/n[1], this->get_Lz()/n[2];
   for (Uint i=0; i<3; ++i){
-    this->dwq[i][0] = -1./dx[i];
-    this->dwq[i][1] =  1./dx[i];
+    dwq[i][0] = -1./dx[i];
+    dwq[i][1] =  1./dx[i];
   }
 
   // Create arrays
@@ -234,6 +327,8 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
     }
   }
 
+
+
   Uint nnlist[6][3];
   Uint nnum=0;
 
@@ -271,7 +366,7 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
 
   load_int_field(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
   // Smooth solid-liquid interface
-  if (boundary_fix){
+  if (boundary_mode == 0){
     for (Uint ix=0; ix<n[0]; ++ix){
       for (Uint iy=0; iy<n[1]; ++iy){
         for (Uint iz=0; iz<n[2]; ++iz){
@@ -313,7 +408,7 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
       }
     }
   }
-  else {
+  else { // if (boundary_mode == 1 || boundary_mode == 2){
     for (Uint ix=0; ix<n[0]; ++ix){
       for (Uint iy=0; iy<n[1]; ++iy){
         for (Uint iz=0; iz<n[2]; ++iz){
@@ -326,35 +421,26 @@ StructuredInterpol::StructuredInterpol(const std::string infilename) : Interpol(
 
 void StructuredInterpol::update(const double t){
   StampPair sp = ts.get(t);
-  // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
     if (is_initialized && t_next == sp.prev.t){
-      double*** ux_tmp = ux_prev;
-      double*** uy_tmp = uy_prev;
-      double*** uz_tmp = uz_prev;
-      double*** rho_tmp = rho_prev;
-      double*** p_tmp = p_prev;
-
-      ux_prev = ux_next;
-      uy_prev = uy_next;
-      uz_prev = uz_prev;
-      rho_prev = rho_next;
-      p_prev = p_next;
-
-      ux_next = ux_tmp;
-      uy_next = uy_tmp;
-      uz_next = uz_tmp;
-      rho_next = rho_tmp;
-      p_next = p_tmp;
+      std::swap(ux_prev, ux_next);
+      std::swap(uy_prev, uy_next);
+      if (!ignore_uz)
+        std::swap(uz_prev, uz_prev);
+      if (!ignore_density)
+        std::swap(rho_prev, rho_next);
+      if (!ignore_pressure)
+        std::swap(p_prev, p_next);
     }
     else {
       std::cout << "Previous: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
       load_h5(folder + "/" + sp.prev.filename,
               ux_prev, uy_prev, uz_prev, rho_prev, p_prev,
-              n[0], n[1], n[2], verbose);
+              n[0], n[1], n[2],
+              verbose, ignore_density, ignore_pressure, ignore_uz);
       // Extrapolate fields into solid
-      if (boundary_fix){
+      if (boundary_mode == 0){
         fix_boundary(solid_ids_neigh, ux_prev, uy_prev, uz_prev, rho_prev, p_prev);
       }
     }
@@ -362,10 +448,11 @@ void StructuredInterpol::update(const double t){
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     load_h5(folder + "/" + sp.next.filename,
             ux_next, uy_next, uz_next, rho_next, p_next,
-            n[0], n[1], n[2], verbose);
+            n[0], n[1], n[2], 
+            verbose, ignore_density, ignore_pressure, ignore_uz);
 
     // Extrapolate fields into solid
-    if (boundary_fix){
+    if (boundary_mode == 0){
       fix_boundary(solid_ids_neigh, ux_next, uy_next, uz_next, rho_next, p_next);
     }
 
@@ -381,8 +468,8 @@ void StructuredInterpol::probe(const Vector3d &x, const double t){
   assert(t <= t_next && t >= t_prev);
   alpha_t = (t-t_prev)/(t_next-t_prev);
 
-  this->probe_space(x);
-  this->probe_grad();
+  probe_space(x);
+  probe_grad();
 
   // Not in use
   //for (Uint i=0; i<3; ++i){
@@ -400,10 +487,12 @@ void StructuredInterpol::probe(const Vector3d &x, const double t){
   Uy = alpha_t * Uy_next + (1-alpha_t) * Uy_prev;
   Ay = (Uy_next-Uy_prev)/(t_next-t_prev);
 
-  double Uz_prev = weighted_sum(uz_prev, ind, w);
-  double Uz_next = weighted_sum(uz_next, ind, w);
-  Uz = alpha_t * Uz_next + (1-alpha_t) * Uz_prev;
-  Az = (Uz_next-Uz_prev)/(t_next-t_prev);
+  if (!ignore_uz){
+    double Uz_prev = weighted_sum(uz_prev, ind, w);
+    double Uz_next = weighted_sum(uz_next, ind, w);
+    Uz = alpha_t * Uz_next + (1-alpha_t) * Uz_prev;
+    Az = (Uz_next-Uz_prev)/(t_next-t_prev);
+  }
 }
 
 bool StructuredInterpol::inside_domain(){
@@ -432,11 +521,14 @@ void StructuredInterpol::probe_space(const Vector3d &x){
       }
     }
   }
-  if (boundary_fix){
+  if (boundary_mode == 0){
     inside_domain_factor = std::max(weighted_sum(levelZ, ind, w), 0.0);
   }
-  else {
+  else if (boundary_mode == 1) {
     inside_domain_factor = weighted_sum(levelZ, ind, w) > 0.0 ? 1.0 : 0.0;
+  }
+  else { // boundary_mode == 2
+    inside_domain_factor = weighted_sum(levelZ, ind, w) < 1.0 ? 0.0 : 1.0;
   }
 }
 
@@ -453,7 +545,7 @@ void StructuredInterpol::probe_grad(){
 
   // Factor used to determine whether point is in the domain or not
   // and to strictly enforce no-slip boundary conditions
-  if (boundary_fix){
+  if (boundary_mode == 0){
     //inside_domain_factor = std::max(weighted_sum(levelZ, ind, w), 0.0);
     inside_domain_factor_x = weighted_sum(levelZ, ind, dw_x);
     inside_domain_factor_y = weighted_sum(levelZ, ind, dw_y);

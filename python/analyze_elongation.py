@@ -36,6 +36,14 @@ parser.add_argument("--skip", type=int, default=1, help="Skip")
 args = parser.parse_args()
 
 
+def gaussian(x, mu,sig):
+    return 1./(np.sqrt(2.*np.pi)*sig) * np.exp(-np.power(x - mu, 2.) / (2 * np.power(sig, 2.)))
+
+
+def lognormal(x, mu, sig):
+    return 1./(np.sqrt(2.*np.pi)*sig*x) * np.exp(-np.power(np.log(x) - mu, 2.) / (2 * np.power(sig, 2.)))
+
+
 def calc_moments(data, w):
     w /= w.sum()
     assert all(w >= 0)
@@ -49,10 +57,10 @@ def calc_moments(data, w):
 
 def calc_hist(data, w, data_mean, data_std, brange, nstd, bins):
     if brange is None:
-        brange = (data_mean - args.nstd * data_std,
-                  data_mean + args.nstd * data_std)
-    else:
-        x0, x1 = [float(a) for a in args.range.split(":")]
+        brange = (data_mean - nstd * data_std,
+                  data_mean + nstd * data_std)
+    elif isinstance(brange, str):
+        x0, x1 = [float(a) for a in brange.split(":")]
         brange = (x0, x1)
 
     hist, bin_edges = np.histogram(data,
@@ -70,9 +78,9 @@ if __name__ == "__main__":
 
     ts, posf = get_timeseries(args.folder)
 
-    possible_fields = [["u", "Vector", "Node"], ["c", "Scalar", "Node"],
-                       ["p", "Scalar", "Node"], ["rho", "Scalar", "Node"],
-                       ["H", "Scalar", "Node"], ["n", "Vector", "Node"],
+    possible_fields = [["u", "Vector", "Node"],  ["c", "Scalar", "Node"],
+                       ["p", "Scalar", "Node"],  ["rho", "Scalar", "Node"],
+                       ["H", "Scalar", "Node"],  ["n", "Vector", "Node"],
                        ["dA", "Scalar", "Face"], ["dA0", "Scalar", "Face"],
                        ["dl", "Scalar", "Edge"], ["dl0", "Scalar", "Edge"]]
 
@@ -99,10 +107,10 @@ if __name__ == "__main__":
     ts = ts[ts >= t0]
     ts = ts[ts <= t1]
 
-    ax = plt.axes()
-    ax.set_prop_cycle(
-        'color',
-        [plt.cm.viridis(i) for i in np.linspace(0, 1, len(ts[::args.skip]))])
+    #ax = plt.axes()
+    #ax.set_prop_cycle(
+    #    'color',
+    #    [plt.cm.viridis(i) for i in np.linspace(0, 1, len(ts[::args.skip]))])
 
     ht = np.zeros((len(ts[::args.skip]), args.bins))
 
@@ -126,19 +134,24 @@ if __name__ == "__main__":
                 dA = np.array(h5f[grp + "/dA"])[:, 0]
                 dA0 = np.array(h5f[grp + "/dA0"])[:, 0]
                 elong = dA / dA0
-                w = dA0
+                ids = elong != 1.0
+                elong = elong[ids]
+                w = dA0[ids]
             elif grp + "/dl" in h5f and grp + "/dl0" in h5f:
                 if args.single:
                     print("Found edge lengths")
                 dl = np.array(h5f[grp + "/dl"])[:, 0]
                 dl0 = np.array(h5f[grp + "/dl0"])[:, 0]
                 elong = dl / dl0
+                ids = (abs(elong) - 1.0) > 1e-9
                 if args.weights == "dl":
                     w = dl
                 elif args.weights == "1":
                     w = np.ones_like(dl0)
                 else:
                     w = dl0
+                elong = elong[ids]
+                w = w[ids]
             else:
                 print("Does not contain this.")
                 exit()
@@ -157,43 +170,48 @@ if __name__ == "__main__":
         logelong_mean, logelong_var, logelong_std = calc_moments(logelong, w)
         elong_mean, elong_var, elong_std = calc_moments(elong, w)
 
-        string = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(t, elong_mean, elong_var,
-                                                     elong_std, logelong_mean,
-                                                     logelong_var,
-                                                     logelong_std)
+        string = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(t, 
+                                                     np.log(elong_mean), np.log(elong_var), np.log(elong_std),
+                                                     logelong_mean, logelong_var, logelong_std)
         print(string)
         elongdatafile.write(string + "\n")
 
         x_elong, hist_elong = calc_hist(elong, w, elong_mean, elong_std,
-                                        args.range, args.nstd, args.bins)
+                                        (np.exp(logelong_mean - args.nstd*logelong_std), np.exp(logelong_mean + args.nstd*logelong_std)), args.nstd, args.bins)
         x_logelong, hist_logelong = calc_hist(logelong, w, logelong_mean,
-                                              logelong_std, args.range,
+                                              logelong_std, None,
                                               args.nstd, args.bins)
         ht[it, :] = hist_logelong
 
         if args.show:
-            if not args.nolog:
-                var = "\\rho"
-                plt.plot(x_elong, hist_elong, label="$t={}$".format(t))
-                plt.xlabel("$" + var + "$")
-                plt.ylabel("$P(" + var + ")$")
-            else:
-                var = "\\log(\\rho)"
-                ids = hist_logelong > 0
-                xf = (x_logelong[ids])
-                ff = np.log(hist_logelong[ids])
-                plt.plot(xf, ff)
-                plt.xlabel("$" + var + "$")
-                plt.ylabel("$\\log P(" + var + ")$")
+            var = "\\rho"
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2)
+            ax1.plot(x_elong, hist_elong, label="$t={}$".format(t))
+            ax1.set_xlabel("$" + var + "$")
+            ax1.set_ylabel("$P(" + var + ")$")
+            #ax1.set_yscale("log")
+            xx = np.linspace(0, x_elong[-1], 1000)[1:]
+            ax1.plot(xx, lognormal(xx, logelong_mean, logelong_std))
+
+            var = "\\log(\\rho)"
+            ids = hist_logelong > 0
+            xf = x_logelong[ids]
+            ff = hist_logelong[ids]
+            ax2.plot(xf, ff)
+            ax2.set_xlabel("$" + var + "$")
+            ax2.set_ylabel("$P(" + var + ")$")
+            nn = 5.
+            xx = np.linspace(logelong_mean-nn*logelong_std, logelong_mean+nn*logelong_std, 1000)
+            ax2.plot(xx, gaussian(xx, logelong_mean, logelong_std))
+            plt.show()
 
         if args.output:
-            histdata.append((t, np.array(list(zip(x_elong, hist_elong))),
-                             np.array(list(zip(x_logelong, hist_logelong)))))
+            histdata.append((t, np.array(list(zip(x_elong, hist_elong))), np.array(list(zip(x_logelong, hist_logelong)))))
     elongdatafile.close()
 
     if args.output:
-        with h5py.File(os.path.join(analysis_folder, "histograms.h5"),
-                       "w") as h5f:
+        with h5py.File(os.path.join(analysis_folder, "histograms.h5"), "w") as h5f:
             for t, hist_elong, hist_logelong in histdata:
                 dset_elong = h5f.create_dataset("{}/elong".format(t),
                                                 data=hist_elong)
@@ -203,5 +221,5 @@ if __name__ == "__main__":
     if args.show:
         plt.show()
 
-        plt.imshow(ht.T)
+        plt.imshow(ht.T[:, 1:])
         plt.show()

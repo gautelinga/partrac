@@ -8,6 +8,7 @@
 #include "typedefs.hpp"
 #include "Interpol.hpp"
 #include "utils.hpp"
+#include "MPIwrap.hpp"
 
 // TODO: Massive cleanup!
 struct less_than_op {
@@ -18,7 +19,7 @@ struct less_than_op {
 
 class Initializer {
 public:
-  Initializer(Interpol* intp, Parameters& prm) : intp(intp), prm(prm) {
+  Initializer(std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : intp(intp), prm(prm), m_mpi(mpi) {
     x0 = {prm.x0, prm.y0, prm.z0};
     x_min = intp->get_x_min();
     x_max = intp->get_x_max();
@@ -39,17 +40,18 @@ public:
   bool inject;
   bool clear_initial_edges;
 protected:
-  Interpol* intp;
+  std::shared_ptr<Interpol> intp;
   Parameters& prm;
   Vector3d x0;
   Vector3d x_min;
   Vector3d x_max;
   Vector3d L;
+  MPIwrap& m_mpi;
 };
 
 class PointInitializer : public Initializer {
 public:
-  PointInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm) : Initializer(intp, prm) {
+  PointInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     intp->probe(x0);
     for (Uint irw=0; irw < prm.Nrw; ++irw){
       if (intp->inside_domain()){
@@ -63,7 +65,7 @@ public:
 
 class UniformInitializer : public Initializer {
 public:
-  UniformInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm) : Initializer(intp, prm) {
+  UniformInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     Vector3d x_a = x0;
     Vector3d x_b = x0;
     if (key[1] == "x"){
@@ -100,7 +102,7 @@ public:
 
 class SheetInitializer : public Initializer {
 public:
-  SheetInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm) : Initializer(intp, prm) {
+  SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     double La = prm.La;
     double Lb = prm.Lb;
     Vector3d n(0., 0., 0.);
@@ -176,7 +178,7 @@ public:
 
 class EllipsoidInitializer : public Initializer {
 public:
-  EllipsoidInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm) : Initializer(intp, prm) {
+  EllipsoidInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     double La = prm.La;
     double Lb = prm.Lb;
     double lx2 = Lb*Lb;
@@ -243,7 +245,7 @@ public:
     nodes_loc.push_back(x_2);
     nodes_loc.push_back(x_3);
 
-    ParticleSet pset_loc(intp, prm.Nrw_max);
+    ParticleSet pset_loc(intp, prm.Nrw_max, m_mpi);
     pset_loc.add(nodes_loc, 0);
 
     edges.push_back({{0, 1}, dist(nodes_loc[0], nodes_loc[1])});
@@ -274,7 +276,7 @@ public:
         pset_loc.set_x(irw, rad * nn);
       }
       n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
-                                    pset_loc, prm.ds_min, 0.0);
+                               pset_loc, prm.ds_min, 0.0);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
     } while (n_add > 0 || n_rem > 0);
@@ -299,7 +301,7 @@ class RandomPairsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPairsInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm, std::mt19937 &gen) : Initializer(intp, prm), gen(gen) {
+  RandomPairsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
     std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
     std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
     std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
@@ -372,7 +374,7 @@ class RandomPointsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPointsInitializer(const std::vector<std::string>& key, Interpol* intp, Parameters& prm, std::mt19937 &gen) : Initializer(intp, prm), gen(gen) {
+  RandomPointsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
     bool init_rand_x = false;
     bool init_rand_y = false;
     bool init_rand_z = false;

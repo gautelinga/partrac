@@ -60,7 +60,7 @@ public:
   int int_order = 1;
   std::string init_mode = "line_x";  // what else?
   std::string init_weight = "none";
-  std::string write_mode = "hdf5";  // or text
+  //std::string write_mode = "hdf5";  // or text
   int interpolation_test = 0;
   long int n_accepted = 0;
   long int n_declined = 0;
@@ -68,7 +68,7 @@ public:
   bool coarsen = false;
   double refine_intv = 100.0;
   double coarsen_intv = 1000.0;
-  int hist_chunk_size = 10;
+  //int hist_chunk_size = 10;
   double ds_max = 1.0;
   double ds_min = 0.1;
   double ds_init = 1.0;
@@ -184,7 +184,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "int_order") int_order = stoint(val);
   if (key == "init_mode") init_mode = val;
   if (key == "init_weight") init_weight = val;
-  if (key == "dump_mode") write_mode = val;
+  //if (key == "dump_mode") write_mode = val;
   if (key == "interpolation_test") interpolation_test = stoint(val);
   if (key == "dump_chunk_size") dump_chunk_size = stoint(val);
   if (key == "n_accepted") n_accepted = stoint(val);  // may be too large?
@@ -198,7 +198,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "refine_intv") refine_intv = stodouble(val);
   if (key == "coarsen") coarsen = stobool(val);
   if (key == "coarsen_intv") coarsen_intv = stodouble(val);
-  if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
+  //if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
   if (key == "ds_max") ds_max = stodouble(val);
   if (key == "ds_min") ds_min = stodouble(val);
   if (key == "ds_init") ds_init = stodouble(val);
@@ -252,7 +252,7 @@ void Parameters::print(){
     print_param("int_order          ", int_order);
     print_param("init_mode          ", init_mode);
     print_param("init_weight        ", init_weight);
-    print_param("dump_mode          ", write_mode);
+    //print_param("dump_mode          ", write_mode);
     print_param("restart_folder     ", restart_folder);
     print_param("mode               ", mode);
     print_param("folder             ", folder);
@@ -261,7 +261,7 @@ void Parameters::print(){
     print_param("refine_intv        ", refine_intv);
     print_param("coarsen            ", bool2string(coarsen));
     print_param("coarsen_intv       ", coarsen_intv);
-    print_param("hist_chunk_size    ", hist_chunk_size);
+    //print_param("hist_chunk_size    ", hist_chunk_size);
     print_param("ds_max             ", ds_max);
     print_param("ds_min             ", ds_min);
     print_param("ds_init            ", ds_init);
@@ -330,7 +330,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "int_order", int_order);
   write_param(paramsfile, "init_mode", init_mode);
   write_param(paramsfile, "init_weight", init_weight);
-  write_param(paramsfile, "write_mode", write_mode);
+  //write_param(paramsfile, "write_mode", write_mode);
   write_param(paramsfile, "interpolation_test", interpolation_test);
   write_param(paramsfile, "dump_chunk_size", dump_chunk_size);
   write_param(paramsfile, "n_accepted", n_accepted);
@@ -343,7 +343,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "refine_intv", refine_intv);
   write_param(paramsfile, "coarsen", bool2string(coarsen));
   write_param(paramsfile, "coarsen_intv", coarsen_intv);
-  write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
+  //write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
   write_param(paramsfile, "ds_max", ds_max);
   write_param(paramsfile, "ds_min", ds_min);
   write_param(paramsfile, "ds_init", ds_init);

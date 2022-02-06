@@ -5,10 +5,13 @@
 #include "Interpol.hpp"
 #include "Integrator.hpp"
 #include "io.hpp"
+#include "MPIwrap.hpp"
+
 
 class ParticleSet {
 public:
-    ParticleSet(Interpol* intp, const Uint Nrw_max);
+    ParticleSet(std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi);
+    ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
     bool insert_node_between(const Uint, const Uint);
     double dist(const Uint inode, const Uint jnode) const { Vector3d dx = x_rw[inode]-x_rw[jnode]; return dx.norm(); };
@@ -36,18 +39,19 @@ public:
     void dump_scalar(const std::string filename, const std::string fieldname) const;
     void load_positions(const std::string filename);
     void dump_positions(const std::string filename) const;
-    void dump_hdf5(H5FilePtr h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const;
+    void dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const;
     bool integrate(const double t, const double dt);
-    void attach_integrator(Integrator* integrator) { this->integrator = integrator; };
+    // void attach_integrator(std::shared_ptr<Integrator> integrator) { this->integrator = integrator; };
     Uint get_accepted() { return integrator->get_accepted(); };
     Uint get_declined() { return integrator->get_declined(); };
     void update_fields(const double t, std::map<std::string, bool> &output_fields);
+    void reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields);
   private:
     //bool do_output_all = false;
     Uint Nrw = 0;
     Uint Nrw_max;
-    Interpol* intp;
-    Integrator* integrator;
+    std::shared_ptr<Interpol> intp;
+    std::shared_ptr<Integrator> integrator;
     // Vector fields
     std::vector<Vector3d> x_rw;
     std::vector<Vector3d> u_rw;
@@ -60,9 +64,15 @@ public:
     std::vector<double> rho_rw;
     std::vector<double> p_rw;
     std::vector<double> tau_rw;  // eigentime
+
+    MPIwrap& m_mpi;
 };
 
-ParticleSet::ParticleSet (Interpol* intp, const Uint Nrw_max) {
+ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi) : ParticleSet(intp, Nrw_max, mpi) {
+    this->integrator = integrator;
+}
+
+ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
     this->intp = intp;
     this->Nrw_max = Nrw_max;
     // Vector fields
@@ -402,7 +412,7 @@ void ParticleSet::update_fields(const double t, std::map<std::string, bool> &out
   }
 }
 
-void ParticleSet::dump_hdf5(H5FilePtr h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const {
+void ParticleSet::dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const {
     vector2hdf5(h5f, groupname + "/points", x_rw, N());
     if (output_fields["u"])
         vector2hdf5(h5f, groupname + "/u", u_rw, N());
@@ -455,6 +465,22 @@ bool ParticleSet::integrate(const double t, const double dt){
         */
     }
     return all_nodes_are_fine;
+}
+
+void ParticleSet::reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields){
+  std::vector<double> xvals_(3*psb.N());
+  for (Uint i=0; i<psb.N(); ++i){
+    for (int d=0; d<3; ++d){
+      xvals_[3*i+d] = psb.x_rw[i][d];
+    }
+  }
+  auto all_xvals_ = gather_vector<double>(m_mpi, xvals_, MPI_DOUBLE);
+  Nrw = all_xvals_.size()/3;
+  for (Uint i=0; i<Nrw; ++i){
+    for (int d=0; d<3; ++d){
+      x_rw[i][d] = all_xvals_[3*i+d];
+    }
+  }
 }
 
 #endif

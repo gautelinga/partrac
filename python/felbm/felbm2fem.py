@@ -57,7 +57,7 @@ class Wall(df.SubDomain):
         
 def make_xdmf_mesh(nx, ny, is_fluid, tmpfilename):
     if rank == 0:
-        nodes = np.array([(i, j) for j, i in itertools.product(range(ny+1), range(nx+1))], dtype=float)
+        nodes = np.array([(i-0.5, j-0.5) for j, i in itertools.product(range(ny+1), range(nx+1))], dtype=float)
         elems = np.array([(i + j*(nx+1), i+1 + j*(nx+1), i+1 + (j+1)*(nx+1), i + (j+1)*(nx+1)) 
                           for j, i in itertools.product(range(ny), range(nx))], dtype=int)
         
@@ -92,10 +92,10 @@ if __name__ == "__main__":
     args = parse_args()
 
     felbm_folder = args.folder
+    timestamps = select_timestamps(felbm_folder, args.t0, args.t1)
+
     analysisfolder = os.path.join(felbm_folder, "Analysis")
     make_folder_safe(analysisfolder)
-
-    timestamps = select_timestamps(felbm_folder, args.t0, args.t1)
 
     is_fluid_xy, (nx, ny, nz) = get_fluid_domain(felbm_folder)
     is_fluid = is_fluid_xy.flatten()
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     S0 = df.FunctionSpace(mesh, "DG", 0, constrained_domain=pbc)
 
-    dof_coord_loc = np.array(S0.tabulate_dof_coordinates()-0.5, dtype=int)
+    dof_coord_loc = np.array(S0.tabulate_dof_coordinates()-0.0, dtype=int)
     dof_coord_glob = np.array([(i, j) for j, i in itertools.product(range(ny), range(nx))], dtype=int)[is_fluid, :]
     coord2glob = dict()
     for i, coord in enumerate(dof_coord_glob):
@@ -245,10 +245,10 @@ if __name__ == "__main__":
         # u.assign(df.project(u0, V=V, bcs=noslip, solver_type="gmres", preconditioner_type="amg"))
         solver_u.solve()
 
-        A = df.assemble(a)
-        b = df.assemble(L)
-        [bc.apply(A, b) for bc in bcs]
-        df.solve(A, psi_.vector(), b, "gmres", "hypre_amg")
+        #        A = df.assemble(a)
+        #    b = df.assemble(L)
+        #[bc.apply(A, b) for bc in bcs]
+        #df.solve(A, psi_.vector(), b, "gmres", "hypre_amg")
 
         #b = df.assemble(L)
         #null_space.orthogonalize(b)
@@ -260,8 +260,8 @@ if __name__ == "__main__":
         #df.solve(a == L, phi_, solver_parameters={"linear_solver": "gmres", "preconditioner": "hypre_amg"})
         #solver.solve(phi_.vector(), b)
 
-        xdmff.write(ux0, t)
-        xdmff.write(uy0, t)
+        #xdmff.write(ux0, t)
+        #xdmff.write(uy0, t)
         xdmff.write(u_, t)
         #xdmff.write(U_, t)
         xdmff.write(psi_, t)

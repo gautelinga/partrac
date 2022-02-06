@@ -3,12 +3,15 @@
 
 #include "typedefs.hpp"
 #include "mesh.hpp"
+#include "Interpol.hpp"
 #include "Initializer.hpp"
 #include "stats.hpp"
+#include "MPIwrap.hpp"
+
 
 class Topology {
 public:
-  Topology(ParticleSet& ps, const Parameters &prm);
+  Topology(ParticleSet& ps, const Parameters &prm, MPIwrap& mpi);
   int dim();
   void compute_maps();
   void clear();
@@ -31,10 +34,10 @@ public:
   std::vector<Vector3d> face_normals;
   void write_checkpoint(const std::string checkpointsfolder, const double t, Parameters &prm) const;
   void load_checkpoint(const std::string checkpointsfolder, const Parameters &prm);
-  void dump_hdf5(H5FilePtr h5f, const std::string groupname);
-  void load_initial_state(Initializer* init_state);
-  void write_statistics(std::ofstream &statfile, const double t, const double ds_max,
-                        const bool do_dump_hist, const std::string histfolder, Integrator* integrator);
+  void dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields);
+  void load_initial_state(std::shared_ptr<Initializer> init_state);
+  void write_statistics(std::ofstream &statfile, const double t, const double ds_max, //const bool do_dump_hist, const std::string histfolder, 
+                        std::shared_ptr<Integrator> integrator);
 private:
   ParticleSet& ps;
   double ds_min;
@@ -44,9 +47,11 @@ private:
   bool inject_edges;
   bool verbose;
   Uint filter_target;
+
+  MPIwrap& m_mpi;
 };
 
-Topology::Topology(ParticleSet& ps, const Parameters &prm) : ps(ps) {
+Topology::Topology(ParticleSet& ps, const Parameters &prm, MPIwrap& mpi) : ps(ps), m_mpi(mpi) {
   ds_min = prm.ds_min;
   ds_max = prm.ds_max;
   curv_refine_factor = prm.curv_refine_factor;
@@ -179,12 +184,53 @@ void Topology::load_checkpoint(const std::string checkpointsfolder, const Parame
   }
 }
 
-void Topology::dump_hdf5(H5FilePtr h5f, const std::string groupname){
-    if (dim() > 0)
-        mesh2hdf(h5f, groupname, ps, faces, edges);
+void Topology::dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields){
+  /*
+  std::cout << "Process " << m_mpi.rank() << ": " << ps.N() << " " << faces.size() << " " << edges.size() << std::endl;
+  auto num_nodes_ = m_mpi.gather(ps.N());
+  auto num_edges_ = m_mpi.gather(edges.size());
+  std::vector<int> cum_nodes_; 
+  std::vector<int> cum_edges_;
+  cum_nodes_.resize(m_mpi.size());
+  cum_edges_.resize(m_mpi.size());
+  if (m_mpi.rank() == 0){
+    for (int i=0; i<m_mpi.size(); ++i){
+      cum_nodes_[i] = (i > 0) ? (cum_nodes_[i-1] + num_nodes_[i-1]) : 0;
+      cum_edges_[i] = (i > 0) ? (cum_edges_[i-1] + num_edges_[i-1]) : 0;
+    }
+  }
+  auto inode0 = m_mpi.scatter(cum_nodes_);
+  auto iedge0 = m_mpi.scatter(cum_edges_);
+  // std::cout << "p" << m_mpi.rank() << " " << inode0 << std::endl;
+
+  EdgesType all_edges = m_mpi.wrapEdges(edges, inode0);
+  FacesType all_faces = m_mpi.wrapFaces(faces, iedge0);
+  // std::cout << "WORKED: " << m_mpi.rank() << " " << all_edges.size() << std::endl;
+  
+  for (auto &el : all_edges){
+    std::cout << "(" << el.first[0] << ", " << el.first[1] << "): " << el.second << std::endl;
+  }
+  for (auto &el : all_faces){
+    std::cout << "(" << el.first[0] << ", " << el.first[1] << ", " << el.first[2] << "): " << el.second << std::endl;
+  }
+
+  m_mpi.barrier();
+
+  Uint all_Nrw = cum_nodes_[m_mpi.size()-1] + num_nodes_[m_mpi.size()-1];
+  Interpol* intp_dummy;
+  ParticleSet all_ps(intp_dummy, all_Nrw, m_mpi);
+  all_ps.reduce(ps, output_fields);
+
+  if (dim() > 0)
+    mesh2hdf(h5f, groupname, all_ps, all_faces, all_edges);
+  all_ps.dump_hdf5(h5f, groupname, output_fields);*/
+  
+  if (dim() > 0)
+    mesh2hdf(h5f, groupname, ps, faces, edges);
+  ps.dump_hdf5(h5f, groupname, output_fields);
 }
 
-void Topology::load_initial_state(Initializer* init_state){
+void Topology::load_initial_state(std::shared_ptr<Initializer> init_state){
   /*std::vector<Vector3d> pos_init;
   pos_init = initial_positions(prm.init_mode,
                                prm.init_weight,
@@ -218,10 +264,10 @@ void Topology::load_initial_state(Initializer* init_state){
 void Topology::write_statistics(std::ofstream &statfile,
                            const double t,
                            const double ds_max,
-                           const bool do_dump_hist,
-                           const std::string histfolder,
-                           Integrator* integrator){
-  write_stats(statfile, t, ps, faces, edges, ds_max, do_dump_hist, histfolder,
+                           //const bool do_dump_hist,
+                           //const std::string histfolder,
+                           std::shared_ptr<Integrator> integrator){
+  write_stats(m_mpi, statfile, t, ps, faces, edges, ds_max, //do_dump_hist, histfolder,
               integrator->get_accepted(), integrator->get_declined());
 }
 

@@ -9,6 +9,7 @@
 #include <set>
 #include <iterator>
 #include "H5Cpp.h"
+//#include "hdf5.h"
 #include <ctime>
 
 #include "io.hpp"
@@ -29,12 +30,20 @@
 #include "RKIntegrator.hpp"
 #include "Initializer.hpp"
 #include "helpers.hpp"
-
+#include "MPIwrap.hpp"
 
 int main(int argc, char* argv[])
 {
+  MPIwrap mpi(argc, argv);
+
+  if (mpi.rank() == 0)
+    std::cout << "Initialized Partrac with " << mpi.size() << " processes." << std::endl;
+  mpi.barrier();
+  std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
+  mpi.barrier();
+
   // Input parameters
-  if (argc < 2) {
+  if (argc < 2 && mpi.rank() == 0) {
     std::cout << "Specify an input file." << std::endl;
     return 0;
   }
@@ -46,21 +55,29 @@ int main(int argc, char* argv[])
 
   std::string infilename = std::string(argv[1]);
 
-  Interpol *intp;
+  //Interpol* intp;
+  std::shared_ptr<Interpol> intp;
   std::string mode = prm.mode;
   if (mode == "analytic"){
     std::cout << "AnalyticInterpol initiated." << std::endl;
-    intp = new AnalyticInterpol(infilename);
+    //intp = new AnalyticInterpol(infilename);
+    intp = std::make_shared<AnalyticInterpol>(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
            mode == "tet" || mode == "triangle"){
 #ifdef USE_DOLFIN
-    if (mode == "tet")
-      intp = new TetInterpol(infilename);
-    else if (mode == "triangle")
-      intp = new TriangleInterpol(infilename);
-    else if (mode == "fenics")
-      intp = new DolfInterpol(infilename);
+    if (mode == "tet"){
+      //intp = new TetInterpol(infilename);
+      intp = std::make_shared<TetInterpol>(infilename);
+    }
+    else if (mode == "triangle"){
+      //intp = new TriangleInterpol(infilename);
+      intp = std::make_shared<TriangleInterpol>(infilename);
+    }
+    else if (mode == "fenics"){
+      //intp = new DolfInterpol(infilename);
+      intp = std::make_shared<DolfInterpol>(infilename);
+    }
     else if (mode == "xdmf"){
       std::cout << "XDMF format is not implemented yet." << std::endl;
       exit(0);
@@ -75,13 +92,15 @@ int main(int argc, char* argv[])
 #endif
   }
   else if (mode == "structured" || mode == "lbm" || mode == "felbm"){
-    intp = new StructuredInterpol(infilename);
+    // intp = new StructuredInterpol(infilename); 
+    intp = std::make_shared<StructuredInterpol>(infilename);
   }
   else {
     std::cout << "Mode not supported." << std::endl;
     exit(0);
   }
   intp->set_U0(prm.U0);
+  intp->set_int_order(prm.int_order);
 
   double Dm = prm.Dm;
   double dt = prm.dt;
@@ -95,21 +114,35 @@ int main(int argc, char* argv[])
   double dl_max = prm.dl_max;
 
   std::string folder = intp->get_folder();
-  std::string rwfolder = create_folder(folder + "/RandomWalkers/");
+  std::string rwfolder = folder + "/RandomWalkers/"; 
+  if (mpi.rank() == 0)
+    create_folder(rwfolder);
   std::string newfolder;
   if (prm.restart_folder != ""){
     newfolder = prm.folder;
   }
   else {
-    std::string newfoldername = get_newfoldername(rwfolder, prm);
-    newfolder = create_folder(newfoldername);
+    newfolder = get_newfoldername(rwfolder, prm);
+    mpi.barrier();
+    if (mpi.rank() == 0)
+      create_folder(newfolder);
+    mpi.barrier();
   }
-  std::string posfolder = create_folder(newfolder + "Positions/");
-  std::string checkpointsfolder = create_folder(newfolder + "Checkpoints/");
-  std::string histfolder = create_folder(newfolder + "Histograms/");
+  newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+  std::string posfolder = newfolder + "Positions/";
+  std::string checkpointsfolder = newfolder + "Checkpoints/";
+  //std::string histfolder = newfolder + "Histograms/";
+  //if (mpi.rank() == 0){ // Might change in the future!
+  {
+    create_folder(newfolder);
+    create_folder(posfolder);
+    create_folder(checkpointsfolder);
+    //create_folder(histfolder);
+  }
   prm.folder = newfolder;
 
-  prm.print();
+  if (mpi.rank() == 0)
+    prm.print();
 
   std::mt19937 gen;
   if (prm.random) {
@@ -117,7 +150,7 @@ int main(int argc, char* argv[])
     gen.seed(rd());
   }
   else {
-    std::seed_seq rd{prm.seed};
+    std::seed_seq rd{prm.seed + mpi.rank()};
     gen.seed(rd);
   }
 
@@ -134,16 +167,18 @@ int main(int argc, char* argv[])
   prm.T = T;
 
   if (prm.inject && prm.filter){
+    if (mpi.rank() == 0)
     std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
   // Higher-order time integration?
   if (prm.int_order > 2){
-    std::cout << "No support for such high temporal integration order." << std::endl;
+    if (mpi.rank() == 0)
+      std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
   }
-  if (prm.interpolation_test > 0){
+  if (prm.interpolation_test > 0 && mpi.rank() == 0){
     std::cout << "Testing interpolation..." << std::endl;
     test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
   }
@@ -153,10 +188,18 @@ int main(int argc, char* argv[])
   else
     intp->update(t0);
 
-  ParticleSet ps(intp, prm.Nrw_max);
-  //ps.Nrw = prm.Nrw;  // to remove?
+  std::shared_ptr<Integrator> integrator;
+  if (prm.scheme == "explicit")
+    integrator = std::make_shared<ExplicitIntegrator>(intp, Dm, prm.int_order, gen);
+  else if (prm.scheme == "RK4")
+    integrator = std::make_shared<RK4Integrator>(intp);
+  else {
+    std::cout << "Unrecognized (ODE integration) scheme: " << prm.scheme << std::endl;
+    exit(0);
+  }
 
-  Topology mesh(ps, prm);
+  ParticleSet ps(intp, integrator, prm.Nrw_max, mpi);
+  Topology mesh(ps, prm, mpi);
 
   if (prm.inject){
     std::vector<std::string> key = split_string(prm.init_mode, "_");
@@ -173,65 +216,50 @@ int main(int argc, char* argv[])
     mesh.load_checkpoint(prm.restart_folder + "/Checkpoints", prm);
   }
   else {
-    Initializer* init_state;
+    std::shared_ptr<Initializer> init_state;
     std::vector<std::string> key = split_string(prm.init_mode, "_");
     if (key.size() == 0){
       std::cout << "init_mode not specified." << std::endl;
       exit(0);
     }
     else if (key[0] == "point"){
-      init_state = new PointInitializer(key, intp, prm);
+      //init_state = new PointInitializer(key, intp, prm, mpi);
+      init_state = std::make_shared<PointInitializer>(key, intp, prm, mpi);
     }
     else if (key[0] == "uniform"){
-      init_state = new UniformInitializer(key, intp, prm);
+      init_state = std::make_shared<UniformInitializer>(key, intp, prm, mpi);
     }
     else if (key[0] == "sheet"){
-      init_state = new SheetInitializer(key, intp, prm);
+      init_state = std::make_shared<SheetInitializer>(key, intp, prm, mpi);
     }
     else if (key[0] == "ellipsoid"){
-      init_state = new EllipsoidInitializer(key, intp, prm);
+      init_state = std::make_shared<EllipsoidInitializer>(key, intp, prm, mpi);
     }
     else if (key[0] == "pair" || key[0] == "pairs"){
-      init_state = new RandomPairsInitializer(key, intp, prm, gen);
+      init_state = std::make_shared<RandomPairsInitializer>(key, intp, prm, mpi, gen);
     }
     else if (key[0] == "points"){
-      init_state = new RandomPointsInitializer(key, intp, prm, gen);
+      init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, mpi, gen);
     }
     else {
       std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
       exit(0);
     }
     mesh.load_initial_state(init_state);
-    delete init_state;
+    //delete init_state;
   }
 
-  // std::cout << "aaa" << std::endl;
-  /*add_particles(pos_init, intp,
-                x_rw, u_rw, c_rw, tau_rw, rho_rw, p_rw, a_rw,
-                U0, prm.restart_folder, prm.int_order, 0);*/
-  // Nrw = pos_init.size();
   mesh.compute_maps();
 
   // Initial refinement
   if (refine && !prm.inject && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
-    /*Uint n_add = refinement(faces, edges,
-                            edge2faces, node2edges,
-                            edges_inlet,
-                            ps, ds_max,
-                            prm.curv_refine_factor,
-                            prm.cut_if_stuck);*/
     Uint n_add = mesh.refine();
 
     std::cout << "Initial coarsening" << std::endl;
-    /*Uint n_rem = coarsening(faces, edges,
-                            edge2faces, node2edges,
-                            edges_inlet, nodes_inlet,
-                            ps, ds_min,
-                            prm.curv_refine_factor);*/
     Uint n_rem = mesh.coarsen();
 
-    if (prm.verbose)
+    if (prm.verbose && mpi.rank() == 0)
       std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
   }
 
@@ -248,7 +276,7 @@ int main(int argc, char* argv[])
   //double dt2 = dt*dt;
 
   double sqrt2Dmdt = sqrt(2*Dm*dt);
-  if (prm.verbose){
+  if (prm.verbose && mpi.rank() == 0){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
     print_param("U*dt         ", prm.U0*dt);
   }
@@ -258,17 +286,7 @@ int main(int argc, char* argv[])
     t = prm.t;
   }
 
-  Integrator* integrator;
-  if (prm.scheme == "explicit")
-    integrator = new ExplicitIntegrator(intp, Dm, prm.int_order, gen);
-  else if (prm.scheme == "RK4")
-    integrator = new RK4Integrator(intp);
-  else {
-    std::cout << "Unrecognized (ODE integration) scheme: " << prm.scheme << std::endl;
-    exit(0);
-  }
-  ps.attach_integrator(integrator);
-
+  //if (mpi.rank() == 0)
   prm.dump(newfolder, t);
 
   // Should not be taken from parameters
@@ -276,16 +294,18 @@ int main(int argc, char* argv[])
   //Uint n_declined = prm.n_declined;
 
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-  H5FilePtr h5f = std::make_shared<H5::H5File>(h5fname.c_str(), H5F_ACC_TRUNC);
-  // h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-  
+  H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+  //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+  //H5wrap h5file(mpi);
+  //h5file.open(h5fname, "w");
+
   Uint int_stat_intv = int(prm.stat_intv/dt);
   Uint int_dump_intv = int(prm.dump_intv/dt);
   Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
   Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
   Uint int_refine_intv = int(prm.refine_intv/dt);
   Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
-  Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
+  //Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
   Uint int_inject_intv = int(prm.inject_intv/dt);
   Uint int_filter_intv = int(prm.filter_intv/dt);
 
@@ -311,8 +331,12 @@ int main(int argc, char* argv[])
 
   //std::string write_mode = prm.write_mode;
 
-  std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-  write_stats_header(statfile, mesh.faces, mesh.edges);
+  std::ofstream statfile;
+  //if (mpi.rank() == 0){
+  {
+    statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
+    write_stats_header(mpi, statfile, mesh.dim());
+  }
   std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
 
   // Simulation start
@@ -323,8 +347,7 @@ int main(int argc, char* argv[])
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
-      bool do_dump_hist = (int_hist_intv > 0 && it % int_hist_intv == 0);
-      mesh.write_statistics(statfile, t, prm.ds_max, do_dump_hist, histfolder, integrator);
+      mesh.write_statistics(statfile, t, prm.ds_max, integrator);
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
@@ -371,38 +394,32 @@ int main(int argc, char* argv[])
     // Dump detailed data
     if (it % int_dump_intv == 0){
       ps.update_fields(t, output_fields);
-      {
+
+      std::string groupname = std::to_string(t);
+      //if (mpi.rank() == 0) {
+      //{
         // Clear file if it exists, otherwise create
-        if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
-          //h5f->close();
-          h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-          h5f = std::make_shared<H5::H5File>(h5fname.c_str(), H5F_ACC_TRUNC);
-        }
-        else {
-          h5f->openFile(h5fname.c_str(), H5F_ACC_RDWR);
-        }
-        std::string groupname = std::to_string(t);
-        h5f->createGroup(groupname + "/");
-
-        /*if (faces.size() == 0){
-          for (EdgesType::const_iterator edgeit = edges.begin();
-               edgeit != edges.end(); ++edgeit){
-            int inode = edgeit->first[0];
-            int jnode = edgeit->first[1];
-            double ds0 = edgeit->second;
-            double ds = ps.dist(inode, jnode);
-
-            if (ps.e_rw[inode] <= 0.) ps.e_rw[inode] = ds/ds0;
-            else ps.e_rw[inode] = 0.5*(ps.e_rw[inode] + ds/ds0);
-            if (ps.e_rw[jnode] <= 0.) ps.e_rw[jnode] = ds/ds0;
-            else ps.e_rw[jnode] = 0.5*(ps.e_rw[jnode] + ds/ds0);
-          }
-        }*/
-        ps.dump_hdf5(h5f, groupname, output_fields);
-        mesh.dump_hdf5(h5f, groupname);
-
-        h5f->close();
+      if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
+        h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
+        // h5f = std::make_shared<H5::H5File>(h5fname.c_str(), H5F_ACC_TRUNC);
+        h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+        //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+        //h5file.open(h5fname, "w");
       }
+      else {
+        //h5f->openFile(h5fname.c_str(), H5F_ACC_RDWR);
+        h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+        //h5file.open(h5fname, "a");
+      }
+      //h5f->createGroup(groupname + "/");
+      h5f.createGroup(groupname + "/");
+      //}
+
+      mesh.dump_hdf5(h5f, groupname, output_fields);
+
+      h5f.close();
+      //h5f->close();
+      //h5file.close();
     }
     /*
     if (!local_dt){
@@ -515,12 +532,10 @@ int main(int argc, char* argv[])
   mesh.write_checkpoint(checkpointsfolder, t, prm);
 
   // Close files
+  //if (mpi.rank() == 0){
   statfile.close();
   declinedfile.close();
-  //if (write_mode == "hdf5"){
-  h5f->close();
-  //}
 
-  delete intp;
+  //delete intp;
   return 0;
 }

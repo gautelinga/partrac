@@ -13,6 +13,7 @@ public:
   void set_folder(std::string folder){ this->folder=folder; };
   std::string get_folder(){ return folder; };
   void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
+  void set_int_order(const int int_order) { this->int_order = int_order; };
   //
   Vector3d get_u() { return { U0*get_ux(), U0 * get_uy(), U0 * get_uz()}; };
   Vector3d get_a() { return { U0 * get_ax(), U0 * get_ay(), U0 * get_az()}; };
@@ -78,6 +79,7 @@ protected:
   std::string folder;
   bool is_initialized = false;
   bool verbose = true;
+  int int_order = 1;
   //double Lx = 0;
   //double Ly = 0;
   //double Lz = 0;

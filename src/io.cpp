@@ -154,6 +154,7 @@ void verify_file_exists(const std::string infilename){
   }
 }
 
+// template this...
 void print_param(const std::string key, const double val){
   std::cout << key << " = " << val << std::endl;
 }
@@ -161,7 +162,6 @@ void print_param(const std::string key, const double val){
 void print_param(const std::string key, const int val){
   std::cout << key << " = " << val << std::endl;
 }
-
 
 void print_param(const std::string key, const std::string val){
   std::cout << key << " = " << val << std::endl;
@@ -181,65 +181,6 @@ void write_param(std::ofstream &ofile, std::string key, long int val){
 
 void write_param(std::ofstream &ofile, std::string key, std::string val){
   ofile << key << "=" << val << std::endl;
-}
-
-void load_field(H5File &h5file,
-		double*** u,
-		const std::string field,
-		const int nx, const int ny, const int nz){
-  DataSet dset = h5file.openDataSet(field);
-  DataSpace dspace = dset.getSpace();
-  std::vector<double> Uv(nx*ny*nz);
-  dset.read(Uv.data(), PredType::NATIVE_DOUBLE,
-	    dspace, dspace);
-  for (int ix=0; ix<nx; ++ix){
-    for (int iy=0; iy<ny; ++iy){
-      for (int iz=0; iz<nz; ++iz){
-  	u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
-      }
-    }
-  }
-}
-
-void load_int_field(H5File &h5file,
-		    int*** u,
-		    const std::string field,
-		    const int nx, const int ny, const int nz){
-  DataSet dset = h5file.openDataSet(field);
-  DataSpace dspace = dset.getSpace();
-  std::vector<int> Uv(nx*ny*nz);
-  dset.read(Uv.data(), PredType::NATIVE_INT,
-	    dspace, dspace);
-  for (int ix=0; ix<nx; ++ix){
-    for (int iy=0; iy<ny; ++iy){
-      for (int iz=0; iz<nz; ++iz){
-  	u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
-      }
-    }
-  }
-}
-
-void load_h5(const std::string h5filename,
-	     double*** ux,
-	     double*** uy,
-	     double*** uz,
-	     double*** rho,
-	     double*** p,
-	     const int nx,
-	     const int ny,
-	     const int nz,
-	     const bool verbose){
-  // Assert that h5 file exists
-  verify_file_exists(h5filename);
-  if (verbose)
-    std::cout << "Opening " << h5filename << std::endl;
-  H5File h5file(h5filename, H5F_ACC_RDONLY);
-  load_field(h5file, ux, "u_x", nx, ny, nz);
-  load_field(h5file, uy, "u_y", nx, ny, nz);
-  load_field(h5file, uz, "u_z", nx, ny, nz);
-  load_field(h5file, rho, "density", nx, ny, nz);
-  load_field(h5file, p, "pressure", nx, ny, nz);
-  h5file.close();
 }
 
 // recently moved here
@@ -362,7 +303,7 @@ void dump_scalar_field(const std::string output_file,
   outfile.close();
 }
 
-void tensor2hdf5(H5FilePtr h5f, const std::string dsetname,
+void tensor2hdf5(H5File& h5f, const std::string dsetname,
                  const std::vector<double>& axx_rw, const std::vector<double>& axy_rw, const std::vector<double>& axz_rw,
                  const std::vector<double>& ayx_rw, const std::vector<double>& ayy_rw, const std::vector<double>& ayz_rw,
                  const std::vector<double>& azx_rw, const std::vector<double>& azy_rw, const std::vector<double>& azz_rw,
@@ -383,13 +324,13 @@ void tensor2hdf5(H5FilePtr h5f, const std::string dsetname,
     data[irw*3*3+7] = azy_rw[irw];
     data[irw*3*3+8] = azz_rw[irw];
   }
-  DataSet dset = h5f->createDataSet(dsetname,
+  DataSet dset = h5f.createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5FilePtr h5f, const std::string dsetname,
+void vector2hdf5(H5File& h5f, const std::string dsetname,
                  const std::vector<double>& ax_rw, const std::vector<double>& ay_rw, const std::vector<double>& az_rw,
                  const Uint Nrw){
   hsize_t dims[2];
@@ -402,13 +343,13 @@ void vector2hdf5(H5FilePtr h5f, const std::string dsetname,
     data[irw*3+1] = ay_rw[irw];
     data[irw*3+2] = az_rw[irw];
   }
-  DataSet dset = h5f->createDataSet(dsetname,
+  DataSet dset = h5f.createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5FilePtr h5f, const std::string dsetname,
+void vector2hdf5(H5File& h5f, const std::string dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
@@ -420,14 +361,14 @@ void vector2hdf5(H5FilePtr h5f, const std::string dsetname,
       data[irw*3+d] = a_rw[irw][d];
     }
   }
-  DataSet dset = h5f->createDataSet(dsetname,
+  DataSet dset = h5f.createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
 
-void scalar2hdf5(H5FilePtr h5f, const std::string dsetname, const std::vector<double>& c_rw,
+void scalar2hdf5(H5File& h5f, const std::string dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
@@ -437,7 +378,7 @@ void scalar2hdf5(H5FilePtr h5f, const std::string dsetname, const std::vector<do
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw] = c_rw[irw];
   }
-  DataSet dset = h5f->createDataSet(dsetname,
+  DataSet dset = h5f.createDataSet(dsetname,
                                     PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
