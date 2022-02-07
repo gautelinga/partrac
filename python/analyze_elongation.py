@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 
-from utils import Params, find_params, get_timeseries, read_params
+from utils import Params, find_params, get_timeseries, read_params, get_folders
 
 parser = argparse.ArgumentParser(
     description="Make elongation pdf from sheet or strip")
@@ -82,20 +82,7 @@ if __name__ == "__main__":
                        ["dA", "Scalar", "Face"], ["dA0", "Scalar", "Face"],
                        ["dl", "Scalar", "Edge"], ["dl0", "Scalar", "Edge"]]
 
-    folders = []
-    paramsfiles = find_params(args.folder)
-    print(paramsfiles)
-
-    if len(paramsfiles) == 0:
-        subfolders = [] 
-        for a in os.listdir(args.folder):
-            if a.isdigit():
-                subfolders.append(a)
-        subfolders = sorted(subfolders)
-        for subfolder in subfolders:
-            fullpath = os.path.join(args.folder, subfolder)
-            paramsfiles = find_params(fullpath)
-            folders.append(fullpath)
+    folders = get_folders(args.folder)
 
     analysis_folder = os.path.join(args.folder, "Analysis")
     if not os.path.exists(analysis_folder):

@@ -79,3 +79,19 @@ def get_timeseries(folder, t_min=-np.inf, t_max=np.inf):
             ts.append(t)
 
     return ts, posf
+
+def get_folders(folder):
+    folders = []
+    paramsfiles = find_params(folder)
+
+    if len(paramsfiles) == 0:
+        subfolders = [] 
+        for a in os.listdir(folder):
+            if a.isdigit():
+                subfolders.append(a)
+        subfolders = sorted(subfolders)
+        for subfolder in subfolders:
+            fullpath = os.path.join(folder, subfolder)
+            paramsfiles = find_params(fullpath)
+            folders.append(fullpath)
+    return folders
