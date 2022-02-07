@@ -264,7 +264,7 @@ if __name__ == "__main__":
         #xdmff.write(uy0, t)
         xdmff.write(u_, t)
         #xdmff.write(U_, t)
-        xdmff.write(psi_, t)
+        #xdmff.write(psi_, t)
 
         if rank == 0:
             pbar.update(1)

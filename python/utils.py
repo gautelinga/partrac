@@ -17,12 +17,16 @@ class Params:
         return self.ts[-1]
 
 
-def read_params(folder):
+def find_params(folder):
     paramsfiles = dict()
     for filename in os.listdir(folder):
         if "params_from_t" in filename:
             t = float(filename[13:-4])
             paramsfiles[t] = os.path.join(folder, filename)
+    return paramsfiles
+
+
+def parse_params(paramsfiles):
     params = dict()
     for t, paramsfile in paramsfiles.items():
         params[t] = dict()
@@ -37,6 +41,11 @@ def read_params(folder):
                 line = pf.readline()
                 cnt += 1
     return params
+
+
+def read_params(folder):
+    paramsfiles = find_params(folder)
+    return parse_params(paramsfiles)
 
 
 def read_timestamps(infile):
