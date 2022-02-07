@@ -76,13 +76,14 @@ if __name__ == "__main__":
         fig, ax = plt.subplots(1, 1)
 
         plt.plot(t, elong_mean, linestyle="-", label='log(<rho>)')
-        plt.plot(t, elong_var, linestyle="-", label='log(Var(rho))')
+        #plt.plot(t, elong_var, linestyle="-", label='log(Var(rho))')
         plt.plot(t, logelong_mean, linestyle="-", label='<log(rho)>')
         plt.plot(t, logelong_var, linestyle="-", label='Var(log(rho))')
+        plt.plot(t_fit, p_em[0] * t_fit + p_em[1], linestyle=":", color="k")
+        #plt.plot(t_fit, p_ev[0] * t_fit + p_ev[1], linestyle=":", color="k")
         plt.plot(t_fit, p_lm[0] * t_fit + p_lm[1], linestyle=":", color="k")
         plt.plot(t_fit, p_lv[0] * t_fit + p_lv[1], linestyle=":", color="k")
-        plt.plot(t_fit, p_em[0] * t_fit + p_em[1], linestyle=":", color="k")
-        plt.plot(t_fit, p_ev[0] * t_fit + p_ev[1], linestyle=":", color="k")
+
 
         plt.legend()
         if args.save:
