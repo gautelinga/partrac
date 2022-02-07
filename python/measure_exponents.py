@@ -14,6 +14,7 @@ def parse_args():
                         default=0,
                         help="First id to include")
     parser.add_argument("--show", action="store_true", help="Show")
+    parser.add_argument("--save", action="store_true", help="Save")
     args = parser.parse_args()
     return args
 
@@ -22,6 +23,7 @@ if __name__ == "__main__":
     args = parse_args()
     filename = os.path.join(args.folder, "Analysis", "elongdata.dat")
     d = np.loadtxt(filename)
+    images_folder = os.path.join(args.folder, "Images")
 
     t = d[args.id0:, 0]
     elong_mean = d[args.id0:, 1]
@@ -70,7 +72,7 @@ if __name__ == "__main__":
 
 
 
-    if args.show:
+    if args.show or args.save:
         fig, ax = plt.subplots(1, 1)
 
         plt.plot(t, elong_mean, linestyle="-", label='log(<rho>)')
@@ -83,4 +85,7 @@ if __name__ == "__main__":
         plt.plot(t_fit, p_ev[0] * t_fit + p_ev[1], linestyle=":", color="k")
 
         plt.legend()
-        plt.show()
+        if args.save:
+            plt.savefig(os.path.join(images_folder, "rho_t_fitted.png"))
+        if args.show:
+            plt.show()
