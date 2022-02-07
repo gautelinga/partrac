@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import os
-import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 from utils import Params, get_folders
