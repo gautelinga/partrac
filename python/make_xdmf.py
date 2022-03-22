@@ -103,6 +103,8 @@ if __name__ == "__main__":
 
     folders = get_folders(args.folder)
     nfld = len(folders)
+    if nfld == 0:
+      folders = [args.folder]
     for ifld, folder in enumerate(folders):
       files = os.listdir(folder)
 
@@ -185,5 +187,9 @@ if __name__ == "__main__":
           text += grid_end
       text += footer
 
-      with open(os.path.join(args.folder, "mesh_{}.xdmf".format(ifld)), "w") as ofile:
+      if nfld > 0:
+        xdmffilename = "mesh_{}.xdmf".format(ifld)
+      else:
+        xdmffilename = "mesh.xdmf"
+      with open(os.path.join(args.folder, xdmffilename), "w") as ofile:
           ofile.write(text)

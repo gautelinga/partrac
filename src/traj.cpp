@@ -166,9 +166,26 @@ int main(int argc, char* argv[])
   prm.t0 = t0;
   prm.T = T;
 
+  /*
+  if (prm.resize && (prm.refine || prm.coarsen || prm.filter)){
+    if (prm.refine){
+      if (mpi.rank() == 0)
+        std::cout << "Cannot resize and refine at the same time." << std::endl;
+    }
+    if (prm.coarsen){
+      if (mpi.rank() == 0)
+        std::cout << "Cannot resize and coarsen at the same time." << std::endl;
+    }
+    if (prm.filter){
+      if (mpi.rank() == 0)
+        std::cout << "Cannot resize and filter at the same time." << std::endl;
+    }
+    exit(0);
+  }*/
+
   if (prm.inject && prm.filter){
     if (mpi.rank() == 0)
-    std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
+      std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
@@ -308,6 +325,7 @@ int main(int argc, char* argv[])
   //Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
   Uint int_inject_intv = int(prm.inject_intv/dt);
   Uint int_filter_intv = int(prm.filter_intv/dt);
+  //Uint int_resize_intv = int(prm.resize_intv/dt);
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.minimal_output;
@@ -391,6 +409,13 @@ int main(int argc, char* argv[])
       if (prm.verbose && filtered)
         std::cout << "Filtered edges." << std::endl;
     }
+    // Resizing
+    /*if (resize && it % int_resize_intv == 0){
+      bool resized = mesh.resize();
+      if (prm.verbose && resized)
+        std::cout << "Resized edges." << std::endl;
+    }*/
+
     // Dump detailed data
     if (it % int_dump_intv == 0){
       ps.update_fields(t, output_fields);

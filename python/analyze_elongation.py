@@ -6,6 +6,8 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
+from scipy import signal
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from utils import Params, find_params, get_timeseries, read_params, get_folders
 
@@ -83,6 +85,9 @@ if __name__ == "__main__":
                        ["dl", "Scalar", "Edge"], ["dl0", "Scalar", "Edge"]]
 
     folders = get_folders(args.folder)
+    nfld = len(folders)
+    if nfld == 0:
+      folders = [args.folder]
 
     analysis_folder = os.path.join(args.folder, "Analysis")
     if not os.path.exists(analysis_folder):
@@ -95,7 +100,7 @@ if __name__ == "__main__":
     elongfilename = os.path.join(analysis_folder, "elongdata.dat")
     #elongdatafile = open(elongfilename, "w")
 
-    params_ = []
+    #params_ = []
     ts_ = []
     posf_ = []
     for ifolder, folder in enumerate(folders):
@@ -142,6 +147,8 @@ if __name__ == "__main__":
         for posf in posf_:
             assert(t in posf)
 
+    c0 = None
+
     #print("{}\t{}\t{}\t{}".format("t", "mean", "var", "std"))
     t_ = ts_[0][::args.skip]
     rho_mean_ = np.zeros_like(t_)
@@ -157,6 +164,7 @@ if __name__ == "__main__":
         dl_ = []
         dl0_ = []
 
+        fig, (ax1, ax2) = plt.subplots(1, 2)
         for posf in posf_:
             posft, grp = posf[t]
 
@@ -171,8 +179,7 @@ if __name__ == "__main__":
                 dl_.append(dl)
                 dl0_.append(dl0)
 
-
-            """
+        """
             print("num nodes:", len(c))
             print("num edges:", len(dl))
 
@@ -195,14 +202,28 @@ if __name__ == "__main__":
                     splits.append(i+1)
             lines = np.split(vs, splits)[:-1]
 
-            for line in lines:
+            for line in lines[:3]:
                 ds = np.linalg.norm(x[line[1:], :]-x[line[:-1], :], axis=1)
-                s = np.cumsum(ds)
-                print(line)
+                dc = c[line[1:]]-c[line[:-1]]
+                if it==0:
+                    c0 = dc.sum()
+                dc /= c0
+                ss = np.zeros(len(dc)+1)
+                ss[1:] = np.cumsum(ds)
+                #cc = c[line[:]]-c[line[0]]
+                cc = np.zeros_like(ss)
+                cc[1:] = np.cumsum(dc)
                 #plt.plot(x[line, 0], x[line, 1])
-                plt.plot(c[line[1:]]-c[line[0]], s)
-            plt.show()
-            """
+                ax1.plot(cc, ss) # np.log(ds/dc))
+                wlen =  2*(len(ss)//2)-1
+                #dsdc = np.gradient(ss, cc) #signal.savgol_filter(ss, window_length=min(5, wlen), polyorder=min(2, wlen-1), deriv=1)
+                lowess_tight = lowess(ss, cc, frac=0.2)
+                #print(lowess_tight)
+                #ax2.plot(lowess_tight[:, 0], lowess_tight[:, 1])
+                dsdc = np.gradient(lowess_tight[:, 0], lowess_tight[:, 1])
+                ax2.plot(cc, dsdc)
+        plt.show()
+        """
 
         dl = np.hstack(dl_)
         dl0 = np.hstack(dl0_)
