@@ -9,7 +9,7 @@
 
 // using namespace std;
 
-std::map<std::string, std::string> load_settings(std::string casefile){
+std::map<std::string, std::string> load_settings(const std::string& casefile){
   std::ifstream input(casefile);
   std::string line;
   std::string el;
@@ -33,7 +33,7 @@ std::vector<std::string> get_files(const std::string& s)
     return r;
 }
 
-std::vector<std::vector<std::string>> load_grid(std::string infile){
+std::vector<std::vector<std::string>> load_grid(const std::string& infile){
   std::ifstream input(infile);
 
   std::vector<char> x;
@@ -61,7 +61,7 @@ std::vector<std::vector<std::string>> load_grid(std::string infile){
   return sites;
 }
 
-std::vector<std::vector<std::string>> load_fields(std::string infile){
+std::vector<std::vector<std::string>> load_fields(const std::string& infile){
   std::ifstream input(infile);
 
   std::vector<char> x;
@@ -120,7 +120,7 @@ void copy_arr(double** a_from,
   }
 }
 
-void dump2file(std::string filename,
+void dump2file(const std::string& filename,
 	       double** rho,
 	       double** m_x,
 	       double** m_y,
@@ -140,14 +140,14 @@ void dump2file(std::string filename,
   outfile.close();
 }
 
-std::string create_folder(const std::string folder){
+std::string create_folder(const std::string& folder){
   if (!std::filesystem::is_directory(folder)){
     std::filesystem::create_directory(folder);
   }
   return folder;
 }
 
-void verify_file_exists(const std::string infilename){
+void verify_file_exists(const std::string& infilename){
   if (!std::filesystem::exists(infilename)){
     std::cout << "No such file: " << infilename << std::endl;
     exit(0);
@@ -155,36 +155,36 @@ void verify_file_exists(const std::string infilename){
 }
 
 // template this...
-void print_param(const std::string key, const double val){
+void print_param(const std::string& key, const double val){
   std::cout << key << " = " << val << std::endl;
 }
 
-void print_param(const std::string key, const int val){
+void print_param(const std::string& key, const int val){
   std::cout << key << " = " << val << std::endl;
 }
 
-void print_param(const std::string key, const std::string val){
+void print_param(const std::string& key, const std::string& val){
   std::cout << key << " = " << val << std::endl;
 }
 
-void write_param(std::ofstream &ofile, std::string key, double val){
+void write_param(std::ofstream &ofile, const std::string& key, double val){
   ofile << key << "=" << val << std::endl;
 }
 
-void write_param(std::ofstream &ofile, std::string key, int val){
+void write_param(std::ofstream &ofile, const std::string& key, int val){
   ofile << key << "=" << val << std::endl;
 }
 
-void write_param(std::ofstream &ofile, std::string key, long int val){
+void write_param(std::ofstream &ofile, const std::string& key, long int val){
   ofile << key << "=" << val << std::endl;
 }
 
-void write_param(std::ofstream &ofile, std::string key, std::string val){
+void write_param(std::ofstream &ofile, const std::string& key, const std::string& val){
   ofile << key << "=" << val << std::endl;
 }
 
 // recently moved here
-void load_vector_field(const std::string input_file,
+void load_vector_field(const std::string& input_file,
                        std::vector<Vector3d> &pos_init){
   std::ifstream infile(input_file);
   double x, y, z;
@@ -194,7 +194,7 @@ void load_vector_field(const std::string input_file,
   infile.close();
 }
 
-void dump_vector_field(const std::string output_file,
+void dump_vector_field(const std::string& output_file,
                        const std::vector<Vector3d>& x_rw,
                        const Uint Nrw){
   std::ofstream outfile(output_file);
@@ -207,7 +207,7 @@ void dump_vector_field(const std::string output_file,
   outfile.close();
 }
 
-void dump_vector_field(const std::string output_file,
+void dump_vector_field(const std::string& output_file,
                        const std::vector<Vector3d> &pos){
   std::ofstream outfile(output_file);
   for (std::vector<Vector3d>::const_iterator posit=pos.begin();
@@ -220,7 +220,7 @@ void dump_vector_field(const std::string output_file,
   outfile.close();
 }
 
-void load_faces(const std::string input_file,
+void load_faces(const std::string& input_file,
                 FacesType& faces){
   std::ifstream infile(input_file);
   Uint first, second, third;
@@ -231,7 +231,7 @@ void load_faces(const std::string input_file,
   infile.close();
 }
 
-void load_edges(const std::string input_file,
+void load_edges(const std::string& input_file,
                 EdgesType &edges){
   std::ifstream infile(input_file);
   Uint first, second;
@@ -242,7 +242,7 @@ void load_edges(const std::string input_file,
   infile.close();
 }
 
-void load_list(const std::string input_file,
+void load_list(const std::string& input_file,
                std::list<Uint> &li){
   std::ifstream infile(input_file);
   Uint a;
@@ -252,7 +252,7 @@ void load_list(const std::string input_file,
   infile.close();
 }
 
-void dump_list(const std::string output_file,
+void dump_list(const std::string& output_file,
                const std::list<Uint> &li){
   std::ofstream outfile(output_file);
   for (std::list<Uint>::const_iterator lit=li.begin();
@@ -262,7 +262,7 @@ void dump_list(const std::string output_file,
   outfile.close();
 }
 
-void dump_faces(const std::string output_file,
+void dump_faces(const std::string& output_file,
                 const FacesType &faces){
   std::ofstream outfile(output_file);
   for (FacesType::const_iterator faceit = faces.begin();
@@ -273,7 +273,7 @@ void dump_faces(const std::string output_file,
   outfile.close();
 }
 
-void dump_edges(const std::string output_file,
+void dump_edges(const std::string& output_file,
                 const EdgesType &edges){
   std::ofstream outfile(output_file);
   for (auto edgeit = edges.begin();
@@ -283,7 +283,7 @@ void dump_edges(const std::string output_file,
   outfile.close();
 }
 
-void load_scalar_field(const std::string input_file,
+void load_scalar_field(const std::string& input_file,
                        std::vector<double>& c_rw, const Uint Nrw){
   // TODO: to hdf5
   std::ifstream infile(input_file);
@@ -293,7 +293,7 @@ void load_scalar_field(const std::string input_file,
   infile.close();
 }
 
-void dump_scalar_field(const std::string output_file,
+void dump_scalar_field(const std::string& output_file,
                        const std::vector<double>& c_rw, const Uint Nrw){
                    // TODO: to hdf5
   std::ofstream outfile(output_file);
@@ -303,7 +303,7 @@ void dump_scalar_field(const std::string output_file,
   outfile.close();
 }
 
-void tensor2hdf5(H5File& h5f, const std::string dsetname,
+void tensor2hdf5(H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& axx_rw, const std::vector<double>& axy_rw, const std::vector<double>& axz_rw,
                  const std::vector<double>& ayx_rw, const std::vector<double>& ayy_rw, const std::vector<double>& ayz_rw,
                  const std::vector<double>& azx_rw, const std::vector<double>& azy_rw, const std::vector<double>& azz_rw,
@@ -330,7 +330,7 @@ void tensor2hdf5(H5File& h5f, const std::string dsetname,
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5File& h5f, const std::string dsetname,
+void vector2hdf5(H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& ax_rw, const std::vector<double>& ay_rw, const std::vector<double>& az_rw,
                  const Uint Nrw){
   hsize_t dims[2];
@@ -349,7 +349,7 @@ void vector2hdf5(H5File& h5f, const std::string dsetname,
   dset.write(data.data(), PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5File& h5f, const std::string dsetname,
+void vector2hdf5(H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
@@ -368,7 +368,7 @@ void vector2hdf5(H5File& h5f, const std::string dsetname,
 }
 
 
-void scalar2hdf5(H5File& h5f, const std::string dsetname, const std::vector<double>& c_rw,
+void scalar2hdf5(H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;

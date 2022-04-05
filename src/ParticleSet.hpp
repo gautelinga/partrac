@@ -3,16 +3,18 @@
 #include "typedefs.hpp"
 #include <string>
 #include "Interpol.hpp"
-#include "Integrator.hpp"
+//#include "Integrator.hpp"  // remove!
 #include "io.hpp"
 #include "MPIwrap.hpp"
 
 
 class ParticleSet {
 public:
-    ParticleSet(std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi);
+    //ParticleSet(std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi);
     ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi);
+    //ParticleSet(const Uint Nrw_max, MPIwrap& mpi);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
+    //template<typename T>
     bool insert_node_between(const Uint, const Uint);
     double dist(const Uint inode, const Uint jnode) const { Vector3d dx = x_rw[inode]-x_rw[jnode]; return dx.norm(); };
     void copy_node(const Uint, const Uint);
@@ -24,6 +26,8 @@ public:
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
     Vector3d x(const Uint i) const { return x_rw[i]; };
     void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
+    double tau(const Uint i) const { return tau_rw[i]; };
+    void set_tau(const Uint i, const double val) { tau_rw[i] = val; };
     Vector3d u(const Uint i) const { return u_rw[i]; };
     Vector3d facet_normal(const Uint iface,
                           const FacesType &faces,
@@ -39,19 +43,21 @@ public:
     void dump_scalar(const std::string filename, const std::string fieldname) const;
     void load_positions(const std::string filename);
     void dump_positions(const std::string filename) const;
-    void dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const;
-    bool integrate(const double t, const double dt);
+    void dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const;
+    //bool integrate(const double t, const double dt);
     // void attach_integrator(std::shared_ptr<Integrator> integrator) { this->integrator = integrator; };
-    Uint get_accepted() { return integrator->get_accepted(); };
-    Uint get_declined() { return integrator->get_declined(); };
+    //Uint get_accepted() { return integrator->get_accepted(); };
+    //Uint get_declined() { return integrator->get_declined(); };
+    //template<typename T>
     void update_fields(const double t, std::map<std::string, bool> &output_fields);
-    void reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields);
+    //void reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields);
+    std::shared_ptr<Interpol>& interpolator() { return intp; };
   private:
     //bool do_output_all = false;
     Uint Nrw = 0;
     Uint Nrw_max;
     std::shared_ptr<Interpol> intp;
-    std::shared_ptr<Integrator> integrator;
+    //std::shared_ptr<Integrator> integrator;
     // Vector fields
     std::vector<Vector3d> x_rw;
     std::vector<Vector3d> u_rw;
@@ -68,11 +74,12 @@ public:
     MPIwrap& m_mpi;
 };
 
+/*
 ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi) : ParticleSet(intp, Nrw_max, mpi) {
     this->integrator = integrator;
-}
+}*/
 
-ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
+ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
     this->intp = intp;
     this->Nrw_max = Nrw_max;
     // Vector fields
@@ -88,6 +95,22 @@ ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, const Uint Nrw_max, MP
     this->p_rw.resize(Nrw_max);
     this->tau_rw.resize(Nrw_max);  // eigentime
 }
+/*
+ParticleSet::ParticleSet (const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
+    this->Nrw_max = Nrw_max;
+    // Vector fields
+    this->x_rw.resize(Nrw_max);
+    this->u_rw.resize(Nrw_max);
+    this->a_rw.resize(Nrw_max);  // for second order integration
+    this->n_rw.resize(Nrw_max);  // useless?
+    // Scalar fields
+    this->c_rw.resize(Nrw_max);
+    this->e_rw.resize(Nrw_max);
+    this->H_rw.resize(Nrw_max);
+    this->rho_rw.resize(Nrw_max);
+    this->p_rw.resize(Nrw_max);
+    this->tau_rw.resize(Nrw_max);  // eigentime
+}*/
 
 void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
   for (Uint irw=irw0; irw < irw0+pos_init.size(); ++irw){
@@ -115,6 +138,7 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
   Nrw += pos_init.size();
 }
 
+//template<typename T>
 bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
   int refinement_insertion_levels = 10;
@@ -228,7 +252,7 @@ std::vector<double> ParticleSet::triangle_areas(const std::vector<Uint> &kfaces,
 }
 
 void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode){
-  intp->probe(x);  //
+  //intp->probe(x);  //
 
   Uint irws[2] = {inode, jnode};
   for (Uint i=0; i<2; ++i){
@@ -400,6 +424,7 @@ void ParticleSet::dump_positions(const std::string filename) const {
     dump_vector_field(filename, x_rw, N());
 }
 
+//template<typename T>
 void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
   for (Uint irw=0; irw < N(); ++irw){
     intp->probe(x_rw[irw], t);
@@ -412,7 +437,7 @@ void ParticleSet::update_fields(const double t, std::map<std::string, bool> &out
   }
 }
 
-void ParticleSet::dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool> &output_fields) const {
+void ParticleSet::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const {
     vector2hdf5(h5f, groupname + "/points", x_rw, N());
     if (output_fields["u"])
         vector2hdf5(h5f, groupname + "/u", u_rw, N());
@@ -432,55 +457,55 @@ void ParticleSet::dump_hdf5(H5File& h5f, const std::string groupname, std::map<s
         scalar2hdf5(h5f, groupname + "/tau", tau_rw, N());
 }
 
-bool ParticleSet::integrate(const double t, const double dt){
-    Vector3d dx_rw = {0., 0., 0.};
-    bool all_nodes_are_fine = true;
-    for (Uint irw=0; irw < N(); ++irw){
-        //dx_rw = u_rw[irw]*dt;
-        dx_rw = integrator->integrate(x_rw[irw], t, dt);
+// bool ParticleSet::integrate(const double t, const double dt){
+//     Vector3d dx_rw = {0., 0., 0.};
+//     bool all_nodes_are_fine = true;
+//     for (Uint irw=0; irw < N(); ++irw){
+//         //dx_rw = u_rw[irw]*dt;
+//         dx_rw = integrator->integrate(x_rw[irw], t, dt);
 
-        //intp->probe(x_rw[irw] + dx_rw, t + dt);
-        //assert (intp->inside_domain());
-        x_rw[irw] += dx_rw;
+//         //intp->probe(x_rw[irw] + dx_rw, t + dt);
+//         //assert (intp->inside_domain());
+//         x_rw[irw] += dx_rw;
 
-        if (integrator->is_stuck()){
-          all_nodes_are_fine = false;
+//         if (integrator->is_stuck()){
+//           all_nodes_are_fine = false;
 
-        }
-        /*
-        u_rw[irw] = intp->get_u();
-        */
+//         }
+//         /*
+//         u_rw[irw] = intp->get_u();
+//         */
 
-        /*if ((it+1) % int_dump_intv == 0){
-            rho_rw[irw] = intp->get_rho();
-            p_rw[irw] = intp->get_p();
-        }*/
+//         /*if ((it+1) % int_dump_intv == 0){
+//             rho_rw[irw] = intp->get_rho();
+//             p_rw[irw] = intp->get_p();
+//         }*/
 
-        /*
-        // Second-order terms
-        if (int_order >= 2){
-            a_rw[irw] = intp->get_Ju() + intp->get_a();
-        }
-        //return true;
-        */
-    }
-    return all_nodes_are_fine;
-}
+//         /*
+//         // Second-order terms
+//         if (int_order >= 2){
+//             a_rw[irw] = intp->get_Ju() + intp->get_a();
+//         }
+//         //return true;
+//         */
+//     }
+//     return all_nodes_are_fine;
+// }
 
-void ParticleSet::reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields){
-  std::vector<double> xvals_(3*psb.N());
-  for (Uint i=0; i<psb.N(); ++i){
-    for (int d=0; d<3; ++d){
-      xvals_[3*i+d] = psb.x_rw[i][d];
-    }
-  }
-  auto all_xvals_ = gather_vector<double>(m_mpi, xvals_, MPI_DOUBLE);
-  Nrw = all_xvals_.size()/3;
-  for (Uint i=0; i<Nrw; ++i){
-    for (int d=0; d<3; ++d){
-      x_rw[i][d] = all_xvals_[3*i+d];
-    }
-  }
-}
+// void ParticleSet::reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields){
+//   std::vector<double> xvals_(3*psb.N());
+//   for (Uint i=0; i<psb.N(); ++i){
+//     for (int d=0; d<3; ++d){
+//       xvals_[3*i+d] = psb.x_rw[i][d];
+//     }
+//   }
+//   auto all_xvals_ = gather_vector<double>(m_mpi, xvals_, MPI_DOUBLE);
+//   Nrw = all_xvals_.size()/3;
+//   for (Uint i=0; i<Nrw; ++i){
+//     for (int d=0; d<3; ++d){
+//       x_rw[i][d] = all_xvals_[3*i+d];
+//     }
+//   }
+// }
 
 #endif

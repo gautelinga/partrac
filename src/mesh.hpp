@@ -47,7 +47,7 @@ void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
   }
 }*/
 
-void mesh2hdf(H5File& h5f, const std::string groupname,
+void mesh2hdf(H5File& h5f, const std::string& groupname,
               const ParticleSet& ps,
               const FacesType& faces, const EdgesType& edges){
   // This function is here because it contains ps. Consider stripping that.
@@ -1286,6 +1286,30 @@ bool filtering(FacesType &faces,
   else{
     return strip_filtering(edges, node2edges, ps, filter_target);
   }
+}
+
+bool resizing(EdgesType &edges,
+              Node2EdgesType &node2edges,
+              ParticleSet& ps,
+              const double ds){
+  bool resized = false;
+  for ( auto & edge : edges ){
+    Uint inode = edge.first[0];
+    Uint jnode = edge.first[1];
+    double ds0 = edge.second;
+
+    Vector3d xi = ps.x(inode);
+    Vector3d xj = ps.x(jnode);
+    Vector3d dx = xj - xi;  // such that xj = xi + dx
+
+    double rescale_factor = ds / dx.norm();
+    if (rescale_factor < 1.0){
+      resized = true;
+      edge.second *= rescale_factor;
+      ps.set_x(jnode, xi + dx * rescale_factor); // such that xj = xi + dx
+    }
+  }
+  return resized;
 }
 
 std::array<double, 3> mixed_area_contrib(const double ang0,

@@ -12,7 +12,7 @@
 
 using namespace H5;
 
-TetInterpol::TetInterpol(const std::string infilename)
+TetInterpol::TetInterpol(const std::string& infilename)
   : Interpol(infilename)
 {
   std::ifstream input(infilename);

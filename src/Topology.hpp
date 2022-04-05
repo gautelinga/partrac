@@ -20,6 +20,8 @@ public:
   bool filter();
   Uint inject();
   void compute_interior();
+  void remove_nodes_safe(std::vector<bool>&);
+  bool resize(const double);
   EdgesType edges;
   FacesType faces;
   Edge2FacesType edge2faces;
@@ -32,12 +34,14 @@ public:
   InteriorAnglesType interior_ang;
   std::vector<double> mixed_areas;
   std::vector<Vector3d> face_normals;
-  void write_checkpoint(const std::string checkpointsfolder, const double t, Parameters &prm) const;
-  void load_checkpoint(const std::string checkpointsfolder, const Parameters &prm);
-  void dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields);
+  void write_checkpoint(const std::string& checkpointsfolder, const double t, Parameters &prm) const;
+  void load_checkpoint(const std::string& checkpointsfolder, const Parameters &prm);
+  void dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(std::shared_ptr<Initializer> init_state);
+  template<typename T>
   void write_statistics(std::ofstream &statfile, const double t, const double ds_max, //const bool do_dump_hist, const std::string histfolder, 
-                        std::shared_ptr<Integrator> integrator);
+                        T& integrator);
+                        //std::shared_ptr<Integrator> integrator);
 private:
   ParticleSet& ps;
   double ds_min;
@@ -128,14 +132,26 @@ void Topology::compute_interior(){
   /**/
 }
 
+void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
+  remove_nodes_safely(faces, edges,
+                      edge2faces, node2edges,
+                      edges_inlet, nodes_inlet,
+                      node_isactive,
+                      ps);
+}
+
 bool Topology::filter(){
   return filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
 }
 
-void Topology::write_checkpoint(const std::string checkpointsfolder, const double t, Parameters &prm) const {
+bool Topology::resize(const double ds){
+  return resizing(edges, node2edges, ps, ds);
+}
+
+void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, Parameters &prm) const {
   prm.t = t;
-  prm.n_accepted = ps.get_accepted();
-  prm.n_declined = ps.get_declined();
+  //prm.n_accepted = ps.get_accepted();
+  //prm.n_declined = ps.get_declined();
   //prm.Nrw = Nrw;
   prm.dump(checkpointsfolder);
   // dump_positions(checkpointsfolder + "/positions.pos", ps.x_rw, ps.Nrw);
@@ -156,7 +172,7 @@ void Topology::write_checkpoint(const std::string checkpointsfolder, const doubl
   }
 }
 
-void Topology::load_checkpoint(const std::string checkpointsfolder, const Parameters &prm){
+void Topology::load_checkpoint(const std::string& checkpointsfolder, const Parameters &prm){
   std::string posfile = checkpointsfolder + "/positions.pos";
   //load_positions(posfile, pos_init, prm.Nrw);
   ps.load_positions(posfile);
@@ -184,7 +200,7 @@ void Topology::load_checkpoint(const std::string checkpointsfolder, const Parame
   }
 }
 
-void Topology::dump_hdf5(H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields){
+void Topology::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
   /*
   std::cout << "Process " << m_mpi.rank() << ": " << ps.N() << " " << faces.size() << " " << edges.size() << std::endl;
   auto num_nodes_ = m_mpi.gather(ps.N());
@@ -261,14 +277,17 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state){
   ps.add(init_state->nodes, 0);
 }
 
-void Topology::write_statistics(std::ofstream &statfile,
-                           const double t,
-                           const double ds_max,
+template<typename T>
+void Topology::write_statistics( std::ofstream &statfile
+                               , const double t
+                               , const double ds_max
+                               , T& integrator){
                            //const bool do_dump_hist,
                            //const std::string histfolder,
-                           std::shared_ptr<Integrator> integrator){
+                           //std::shared_ptr<Integrator> integrator){
   write_stats(m_mpi, statfile, t, ps, faces, edges, ds_max, //do_dump_hist, histfolder,
-              integrator->get_accepted(), integrator->get_declined());
+              integrator.get_accepted(), integrator.get_declined());
+              //integrator->get_accepted(), integrator->get_declined());
 }
 
 #endif

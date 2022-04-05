@@ -15,20 +15,13 @@
 #include "io.hpp"
 #include "utils.hpp"
 #include "Parameters.hpp"
-#include "Interpol.hpp"
-#include "StructuredInterpol.hpp"
-#include "AnalyticInterpol.hpp"
-#ifdef USE_DOLFIN
-#include "DolfInterpol.hpp"
-#include "TetInterpol.hpp"
-#include "TriangleInterpol.hpp"
-#endif
+
 #include "ParticleSet.hpp"
 #include "Topology.hpp"
+
 #include "Integrator.hpp"
 #include "ExplicitIntegrator.hpp"
 #include "RKIntegrator.hpp"
-#include "Initializer.hpp"
 #include "helpers.hpp"
 #include "MPIwrap.hpp"
 
@@ -55,50 +48,11 @@ int main(int argc, char* argv[])
 
   std::string infilename = std::string(argv[1]);
 
-  //Interpol* intp;
+  std::cout << "Setting interpolator..." << std::endl;
+
   std::shared_ptr<Interpol> intp;
-  std::string mode = prm.mode;
-  if (mode == "analytic"){
-    std::cout << "AnalyticInterpol initiated." << std::endl;
-    //intp = new AnalyticInterpol(infilename);
-    intp = std::make_shared<AnalyticInterpol>(infilename);
-  }
-  else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
-           mode == "tet" || mode == "triangle"){
-#ifdef USE_DOLFIN
-    if (mode == "tet"){
-      //intp = new TetInterpol(infilename);
-      intp = std::make_shared<TetInterpol>(infilename);
-    }
-    else if (mode == "triangle"){
-      //intp = new TriangleInterpol(infilename);
-      intp = std::make_shared<TriangleInterpol>(infilename);
-    }
-    else if (mode == "fenics"){
-      //intp = new DolfInterpol(infilename);
-      intp = std::make_shared<DolfInterpol>(infilename);
-    }
-    else if (mode == "xdmf"){
-      std::cout << "XDMF format is not implemented yet." << std::endl;
-      exit(0);
-    }
-    else {
-      std::cout << "Mode should be 'fenics', 'tet' or 'triangle'." << std::endl;
-      exit(1);
-    }
-#else
-    std::cout << "You have to compile with PARTRAC_ENABLE_FENICS=ON." << std::endl;
-    exit(0);
-#endif
-  }
-  else if (mode == "structured" || mode == "lbm" || mode == "felbm"){
-    // intp = new StructuredInterpol(infilename); 
-    intp = std::make_shared<StructuredInterpol>(infilename);
-  }
-  else {
-    std::cout << "Mode not supported." << std::endl;
-    exit(0);
-  }
+  set_interpolate_mode(intp, prm.mode, infilename);
+  
   intp->set_U0(prm.U0);
   intp->set_int_order(prm.int_order);
 
@@ -111,7 +65,9 @@ int main(int argc, char* argv[])
 
   bool frozen_fields = prm.frozen_fields;
   bool local_dt = prm.local_dt;
-  double dl_max = prm.dl_max;
+  //double dl_max = prm.dl_max;
+
+  std::cout << "Creating folders..." << std::endl;
 
   std::string folder = intp->get_folder();
   std::string rwfolder = folder + "/RandomWalkers/"; 
@@ -207,15 +163,15 @@ int main(int argc, char* argv[])
 
   std::shared_ptr<Integrator> integrator;
   if (prm.scheme == "explicit")
-    integrator = std::make_shared<ExplicitIntegrator>(intp, Dm, prm.int_order, gen);
+    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gen);
   else if (prm.scheme == "RK4")
-    integrator = std::make_shared<RK4Integrator>(intp);
+    integrator = std::make_shared<RK4Integrator>();
   else {
     std::cout << "Unrecognized (ODE integration) scheme: " << prm.scheme << std::endl;
     exit(0);
   }
 
-  ParticleSet ps(intp, integrator, prm.Nrw_max, mpi);
+  ParticleSet ps(intp, prm.Nrw_max, mpi);
   Topology mesh(ps, prm, mpi);
 
   if (prm.inject){
@@ -234,36 +190,8 @@ int main(int argc, char* argv[])
   }
   else {
     std::shared_ptr<Initializer> init_state;
-    std::vector<std::string> key = split_string(prm.init_mode, "_");
-    if (key.size() == 0){
-      std::cout << "init_mode not specified." << std::endl;
-      exit(0);
-    }
-    else if (key[0] == "point"){
-      //init_state = new PointInitializer(key, intp, prm, mpi);
-      init_state = std::make_shared<PointInitializer>(key, intp, prm, mpi);
-    }
-    else if (key[0] == "uniform"){
-      init_state = std::make_shared<UniformInitializer>(key, intp, prm, mpi);
-    }
-    else if (key[0] == "sheet"){
-      init_state = std::make_shared<SheetInitializer>(key, intp, prm, mpi);
-    }
-    else if (key[0] == "ellipsoid"){
-      init_state = std::make_shared<EllipsoidInitializer>(key, intp, prm, mpi);
-    }
-    else if (key[0] == "pair" || key[0] == "pairs"){
-      init_state = std::make_shared<RandomPairsInitializer>(key, intp, prm, mpi, gen);
-    }
-    else if (key[0] == "points"){
-      init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, mpi, gen);
-    }
-    else {
-      std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
-      exit(0);
-    }
+    set_initial_state(init_state, intp, mpi, prm, gen);
     mesh.load_initial_state(init_state);
-    //delete init_state;
   }
 
   mesh.compute_maps();
@@ -365,7 +293,7 @@ int main(int argc, char* argv[])
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
-      mesh.write_statistics(statfile, t, prm.ds_max, integrator);
+      mesh.write_statistics(statfile, t, prm.ds_max, *integrator);
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
@@ -446,105 +374,10 @@ int main(int argc, char* argv[])
       //h5f->close();
       //h5file.close();
     }
-    /*
-    if (!local_dt){
-      for (Uint irw=0; irw < ps.Nrw; ++irw){
-        dx_rw = ps.u_rw[irw]*dt;
-
-        // Set elongation
-        //ps.e_rw[irw] = 0.;
-
-        // Second-order terms
-        if (prm.int_order >= 2){
-          dx_rw += 0.5*ps.a_rw[irw]*dt2;
-        }
-        if (Dm > 0.0){
-          Vector3d eta = {rnd_normal(gen),
-                          rnd_normal(gen),
-                          rnd_normal(gen)};
-          dx_rw += sqrt2Dmdt*eta;
-        }
-        intp->probe(ps.x_rw[irw]+dx_rw);
-        if (intp->inside_domain()){
-          ps.x_rw[irw] += dx_rw;
-          ps.u_rw[irw] = intp->get_u();
-
-          if ((it+1) % int_dump_intv == 0){
-            ps.rho_rw[irw] = intp->get_rho();
-            ps.p_rw[irw] = intp->get_p();
-          }
-
-          // Second-order terms
-          if (prm.int_order >= 2){
-            ps.a_rw[irw] = intp->get_Ju() + intp->get_a();
-          }
-          n_accepted++;
-        }
-        else {
-          n_declined++;
-          declinedfile << t << " "
-                       << ps.x_rw[irw][0]+dx_rw[0] << " "
-                       << ps.x_rw[irw][1]+dx_rw[1] << " "
-                       << ps.x_rw[irw][2]+dx_rw[2] << std::endl;
-        }
-      }
-    }
-    else {
-      double dtau;
-      double u_abs;
-      std::set<Uint> nodes_to_remove;
-      for (Uint irw=0; irw < ps.Nrw; ++irw){
-        u_abs = ps.u_rw[irw].norm();
-        if (u_abs < prm.u_eps){
-          //
-          nodes_to_remove.insert(irw);
-        }
-        dtau = dl_max/(u_abs+prm.u_eps);
-        ps.tau_rw[irw] += dtau;
-        dx_rw = ps.u_rw[irw]*dtau;
-
-        ps.e_rw[irw] = 0.; //elongation - why??
-
-        if (prm.int_order >= 2){
-          dx_rw += 0.5 * ps.a_rw[irw] * dtau * dtau;
-        }
-        intp->probe(ps.x_rw[irw]+dx_rw);
-        if (intp->inside_domain()){
-          ps.x_rw[irw] += dx_rw;
-          ps.u_rw[irw] = intp->get_u();
-          // other scalars?
-          if (prm.int_order >= 2){
-            ps.a_rw[irw] = intp->get_Ju() + intp->get_a();
-          }
-          n_accepted++;
-        }
-        else {
-          n_declined++;
-          //log??
-        }
-      }
-      if (nodes_to_remove.size() > 0){
-        if (!prm.cut_if_stuck){
-          std::cout << "Node is stuck! Turn on cut_if_stuck to continue." << std::endl;
-          exit(0);
-        }
-        bool do_output_all = prm.output_all_props && !prm.minimal_output && (it+1) % int_dump_intv == 0;
-        std::vector<bool> node_isactive(ps.Nrw, true);
-        for (std::set<Uint>::const_iterator sit = nodes_to_remove.begin();
-             sit != nodes_to_remove.end(); ++sit){
-          node_isactive[*sit] = false;
-        }
-        remove_nodes_safely(faces, edges,
-                            edge2faces, node2edges,
-                            edges_inlet, nodes_inlet,
-                            node_isactive,
-                            ps);
-      }
-    }
-    */
-    bool all_inside = ps.integrate(t, dt);
     
-    if (!all_inside)
+    auto outside_nodes = integrator->step(ps, t, dt);
+
+    if (outside_nodes.size() > 0)
       std::cout << "Some nodes are outside." << std::endl;
 
     t += dt;

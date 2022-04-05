@@ -8,14 +8,14 @@
 
 class Interpol {  // Abstract base class
 public:
-  Interpol(const std::string infilename) { this->infilename=infilename; };
+  Interpol(const std::string& infilename) { this->infilename=infilename; };
   virtual ~Interpol() = default;
-  void set_folder(std::string folder){ this->folder=folder; };
-  std::string get_folder(){ return folder; };
+  void set_folder(const std::string& folder){ this->folder=folder; };
+  std::string get_folder() const { return folder; };
   void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
   void set_int_order(const int int_order) { this->int_order = int_order; };
   //
-  Vector3d get_u() { return { U0*get_ux(), U0 * get_uy(), U0 * get_uz()}; };
+  Vector3d get_u() { return { U0 * get_ux(), U0 * get_uy(), U0 * get_uz()}; };
   Vector3d get_a() { return { U0 * get_ax(), U0 * get_ay(), U0 * get_az()}; };
   double get_Lx() { return x_max[0]-x_min[0]; };
   double get_Ly() { return x_max[1]-x_min[1]; };
@@ -51,7 +51,7 @@ public:
   virtual void update(const double t) = 0;
   virtual void probe(const Vector3d &x, const double t) = 0;
   //
-  virtual bool inside_domain() = 0;
+  virtual bool inside_domain() const = 0;
   virtual double get_ux() = 0;
   virtual double get_uy() = 0;
   virtual double get_uz() = 0;
@@ -74,6 +74,8 @@ public:
   //
   virtual Matrix3d get_grada() = 0;
   //
+  template<typename T>
+  void assign_fields(T&, std::map<std::string, bool>& output_fields);
 protected:
   std::string infilename;
   std::string folder;
@@ -89,5 +91,19 @@ protected:
   double U02 = 1.0;
   double t_update;
 };
+
+template<typename T>
+void Interpol::assign_fields(T& ps, std::map<std::string, bool>& output_fields){
+  double t = t_update;
+  for ( auto & particle : ps.particles() ){
+    probe(particle.x(), t);
+    if (output_fields["u"])
+      particle.u() = get_u();
+    if (output_fields["rho"])
+      particle.rho() = get_rho();
+    if (output_fields["p"])
+      particle.p() = get_p();
+  }
+}
 
 #endif

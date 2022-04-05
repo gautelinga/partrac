@@ -2,19 +2,19 @@
 #ifndef __TETINTERPOL_HPP
 #define __TETINTERPOL_HPP
 
+#include "Tet.hpp"
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
-#include "Tet.hpp"
 
 class TetInterpol
   : public Interpol
 {
 public:
 
-  TetInterpol(const std::string infilename);
+  TetInterpol(const std::string& infilename);
   void update(const double t);
   void probe(const Vector3d &x, const double t);
-  bool inside_domain() { return inside; };
+  bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
   double get_uz(){ return U[2]; };

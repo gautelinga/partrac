@@ -49,9 +49,14 @@ public:
   double filter_intv = 0.0;
   int filter_target = 0;
   //
+  bool resize = false;
+  double resize_intv = 0.0;
+  //
   bool frozen_fields = false;
   bool local_dt = false;
-  double dl_max = 1.0;
+  double dx_max = 1.0;
+  double dxn = 0.1;
+  double Ln = 1.0;
   double u_eps = 1e-7;
   double t_frozen = 0.;
   bool cut_if_stuck = true;
@@ -196,6 +201,8 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "refine") refine = stobool(val);
   if (key == "refine_intv") refine_intv = stodouble(val);
+  if (key == "resize") refine = stobool(val);
+  if (key == "resize_intv") resize_intv = stodouble(val);
   if (key == "coarsen") coarsen = stobool(val);
   if (key == "coarsen_intv") coarsen_intv = stodouble(val);
   //if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
@@ -213,7 +220,9 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "frozen_fields") frozen_fields = stobool(val);
   if (key == "local_dt") local_dt = stobool(val);
-  if (key == "dl_max") dl_max = stodouble(val);
+  if (key == "dx_max") dx_max = stodouble(val);
+  if (key == "dxn") dxn = stodouble(val);
+  if (key == "Ln") Ln = stodouble(val);
   if (key == "u_eps") u_eps = stodouble(val);
   if (key == "t_frozen") t_frozen = stodouble(val);
   if (key == "cut_if_stuck") cut_if_stuck = stobool(val);
@@ -259,6 +268,8 @@ void Parameters::print(){
 
     print_param("refine             ", bool2string(refine));
     print_param("refine_intv        ", refine_intv);
+    print_param("resize             ", bool2string(resize));
+    print_param("resize_intv        ", resize_intv);
     print_param("coarsen            ", bool2string(coarsen));
     print_param("coarsen_intv       ", coarsen_intv);
     //print_param("hist_chunk_size    ", hist_chunk_size);
@@ -276,10 +287,12 @@ void Parameters::print(){
 
     print_param("frozen_fields      ", bool2string(frozen_fields));
     print_param("local_dt           ", bool2string(local_dt));
-    print_param("dl_max             ", dl_max);
+    print_param("dx_max             ", dx_max);
+    print_param("dxn                ", dxn);
+    print_param("Ln                 ", Ln);
     print_param("u_eps              ", u_eps);
     print_param("t_frozen           ", t_frozen);
-    print_param("cut_if_stuck", bool2string(cut_if_stuck));
+    print_param("cut_if_stuck       ", bool2string(cut_if_stuck));
 
     print_param("inject             ", bool2string(inject));
     print_param("inject_intv        ", inject_intv);
@@ -341,6 +354,8 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "refine", bool2string(refine));
   write_param(paramsfile, "refine_intv", refine_intv);
+  write_param(paramsfile, "resize", bool2string(resize));
+  write_param(paramsfile, "resize_intv", resize_intv);
   write_param(paramsfile, "coarsen", bool2string(coarsen));
   write_param(paramsfile, "coarsen_intv", coarsen_intv);
   //write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
@@ -358,7 +373,9 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "frozen_fields", bool2string(frozen_fields));
   write_param(paramsfile, "local_dt", bool2string(local_dt));
-  write_param(paramsfile, "dl_max", dl_max);
+  write_param(paramsfile, "dx_max", dx_max);
+  write_param(paramsfile, "dxn", dxn);
+  write_param(paramsfile, "Ln", Ln);
   write_param(paramsfile, "u_eps", u_eps);
   write_param(paramsfile, "t_frozen", t_frozen);
   write_param(paramsfile, "cut_if_stuck", bool2string(cut_if_stuck));
@@ -375,6 +392,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "random", bool2string(random));
 
   write_param(paramsfile, "scheme", scheme);
+
 
   paramsfile.close();
 }

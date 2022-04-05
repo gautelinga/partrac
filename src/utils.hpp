@@ -12,7 +12,7 @@
 #include <random>
 #include <fstream>
 #include "typedefs.hpp"
-#include "Interpol.hpp"
+//#include "Interpol.hpp"
 //#include "Parameters.hpp"
 
 class Stamp {
@@ -278,92 +278,5 @@ static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
   }
   return ivec;
 }
-
-static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
-                        const std::string &newfolder, const double t0,
-                        std::mt19937 &gen){
-  Uint n = 0;
-  Uint n_inside = 0;
-
-  Vector3d x_min = intp->get_x_min();
-  Vector3d x_max = intp->get_x_max();
-
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-
-  std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
-
-  intp->update(t0);
-
-  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
-  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
-  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
-  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
-  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
-  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
-  //                  intp->get_nodal_uy(ix, iy, iz),
-  //                  intp->get_nodal_uz(ix, iy, iz));
-  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
-  //     }
-  //   }
-  // }
-  // nodalfile.close();
-
-  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
-  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
-  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
-
-  std::ofstream ofile(newfolder + "/interpolation.txt");
-  std::string sep = ",";
-  ofile << "x" << sep << "y" << sep << "z" << sep
-        << "ux" << sep << "uy" << sep << "uz" << sep
-        << "rho" << sep << "p" << sep << "divu" << sep
-        << "vortz" << sep
-        << "uxx" << sep << "uxy" << sep << "uxz" << sep
-        << "uyx" << sep << "uyy" << sep << "uyz" << sep
-        << "uzx" << sep << "uzy" << sep << "uzz"
-        << std::endl;
-  while (n < num_points){
-    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    //std::cout << x << std::endl;
-    intp->probe(x, t0);
-    if (intp->inside_domain()){
-      Vector3d u = intp->get_u();
-      double rho = intp->get_rho();
-      double p = intp->get_p();
-      double divu = intp->get_divu();
-      double vortz = intp->get_vortz();
-      ofile << x[0] << sep << x[1] << sep << x[2] << sep
-            << u[0] << sep << u[1] << sep << u[2] << sep
-            << rho << sep << p << sep << divu << sep
-            << vortz << sep
-            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
-            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
-            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
-            << std::endl;
-      ++n_inside;
-    }
-    ++n;
-  }
-  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
-  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
-  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
-  ofile.close();
-}
-
-/*std::vector<double> areas(const std::vector<Uint> &kfaces,
-                          std::vector<Vector3d>& x_rw,
-                          const FacesType &faces, const EdgesType &edges){
-  // To be decommisioned??
-  
-  std::vector<double> a;
-  for (std::vector<Uint>::const_iterator faceit=kfaces.begin();
-       faceit != kfaces.end(); ++faceit){
-    a.push_back(area(*faceit, x_rw, faces, edges));
-  }
-  return a;
-}*/
 
 #endif

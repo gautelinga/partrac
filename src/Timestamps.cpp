@@ -3,11 +3,11 @@
 #include "io.hpp"
 
 
-Timestamps::Timestamps(std::string infilename){
+Timestamps::Timestamps(const std::string& infilename){
   initialize(infilename);
 }
 
-void Timestamps::initialize(std::string infilename){
+void Timestamps::initialize(const std::string& infilename){
   verify_file_exists(infilename);
   std::ifstream input(infilename);
   std::string fname;

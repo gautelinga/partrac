@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+#set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
+
 include(CTest)
 find_package(Doxygen)
 if (Doxygen_FOUND)
@@ -75,36 +77,42 @@ include_directories(${HDF5_INCLUDE_DIR})
 
 add_subdirectory(src)
 
+set(PROJECT_TARGETS ${PROJECT_NAME})
 #aux_source_directory(src SRC_LIST)
+add_subdirectory(apps)
 
 #message(STATUS ${SRC_LIST})
 #add_library(Src1 ${SRC_LIST})
 #add_executable(${PROJECT_NAME} ${SRC_LIST})
-add_executable(${PROJECT_NAME} src/traj.cpp)
+#add_executable(${PROJECT_NAME} src/traj.cpp)
 
-if (PARTRAC_ENABLE_DOLFIN)
-  target_link_libraries(${PROJECT_NAME} dolfin)
-endif()
+#if (PARTRAC_ENABLE_DOLFIN)
+#  target_link_libraries(${PROJECT_NAME} dolfin)
+#endif()
 
-if (PARTRAC_ENABLE_MPI)
-  target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES})
-endif()
+#if (PARTRAC_ENABLE_MPI)
+#  target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES})
+#endif()
 
-if(MPI_COMPILE_FLAGS)
-  set_target_properties(${PROJECT_NAME}  PROPERTIES
-    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
-endif()
+#if(MPI_COMPILE_FLAGS)
+#  set_target_properties(${PROJECT_NAME}  PROPERTIES
+#    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+#endif()
 
-if(MPI_LINK_FLAGS)
-  set_target_properties(${PROJECT_NAME}  PROPERTIES
-    LINK_FLAGS "${MPI_LINK_FLAGS}")
-endif()
+#if(MPI_LINK_FLAGS)
+#  set_target_properties(${PROJECT_NAME}  PROPERTIES
+#    LINK_FLAGS "${MPI_LINK_FLAGS}")
+#endif()
 
-target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+#target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
+#  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
+#target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
-install(TARGETS ${PROJECT_NAME} DESTINATION /usr/bin/)
+#install(TARGETS ${PROJECT_NAME} interpol filaments filaments_felbmRK4 DESTINATION /usr/bin/)
+message(STATUS ${PROJECT_TARGETS})
+
+separate_arguments(PROJECT_TARGETS)
+install(TARGETS ${PROJECT_TARGETS} DESTINATION /usr/bin/)
 
 # FetchContent added in CMake 3.11, downloads during the configure step
 

@@ -5,12 +5,14 @@
 #include <boost/algorithm/string.hpp>
 #include <cassert>
 #include "dolfin_elements/P1_2.h"
+#include "dolfin_elements/P2_2.h"
+#include "dolfin_elements/vP1_2.h"
 #include "dolfin_elements/vP2_2.h"
 #include "PeriodicBC.hpp"
 
 using namespace H5;
 
-TriangleInterpol::TriangleInterpol(const std::string infilename)
+TriangleInterpol::TriangleInterpol(const std::string& infilename)
   : Interpol(infilename)
 {
   std::ifstream input(infilename);
@@ -42,7 +44,9 @@ TriangleInterpol::TriangleInterpol(const std::string infilename)
   if (dolfin_params["periodic_y"] == "true"){
     periodic[1] = true;
   }
-
+  if (dolfin_params["ignore_pressure"] == "true"){
+    include_pressure = false;
+  }
   std::string meshfilename = get_folder() + "/" + dolfin_params["mesh"];
   dolfin::HDF5File meshfile(MPI_COMM_WORLD, meshfilename, "r");
 
@@ -88,18 +92,67 @@ TriangleInterpol::TriangleInterpol(const std::string infilename)
   }
 
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
-  u_space_ = std::make_shared<vP2_2::FunctionSpace>(mesh, constrained_domain);
-  p_space_ = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
+  
+  std::string u_el = dolfin_params["velocity_space"];
+  std::string p_el = dolfin_params["pressure_space"];
+  
+  // Velocity
+  if (u_el == "P1"){
+    u_space_ = std::make_shared<vP1_2::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_u = 3;
+  }
+  else if (u_el == "P2"){
+    u_space_ = std::make_shared<vP2_2::FunctionSpace>(mesh, constrained_domain);
+    ncoeffs_u = 6;
+  }
+  else {
+    std::cout << "Unrecognized velocity element: " << u_el << std::endl;
+    exit(0);
+  }
+  // Pressure
+  if (include_pressure){
+    if (p_el == "P1"){
+      p_space_ = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
+      ncoeffs_p = 3;
+    }
+    else if (p_el == "P2"){
+      p_space_ = std::make_shared<P2_2::FunctionSpace>(mesh, constrained_domain);
+      ncoeffs_p = 6;
+    }
+    else {
+      std::cout << "Unrecognized pressure element: " << p_el << std::endl;
+      exit(0);
+    }
+  }
+  else {
+    std::cout << "Note: Ignoring pressure." << std::endl;
+  }
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
-  p_prev_ = std::make_shared<dolfin::Function>(p_space_);
-  p_next_ = std::make_shared<dolfin::Function>(p_space_);
 
+  u_prev_coefficients_.resize(dim*ncoeffs_u);
+  u_next_coefficients_.resize(dim*ncoeffs_u);
+
+  Nu_.resize(ncoeffs_u);
+
+  Nux_.resize(ncoeffs_u);
+  Nuy_.resize(ncoeffs_u);
+
+  if (include_pressure){
+    p_prev_ = std::make_shared<dolfin::Function>(p_space_);
+    p_next_ = std::make_shared<dolfin::Function>(p_space_);
+
+    p_prev_coefficients_.resize(ncoeffs_p);
+    p_next_coefficients_.resize(ncoeffs_p);
+    
+    Np_.resize(ncoeffs_p);
+  }
 }
 
 void TriangleInterpol::update(const double t)
 {
+  // TODO: swapping!
 
   StampPair sp = ts.get(t);
   // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
@@ -146,11 +199,32 @@ void TriangleInterpol::probe(const Vector3d &x, const double t)
   inside = (id != std::numeric_limits<unsigned int>::max());
   if (inside)
   {
-    // Compute P2-P1 basis at x
+    // Compute Pk-Pl basis at x
     double r, s, t;
     triangles_[id].xy2bary(x_loc[0], x_loc[1], r, s, t);
-    triangles_[id].quadbasis(r, s, t, N6_);
-    triangles_[id].linearbasis(r, s, t, N3_);
+
+    if (ncoeffs_u == 3){
+      triangles_[id].linearbasis(r, s, t, Nu_);
+    }
+    else if (ncoeffs_u == 6){
+      triangles_[id].quadbasis(r, s, t, Nu_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+      exit(0);
+    }
+    if (include_pressure){
+      if (ncoeffs_p == 3){
+        triangles_[id].linearbasis(r, s, t, Np_);
+      }
+      else if (ncoeffs_p == 6){
+        triangles_[id].quadbasis(r, s, t, Np_);
+      }
+      else {
+        std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
+        exit(0);
+      }
+    }
 
     // Restrict solution to cell
     u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
@@ -163,39 +237,55 @@ void TriangleInterpol::probe(const Vector3d &x, const double t)
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
 
     // Evaluate
-    double P_prev = std::inner_product(N3_.begin(), N3_.end(), p_prev_coefficients_.begin(), 0.0);
-    double P_next = std::inner_product(N3_.begin(), N3_.end(), p_next_coefficients_.begin(), 0.0);
 
-    Vector3d U_prev = {std::inner_product(N6_.begin(), N6_.end(), u_prev_coefficients_.begin(), 0.0),
-                       std::inner_product(N6_.begin(), N6_.end(), &u_prev_coefficients_[6], 0.0),
-                       std::inner_product(N6_.begin(), N6_.end(), &u_prev_coefficients_[12], 0.0) };
-    Vector3d U_next = {std::inner_product(N6_.begin(), N6_.end(), u_next_coefficients_.begin(), 0.0),
-                       std::inner_product(N6_.begin(), N6_.end(), &u_next_coefficients_[6], 0.0),
-                       std::inner_product(N6_.begin(), N6_.end(), &u_next_coefficients_[12], 0.0) };
+    Vector3d U_prev = {std::inner_product(Nu_.begin(), Nu_.end(), u_prev_coefficients_.begin(), 0.0),
+                       std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[ncoeffs_u], 0.0),
+                       0.0};
+    Vector3d U_next = {std::inner_product(Nu_.begin(), Nu_.end(), u_next_coefficients_.begin(), 0.0),
+                       std::inner_product(Nu_.begin(), Nu_.end(), &u_next_coefficients_[ncoeffs_u], 0.0),
+                       0.0 };
 
     // Update
     U = alpha_t * U_next + (1-alpha_t) * U_prev;
     A = (U_next-U_prev)/(t_next-t_prev);
-    P = alpha_t * P_next + (1-alpha_t) * P_prev;
+
+    if (include_pressure){
+      // Evaluate
+      double P_prev = std::inner_product(Np_.begin(), Np_.end(), p_prev_coefficients_.begin(), 0.0);
+      double P_next = std::inner_product(Np_.begin(), Np_.end(), p_next_coefficients_.begin(), 0.0);
+      P = alpha_t * P_next + (1-alpha_t) * P_prev;
+    }
 
     if (this->int_order > 1){
-      triangles_[id].quadderiv(r, s, t, Nx_,Ny_);
+      if (ncoeffs_u == 3){
+        triangles_[id].linearderiv(r, s, t, Nux_, Nuy_);
+      }
+      else if (ncoeffs_u == 6){
+        triangles_[id].quadderiv(r, s, t, Nux_, Nuy_);
+      }
+
       Matrix3d gradU_prev;
       gradU_prev <<
-        std::inner_product(Nx_.begin(), Nx_.end(), u_prev_coefficients_.begin(), 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), u_prev_coefficients_.begin(), 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[6], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[6], 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_prev_coefficients_[12], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_prev_coefficients_[12], 0.0);
+        std::inner_product(Nux_.begin(), Nux_.end(), u_prev_coefficients_.begin(), 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), u_prev_coefficients_.begin(), 0.0),
+        0.0,
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_prev_coefficients_[ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_prev_coefficients_[ncoeffs_u], 0.0),
+        0.0,
+        0.0,
+        0.0,
+        0.0;
       Matrix3d gradU_next;
-      gradU_next << std::inner_product(Nx_.begin(), Nx_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Nz_.begin(), Nz_.end(), u_next_coefficients_.begin(), 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[6], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[6], 0.0),
-        std::inner_product(Nx_.begin(), Nx_.end(), &u_next_coefficients_[12], 0.0),
-        std::inner_product(Ny_.begin(), Ny_.end(), &u_next_coefficients_[12], 0.0);
+      gradU_next << 
+        std::inner_product(Nux_.begin(), Nux_.end(), u_next_coefficients_.begin(), 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), u_next_coefficients_.begin(), 0.0),
+        0.0,
+        std::inner_product(Nux_.begin(), Nux_.end(), &u_next_coefficients_[ncoeffs_u], 0.0),
+        std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[ncoeffs_u], 0.0),
+        0.0,
+        0.0,
+        0.0,
+        0.0;
 
       gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
       gradA = (gradU_next-gradU_prev)/(t_next-t_prev);

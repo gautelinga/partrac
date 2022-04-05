@@ -10,10 +10,10 @@ class TriangleInterpol
   : public Interpol
 {
 public:
-  TriangleInterpol(const std::string infilename);
+  TriangleInterpol(const std::string& infilename);
   void update(const double t);
   void probe(const Vector3d &x, const double t);
-  bool inside_domain() { return inside; };
+  bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
   double get_uz(){ return 0.; };
@@ -61,6 +61,8 @@ protected:
 
   bool inside;
 
+  bool include_pressure = true;
+
   std::map<std::string, std::string> dolfin_params;
 
   std::shared_ptr<dolfin::Mesh> mesh;
@@ -80,13 +82,23 @@ protected:
 
   std::vector<std::vector<double>> coordinate_dofs_;
 
-  std::array<double, 18> u_prev_coefficients_;
-  std::array<double, 18> u_next_coefficients_;
-  std::array<double, 3> p_prev_coefficients_;
-  std::array<double, 3> p_next_coefficients_;
+  //std::array<double, 12> u_prev_coefficients_;
+  //std::array<double, 12> u_next_coefficients_;
+  //std::array<double, 3> p_prev_coefficients_;
+  //std::array<double, 3> p_next_coefficients_;
+  std::vector<double> u_prev_coefficients_;
+  std::vector<double> u_next_coefficients_;
+  std::vector<double> p_prev_coefficients_;
+  std::vector<double> p_next_coefficients_;
 
-  std::array<double, 6> N6_, Nx_, Ny_, Nz_;
-  std::array<double, 3> N3_;
+  //std::array<double, 6> N6_, Nx_, Ny_, Nz_;
+  //std::array<double, 3> N3_;
+  std::vector<double> Nu_, Nux_, Nuy_;
+  std::vector<double> Np_;
+
+  Uint ncoeffs_u;
+  Uint ncoeffs_p;
+
 };
 
 #endif

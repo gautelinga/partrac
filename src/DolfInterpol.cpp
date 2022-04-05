@@ -2,7 +2,7 @@
 #include "DolfInterpol.hpp"
 #include <boost/algorithm/string.hpp>
 
-DolfInterpol::DolfInterpol(const std::string infilename) : Interpol(infilename) {
+DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename) {
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;

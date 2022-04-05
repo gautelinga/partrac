@@ -16,7 +16,7 @@ public:
   AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t_update=t; };
   void probe(const Vector3d &x, const double t) { expr->eval(x, t); };
-  bool inside_domain() { return expr->inside(); };
+  bool inside_domain() const { return expr->inside(); };
   double get_ux() { return expr->ux(); };
   double get_uy() { return expr->uy(); };
   double get_uz() { return expr->uz(); };
