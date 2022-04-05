@@ -499,7 +499,7 @@ void Particles<ParticleType>::_get_x_data(std::vector<Real>& a){
         a.push_back(x[1]);
         a.push_back(x[2]);
     }
-};
+}
 
 template<class ParticleType>
 void Particles<ParticleType>::_get_u_data(std::vector<Real>& a){
@@ -510,7 +510,7 @@ void Particles<ParticleType>::_get_u_data(std::vector<Real>& a){
         a.push_back(u[1]);
         a.push_back(u[2]);
     }
-};
+}
 
 template<class ParticleType>
 void Particles<ParticleType>::_get_scalar_data(const std::string& field, std::vector<Real>& a){
@@ -519,7 +519,7 @@ void Particles<ParticleType>::_get_scalar_data(const std::string& field, std::ve
         Real s = particle.get_scalar(field);
         a.push_back(s);
     }
-};
+}
 
 template<class ParticleType>
 void Particles<ParticleType>::_get_vector_data(const std::string& field, std::vector<Real>& a){
@@ -530,6 +530,6 @@ void Particles<ParticleType>::_get_vector_data(const std::string& field, std::ve
         a.push_back(v[1]);
         a.push_back(v[2]);
     }
-};
+}
 
 #endif
