@@ -236,6 +236,12 @@ int main(int argc, char* argv[])
     while (t <= T){
         intp.update(t);
 
+        // Update fields for output
+        if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
+            //ps.update_fields(t, output_fields);
+            intp.assign_fields(ps, output_fields);
+        }
+
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
@@ -254,9 +260,6 @@ int main(int argc, char* argv[])
 
         // Dump detailed data
         if (it % int_dump_intv == 0){
-            //ps.update_fields(t, output_fields);
-            intp.assign_fields(ps, output_fields);
-
             std::string groupname = std::to_string(t);
 
             // Clear file if it exists, otherwise create

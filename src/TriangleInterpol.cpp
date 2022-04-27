@@ -164,7 +164,7 @@ void TriangleInterpol::update(const double t)
     prevfile.read(*p_prev_, "p");
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, "u");
     nextfile.read(*p_next_, "p");
 
@@ -180,6 +180,8 @@ void TriangleInterpol::probe(const Vector3d &x, const double t)
 {
   assert(t <= t_next && t >= t_prev);
   alpha_t = (t-t_prev)/(t_next-t_prev);
+
+  // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;
 
   dolfin::Array<double> x_loc(dim);
   for (std::size_t i=0; i<dim; ++i){

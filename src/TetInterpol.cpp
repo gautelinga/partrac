@@ -187,7 +187,7 @@ void TetInterpol::update(const double t)
       prevfile.read(*p_prev_, dolfin_params["pressure_field"]);
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, dolfin_params["velocity_field"]);
     if (include_pressure)
       nextfile.read(*p_next_, dolfin_params["pressure_field"]);
