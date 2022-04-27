@@ -5,7 +5,7 @@
 #include <list>
 #include <array>
 #include <map>
-#include <Eigen/Dense>
+#include <eigen3/Eigen/Dense>
 #include <memory>
 
 #include "H5Cpp.h"

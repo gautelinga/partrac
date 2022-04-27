@@ -41,6 +41,7 @@ public:
   double get_uzy() { return 0.; };
   double get_uzz() { return 0.; };
   Matrix3d get_grada() { return gradA; };
+  void probe(const Vector3d &x){ probe(x, this->t_update); };
 
 protected:
   Timestamps ts;

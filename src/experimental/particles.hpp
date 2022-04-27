@@ -313,7 +313,7 @@ public:
     //std::vector<Edge<ParticleType>>& edges() { return m_edges; };
     std::vector<Edge>& edges() { return m_edges; };
     std::vector<Face<ParticleType>>& faces() { return m_faces; };
-    void dump_hdf5(H5::H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields);
+    void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
     void color_particles(Real c0, Real c1){
         Uint i = 0;
         Uint n = m_particles.size()-1;
@@ -414,7 +414,7 @@ Particles<ParticleType>::Particles(const Uint Nrw_max) : m_Nrw_max(Nrw_max)
 }
 
 template<class ParticleType>
-void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string groupname, std::map<std::string, bool>& output_fields){
+void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
     //_number_particles();
     /*
     if (m_faces.size() > 0){
