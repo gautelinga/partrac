@@ -1,0 +1,8 @@
+velocity_space=P2
+pressure_space=P1
+timestamps=timestamps.dat
+mesh=mesh.h5
+periodic_x=true
+periodic_y=true
+periodic_z=true
+rho=1.0
