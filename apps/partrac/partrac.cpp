@@ -290,6 +290,11 @@ int main(int argc, char* argv[])
   while (t <= T){
     if (!frozen_fields)
       intp->update(t);
+    // Update fields if needed
+    if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
+      ps.update_fields(t, output_fields);
+    }
+
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
@@ -346,8 +351,6 @@ int main(int argc, char* argv[])
 
     // Dump detailed data
     if (it % int_dump_intv == 0){
-      ps.update_fields(t, output_fields);
-
       std::string groupname = std::to_string(t);
       //if (mpi.rank() == 0) {
       //{
