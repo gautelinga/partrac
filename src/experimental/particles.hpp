@@ -133,13 +133,18 @@ public:
     Real length(T& ps) const { return vector(ps).norm(); }
     //void set_l0(Real l0) { m_l0 = l0; };
     template<typename T>
-    void resize(T& ps, Real ds){
+    void resize(T& ps, Real ds_max){
         // _Assumes_ every node belongs to exactly one edge! Make a check for this. (assert_is_resizable)
         // conserve local elongation
-        Real rescale_factor = ds / length(ps); // typically < 1
-        if (rescale_factor < 1.0){
+        // Real rescale_factor = ds / length(ps); // typically < 1
+        //if (rescale_factor < 1.0){
+        Real ds = length(ps);
+        if (ds > ds_max){
             //std::cout << rescale_factor << std::endl;
-            m_l0 *= rescale_factor;
+            // m_l0 *= rescale_factor;
+            int n_doublings_loc = ceil(log2(ds / ds_max));
+            m_n_doublings += n_doublings_loc;
+            //ds /= exp2(n_doublings_loc);
             //Vector x_a = m_a->x();
             //Vector x_b = m_b->x();
             //Vector x0 = 0.5*(x_a + x_b);
@@ -149,7 +154,8 @@ public:
             //m_a->x() = x0 + dx * rescale_factor;
             //m_b->x() = x0 - dx * rescale_factor;
             //m_b->x() = m_a->x() - dx * rescale_factor; // Ex.: x_a - (x_a - x_b) * 1.0 = x_b
-            ps.particles()[m_b_id].x() = ps.particles()[m_a_id].x() - dx * rescale_factor;
+            //ps.particles()[m_b_id].x() = ps.particles()[m_a_id].x() - dx * rescale_factor;
+            ps.particles()[m_b_id].x() = ps.particles()[m_a_id].x() - dx / exp2(n_doublings_loc);
             //m_ps->particles()[m_b_id].x() = m_ps->particles()[m_a_id].x() - dx * rescale_factor;
         }
     }
@@ -192,6 +198,17 @@ public:
         m_a_id = old2new[m_a_id];
         m_b_id = old2new[m_b_id];
     }
+    Uint n_doublings() const {
+        return m_n_doublings;
+    }
+    template<typename T>
+    Real logelong(T& ps){
+        return log(length(ps)/l0()) + n_doublings() * log(2);
+    }
+    template<typename T>
+    Real elong(T& ps){
+        return length(ps)/l0() * exp2(n_doublings());
+    }
     //void connect(Particles<ParticleType>* ps){
     //    m_ps = ps;
     //}
@@ -204,6 +221,7 @@ protected:
     //std::vector<ParticleType>& m_particles;
     //std::vector<ParticleType>& m_particles() { return m_ps.particles(); }
     Real              m_l0 = 0.;
+    Uint              m_n_doublings = 0;
     //Uint            m_id = NULL;
     //std::vector<Face<ParticleType>*> m_faces;
     std::vector<Uint> m_face_ids;
@@ -245,6 +263,17 @@ public:
         Vector b = m_edges()[m_b_id].vector(ps);
         return a.cross(b).norm()/2;
     }
+    template<typename T>
+    Real logelong(T& ps){
+        return log(area(ps)/A0()) + n_doublings() * log(2);
+    }
+    Real n_doublings() const {
+        return m_n_doublings;
+    }
+    template<typename T>
+    Real elong(T& ps){
+        return area(ps)/A0() * exp2(n_doublings());
+    }
     //void connect(Particles<ParticleType>* ps){
     //    m_ps = ps;
     //}
@@ -258,6 +287,7 @@ protected:
     Uint m_c_id;
     Real                  m_A0 = NULL;
     //Uint                m_id = NULL;
+    Uint m_n_doublings         = 0;
     //std::vector<Edge<ParticleType>>& m_edges() { return m_ps.edges(); };
     std::vector<Edge>& m_edges() { return m_ps.edges(); };
     Particles<ParticleType>& m_ps;
@@ -446,6 +476,13 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
         std::vector<Real> dl0; 
         dl0.reserve(m_edges.size());
         //(edges_dims[0]);
+        //std::vector<Real> elong;
+        //elong.reserve(m_edges.size());
+        std::vector<Real> logelong;
+        logelong.reserve(m_edges.size());
+        std::vector<Uint> doublings;
+        doublings.reserve(m_edges.size());
+
         for (auto & edge : m_edges){
             /*for (auto & node : edge.particle_ptrs() ){
                 edges_arr.push_back(node->get_id());
@@ -457,6 +494,8 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
             //std::cout << std::endl;
             dl.push_back(edge.length(*this));  //dist(edges[iedge].first[0], edges[iedge].first[1]);
             dl0.push_back(edge.l0());  // [iedge] = edges[iedge].second;
+            logelong.push_back(edge.logelong(*this));
+            doublings.push_back(edge.n_doublings());
         }
         H5::DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
                                                H5::PredType::NATIVE_ULONG,
@@ -465,6 +504,16 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
 
         scalar_to_h5(h5f, groupname + "/dl", dl);
         scalar_to_h5(h5f, groupname + "/dl0", dl0);
+        scalar_to_h5(h5f, groupname + "/logelong", logelong);
+
+        hsize_t doublings_dims[2];
+        doublings_dims[0] = doublings.size();
+        doublings_dims[1] = 1;
+        H5::DataSpace doublings_dspace(2, doublings_dims);
+        H5::DataSet doublings_dset = h5f.createDataSet(groupname + "/doublings",
+                                                       H5::PredType::NATIVE_ULONG,
+                                                       doublings_dspace);
+        doublings_dset.write(doublings.data(), H5::PredType::NATIVE_ULONG);
     }
     if (m_particles.size() > 0){
         std::vector<Real> _vtmp;
