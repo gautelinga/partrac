@@ -142,7 +142,7 @@ void write_stats( MPIwrap& mpi
     statfile << nsum                    << "\t"           // 13
              << wsum                    << "\t"           // 14
              << w0sum                   << "\t"           // 15
-             << logelong_mean          << "\t"            // 16
+             << logelong_mean           << "\t"           // 16
              << logelong_wmean          << "\t"           // 17
              << logelong_w0mean         << "\t";          // 18
   }
