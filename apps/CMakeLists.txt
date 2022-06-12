@@ -3,6 +3,7 @@ add_subdirectory(interpol)
 add_subdirectory(filaments)
 add_subdirectory(filaments_triangleRK4)
 add_subdirectory(filaments_felbmRK4)
+add_subdirectory(tracers_triangleRK4)
 #add_subdirectory(spatial_strip_experimental)
 add_subdirectory(spatial)
 

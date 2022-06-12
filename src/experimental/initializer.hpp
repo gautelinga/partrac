@@ -420,14 +420,53 @@ public:
     }
   };
 };
-/*
-template<class InterpolType>
-class RandomPointsInitializer : public Initializer<InterpolType> {
+
+class RandomPointsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPointsInitializer(const std::vector<std::string>& key, InterpolType& intp, Parameters& prm, MPIwrap& mpi, std::mt19937 &gen)
-   : Initializer<InterpolType>(intp, prm, mpi), gen(gen) {
+  RandomPointsInitializer( const std::vector<std::string>& key
+                         , std::shared_ptr<Interpol> intp
+                         , Parameters& prm
+                         , MPIwrap& mpi
+                         , std::mt19937 &gen
+                         )
+   : Initializer(intp, prm, mpi), gen(gen){
+    std::uniform_real_distribution<> uni_dist_x(this->x_min[0], this->x_max[0]);
+    std::uniform_real_distribution<> uni_dist_y(this->x_min[1], this->x_max[1]);
+    std::uniform_real_distribution<> uni_dist_z(this->x_min[2], this->x_max[2]);
+
+    Uint Nrw = prm.Nrw;
+
+    Vector x0_ = this->x0;
+    Uint irw=0;
+    while (irw < Nrw){
+      if (key[0] == "points" && key.size() == 2){
+        if (contains(key[1], "x")){
+          x0_[0] = uni_dist_x(gen);
+        }
+        if (contains(key[1], "y")){
+          x0_[1] = uni_dist_y(gen);
+        }
+        if (contains(key[1], "z")){
+          x0_[2] = uni_dist_z(gen);
+        }
+      }
+      
+      intp->probe(x0_);
+      bool inside = intp->inside_domain();
+      if (inside){
+        this->nodes.push_back(x0_);
+        ++irw;
+      }
+      else if (key[0] == "point"){
+        std::cout << "Point not inside domain" << std::endl;
+        exit(0);
+      }
+    }
+  };
+};
+/*{
     bool init_rand_x = false;
     bool init_rand_y = false;
     bool init_rand_z = false;
@@ -440,7 +479,7 @@ public:
 
     // TODO: Factor out position generation
     Real tol = 1e-12;
-    Uint N_est = 1000000;
+    Uint N_est = 10000000;
     Real dx_est;
   
     Real Lx = this->L[0];
@@ -530,23 +569,23 @@ public:
         if (init_rand_x) x[0] += uni_dist_dx(gen);
         if (init_rand_y) x[1] += uni_dist_dy(gen);
         if (init_rand_z) x[2] += uni_dist_dz(gen);
-        this->interpolator().probe(x);
+        intp->probe(x);
         //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
-      } while (!this->interpolator().inside_domain());
+      } while (!intp->inside_domain());
       this->nodes.push_back(x);
     }
 
     sort(this->nodes.begin(), this->nodes.end(), less_than_op());
-
-    for (Uint irw=1; irw < prm.Nrw; ++irw){
-      Real ds0 = dist(this->nodes[irw-1], this->nodes[irw]);
-      if (ds0 < 10*prm.ds_init)  // 2 lattice units (before) --> 10 x ds_max (now)
-        this->edges.push_back({{irw-1, irw}, ds0});
-      // Needs customization for 2D/3D applications
-    }
+    
+    //for (Uint irw=1; irw < prm.Nrw; ++irw){
+    //  Real ds0 = dist(this->nodes[irw-1], this->nodes[irw]);
+    //  if (ds0 < 10*prm.ds_init)  // 2 lattice units (before) --> 10 x ds_max (now)
+    //    this->edges.push_back({{irw-1, irw}, ds0});
+    //  // Needs customization for 2D/3D applications
+    //}
   };
-};
-*/
+};/*
+
 
 /*std::vector<Vector> initial_positions(const std::string init_mode,
                                         const std::string init_weight,

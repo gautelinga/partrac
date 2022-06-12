@@ -161,12 +161,14 @@ void TriangleInterpol::update(const double t)
     std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
     dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
     prevfile.read(*u_prev_, "u");
-    prevfile.read(*p_prev_, "p");
+    if (include_pressure)
+      prevfile.read(*p_prev_, "p");
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, "u");
-    nextfile.read(*p_next_, "p");
+    if (include_pressure)
+      nextfile.read(*p_next_, "p");
 
     is_initialized = true;
     t_prev = sp.prev.t;
@@ -233,10 +235,12 @@ void TriangleInterpol::probe(const Vector3d &x, const double t)
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
     u_next_->restrict(u_next_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
                       coordinate_dofs_[id].data(), ufc_cells_[id]);
-    p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-                      coordinate_dofs_[id].data(), ufc_cells_[id]);
-    p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+    if (include_pressure){
+      p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                        coordinate_dofs_[id].data(), ufc_cells_[id]);
+      p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                        coordinate_dofs_[id].data(), ufc_cells_[id]);
+    }
 
     // Evaluate
 
