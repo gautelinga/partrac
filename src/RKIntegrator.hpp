@@ -78,7 +78,7 @@ std::set<Uint> RK4Integrator::step(ParticleSet& ps, const double t, const double
         intp.probe(x+dx, t+dt);
         if (intp.inside_domain()){
             ps.set_x(i, x + dx);
-            ps.set_tau(i, ps.tau(i) + dt);
+            ps.set_t_loc(i, ps.t_loc(i) + dt);
             ++n_accepted;
         }
         else {

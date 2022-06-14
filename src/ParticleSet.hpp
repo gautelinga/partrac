@@ -26,8 +26,8 @@ public:
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
     Vector3d x(const Uint i) const { return x_rw[i]; };
     void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
-    double tau(const Uint i) const { return tau_rw[i]; };
-    void set_tau(const Uint i, const double val) { tau_rw[i] = val; };
+    double t_loc(const Uint i) const { return t_loc_rw[i]; };
+    void set_t_loc(const Uint i, const double val) { t_loc_rw[i] = val; };
     Vector3d u(const Uint i) const { return u_rw[i]; };
     Vector3d facet_normal(const Uint iface,
                           const FacesType &faces,
@@ -69,7 +69,7 @@ public:
     std::vector<double> H_rw;
     std::vector<double> rho_rw;
     std::vector<double> p_rw;
-    std::vector<double> tau_rw;  // eigentime
+    std::vector<double> t_loc_rw;  // eigentime
 
     MPIwrap& m_mpi;
 };
@@ -93,7 +93,7 @@ ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPI
     this->H_rw.resize(Nrw_max);
     this->rho_rw.resize(Nrw_max);
     this->p_rw.resize(Nrw_max);
-    this->tau_rw.resize(Nrw_max);  // eigentime
+    this->t_loc_rw.resize(Nrw_max);  // eigentime
 }
 /*
 ParticleSet::ParticleSet (const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
@@ -109,7 +109,7 @@ ParticleSet::ParticleSet (const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
     this->H_rw.resize(Nrw_max);
     this->rho_rw.resize(Nrw_max);
     this->p_rw.resize(Nrw_max);
-    this->tau_rw.resize(Nrw_max);  // eigentime
+    this->t_loc_rw.resize(Nrw_max);  // eigentime
 }*/
 
 void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
@@ -120,7 +120,7 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
     // Does not work for injection:
     c_rw[irw] = double(irw)/(Nrw + pos_init.size() - 1);
 
-    tau_rw[irw] = 0.;  // anything else?
+    t_loc_rw[irw] = 0.;  // anything else?
 
     /*
     intp->probe(x_rw[irw]);
@@ -182,7 +182,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
   x_rw[Nrw] = x_rw_new;
 
   c_rw[Nrw] = 0.5*(c_rw[inode]+c_rw[jnode]);
-  tau_rw[Nrw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
+  t_loc_rw[Nrw] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
 
   H_rw[Nrw] = 0.5*(H_rw[inode]+H_rw[jnode]);
   n_rw[Nrw] = 0.5*(n_rw[inode]+n_rw[jnode]);
@@ -209,7 +209,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
 void ParticleSet::copy_node(const Uint i, const Uint j){
   x_rw[i] = x_rw[j];
   c_rw[i] = c_rw[j];
-  tau_rw[i] = tau_rw[j];  // if it is used?
+  t_loc_rw[i] = t_loc_rw[j];  // if it is used?
 
   /*
   u_rw[i] = u_rw[j];
@@ -259,7 +259,7 @@ void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode)
     Uint irw = irws[i];
     x_rw[irw] = x;
     c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
-    tau_rw[irw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
+    t_loc_rw[irw] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
 
     H_rw[irw] = 0.5*(H_rw[inode]+H_rw[jnode]);
     n_rw[irw] = 0.5*(n_rw[inode]+n_rw[jnode]);
@@ -304,7 +304,7 @@ void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesT
     x_rw[jnode] = pos_new;
 
     c_rw[new_inode] = 0.5*(c_rw[inode]+c_rw[jnode]);
-    tau_rw[new_inode] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
+    t_loc_rw[new_inode] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
 
     H_rw[new_inode] = 0.5*(H_rw[inode]+H_rw[jnode]);
     n_rw[new_inode] = 0.5*(n_rw[inode]+n_rw[jnode]);
@@ -399,8 +399,8 @@ void ParticleSet::load_scalar(const std::string filename, const std::string fiel
   if (fieldname == "c"){
     load_scalar_field(filename, c_rw, N());
   }
-  else if (fieldname == "tau"){
-    load_scalar_field(filename, tau_rw, N());
+  else if (fieldname == "t_loc"){
+    load_scalar_field(filename, t_loc_rw, N());
   }
 }
 
@@ -408,8 +408,8 @@ void ParticleSet::dump_scalar(const std::string filename, const std::string fiel
   if (fieldname == "c"){
     dump_scalar_field(filename, c_rw, N());
   }
-  else if (fieldname == "tau"){
-    dump_scalar_field(filename, tau_rw, N());
+  else if (fieldname == "t_loc"){
+    dump_scalar_field(filename, t_loc_rw, N());
   }
 }
 
@@ -453,8 +453,8 @@ void ParticleSet::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<
         vector2hdf5(h5f, groupname + "/n", n_rw, N());
     //if (faces.size() == 0)
     //  scalar2hdf5(h5f, groupname + "/e", ps.e_rw, ps.Nrw);
-    if (output_fields["tau"])
-        scalar2hdf5(h5f, groupname + "/tau", tau_rw, N());
+    if (output_fields["t_loc"])
+        scalar2hdf5(h5f, groupname + "/t_loc", t_loc_rw, N());
 }
 
 // bool ParticleSet::integrate(const double t, const double dt){

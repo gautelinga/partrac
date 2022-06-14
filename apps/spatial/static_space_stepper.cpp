@@ -73,7 +73,7 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
         uabs_est = u_1.norm();
 
         is_inside = false;
-        if (uabs_est > m_u_min && ps.tau(i) < m_T){
+        if (uabs_est > m_u_min && ps.t_loc(i) < m_T){
             dt = ds / uabs_est;
 
             dx = u_1 * dt;
@@ -95,7 +95,7 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
         if (is_inside){
             ++n_accepted;
             ps.set_x(i, x + dx);
-            ps.set_tau(i, ps.tau(i) + dt);
+            ps.set_t_loc(i, ps.t_loc(i) + dt);
         }
         else {
             outside_nodes.insert(i);
@@ -127,7 +127,7 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
         un_est = u_1.dot(m_direction);
 
         is_inside = false;
-        if (un_est > m_u_min && ps.tau(i) < m_T){
+        if (un_est > m_u_min && ps.t_loc(i) < m_T){
             s_prev = x.dot(m_direction);
             dt = (s - s_prev) / un_est;
             dx = u_1 * dt;
@@ -149,7 +149,7 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
         if (is_inside){
             ++n_accepted;
             ps.set_x(i, x + dx);
-            ps.set_tau(i, ps.tau(i) + dt);
+            ps.set_t_loc(i, ps.t_loc(i) + dt);
         }
         else {
             outside_nodes.insert(i);
@@ -319,6 +319,7 @@ int main(int argc, char* argv[])
   output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
   output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
   output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
+  output_fields["t_loc"] = true;
   output_fields["tau"] = true;
 
   //std::string write_mode = prm.write_mode;

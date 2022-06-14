@@ -94,6 +94,12 @@ public:
   std::string scheme = "explicit";
   //
   bool random = true;
+  //
+  std::string exit_plane = "none";
+  bool integrate_tau = false;
+  double tau_intv = 0.1;
+  double tau_max = 0.0;
+
 private:
   void write_params_to_file(std::string);
 };
@@ -147,6 +153,8 @@ void Parameters::parse_cmd(int argc, char* argv[]){
   }
   dump_intv = std::max(dump_intv, dt);
   stat_intv = std::max(stat_intv, dt);
+  // more?
+
   Nrw_max = std::max(Nrw_max, Nrw);
 }
 
@@ -239,6 +247,12 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "scheme") scheme = val;
 
   if (key == "random") random = stobool(val);
+
+  if (key == "exit_plane") exit_plane = val;
+  if (key == "integrate_tau") integrate_tau = stobool(val);
+  if (key == "tau_intv") tau_intv = stodouble(val);
+  if (key == "tau_max") tau_max = stodouble(val);
+
 }
 
 void Parameters::print(){
@@ -306,6 +320,11 @@ void Parameters::print(){
     print_param("random             ", bool2string(random));
 
     print_param("scheme             ", scheme);
+
+    print_param("exit_plane         ", exit_plane);
+    print_param("integrate_tau      ", bool2string(integrate_tau));
+    print_param("tau_intv           ", tau_intv);
+    print_param("tau_max            ", tau_max);
   }
 }
 
@@ -393,6 +412,10 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "scheme", scheme);
 
+  write_param(paramsfile, "exit_plane", scheme);
+  write_param(paramsfile, "integrate_tau", bool2string(integrate_tau));
+  write_param(paramsfile, "tau_intv", tau_intv);
+  write_param(paramsfile, "tau_max", tau_max);
 
   paramsfile.close();
 }

@@ -176,7 +176,7 @@ int main(int argc, char* argv[])
 
   if (prm.inject){
     std::vector<std::string> key = split_string(prm.init_mode, "_");
-    if (key[0] == "uniform"){
+    if (key[0] == "uniform" || key[0] == "point"){
       std::cout << "Injection activated!" << std::endl;
     }
     else {
@@ -254,6 +254,7 @@ int main(int argc, char* argv[])
   Uint int_inject_intv = int(prm.inject_intv/dt);
   Uint int_filter_intv = int(prm.filter_intv/dt);
   //Uint int_resize_intv = int(prm.resize_intv/dt);
+  Uint int_tau_intv = int(prm.tau_intv/dt);
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.minimal_output;
@@ -262,7 +263,8 @@ int main(int argc, char* argv[])
   output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
   output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
   output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
-  output_fields["tau"] = local_dt;
+  output_fields["t_loc"] = local_dt;
+  output_fields["tau"] = prm.integrate_tau;
 
   if (local_dt && !frozen_fields){
     std::cout << "Error: local_dt=true requires the use of frozen_fields=true!" << std::endl;
@@ -274,6 +276,9 @@ int main(int argc, char* argv[])
   else if (local_dt){
     std::cout << "Note: Using local time steps. Time t should now be considered only as a parametrizing variable." << std::endl;
   }
+
+  bool any_exit_plane = (prm.exit_plane == "x" || prm.exit_plane == "y" || prm.exit_plane == "z") && prm.Ln > 0;
+  int exit_dim = prm.exit_plane == "x" ? 0 : (prm.exit_plane == "y" ? 1 : 2);
 
   //std::string write_mode = prm.write_mode;
 
@@ -348,6 +353,16 @@ int main(int argc, char* argv[])
       if (prm.verbose && resized)
         std::cout << "Resized edges." << std::endl;
     }*/
+    // Removal
+    if (any_exit_plane && it % int_filter_intv == 0){
+      Uint n_rem = mesh.remove_beyond(exit_dim, prm.Ln);
+      if (prm.verbose)
+        std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
+    }
+    // Tau integration
+    if (prm.integrate_tau && it % int_tau_intv == 0){
+      mesh.integrate_tau(dt * int_tau_intv, prm.tau_max);
+    }
 
     // Dump detailed data
     if (it % int_dump_intv == 0){

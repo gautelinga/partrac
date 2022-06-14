@@ -18,10 +18,12 @@ public:
   Uint refine();
   Uint coarsen();
   bool filter();
+  Uint remove_beyond(const int, const double);
   Uint inject();
   void compute_interior();
   void remove_nodes_safe(std::vector<bool>&);
   bool resize(const double);
+  void integrate_tau(const double, const double);
   EdgesType edges;
   FacesType faces;
   Edge2FacesType edge2faces;
@@ -85,6 +87,35 @@ void Topology::clear(){
   faces.clear();
 }
 
+void Topology::integrate_tau(const double dt, const double tau_max){
+  if (faces.size() == 0){
+    for ( auto & edge : edges ){
+      Uint inode = edge.first[0];
+      Uint jnode = edge.first[1];
+      double ds0 = edge.second;
+      double ds = ps.dist(inode, jnode);
+      double rho = ds / ds0;
+      edge.tau += 0.5*dt*(pow(edge.rho_prev, 2) + pow(rho, 2));
+      edge.rho_prev = rho;
+    }
+    if (tau_max > 0.0){
+      std::vector<bool> edge_isactive(edges.size(), true); 
+      for (Uint iedge=0; iedge < edges.size(); ++iedge){
+        if (edges[iedge].tau > tau_max)
+          edge_isactive[iedge] = false;
+      }
+
+      // untested!
+      FacesType faces_dummy;
+      //NodesListType nodes_inlet_dummy;
+      EdgesListType edges_inlet_dummy;
+      remove_edges(faces_dummy, edges, edge_isactive, edges_inlet_dummy);
+      remove_unused_nodes(edges, nodes_inlet, ps);
+      compute_node2edges(node2edges, edges, ps.N());
+    }
+  }
+}
+
 Uint Topology::refine(){
   return refinement(faces, edges,
                     edge2faces, node2edges,
@@ -142,6 +173,20 @@ void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
 
 bool Topology::filter(){
   return filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
+}
+
+Uint Topology::remove_beyond(const int exit_dim, const double Ln){
+  std::vector<bool> node_isactive(ps.N(), true);
+  Uint count = 0;
+  for (Uint i=0; i<ps.N(); ++i){
+    Vector3d xi = ps.x(i);
+    if (xi[exit_dim] > Ln){
+      node_isactive[i] = false;
+      ++count;
+    }
+  }
+  remove_nodes_safe(node_isactive);
+  return count;
 }
 
 bool Topology::resize(const double ds){
@@ -242,7 +287,7 @@ void Topology::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std
   all_ps.dump_hdf5(h5f, groupname, output_fields);*/
   
   if (dim() > 0)
-    mesh2hdf(h5f, groupname, ps, faces, edges);
+    mesh2hdf(h5f, groupname, ps, faces, edges, output_fields["tau"]);
   ps.dump_hdf5(h5f, groupname, output_fields);
 }
 

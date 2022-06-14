@@ -47,9 +47,12 @@ void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
   }
 }*/
 
-void mesh2hdf(H5File& h5f, const std::string& groupname,
-              const ParticleSet& ps,
-              const FacesType& faces, const EdgesType& edges){
+void mesh2hdf( H5File& h5f, const std::string& groupname
+             , const ParticleSet& ps
+             , const FacesType& faces
+             , const EdgesType& edges
+             , const bool output_tau
+             ){
   // This function is here because it contains ps. Consider stripping that.
   // Faces
   if (faces.size() > 0){
@@ -97,12 +100,15 @@ void mesh2hdf(H5File& h5f, const std::string& groupname,
 
     std::vector<double> dl(edges_dims[0]);
     std::vector<double> dl0(edges_dims[0]);
+    std::vector<double> tau_(edges_dims[0]);
     for (Uint iedge=0; iedge < edges_dims[0]; ++iedge){
       for (Uint j=0; j<2; ++j){
         edges_arr[iedge*edges_dims[1] + j] = edges[iedge].first[j];
       }
       dl[iedge] = ps.dist(edges[iedge].first[0], edges[iedge].first[1]);
       dl0[iedge] = edges[iedge].second;
+      if (output_tau)
+        tau_[iedge] = edges[iedge].tau;
     }
 
     DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
@@ -112,6 +118,8 @@ void mesh2hdf(H5File& h5f, const std::string& groupname,
 
     scalar2hdf5(h5f, groupname + "/dl", dl, edges_dims[0]);
     scalar2hdf5(h5f, groupname + "/dl0", dl0, edges_dims[0]);
+    if (output_tau)
+      scalar2hdf5(h5f, groupname + "/tau", tau_, edges_dims[0]);
   }
 }
 
@@ -387,6 +395,8 @@ Uint strip_refinement(EdgesType &edges,
     Uint jnode = edges[iedge].first[1];
     double ds0 = edges[iedge].second;
     double ds = ps.dist(inode, jnode);
+    double tau = edges[iedge].tau;
+    double rho_prev = edges[iedge].rho_prev;
     //double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
     //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
     double ds_max_loc = ds_max/(1.0);  // + curv_refine_factor*kappa);
@@ -402,7 +412,8 @@ Uint strip_refinement(EdgesType &edges,
         edges[iedge].second = ds0/2;
         Uint new_iedge = edges.size();
 
-        edges.push_back({{new_inode, jnode}, ds0/2});
+        //edges.push_back({{new_inode, jnode}, ds0/2});
+        edges.push_back({{new_inode, jnode}, ds0/2, tau, rho_prev});
         //std::cout << "after:  " << edges[iedge].first[0] << " " << edges[iedge].first[1] << std::endl;
         //std::cout << "...and: " << edges[new_iedge].first[0] << " " << edges[new_iedge].first[1] << std::endl;
 
@@ -1175,6 +1186,8 @@ Uint strip_coarsening(EdgesType &edges,
 
           edges[jedge].second += ds0/2;
           edges[kedge].second += ds0/2;
+
+          // Do something about tau, rho_prev?
 
           node2edges[old_inode].clear();
           std::replace(node2edges[new_inode].begin(),

@@ -90,7 +90,7 @@ std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const d
         intp.probe(x+dx_rw, t+dt);
         if (intp.inside_domain()){
             ps.set_x(i, x + dx_rw);
-            ps.set_tau(i, ps.tau(i) + dt);
+            ps.set_t_loc(i, ps.t_loc(i) + dt);
             ++n_accepted;
         }
         else {
