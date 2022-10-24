@@ -70,6 +70,9 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   else if (key[0] == "uniform"){
     init_state = std::make_shared<UniformInitializer>(key, intp, prm, mpi);
   }
+  else if (key[0] == "strip"){
+    init_state = std::make_shared<StripInitializer>(key, intp, prm, mpi);
+  }
   else if (key[0] == "sheet"){
     init_state = std::make_shared<SheetInitializer>(key, intp, prm, mpi);
   }

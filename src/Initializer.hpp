@@ -100,6 +100,56 @@ public:
   };
 };
 
+class StripInitializer : public Initializer {
+public:
+  StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+    double La = prm.La;
+    double Lb = prm.Lb;
+    Vector3d n(0., 0., 0.);
+    if (key[1] == "x"){
+      n[0] = 1.0;
+    }
+    if (key[1] == "y"){
+      n[1] = 1.0;
+    }
+    if (key[1] == "z"){
+      n[2] = 1.0;
+    }
+
+    Vector3d x00 = x0;
+    x00[0] += - La/2*n[0];
+    x00[1] += - La/2*n[1];
+    x00[2] += - La/2*n[2];
+
+    Vector3d x01 = x0;
+    x01[0] += La/2*n[0];
+    x01[1] += La/2*n[1];
+    x01[2] += La/2*n[2];
+
+    intp->probe(x00);
+    bool inside_00 = intp->inside_domain();
+    intp->probe(x01);
+    bool inside_01 = intp->inside_domain();
+
+    if (inside_00 && inside_01){
+      std::cout << "Strip inside domain." << std::endl;
+    }
+    else {
+      std::cout << "Strip not inside domain" << std::endl;
+      exit(0);
+    }
+
+    nodes.push_back(x0);
+    for (Uint irw=0; irw < prm.Nrw; ++irw){
+      double alpha = float(irw+1)/prm.Nrw;
+      Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
+      // check if inside domain
+      nodes.push_back(x0i);
+      edges.push_back({{irw, irw+1}, dist(nodes[irw], nodes[irw+1])});
+    }
+  };
+};
+
 class SheetInitializer : public Initializer {
 public:
   SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {

@@ -292,7 +292,7 @@ int main(int argc, char* argv[])
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
-  while (t <= T){
+  while (t < T + dt/2){
     if (!frozen_fields)
       intp->update(t);
     // Update fields if needed
