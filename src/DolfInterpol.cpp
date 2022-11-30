@@ -52,6 +52,7 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
 
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
   dim = mesh->geometry().dim();
+  mesh->init();
 
   std::vector<double> xx = mesh->coordinates();
 
@@ -174,6 +175,13 @@ void DolfInterpol::update(const double t){
 }
 
 void DolfInterpol::probe(const Vector3d &x, const double t){
+  int cell_id = -1;
+  probe(x, t, cell_id);
+}
+
+void DolfInterpol::probe(const Vector3d &x, const double t, int& cell_id){
+  // TODO: Search neighborhood first
+
   assert(t <= t_next && t >= t_prev);
   alpha_t = (t-t_prev)/(t_next-t_prev);
   //const double* _x = x.data();

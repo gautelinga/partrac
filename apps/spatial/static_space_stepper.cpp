@@ -65,8 +65,9 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
 
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
+        int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t);
+        intp.probe(x, t, cell_id);
 
         Vector3d u_1 = intp.get_u();
 
@@ -84,7 +85,7 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
             }
 
             if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
+                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
                 is_inside = intp.inside_domain();
             }
             else {
@@ -96,6 +97,7 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
             ++n_accepted;
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
+            ps.set_cell_id(i, cell_id);
         }
         else {
             outside_nodes.insert(i);
@@ -119,8 +121,9 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
 
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
+        int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t);
+        intp.probe(x, t, cell_id);
 
         Vector3d u_1 = intp.get_u();
 
@@ -138,7 +141,7 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
             }
 
             if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
+                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
                 is_inside = intp.inside_domain();
             }
             else {
@@ -150,6 +153,7 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
             ++n_accepted;
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
+            ps.set_cell_id(i, cell_id);
         }
         else {
             outside_nodes.insert(i);
@@ -300,7 +304,7 @@ int main(int argc, char* argv[])
   //Uint n_declined = prm.n_declined;
 
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
-  H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+  H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
   //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
   //H5wrap h5file(mpi);
   //h5file.open(h5fname, "w");

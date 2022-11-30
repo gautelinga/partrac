@@ -17,6 +17,7 @@
 #include "MPIwrap.hpp"
 #include "Parameters.hpp"
 #include "StructuredInterpol.hpp"
+#include "TriangleInterpol.hpp"
 #include "experimental/integrator_RK.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
@@ -38,50 +39,59 @@ std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm
 }
 
 template<typename ParticleType, typename InterpolatorType>
-void reinject_edges(const std::set<Uint>& outside_node_ids, const std::vector<std::string>& key, Particles<ParticleType>& ps, InterpolatorType& intp, std::mt19937 &gen){
+void reinject_nodes( const std::set<Uint>& outside_node_ids
+                   , const std::vector<std::string>& key
+                   , Particles<ParticleType>& ps
+                   , InterpolatorType& intp
+                   , std::mt19937 &gen){
     assert(outside_node_ids.size() > 0);
-    
-    std::set<Uint> outside_edge_ids;
-    std::vector<ParticleType>& particles = ps.particles();
-    for ( auto const & node_id : outside_node_ids ){
-        std::set<Uint> edge_ids_cp = particles[node_id].edge_ids();
-        outside_edge_ids.merge(edge_ids_cp);
-    }
-
-    if (! (outside_node_ids.size() <= outside_edge_ids.size()*2) ){
-        exit(0);
-    }
 
     Vector Dx_max = 0.5*(intp.get_x_max()-intp.get_x_min());
     std::uniform_real_distribution<> uni_dist_x(-Dx_max[0], Dx_max[0]);
     std::uniform_real_distribution<> uni_dist_y(-Dx_max[1], Dx_max[1]);
     std::uniform_real_distribution<> uni_dist_z(-Dx_max[2], Dx_max[2]);
-    // Found all edges
-    for ( auto edge_id : outside_edge_ids ){
-        auto & edge = ps.edges()[edge_id];
+    for ( auto node_id : outside_node_ids ){
+        auto & node = ps.particles()[node_id];
 
         bool outside = true;
         Vector Dx = {0., 0., 0.};
         while (outside)
-        { 
-            if (contains(key[2], "x")){
+        {
+            if (contains(key[1], "x")){
                 Dx[0] = uni_dist_x(gen);
             }
-            if (contains(key[2], "y")){
+            if (contains(key[1], "y")){
                 Dx[1] = uni_dist_y(gen);
             }
-            if (contains(key[2], "z")){
+            if (contains(key[1], "z")){
                 Dx[2] = uni_dist_z(gen);
             }
-            Vector x0 = edge.midpoint(ps);
-            Vector dx = edge.vector(ps);
-            intp.probe(x0 + Dx + 0.5*dx);
-            bool inside_a = intp.inside_domain();
-            intp.probe(x0 + Dx - 0.5*dx);
-            bool inside_b = intp.inside_domain();
-            outside = !(inside_a && inside_b);
+            Vector x0 = node.x();
+            intp.probe(x0 + Dx);
+            outside = !intp.inside_domain();
         }
-        edge.move(ps, Dx);
+        node.x() += Dx;
+    }
+}
+
+template<typename ParticleType>
+void spin_all( const std::vector<std::string>& key
+             , Particles<ParticleType>& ps
+             , std::mt19937 &gen){
+    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
+    for ( auto & particle : ps.particles() ){
+        Vector Dn = {0., 0., 0.};
+        if (contains(key[1], "x")){
+            Dn[0] = rnd_normal(gen);
+        }
+        if (contains(key[1], "y")){
+            Dn[1] = rnd_normal(gen);
+        }
+        if (contains(key[1], "z")){
+            Dn[2] = rnd_normal(gen);
+        }
+        Dn /= Dn.norm();
+        particle.n() = Dn;
     }
 }
 
@@ -92,8 +102,7 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental filaments with " << mpi.size() << " processes. \t\t\t ||\n"
-                  //<< "||  With FILAMENTS, RK4 and FELBM piecewise CONSTANT interpolation. ||\n"
+                  << "||  Initialized experimental tracer vectors with " << mpi.size() << " processes. \t\t\t ||\n"
                   << "======================================================================" << std::endl;
     }
     mpi.barrier();
@@ -114,13 +123,15 @@ int main(int argc, char* argv[])
 
     std::string infilename = std::string(argv[1]);
 
-    StructuredInterpol intp(infilename);
+    std::cout << "Initializing TriangleInterpol." << std::endl;
+    TriangleInterpol intp(infilename);
+    // std::cout << "Initialized TriangleInterpol." << std::endl;
 
     intp.set_U0(prm.U0);
-    intp.set_int_order(prm.int_order);
+    intp.set_int_order(2);  // To evaluate gradients
 
     std::string folder = intp.get_folder();
-    std::string rwfolder = folder + "/Filaments/"; 
+    std::string rwfolder = folder + "/TracerVectors/";
     
     if (mpi.rank() == 0)
         create_folder(rwfolder);
@@ -166,9 +177,8 @@ int main(int argc, char* argv[])
     prm.T = T;
 
     // This part is unique
-    std::cout << "initializing Integrator..." << std::endl;
+    std::cout << "Initializing Integrator..." << std::endl;
     Integrator_RK4 integrator;
-    //Integrator_Explicit integrator(prm.Dm, prm.int_order, gen);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.Nrw_max);
@@ -179,27 +189,14 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    //std::shared_ptr<Interpol> intp_ptr (&intp);
-    //std::shared_ptr<Initializer> init_state;
-    //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
-    //init_state->initialize(ps);
-    RandomPairsInitializer init_state(key, prm, mpi, gen);
+    RandomPointsInitializer init_state(key, prm, mpi, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
+    spin_all(key, ps, gen);
 
-    // Check mesh connectivity:
-    Uint id = 0;
-    for ( auto & particle : ps.particles() ){
-        //particle.get_id();
-        std::cout << id << ":\t";
-        for ( auto & edge_id : particle.edge_ids() ){
-            std::cout << edge_id << "\t";
-        }
-        std::cout << std::endl;
-        ++id;
-    }
-
-    //}
+    // Check mesh connectivity: should be uneccessary
+    ps.edges().clear();
+    ps.faces().clear();
 
     int it = 0;
     Real t = t0;
@@ -218,7 +215,6 @@ int main(int argc, char* argv[])
     Uint int_dump_intv = int(prm.dump_intv/dt);
     Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
     Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
-    Uint int_resize_intv = int(prm.resize_intv/dt);
 
     std::map<std::string, bool> output_fields;
     output_fields["u"] = !prm.minimal_output;
@@ -226,7 +222,9 @@ int main(int argc, char* argv[])
     output_fields["p"] = !prm.minimal_output && prm.output_all_props;
     output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
     output_fields["H"] = !prm.minimal_output && ps.dim() > 0;
-    output_fields["n"] = !prm.minimal_output && ps.dim() > 1;
+    output_fields["n"] = true;
+    output_fields["w"] = true;
+    output_fields["S"] = true;
 
     intp.update(t);
     intp.assign_fields(ps, output_fields);
@@ -237,27 +235,25 @@ int main(int argc, char* argv[])
     while (t <= T){
         intp.update(t);
 
+        // Update fields for output
+        if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
+            intp.assign_fields(ps, output_fields);
+        }
+
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
-            // mesh.write_statistics(statfile, t, prm.ds_max, integrator);
-            //ps.write_statistics(statfile, t, integrator);
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
+
+            intp.print_found();
         }
         // Checkpoint
         if (it % int_checkpoint_intv == 0){
             //mesh.write_checkpoint(checkpointsfolder, t, prm);
         }
-        // Resize
-        if (it % int_resize_intv == 0){
-            ps.resize_edges(prm.ds_init);
-        }
 
         // Dump detailed data
         if (it % int_dump_intv == 0){
-            //ps.update_fields(t, output_fields);
-            intp.assign_fields(ps, output_fields);
-
             std::string groupname = std::to_string(t);
 
             // Clear file if it exists, otherwise create
@@ -269,16 +265,15 @@ int main(int argc, char* argv[])
                 h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
             }
             h5f.createGroup(groupname + "/");
-            //mesh.dump_hdf5(h5f, groupname, output_fields);
             ps.dump_hdf5(h5f, groupname, output_fields);
             h5f.close();
         }
 
-        auto outside_nodes = integrator.step(intp, ps, t, dt);
+        auto outside_nodes = integrator.step_vec(intp, ps, t, dt);
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-            reinject_edges(outside_nodes, key, ps, intp, gen);
+            reinject_nodes(outside_nodes, key, ps, intp, gen);
         }
 
         t += dt;

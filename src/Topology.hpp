@@ -38,7 +38,7 @@ public:
   std::vector<Vector3d> face_normals;
   void write_checkpoint(const std::string& checkpointsfolder, const double t, Parameters &prm) const;
   void load_checkpoint(const std::string& checkpointsfolder, const Parameters &prm);
-  void dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
+  void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(std::shared_ptr<Initializer> init_state);
   template<typename T>
   void write_statistics(std::ofstream &statfile, const double t, const double ds_max, //const bool do_dump_hist, const std::string histfolder, 
@@ -245,7 +245,7 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const Param
   }
 }
 
-void Topology::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
+void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
   /*
   std::cout << "Process " << m_mpi.rank() << ": " << ps.N() << " " << faces.size() << " " << edges.size() << std::endl;
   auto num_nodes_ = m_mpi.gather(ps.N());

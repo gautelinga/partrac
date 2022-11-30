@@ -13,7 +13,7 @@ static void load_field(H5::H5File &h5file
   H5::DataSet dset = h5file.openDataSet(field);
   H5::DataSpace dspace = dset.getSpace();
   std::vector<double> Uv(nx*ny*nz);
-  dset.read(Uv.data(), PredType::NATIVE_DOUBLE, dspace, dspace);
+  dset.read(Uv.data(), H5::PredType::NATIVE_DOUBLE, dspace, dspace);
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -32,7 +32,7 @@ static void load_int_field(H5::H5File &h5file
   H5::DataSet dset = h5file.openDataSet(field);
   H5::DataSpace dspace = dset.getSpace();
   std::vector<int> Uv(nx*ny*nz);
-  dset.read(Uv.data(), PredType::NATIVE_INT, dspace, dspace);
+  dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -53,7 +53,7 @@ static void load_int_field_as_bool(H5::H5File &h5file
   H5::DataSet dset = h5file.openDataSet(field);
   H5::DataSpace dspace = dset.getSpace();
   std::vector<int> Uv(nx*ny*nz);
-  dset.read(Uv.data(), PredType::NATIVE_INT, dspace, dspace);
+  dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -214,6 +214,7 @@ public:
   StructuredInterpol(const std::string& infilename);
   void update(const double t);
   void probe(const Vector3d &x, const double t);
+  void probe(const Vector3d &x, const double t, int& cell_id) { probe(x, t); };
   bool inside_domain() const;
   bool inside_domain(const Vector3d &x) const;
   Uint get_nx() { return n[0]; };

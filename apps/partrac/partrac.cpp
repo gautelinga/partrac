@@ -200,12 +200,14 @@ int main(int argc, char* argv[])
   if (refine && !prm.inject && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
-
+    if (prm.verbose && mpi.rank() == 0)
+      std::cout << "Added " << n_add << " edges." << std::endl;
+  }
+  if (coarsen && !prm.inject && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
-
     if (prm.verbose && mpi.rank() == 0)
-      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
+      std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
 
   /*compute_interior_prop(interior_ang, mixed_areas, face_normals,
@@ -214,7 +216,7 @@ int main(int argc, char* argv[])
                     edge2faces, node2edges,
                     ps, interior_ang, mixed_areas, face_normals);
   */
- mesh.compute_interior();
+  mesh.compute_interior();
 
   //Vector3d dx_rw;
   int it = 0;

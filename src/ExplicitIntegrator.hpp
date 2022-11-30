@@ -71,8 +71,9 @@ std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const d
 
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
+        int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t);
+        intp.probe(x, t, cell_id);
         
         Vector3d dx_rw = intp.get_u() * dt;
 
@@ -87,10 +88,11 @@ std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const d
                             rnd_normal(gen)};      
             dx_rw += sqrt2Dmdt * eta;
         }
-        intp.probe(x+dx_rw, t+dt);
+        intp.probe(x+dx_rw, t+dt, cell_id);
         if (intp.inside_domain()){
             ps.set_x(i, x + dx_rw);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
+            ps.set_cell_id(i, cell_id);
             ++n_accepted;
         }
         else {

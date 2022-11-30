@@ -14,6 +14,7 @@ public:
   TetInterpol(const std::string& infilename);
   void update(const double t);
   void probe(const Vector3d &x, const double t);
+  void probe(const Vector3d &x, const double t, int &cell_id);
   bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
@@ -42,7 +43,16 @@ public:
   double get_uzy() { return gradU(2, 1); };
   double get_uzz() { return gradU(2, 2); };
   Matrix3d get_grada() { return gradA; };
-
+  void print_found() {
+    long int found_sum = found_same + found_nneigh + found_other;
+    double frac_same = double(found_same) / found_sum;
+    double frac_nneigh = double(found_nneigh) / found_sum;
+    double frac_other = 1. - frac_same - frac_nneigh;
+    std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
+    found_same = 0;
+    found_nneigh = 0;
+    found_other = 0;
+  }
 protected:
 
   Timestamps ts;
@@ -84,6 +94,8 @@ protected:
 
   std::vector<std::vector<double>> coordinate_dofs_;
 
+  std::vector<std::set<Uint>> cell2cells_;
+
   // std::array<double, 30> u_prev_coefficients_;
   // std::array<double, 30> u_next_coefficients_;
   // std::array<double, 4> p_prev_coefficients_;
@@ -100,6 +112,10 @@ protected:
 
   Uint ncoeffs_u;
   Uint ncoeffs_p;
+
+  long unsigned int found_same = 0;
+  long unsigned int found_nneigh = 0;
+  long unsigned int found_other = 0;
 };
 
 #endif

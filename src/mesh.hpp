@@ -47,7 +47,7 @@ void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
   }
 }*/
 
-void mesh2hdf( H5File& h5f, const std::string& groupname
+void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const ParticleSet& ps
              , const FacesType& faces
              , const EdgesType& edges
@@ -59,7 +59,7 @@ void mesh2hdf( H5File& h5f, const std::string& groupname
     hsize_t faces_dims[2];
     faces_dims[0] = faces.size();
     faces_dims[1] = 3;
-    DataSpace faces_dspace(2, faces_dims);
+    H5::DataSpace faces_dspace(2, faces_dims);
     std::vector<Uint> faces_arr(faces_dims[0]*faces_dims[1]);
 
     std::vector<double> dA(faces_dims[0]);
@@ -82,10 +82,10 @@ void mesh2hdf( H5File& h5f, const std::string& groupname
       dA[iface] = ps.triangle_area(iface, faces, edges);
       dA0[iface] = faces[iface].second;
     }
-    DataSet faces_dset = h5f.createDataSet(groupname + "/faces",
-                                           PredType::NATIVE_ULONG,
+    H5::DataSet faces_dset = h5f.createDataSet(groupname + "/faces",
+                                           H5::PredType::NATIVE_ULONG,
                                            faces_dspace);
-    faces_dset.write(faces_arr.data(), PredType::NATIVE_ULONG);
+    faces_dset.write(faces_arr.data(), H5::PredType::NATIVE_ULONG);
 
     scalar2hdf5(h5f, groupname + "/dA", dA, faces_dims[0]);
     scalar2hdf5(h5f, groupname + "/dA0", dA0, faces_dims[0]);
@@ -95,7 +95,7 @@ void mesh2hdf( H5File& h5f, const std::string& groupname
     hsize_t edges_dims[2];
     edges_dims[0] = edges.size();
     edges_dims[1] = 2;
-    DataSpace edges_dspace(2, edges_dims);
+    H5::DataSpace edges_dspace(2, edges_dims);
     std::vector<Uint> edges_arr(edges_dims[0]*edges_dims[1]);
 
     std::vector<double> dl(edges_dims[0]);
@@ -111,10 +111,10 @@ void mesh2hdf( H5File& h5f, const std::string& groupname
         tau_[iedge] = edges[iedge].tau;
     }
 
-    DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
-                                             PredType::NATIVE_ULONG,
+    H5::DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
+                                             H5::PredType::NATIVE_ULONG,
                                              edges_dspace);
-    edges_dset.write(edges_arr.data(), PredType::NATIVE_ULONG);
+    edges_dset.write(edges_arr.data(), H5::PredType::NATIVE_ULONG);
 
     scalar2hdf5(h5f, groupname + "/dl", dl, edges_dims[0]);
     scalar2hdf5(h5f, groupname + "/dl0", dl0, edges_dims[0]);
@@ -1019,7 +1019,7 @@ void remove_nodes_safely(FacesType &faces, EdgesType &edges,
                          EdgesListType &edges_inlet, NodesListType &nodes_inlet,
                          const std::vector<bool> &node_isactive,
                          ParticleSet& ps) {
-  assert(Nrw == node_isactive.size());
+  assert(ps.N() == node_isactive.size());
   std::vector<bool> edge_isactive(edges.size(), true);
   for (Uint i=0; i<ps.N(); ++i){
     if (!node_isactive[i]){
@@ -1562,14 +1562,16 @@ bool injection(const std::vector<Vector3d> &pos_inj,
         edge2faces.push_back({});
         node2edges[inode].push_back(iedge);
         node2edges[jnode].push_back(iedge);
-        long double dA01 = ps.triangle_area(iedge, kedge, edges);
+        //long 
+        double dA01 = ps.triangle_area(iedge, kedge, edges);
         Uint medge = get_common_entry(node2edges[knode], node2edges[inode]);
         faces.push_back({{iedge, kedge, medge}, dA01});
         edge2faces[iedge].push_back(iface);
         edge2faces[kedge].push_back(iface);
         edge2faces[medge].push_back(iface);
         ++iface;
-        long double dA02 = ps.triangle_area(iedge, ledge, edges);
+        //long 
+        double dA02 = ps.triangle_area(iedge, ledge, edges);
         Uint nedge = get_common_entry(node2edges[lnode], node2edges[jnode]);
         faces.push_back({{iedge, ledge, nedge}, dA02});
         edge2faces[iedge].push_back(iface);

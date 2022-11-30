@@ -63,22 +63,24 @@ std::set<Uint> RK4Integrator::step(ParticleSet& ps, const double t, const double
 
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
+        int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t);
+        intp.probe(x, t, cell_id);
         k1 = intp.get_u();
-        intp.probe(x + k1 * dt/2, t + dt/2);
+        intp.probe(x + k1 * dt/2, t + dt/2, cell_id);
         k2 = intp.get_u();
-        intp.probe(x + k2 * dt/2, t + dt/2);
+        intp.probe(x + k2 * dt/2, t + dt/2, cell_id);
         k3 = intp.get_u();
-        intp.probe(x + k3 * dt, t + dt);
+        intp.probe(x + k3 * dt, t + dt, cell_id);
         k4 = intp.get_u();
 
         dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
 
-        intp.probe(x+dx, t+dt);
+        intp.probe(x+dx, t+dt, cell_id);
         if (intp.inside_domain()){
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
+            ps.set_cell_id(i, cell_id);
             ++n_accepted;
         }
         else {

@@ -30,7 +30,9 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
     Uint i = 0;
     for (auto & particle : ps.particles() ){
         Vector x = particle.x();
-        intp.probe(x, t);
+        int cell_id = particle.cell_id();
+
+        intp.probe(x, t, cell_id);
         Vector dx = intp.get_u() * dt;
 
         // Second-order terms
@@ -44,10 +46,11 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
                             rnd_normal(gen)};
             dx += sqrt2Dmdt * eta;
         }
-        intp.probe(x+dx, t+dt);
+        intp.probe(x+dx, t+dt, cell_id);
         if (intp.inside_domain()){
             ++n_accepted;
             particle.x() = x + dx;
+            particle.cell_id() = cell_id;
         }
         else {
             outside_nodes.insert(i);
