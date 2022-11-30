@@ -6,6 +6,103 @@
 #include <sstream>
 #include <boost/algorithm/string.hpp>
 #include "io.hpp"
+//#include "Parameters.hpp"
+#include "typedefs.hpp"
+
+class Parameters {
+public:
+  Parameters(int argc, char* argv[]);
+  void parse_cmd(int argc, char* argv[]);
+  void parse_file(std::string infile);
+  void set_param(std::string key, std::string val);
+  void print();
+  void dump(std::string folder);
+  void dump(std::string folder, const double t);
+  // Default parameters
+  std::string mode = "structured";
+  std::string folder = "";
+  std::string restart_folder = "";
+  double Dm = 1.0;
+  double t0 = 0.;
+  double t = 0.;
+  double T = 10000000.;
+  Uint Nrw = 100;
+  double dump_intv = 100.0;
+  double stat_intv = 100.0;
+  double checkpoint_intv = 1000.0;
+  int dump_chunk_size = 0;
+  bool verbose = false;
+  double U0 = 1.0;
+  //
+  double x0 = 0.0;
+  double y0 = 0.0;
+  double z0 = 0.0;
+  //
+  double La = 0.0;
+  double Lb = 0.0;
+  //
+  double Lx = 0.0;
+  double Ly = 0.0;
+  double Lz = 0.0;
+  //
+  bool filter = false;
+  double filter_intv = 0.0;
+  int filter_target = 0;
+  //
+  bool resize = false;
+  double resize_intv = 0.0;
+  //
+  bool frozen_fields = false;
+  bool local_dt = false;
+  double dx_max = 1.0;
+  double dxn = 0.1;
+  double Ln = 1.0;
+  double u_eps = 1e-7;
+  double t_frozen = 0.;
+  bool cut_if_stuck = true;
+  //
+  double dt = 1.0;
+  int int_order = 1;
+  std::string init_mode = "line_x";  // what else?
+  std::string init_weight = "none";
+  //std::string write_mode = "hdf5";  // or text
+  int interpolation_test = 0;
+  long int n_accepted = 0;
+  long int n_declined = 0;
+  bool refine = false;
+  bool coarsen = false;
+  double refine_intv = 100.0;
+  double coarsen_intv = 1000.0;
+  //int hist_chunk_size = 10;
+  double ds_max = 1.0;
+  double ds_min = 0.1;
+  double ds_init = 1.0;
+  Uint Nrw_max = -1;
+  double curv_refine_factor = 0.0;
+  bool output_all_props = true;
+  bool minimal_output = false;
+  bool inject = false;
+  double inject_intv = 0.0;
+  double T_inject = 1e10;
+  bool inject_edges = true;
+  //
+  bool clear_initial_edges = false;
+  //
+  int seed = 0;
+  //
+  std::string tag = "";
+  std::string scheme = "explicit";
+  //
+  bool random = true;
+  //
+  std::string exit_plane = "none";
+  bool integrate_tau = false;
+  double tau_intv = 0.1;
+  double tau_max = 0.0;
+
+private:
+  void write_params_to_file(std::string);
+};
 
 double stodouble(const std::string val){
   std::stringstream ss(val);
@@ -36,89 +133,6 @@ std::string bool2string(const bool val){
   return (val ? "true" : "false");
 }
 
-class Parameters {
-public:
-  Parameters(int argc, char* argv[]);
-  void parse_cmd(int argc, char* argv[]);
-  void parse_file(std::string infile);
-  void set_param(std::string key, std::string val);
-  void print();
-  void dump(std::string folder);
-  void dump(std::string folder, const double t);
-  // Default parameters
-  std::string mode = "structured";
-  std::string folder = "";
-  std::string restart_folder = "";
-  double Dm = 1.0;
-  double t0 = 0.;
-  double t = 0.;
-  double T = 10000000.;
-  int Nrw = 100;
-  double dump_intv = 100.0;
-  double stat_intv = 100.0;
-  double checkpoint_intv = 1000.0;
-  int dump_chunk_size = 50;
-  bool verbose = false;
-  double U0 = 1.0;
-  //
-  double x0 = 0.0;
-  double y0 = 0.0;
-  double z0 = 0.0;
-  //
-  double La = 0.0;
-  double Lb = 0.0;
-  //
-  double Lx = 0.0;
-  double Ly = 0.0;
-  double Lz = 0.0;
-  //
-  bool filter = false;
-  double filter_intv = 0.0;
-  int filter_target = 0;
-  //
-  bool frozen_fields = false;
-  bool local_dt = false;
-  double dl_max = 1.0;
-  double u_eps = 1e-7;
-  double t_frozen = 0.;
-  bool cut_if_stuck = true;
-  //
-  double dt = 1.0;
-  int int_order = 1;
-  std::string init_mode = "line_x";  // what else?
-  std::string init_weight = "none";
-  std::string write_mode = "hdf5";  // or text
-  int interpolation_test = 0;
-  long int n_accepted = 0;
-  long int n_declined = 0;
-  bool refine = false;
-  bool coarsen = false;
-  double refine_intv = 100.0;
-  double coarsen_intv = 1000.0;
-  int hist_chunk_size = 10;
-  double ds_max = 1.0;
-  double ds_min = 0.1;
-  double ds_init = 1.0;
-  int Nrw_max = -1;
-  double curv_refine_factor = 0.0;
-  bool output_all_props = true;
-  bool minimal_output = false;
-  bool inject = false;
-  double inject_intv = 0.0;
-  double T_inject = 1e10;
-  bool inject_edges = true;
-  //
-  bool clear_initial_edges = false;
-  //
-  int seed = 0;
-  //
-  std::string tag = "";
-  //
-  bool random = true;
-private:
-  void write_params_to_file(std::string);
-};
-
 Parameters::Parameters(int argc, char* argv[]){
   parse_cmd(argc, argv);
 }
@@ -139,6 +153,8 @@ void Parameters::parse_cmd(int argc, char* argv[]){
   }
   dump_intv = std::max(dump_intv, dt);
   stat_intv = std::max(stat_intv, dt);
+  // more?
+
   Nrw_max = std::max(Nrw_max, Nrw);
 }
 
@@ -181,7 +197,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "int_order") int_order = stoint(val);
   if (key == "init_mode") init_mode = val;
   if (key == "init_weight") init_weight = val;
-  if (key == "dump_mode") write_mode = val;
+  //if (key == "dump_mode") write_mode = val;
   if (key == "interpolation_test") interpolation_test = stoint(val);
   if (key == "dump_chunk_size") dump_chunk_size = stoint(val);
   if (key == "n_accepted") n_accepted = stoint(val);  // may be too large?
@@ -193,9 +209,11 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "refine") refine = stobool(val);
   if (key == "refine_intv") refine_intv = stodouble(val);
+  if (key == "resize") refine = stobool(val);
+  if (key == "resize_intv") resize_intv = stodouble(val);
   if (key == "coarsen") coarsen = stobool(val);
   if (key == "coarsen_intv") coarsen_intv = stodouble(val);
-  if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
+  //if (key == "hist_chunk_size") hist_chunk_size = stoint(val);
   if (key == "ds_max") ds_max = stodouble(val);
   if (key == "ds_min") ds_min = stodouble(val);
   if (key == "ds_init") ds_init = stodouble(val);
@@ -210,7 +228,9 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "frozen_fields") frozen_fields = stobool(val);
   if (key == "local_dt") local_dt = stobool(val);
-  if (key == "dl_max") dl_max = stodouble(val);
+  if (key == "dx_max") dx_max = stodouble(val);
+  if (key == "dxn") dxn = stodouble(val);
+  if (key == "Ln") Ln = stodouble(val);
   if (key == "u_eps") u_eps = stodouble(val);
   if (key == "t_frozen") t_frozen = stodouble(val);
   if (key == "cut_if_stuck") cut_if_stuck = stobool(val);
@@ -224,8 +244,15 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "seed") seed = stoint(val);
 
   if (key == "tag") tag = val;
+  if (key == "scheme") scheme = val;
 
   if (key == "random") random = stobool(val);
+
+  if (key == "exit_plane") exit_plane = val;
+  if (key == "integrate_tau") integrate_tau = stobool(val);
+  if (key == "tau_intv") tau_intv = stodouble(val);
+  if (key == "tau_max") tau_max = stodouble(val);
+
 }
 
 void Parameters::print(){
@@ -234,7 +261,7 @@ void Parameters::print(){
     print_param("t0                 ", t0);
     print_param("T                  ", T);
     print_param("dt                 ", dt);
-    print_param("Nrw                ", Nrw);
+    print_param("Nrw                ", int(Nrw));
     print_param("dump_intv          ", dump_intv);
     print_param("stat_intv          ", stat_intv);
     print_param("checkpoint_intv    ", checkpoint_intv);
@@ -248,20 +275,22 @@ void Parameters::print(){
     print_param("int_order          ", int_order);
     print_param("init_mode          ", init_mode);
     print_param("init_weight        ", init_weight);
-    print_param("dump_mode          ", write_mode);
+    //print_param("dump_mode          ", write_mode);
     print_param("restart_folder     ", restart_folder);
     print_param("mode               ", mode);
     print_param("folder             ", folder);
 
     print_param("refine             ", bool2string(refine));
     print_param("refine_intv        ", refine_intv);
+    print_param("resize             ", bool2string(resize));
+    print_param("resize_intv        ", resize_intv);
     print_param("coarsen            ", bool2string(coarsen));
     print_param("coarsen_intv       ", coarsen_intv);
-    print_param("hist_chunk_size    ", hist_chunk_size);
+    //print_param("hist_chunk_size    ", hist_chunk_size);
     print_param("ds_max             ", ds_max);
     print_param("ds_min             ", ds_min);
     print_param("ds_init            ", ds_init);
-    print_param("Nrw_max            ", Nrw_max);
+    print_param("Nrw_max            ", int(Nrw_max));
     print_param("curv_refine_factor ", curv_refine_factor);
     print_param("output_all_props   ", bool2string(output_all_props));
     print_param("minimal_output     ", bool2string(minimal_output));
@@ -272,10 +301,12 @@ void Parameters::print(){
 
     print_param("frozen_fields      ", bool2string(frozen_fields));
     print_param("local_dt           ", bool2string(local_dt));
-    print_param("dl_max             ", dl_max);
+    print_param("dx_max             ", dx_max);
+    print_param("dxn                ", dxn);
+    print_param("Ln                 ", Ln);
     print_param("u_eps              ", u_eps);
     print_param("t_frozen           ", t_frozen);
-    print_param("cut_if_stuck", bool2string(cut_if_stuck));
+    print_param("cut_if_stuck       ", bool2string(cut_if_stuck));
 
     print_param("inject             ", bool2string(inject));
     print_param("inject_intv        ", inject_intv);
@@ -287,6 +318,13 @@ void Parameters::print(){
 
     print_param("tag                ", tag);
     print_param("random             ", bool2string(random));
+
+    print_param("scheme             ", scheme);
+
+    print_param("exit_plane         ", exit_plane);
+    print_param("integrate_tau      ", bool2string(integrate_tau));
+    print_param("tau_intv           ", tau_intv);
+    print_param("tau_max            ", tau_max);
   }
 }
 
@@ -307,7 +345,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "t", t);
   write_param(paramsfile, "T", T);
   write_param(paramsfile, "dt", dt);
-  write_param(paramsfile, "Nrw", Nrw);
+  write_param(paramsfile, "Nrw", int(Nrw));
   write_param(paramsfile, "dump_intv", dump_intv);
   write_param(paramsfile, "stat_intv", stat_intv);
   write_param(paramsfile, "checkpoint_intv", checkpoint_intv);
@@ -324,7 +362,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "int_order", int_order);
   write_param(paramsfile, "init_mode", init_mode);
   write_param(paramsfile, "init_weight", init_weight);
-  write_param(paramsfile, "write_mode", write_mode);
+  //write_param(paramsfile, "write_mode", write_mode);
   write_param(paramsfile, "interpolation_test", interpolation_test);
   write_param(paramsfile, "dump_chunk_size", dump_chunk_size);
   write_param(paramsfile, "n_accepted", n_accepted);
@@ -335,13 +373,15 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "refine", bool2string(refine));
   write_param(paramsfile, "refine_intv", refine_intv);
+  write_param(paramsfile, "resize", bool2string(resize));
+  write_param(paramsfile, "resize_intv", resize_intv);
   write_param(paramsfile, "coarsen", bool2string(coarsen));
   write_param(paramsfile, "coarsen_intv", coarsen_intv);
-  write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
+  //write_param(paramsfile, "hist_chunk_size", hist_chunk_size);
   write_param(paramsfile, "ds_max", ds_max);
   write_param(paramsfile, "ds_min", ds_min);
   write_param(paramsfile, "ds_init", ds_init);
-  write_param(paramsfile, "Nrw_max", Nrw_max);
+  write_param(paramsfile, "Nrw_max", int(Nrw_max));
   write_param(paramsfile, "curv_refine_factor", curv_refine_factor);
   write_param(paramsfile, "output_all_props", bool2string(output_all_props));
   write_param(paramsfile, "minimal_output", bool2string(minimal_output));
@@ -352,7 +392,9 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "frozen_fields", bool2string(frozen_fields));
   write_param(paramsfile, "local_dt", bool2string(local_dt));
-  write_param(paramsfile, "dl_max", dl_max);
+  write_param(paramsfile, "dx_max", dx_max);
+  write_param(paramsfile, "dxn", dxn);
+  write_param(paramsfile, "Ln", Ln);
   write_param(paramsfile, "u_eps", u_eps);
   write_param(paramsfile, "t_frozen", t_frozen);
   write_param(paramsfile, "cut_if_stuck", bool2string(cut_if_stuck));
@@ -367,6 +409,13 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "tag", tag);
   write_param(paramsfile, "random", bool2string(random));
+
+  write_param(paramsfile, "scheme", scheme);
+
+  write_param(paramsfile, "exit_plane", scheme);
+  write_param(paramsfile, "integrate_tau", bool2string(integrate_tau));
+  write_param(paramsfile, "tau_intv", tau_intv);
+  write_param(paramsfile, "tau_max", tau_max);
 
   paramsfile.close();
 }

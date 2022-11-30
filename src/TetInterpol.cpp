@@ -12,7 +12,7 @@
 
 using namespace H5;
 
-TetInterpol::TetInterpol(const std::string infilename)
+TetInterpol::TetInterpol(const std::string& infilename)
   : Interpol(infilename)
 {
   std::ifstream input(infilename);
@@ -187,7 +187,7 @@ void TetInterpol::update(const double t)
       prevfile.read(*p_prev_, dolfin_params["pressure_field"]);
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, dolfin_params["velocity_field"]);
     if (include_pressure)
       nextfile.read(*p_next_, dolfin_params["pressure_field"]);
@@ -196,11 +196,15 @@ void TetInterpol::update(const double t)
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  alpha_t = sp.weight_next(t);
+  // alpha_t = sp.weight_next(t);
+  t_update = t;
 }
 
-void TetInterpol::probe(const Vector3d &x)
+void TetInterpol::probe(const Vector3d &x, const double t)
 {
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
+
   dolfin::Array<double> x_loc(dim);
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){

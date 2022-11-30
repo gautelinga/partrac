@@ -2,7 +2,7 @@
 #include "DolfInterpol.hpp"
 #include <boost/algorithm/string.hpp>
 
-DolfInterpol::DolfInterpol(const std::string infilename) : Interpol(infilename) {
+DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename) {
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
@@ -161,7 +161,7 @@ void DolfInterpol::update(const double t){
     prevfile.read(*p_prev_, "p");
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, "u");
     nextfile.read(*p_next_, "p");
 
@@ -169,10 +169,13 @@ void DolfInterpol::update(const double t){
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  alpha_t = sp.weight_next(t);
+  // alpha_t = sp.weight_next(t);
+  t_update = t;
 }
 
-void DolfInterpol::probe(const Vector3d &x){
+void DolfInterpol::probe(const Vector3d &x, const double t){
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
   //const double* _x = x.data();
   dolfin::Array<double> x_loc(dim);
   for (Uint i=0; i<dim; ++i){

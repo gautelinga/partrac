@@ -3,72 +3,88 @@
 
 #include "utils.hpp"
 
-
-void write_stats(std::ofstream &statfile,
+void write_stats(MPIwrap& mpi,
+                 std::ofstream &statfile,
                  const double t,
-                 std::vector<Vector3d>& x_rw,
-                 std::vector<Vector3d>& u_rw,
-                 const Uint Nrw,
-                 FacesType &faces,
-                 EdgesType &edges,
+                 const ParticleSet& ps,
+                 const FacesType &faces,
+                 const EdgesType &edges,
                  const double ds_max,
-                 const bool do_dump_hist,
-                 const std::string histfolder,
+                 //const bool do_dump_hist,
+                 //const std::string histfolder,
                  const unsigned long int n_accepted,
                  const unsigned long int n_declined)
 {
-  double x_mean = 0.;
-  double y_mean = 0.;
-  double z_mean = 0.;
-  double dx2_mean = 0.;
-  double dy2_mean = 0.;
-  double dz2_mean = 0.;
-  double ux_mean = 0.;
-  double uy_mean = 0.;
-  double uz_mean = 0.;
+  Vector3d x_mean = {0., 0., 0.};
+  Vector3d dx2_mean = {0., 0., 0.};
+  Vector3d u_mean = {0., 0., 0.};
+  Vector3d x_mean_glob = {0., 0., 0.};
+  Vector3d dx2_mean_glob = {0., 0., 0.};
+  Vector3d u_mean_glob = {0., 0., 0.};
+  Uint Nrw = ps.N();
+  Uint Nrw_glob = mpi.allsum<Uint>(Nrw, MPI_UNSIGNED_LONG);
   for (Uint irw=0; irw < Nrw; ++irw){
     // Sample mean
-    x_mean += x_rw[irw][0]/Nrw;
-    y_mean += x_rw[irw][1]/Nrw;
-    z_mean += x_rw[irw][2]/Nrw;
-    ux_mean += u_rw[irw][0]/Nrw;
-    uy_mean += u_rw[irw][1]/Nrw;
-    uz_mean += u_rw[irw][2]/Nrw;
+    x_mean += ps.x(irw); // /Nrw;
+    u_mean += ps.u(irw); // /Nrw;
   }
+  for (int d=0; d<3; ++d){
+    auto xtmp = mpi.allsum<double>(x_mean[d], MPI_DOUBLE);
+    auto utmp = mpi.allsum<double>(u_mean[d], MPI_DOUBLE);
+    x_mean_glob[d] = xtmp / Nrw_glob;
+    u_mean_glob[d] = utmp / Nrw_glob;
+  }
+  x_mean /= Nrw;
+  u_mean /= Nrw;
+
   for (Uint irw=0; irw < Nrw; ++irw){
     // Sample variance
-    dx2_mean += pow(x_rw[irw][0]-x_mean, 2)/(Nrw-1);
-    dy2_mean += pow(x_rw[irw][1]-y_mean, 2)/(Nrw-1);
-    dz2_mean += pow(x_rw[irw][2]-z_mean, 2)/(Nrw-1);
+    Vector3d dx = ps.x(irw)-x_mean;
+    dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
+
+    Vector3d dx_glob = ps.x(irw) - x_mean_glob;
+    dx2_mean_glob += dx_glob.cwiseProduct(dx_glob);
   }
+  for (int d=0; d<3; ++d){
+    auto dx2tmp = mpi.allsum<double>(dx2_mean_glob[d], MPI_DOUBLE);
+    dx2_mean_glob[d] = dx2tmp / (Nrw_glob - 1);
+  }
+
   statfile << t << "\t"                   //  1
-           << x_mean << "\t"              //  2
-           << dx2_mean << "\t"            //  3
-           << y_mean << "\t"              //  4
-           << dy2_mean << "\t"            //  5
-           << z_mean << "\t"              //  6
-           << dz2_mean << "\t"            //  7
-           << ux_mean << "\t"             //  8
-           << uy_mean << "\t"             //  9
-           << uz_mean << "\t"             // 10
+           << x_mean[0] << "\t"           //  2
+           << dx2_mean[0] << "\t"         //  3
+           << x_mean[1] << "\t"           //  4
+           << dx2_mean[1] << "\t"         //  5
+           << x_mean[2] << "\t"           //  6
+           << dx2_mean[2] << "\t"         //  7
+           << u_mean[0] << "\t"           //  8
+           << u_mean[1] << "\t"           //  9
+           << u_mean[2] << "\t"           // 10
            << Nrw << "\t"                 // 11
            << n_accepted << "\t"          // 12
-           << n_declined << "\t";          // 13
+           << n_declined << "\t";         // 13
 
-  if (edges.size() > 0){
+  double s = 0.;
+  double s0 = 0.;
+  double A = 0.;
+  double A0 = 0.;
+
+  bool do_strip = edges.size() > 0 && faces.size() == 0;
+  bool do_sheet = faces.size() > 0;
+
+  if (do_strip){
     // Strip method
-    double s = 0.;
     Uint n_too_long = 0;
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
-    double s0 = 0.;
+
     std::vector<std::array<double, 3>> logelong_vec;
     for (EdgesType::const_iterator edgeit = edges.begin();
          edgeit != edges.end(); ++edgeit){
       int inode = edgeit->first[0];
       int jnode = edgeit->first[1];
       double ds0 = edgeit->second;
-      double ds = dist(inode, jnode, x_rw);
+      double ds = ps.dist(inode, jnode);
       if (ds > ds_max){
         ++n_too_long;
       }
@@ -93,7 +109,7 @@ void write_stats(std::ofstream &statfile,
       }
       logelong_wvar /= s;
       logelong_w0var /= s0;
-      double s_ = 0.;
+      /*double s_ = 0.;
       double s0_ = 0.;
       if (do_dump_hist){
         std::sort(logelong_vec.begin(), logelong_vec.end());
@@ -108,7 +124,7 @@ void write_stats(std::ofstream &statfile,
                        << std::endl;
         }
         logelongfile.close();
-      }
+      }*/
       statfile << s << "\t"                   // 15
                << s0 << "\t"                  // 16
                << logelong_wmean << "\t"       // 17
@@ -117,10 +133,8 @@ void write_stats(std::ofstream &statfile,
                << logelong_w0var << "\t";      // 20
     }
   }
-  if (faces.size() > 0){
+  else if (do_sheet){
     // Sheet method
-    double A = 0.;
-    double A0 = 0.;
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
     std::vector<std::array<double, 3>> logelong_vec;
@@ -130,7 +144,7 @@ void write_stats(std::ofstream &statfile,
       Uint jedge = faceit->first[1];
       // Uint kedge = faceit->first[2];
       double dA0 = faceit->second;
-      double dA = area(iedge, jedge, x_rw, edges);
+      double dA = ps.triangle_area(iedge, jedge, edges);
       double logelong = log(dA/dA0);
       logelong_wmean += logelong*dA;
       logelong_w0mean += logelong*dA0;
@@ -149,7 +163,7 @@ void write_stats(std::ofstream &statfile,
     }
     logelong_wvar /= A;
     logelong_w0var /= A0;
-    double A_ = 0.;
+    /*double A_ = 0.;
     double A0_ = 0.;
     if (do_dump_hist){
       std::sort(logelong_vec.begin(), logelong_vec.end());
@@ -164,7 +178,7 @@ void write_stats(std::ofstream &statfile,
                      << std::endl;
       }
       logelongfile.close();
-    }
+    }*/
     statfile << A << "\t"                   // 15
              << A0 << "\t"                  // 16
              << logelong_wmean << "\t"  // 17
@@ -172,12 +186,31 @@ void write_stats(std::ofstream &statfile,
              << logelong_w0mean << "\t" // 19
              << logelong_w0var << "\t"; // 20
   }
+  double s_glob = mpi.sum<double>(s, MPI_DOUBLE);
+  double s0_glob = mpi.sum<double>(s0, MPI_DOUBLE);
+  double A_glob = mpi.sum<double>(A, MPI_DOUBLE);
+  double A0_glob = mpi.sum<double>(A0, MPI_DOUBLE);
+  if (mpi.rank() == 0){
+    statfile << x_mean_glob[0] << "\t"           //  21
+             << dx2_mean_glob[0] << "\t"         //  22
+             << x_mean_glob[1] << "\t"           //  23
+             << dx2_mean_glob[1] << "\t"         //  24
+             << x_mean_glob[2] << "\t"           //  25
+             << dx2_mean_glob[2] << "\t";        //  26
+    if (do_strip){
+      statfile << s_glob << "\t"           // 27
+               << s0_glob << "\t";         // 28
+    }
+    else if (do_sheet){
+      statfile << A_glob << "\t"           // 27
+               << A0_glob << "\t";         // 28
+    }
+  }
+ 
   statfile << std::endl;
 }
 
-void write_stats_header(std::ofstream &statfile,
-                        const FacesType &faces,
-                        const EdgesType &edges){
+void write_stats_header(MPIwrap& mpi, std::ofstream &statfile, Uint mesh_dim){
   statfile << "# t" << "\t"                   //  1
            << "x_mean" << "\t"                //  2
            << "dx2_mean" << "\t"              //  3
@@ -191,10 +224,10 @@ void write_stats_header(std::ofstream &statfile,
            << "Nrw" << "\t"                   // 11
            << "n_accepted" << "\t"            // 12
            << "n_declined" << "\t";           // 13
-  if (edges.size() > 0){
+  if (mesh_dim > 0){
     statfile << "n_too_long" << "\t";         // 14
   }
-  if (faces.size() == 0){
+  if (mesh_dim > 1){
     statfile << "s" << "\t"                   // 15
              << "s0" << "\t"                  // 16
              << "logelong_wmean" << "\t"      // 17
@@ -205,10 +238,26 @@ void write_stats_header(std::ofstream &statfile,
   else {
     statfile << "A" << "\t"                   // 15
              << "A0" << "\t"                  // 16
-             << "logelong_wmean" << "\t"  // 17
-             << "logelong_wvar" << "\t"   // 18
-             << "logelong_w0mean" << "\t" // 19
-             << "logelong_w0var" << "\t"; // 20
+             << "logelong_wmean" << "\t"      // 17
+             << "logelong_wvar" << "\t"       // 18
+             << "logelong_w0mean" << "\t"     // 19
+             << "logelong_w0var" << "\t";     // 20
+  }
+  if (mpi.rank() == 0){
+    statfile << "x_mean" << "\t"                //  21
+             << "dx2_mean" << "\t"              //  22
+             << "y_mean" << "\t"                //  23
+             << "dy2_mean" << "\t"              //  24
+             << "z_mean" << "\t"                //  25
+             << "dz2_mean" << "\t";             //  26
+    if (mesh_dim == 1){
+      statfile << "s_glob" << "\t"           // 27
+               << "s0_glob" << "\t";         // 28
+    }
+    else if (mesh_dim == 2){
+      statfile << "A_glob" << "\t"           // 27
+               << "A0_glob" << "\t";         // 28
+    }
   }
   statfile << std::endl;
 }

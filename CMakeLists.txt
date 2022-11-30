@@ -15,6 +15,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+#set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
+
 include(CTest)
 find_package(Doxygen)
 if (Doxygen_FOUND)
@@ -27,7 +29,7 @@ endif()
 include(FeatureSummary)
 
 set(OPTIONAL_PACKAGES "")
-list(APPEND OPTIONAL_PACKAGES "Dolfin")
+list(APPEND OPTIONAL_PACKAGES "Dolfin" "mpi")
 foreach (OPTIONAL_PACKAGE ${OPTIONAL_PACKAGES})
   string (TOUPPER "PARTRAC_ENABLE_${OPTIONAL_PACKAGE}" OPTION_NAME)
   option(${OPTION_NAME} "Compile with support for ${OPTIONAL_PACKAGE}." ON)
@@ -42,8 +44,14 @@ if(PARTRAC_ENABLE_DOLFIN)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
 endif()
 
+if (PARTRAC_ENABLE_MPI)
+  message(STATUS "*** with MPI support ***")
+  find_package(MPI)
+  include_directories(${MPI_INCLUDE_PATH})
+endif()
+
 # # Debug build
-# set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
+#set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
 # set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
 
 # Optimized build
@@ -53,6 +61,14 @@ set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=
 # pprof-symbolize --ps ./partrac prof.txt > prof.ps
 #list(APPEND DOLFIN_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprofiler.so.0")
 
+# Profiling build
+#set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pg -pedantic-errors -Wextra")
+
+#set(HDF5_PREFER_PARALLEL TRUE)
+#find_package(HDF5 COMPONENTS CXX)
+#set_package_properties(HDF5 PROPERTIES TYPE OPTIONAL
+#  DESCRIPTION "Hierarchical Data Format 5 (HDF5)"
+#  URL "https://www.hdfgroup.org/HDF5")
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
@@ -61,21 +77,42 @@ include_directories(${HDF5_INCLUDE_DIR})
 
 add_subdirectory(src)
 
+set(PROJECT_TARGETS ${PROJECT_NAME})
 #aux_source_directory(src SRC_LIST)
+add_subdirectory(apps)
 
 #message(STATUS ${SRC_LIST})
 #add_library(Src1 ${SRC_LIST})
 #add_executable(${PROJECT_NAME} ${SRC_LIST})
-add_executable(${PROJECT_NAME} src/traj.cpp)
+#add_executable(${PROJECT_NAME} src/traj.cpp)
 
-if (PARTRAC_ENABLE_DOLFIN)
-  target_link_libraries(${PROJECT_NAME} dolfin)
-endif()
-target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+#if (PARTRAC_ENABLE_DOLFIN)
+#  target_link_libraries(${PROJECT_NAME} dolfin)
+#endif()
 
-install(TARGETS ${PROJECT_NAME} DESTINATION /usr/bin/)
+#if (PARTRAC_ENABLE_MPI)
+#  target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES})
+#endif()
+
+#if(MPI_COMPILE_FLAGS)
+#  set_target_properties(${PROJECT_NAME}  PROPERTIES
+#    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+#endif()
+
+#if(MPI_LINK_FLAGS)
+#  set_target_properties(${PROJECT_NAME}  PROPERTIES
+#    LINK_FLAGS "${MPI_LINK_FLAGS}")
+#endif()
+
+#target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
+#  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
+#target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+
+#install(TARGETS ${PROJECT_NAME} interpol filaments filaments_felbmRK4 DESTINATION /usr/bin/)
+message(STATUS ${PROJECT_TARGETS})
+
+separate_arguments(PROJECT_TARGETS)
+install(TARGETS ${PROJECT_TARGETS} DESTINATION /usr/bin/)
 
 # FetchContent added in CMake 3.11, downloads during the configure step
 

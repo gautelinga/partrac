@@ -1,11 +1,12 @@
 import argparse
 import os
+
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-import h5py
-from utils import Params
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from utils import Params
 
 parser = argparse.ArgumentParser(description="Plot pos")
 parser.add_argument("folder", type=str, help="Folder")
@@ -16,14 +17,18 @@ parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
 parser.add_argument("--export", action="store_true", help="Export")
 parser.add_argument("--elong", action="store_true", help="Plot elong")
+parser.add_argument("--nocol", action="store_true", help="Plot no color")
 parser.add_argument("--cbar", action="store_true", help="Colorbar")
-parser.add_argument("-cmax", type=float, default=5, help="cmax")
-parser.add_argument("-cmin", type=float, default=0, help="cmin")
+parser.add_argument("-cmax", type=float, default=None, help="cmax")
+parser.add_argument("-cmin", type=float, default=None, help="cmin")
 parser.add_argument("-size_x", type=float, default=5, help="Image size x")
 parser.add_argument("-size_y", type=float, default=10, help="Image size y")
-parser.add_argument("-pointsize", type=float, default=1.0, help="Point/dot size")
+parser.add_argument("-x_shift", type=float, default=0., help="Shift x")
+parser.add_argument("-pointsize",
+                    type=float,
+                    default=1.0,
+                    help="Point/dot size")
 args = parser.parse_args()
-
 
 params = Params(args.folder)
 t0 = params.get_tmin()
@@ -61,9 +66,7 @@ for t in list(sorted(posf.keys())):
     if t >= args.t_min and t <= args.t_max:
         ts.append(t)
 
-proj_axis = [[1, 2],
-             [2, 0],
-             [0, 1]]
+proj_axis = [[1, 2], [2, 0], [0, 1]]
 pax = proj_axis[args.axis]
 
 cmap = plt.cm.get_cmap(args.cmap)
@@ -72,15 +75,19 @@ for t in ts:
     posft, grp = posf[t]
     with h5py.File(posft, "r") as h5f:
         pos = np.array(h5f[grp + "/points"])
-        elong = np.array(h5f[grp + "/e"])
-        col = np.array(h5f[grp + "/c"])
+        if args.nocol:
+            col = np.zeros_like(pos)
+        elif args.elong:
+            elong = np.array(h5f[grp + "/e"])
+        else:
+            col = np.array(h5f[grp + "/c"])
 
     eps = 0
     #if t == ts[0]:
     #    eps = 1e-2*np.random.rand(len(pos[:, 1]))
 
     fig, ax = plt.subplots(figsize=(args.size_x, args.size_y))
-    x1 = np.remainder(pos[:, pax[0]], L[pax[0]])
+    x1 = np.remainder(pos[:, pax[0]] - args.x_shift, L[pax[0]])
     x2 = np.remainder(pos[:, pax[1]], L[pax[1]])
     if args.elong:
         c = np.log(elong[:, 0])
@@ -89,20 +96,39 @@ for t in ts:
         c = col[:, 0]
         label = "Color"
 
-    p = ax.scatter(x1, x2+eps,
-                   c=c, vmin=args.cmin, vmax=args.cmax,
-                   marker=',', lw=0, s=args.pointsize, cmap=cmap)
+    if args.cmin is None:
+        cmin = c.min()
+    else:
+        cmin = args.cmin
+    if args.cmax is None:
+        cmax = c.max()
+    else:
+        cmax = args.cmax
+
+    p = ax.scatter(x1,
+                   x2 + eps,
+                   c=c,
+                   vmin=cmin,
+                   vmax=cmax,
+                   marker=',',
+                   lw=0,
+                   s=args.pointsize,
+                   cmap=cmap)
     if args.cbar:
         divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        cbar = fig.colorbar(p, ax=ax, cax=cax)
-        cbar.set_label(label, rotation=270)
+        cax = divider.append_axes("right", size="5%", pad=0.15)
+        #v1 = np.linspace(cmin, cmax, 8, endpoint=True)
+        cbar = fig.colorbar(p, ax=ax, cax=cax)  # , ticks=v1)
+        cbar.set_label(label, rotation=270, labelpad=15.0)
+        #cbar.ax.set_yticklabels([""] + ["{:4.2f}".format(i)
+        #                                for i in v1[1:-1]] + [""],
+        #                        fontsize='7')
 
     plt.tick_params(
-        axis='both',          # changes apply to the x-axis
-        which='both',      # both major and minor ticks are affected
-        bottom=False,      # ticks along the bottom edge are off
-        top=False,         # ticks along the top edge are off
+        axis='both',  # changes apply to the x-axis
+        which='both',  # both major and minor ticks are affected
+        bottom=False,  # ticks along the bottom edge are off
+        top=False,  # ticks along the top edge are off
         left=False,
         right=False,
         labelleft=False,
@@ -110,16 +136,12 @@ for t in ts:
     ax.set_xlim(0, L[pax[0]])
     ax.set_ylim(0, L[pax[1]])
     ax.set_aspect('equal')
-    plt.tight_layout()
+    #plt.tight_layout()
     if args.show:
         plt.show()
     if args.export:
         order = np.argsort(x1)
-        np.savetxt(os.path.join(
-            posfolder,
-            "pos_{:06.6f}.pos".format(t)),
+        np.savetxt(os.path.join(posfolder, "pos_{:06.6f}.pos".format(t)),
                    np.vstack((x1[order], x2[order], c[order])).T)
-    plt.savefig(os.path.join(
-        imgfolder,
-        "pos_{:06.6f}.png".format(t)))
+    plt.savefig(os.path.join(imgfolder, "pos_{:06.6f}.png".format(t)))
     plt.close()

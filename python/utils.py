@@ -17,12 +17,16 @@ class Params:
         return self.ts[-1]
 
 
-def read_params(folder):
+def find_params(folder):
     paramsfiles = dict()
     for filename in os.listdir(folder):
         if "params_from_t" in filename:
             t = float(filename[13:-4])
             paramsfiles[t] = os.path.join(folder, filename)
+    return paramsfiles
+
+
+def parse_params(paramsfiles):
     params = dict()
     for t, paramsfile in paramsfiles.items():
         params[t] = dict()
@@ -37,6 +41,11 @@ def read_params(folder):
                 line = pf.readline()
                 cnt += 1
     return params
+
+
+def read_params(folder):
+    paramsfiles = find_params(folder)
+    return parse_params(paramsfiles)
 
 
 def read_timestamps(infile):
@@ -70,3 +79,19 @@ def get_timeseries(folder, t_min=-np.inf, t_max=np.inf):
             ts.append(t)
 
     return ts, posf
+
+def get_folders(folder):
+    folders = []
+    paramsfiles = find_params(folder)
+
+    if len(paramsfiles) == 0:
+        subfolders = [] 
+        for a in os.listdir(folder):
+            if a.isdigit():
+                subfolders.append(a)
+        subfolders = sorted(subfolders)
+        for subfolder in subfolders:
+            fullpath = os.path.join(folder, subfolder)
+            paramsfiles = find_params(fullpath)
+            folders.append(fullpath)
+    return folders

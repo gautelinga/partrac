@@ -14,9 +14,9 @@
 class AnalyticInterpol : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
-  void update(const double t) { this->t=t; };
-  void probe(const Vector3d &x) { expr->eval(x, t); };
-  bool inside_domain() { return expr->inside(); };
+  void update(const double t) { this->t_update=t; };
+  void probe(const Vector3d &x, const double t) { expr->eval(x, t); };
+  bool inside_domain() const { return expr->inside(); };
   double get_ux() { return expr->ux(); };
   double get_uy() { return expr->uy(); };
   double get_uz() { return expr->uz(); };
@@ -38,9 +38,8 @@ public:
   double get_uzz() { return expr->uzz(); };
   Matrix3d get_grada() { return expr->grada(); };
 protected:
-  double t;
   std::map<std::string, std::string> expr_params;
-  Expr* expr;
+  std::shared_ptr<Expr> expr;
 };
 
 AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infilename) {
@@ -65,28 +64,28 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
   std::size_t botDirPos = infilename.find_last_of("/");
   set_folder(infilename.substr(0, botDirPos));
 
-  this->t = get_t_min();
   this->x_min << getd(expr_params, "x_min"), getd(expr_params, "y_min"), getd(expr_params, "z_min");
   this->x_max << getd(expr_params, "x_max"), getd(expr_params, "y_max"), getd(expr_params, "z_max");
 
-  if (expr_params["expression"] == "stokes_sphere" || expr_params["expression"] == "StokesSphere"){
+  if (expr_params["expression"] == "stokes_sphere" ||
+      expr_params["expression"] == "StokesSphere"){
     std::cout << "StokesSphere selected" << std::endl;
-    expr = new Expr_StokesSphere(expr_params);
+    expr = std::make_shared<Expr_StokesSphere>(expr_params);
   }
   else if (expr_params["expression"] == "sine_flow" ||
            expr_params["expression"] == "SineFlow"){
     std::cout << "SineFlow selected" << std::endl;
-    expr = new Expr_SineFlow(expr_params);
+    expr = std::make_shared<Expr_SineFlow>(expr_params);
   }
   else if (expr_params["expression"] == "batchelor_vortex" ||
            expr_params["expression"] == "BatchelorVortex"){
     std::cout << "BatchelorVortex selected" << std::endl;
-    expr = new Expr_BatchelorVortex(expr_params);
+    expr = std::make_shared<Expr_BatchelorVortex>(expr_params);
   }
   else if (expr_params["expression"] == "abc_flow" ||
            expr_params["expression"] == "ABCFlow"){
-    std::cout << "ABC Flow selected" << std::endl;
-    expr = new Expr_ABCFlow(expr_params);
+    std::cout << "ABCFlow selected" << std::endl;
+    expr = std::make_shared<Expr_ABCFlow>(expr_params);
   }
   else {
     std::cout << "Could not find expression: " << expr_params[""] << std::endl;

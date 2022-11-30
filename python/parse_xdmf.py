@@ -11,7 +11,7 @@ def parse_args():
     parser.add_argument("filename", type=str, help="XDMF file")
     parser.add_argument("--output_dir",
                         type=str,
-                        default="./",
+                        default="",
                         help="(Optional) output directory")
     args = parser.parse_args()
     return args
@@ -21,15 +21,20 @@ def main():
     args = parse_args()
 
     dirname = os.path.dirname(args.filename)
-    reldirname = os.path.relpath(dirname, args.output_dir)
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    if args.output_dir == "":
+        output_dir = dirname
+    else:
+        output_dir = args.output_dir
+
+    reldirname = os.path.relpath(dirname, output_dir)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     try:
         tree = etree.parse(args.filename)
     except:
         name = os.path.basename(args.filename).split(".")
-        newfilename = os.path.join(args.output_dir,
+        newfilename = os.path.join(output_dir,
                                    ".".join(name[:-1]) + "_mod." + name[-1])
         # with open(args.filename)
         print("Making new file: " + newfilename)
@@ -63,7 +68,7 @@ def main():
                     entries.append(entries_loc)
                     it = it + 1
 
-    ofile = open(os.path.join(args.output_dir, "timestamps.dat"), "w")
+    ofile = open(os.path.join(output_dir, "timestamps.dat"), "w")
     req_fields = ["density", "pressure", "u_x", "u_y", "u_z"]
     for t, entries_loc in zip(times, entries):
         for req_field in req_fields:
@@ -78,8 +83,7 @@ def main():
         ofile.write("{}\t{}\n".format(t, fi))
     ofile.close()
 
-    with open(os.path.join(args.output_dir, "felbm_params.dat"),
-              "w") as paramsfile:
+    with open(os.path.join(output_dir, "felbm_params.dat"), "w") as paramsfile:
         paramsfile.write("timestamps=timestamps.dat\n")
         paramsfile.write("is_solid_file={}\n".format(
             os.path.join(reldirname, "output_is_solid.h5")))

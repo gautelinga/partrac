@@ -37,10 +37,10 @@ using namespace H5;
 
 class DolfInterpol : public Interpol {
 public:
-  DolfInterpol(const std::string infilename);
+  DolfInterpol(const std::string& infilename);
   void update(const double t);
-  void probe(const Vector3d &x);
-  bool inside_domain() { return inside; };
+  void probe(const Vector3d &x, const double t);
+  bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
   double get_uz(){ return U[2]; };

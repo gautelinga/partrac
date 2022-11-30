@@ -12,7 +12,8 @@
 #include <random>
 #include <fstream>
 #include "typedefs.hpp"
-#include "Interpol.hpp"
+//#include "Interpol.hpp"
+//#include "Parameters.hpp"
 
 class Stamp {
 public:
@@ -44,81 +45,6 @@ static double modulox(const double x, const double L){
 
 static Uint imodulo(const int a, const int b) {
   return ((a % b) + b) % b;
-}
-
-static double interpolate(const double x,
-		   const double y,
-		   const double z,
-		   double*** C,
-		   const Uint nx,
-		   const Uint ny,
-		   const Uint nz,
-		   const double Lx,
-		   const double Ly,
-		   const double Lz,
-		   const bool verbose
-		   ){
-  int ix_lo, ix_hi, iy_lo, iy_hi, iz_lo, iz_hi;
-  double wx, wy, wz;
-  double f000, f001, f010, f011, f100, f101, f110, f111;
-  double f;
-  double dx = Lx/nx;
-  double dy = Ly/ny;
-  double dz = Lz/nz;
-
-  int ix_est = floor(x/dx);
-  int iy_est = floor(y/dy);
-  int iz_est = floor(z/dz);
-
-  ix_lo = imodulo(ix_est, nx);
-  ix_hi = imodulo(ix_lo + 1, nx);
-  iy_lo = imodulo(iy_est, ny);
-  iy_hi = imodulo(iy_lo + 1, ny);
-  iz_lo = imodulo(iz_est, nz);
-  iz_hi = imodulo(iz_lo + 1, nz);
-
-  wx = (x-dx*ix_est)/dx;
-  wy = (y-dy*iy_est)/dy;
-  wz = (z-dz*iz_est)/dz;
-
-  if (verbose)
-    std::cout << wx << " " << wy << " " << wz << std::endl;
-
-  // Nodal values
-  f000 = C[ix_lo][iy_lo][iz_lo];
-  f001 = C[ix_lo][iy_lo][iz_hi];
-  f010 = C[ix_lo][iy_hi][iz_lo];
-  f011 = C[ix_lo][iy_hi][iz_hi];
-  f100 = C[ix_hi][iy_lo][iz_lo];
-  f101 = C[ix_hi][iy_lo][iz_hi];
-  f110 = C[ix_hi][iy_hi][iz_lo];
-  f111 = C[ix_hi][iy_hi][iz_hi];
-
-  // Trilinear interpolaton
-  f = f000*(1-wx)*(1-wy)*(1-wz)
-    + f001*(1-wx)*(1-wy)*  wz
-    + f010*(1-wx)*  wy  *(1-wz)
-    + f011*(1-wx)*  wy  *  wz
-    + f100*  wx  *(1-wy)*(1-wz)
-    + f101*  wx  *(1-wy)*  wz
-    + f110*  wx  *  wy  *(1-wz)
-    + f111*  wx  *  wy  *  wz;
-
-  return f;
-}
-
-static double weighted_sum(double*** C,
-                    const Uint ind[3][2],
-                    const double w[2][2][2]){
-  double f = 0.0;
-  for (Uint q0=0; q0<2; ++q0){
-    for (Uint q1=0; q1<2; ++q1){
-      for (Uint q2=0; q2<2; ++q2){
-        f += C[ind[0][q0]][ind[1][q1]][ind[2][q2]]*w[q0][q1][q2];
-      }
-    }
-  }
-  return f;
 }
 
 static double norm(const double x, const double y, const double z){
@@ -166,6 +92,7 @@ static long double area(const Uint iedge, const Uint jedge,
 
 static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
                  const FacesType& faces, const EdgesType& edges){
+  // To be decommissioned?
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return area(iedge, jedge, x_rw, edges);
@@ -350,80 +277,6 @@ static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
     exit(0);
   }
   return ivec;
-}
-
-static void test_interpolation(Uint num_points, Interpol *intp,
-                        const std::string &newfolder, const double t0,
-                        std::mt19937 &gen){
-  Uint n = 0;
-  Uint n_inside = 0;
-
-  Vector3d x_min = intp->get_x_min();
-  Vector3d x_max = intp->get_x_max();
-
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-
-  std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
-
-  intp->update(t0);
-
-  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
-  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
-  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
-  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
-  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
-  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
-  //                  intp->get_nodal_uy(ix, iy, iz),
-  //                  intp->get_nodal_uz(ix, iy, iz));
-  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
-  //     }
-  //   }
-  // }
-  // nodalfile.close();
-
-  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
-  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
-  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
-
-  std::ofstream ofile(newfolder + "/interpolation.txt");
-  std::string sep = ",";
-  ofile << "x" << sep << "y" << sep << "z" << sep
-        << "ux" << sep << "uy" << sep << "uz" << sep
-        << "rho" << sep << "p" << sep << "divu" << sep
-        << "vortz" << sep
-        << "uxx" << sep << "uxy" << sep << "uxz" << sep
-        << "uyx" << sep << "uyy" << sep << "uyz" << sep
-        << "uzx" << sep << "uzy" << sep << "uzz"
-        << std::endl;
-  while (n < num_points){
-    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    //std::cout << x << std::endl;
-    intp->probe(x);
-    if (intp->inside_domain()){
-      Vector3d u = intp->get_u();
-      double rho = intp->get_rho();
-      double p = intp->get_p();
-      double divu = intp->get_divu();
-      double vortz = intp->get_vortz();
-      ofile << x[0] << sep << x[1] << sep << x[2] << sep
-            << u[0] << sep << u[1] << sep << u[2] << sep
-            << rho << sep << p << sep << divu << sep
-            << vortz << sep
-            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
-            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
-            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
-            << std::endl;
-      ++n_inside;
-    }
-    ++n;
-  }
-  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
-  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
-  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
-  ofile.close();
 }
 
 #endif

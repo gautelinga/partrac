@@ -40,21 +40,26 @@ void Triangle::xy2bary(double x, double y,
   r = 1.-s-t;
 }
 
-void Triangle::linearbasis(double r,
-                      double s,
-                      double t,
-                      std::array<double, 3> &N) const
+void Triangle::linearbasis( double r
+                          , double s
+                          , double t
+                          //, std::array<double, 3> &N
+                          , std::vector<double> &N
+                          ) const
 {
   N[0] = r;
   N[1] = s;
   N[2] = t;
 }
 
-void Triangle::linearderiv(double r,
-                      double s,
-                      double t,
-                      std::array<double, 3> &Nx,
-                      std::array<double, 3> &Ny) const
+void Triangle::linearderiv( double r
+                          , double s
+                          , double t
+                          //, std::array<double, 3> &Nx
+                          //, std::array<double, 3> &Ny
+                          , std::vector<double> &Nx
+                          , std::vector<double> &Ny
+                          ) const
 {
   Nx[0] = g1x_;
   Nx[1] = g2x_;
@@ -65,10 +70,12 @@ void Triangle::linearderiv(double r,
   Ny[2] = g3y_;
 }
 
-void Triangle::quadbasis(double r,
-                         double s,
-                         double t,
-                         std::array<double, 6> &N) const
+void Triangle::quadbasis( double r
+                        , double s
+                        , double t
+                        //, std::array<double, 6> &N
+                        , std::vector<double> &N
+                        ) const
 {
   N[0] = r*(2*r-1);
   N[1] = s*(2*s-1);
@@ -78,11 +85,14 @@ void Triangle::quadbasis(double r,
   N[perm_[5]] = 4*r*t;
 }
 
-void Triangle::quadderiv(double r,
-                         double s,
-                         double t,
-                         std::array<double, 6> &Nx,
-                         std::array<double, 6> &Ny) const
+void Triangle::quadderiv( double r
+                        , double s
+                        , double t
+                        //, std::array<double, 6> &Nx
+                        //, std::array<double, 6> &Ny
+                        , std::vector<double> &Nx
+                        , std::vector<double> &Ny
+                        ) const
 {
   double a = 4.0*r-1.0;
   double b = 4.0*s-1.0;
