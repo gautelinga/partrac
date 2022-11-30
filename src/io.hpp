@@ -11,7 +11,7 @@
 #include "typedefs.hpp"
 
 //using namespace std;
-using namespace H5;
+//using namespace H5;
 
 std::map<std::string, std::string> load_settings(const std::string& casefile);
 std::vector<std::string> get_files(const std::string& s);
@@ -45,13 +45,13 @@ void write_param(std::ofstream &ofile, const std::string& key, double val);
 void write_param(std::ofstream &ofile, const std::string& key, int val);
 void write_param(std::ofstream &ofile, const std::string& key, long int val);
 void write_param(std::ofstream &ofile, const std::string& key, const std::string& val);
-/*void load_field(H5File &h5file,
+/*void load_field(H5::H5File &h5file,
                 //double*** u,
                 std::vector<double>&,
                 const std::string field
                 //, const int nx, const int ny, const int nz
                 );
-void load_int_field(H5File &h5file,
+void load_int_field(H5::H5File &h5file,
                     //int*** u,
                     std::vector<int>&,
                     const std::string field
@@ -98,17 +98,17 @@ void load_scalar_field(const std::string& input_file,
                        std::vector<double>& c_rw, const Uint Nrw);
 void dump_scalar_field(const std::string& output_file,
                        const std::vector<double>& c_rw, const Uint Nrw);
-void tensor2hdf5(H5File& h5f, const std::string& dsetname,
+void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& axx_rw, const std::vector<double>& axy_rw, const std::vector<double>& axz_rw,
                  const std::vector<double>& ayx_rw, const std::vector<double>& ayy_rw, const std::vector<double>& ayz_rw,
                  const std::vector<double>& azx_rw, const std::vector<double>& azy_rw, const std::vector<double>& azz_rw,
                  const Uint Nrw);
-void vector2hdf5(H5File& h5f, const std::string& dsetname,
+void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& ax_rw, const std::vector<double>& ay_rw, const std::vector<double>& az_rw,
                  const Uint Nrw);
-void vector2hdf5(H5File& h5f, const std::string& dsetname,
+void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw);
-void scalar2hdf5(H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
+void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw);
 void print_mesh(const FacesType& faces, const EdgesType& edges,
                 const Edge2FacesType& edge2faces,

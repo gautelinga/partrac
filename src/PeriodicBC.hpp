@@ -13,8 +13,13 @@ public:
     periodic_z = periodic[2] && dim > 2;
     this->x_min = x_min;
     this->x_max = x_max;
+    this->dim = dim;
   };
-  bool inside(const dolfin::Array<double>& x, bool on_boundary) const {
+  bool inside(const dolfin::Array<double>& xx, bool on_boundary) const {
+    std::vector<double> x = {0., 0., 0.};
+    for (std::size_t d=0; d<dim; ++d){
+      x[d] = xx[d];
+    }
     return (on_boundary &&
             ((periodic_x && x[0] < x_min[0] + DOLFIN_EPS_LARGE) ||
              (periodic_y && x[1] < x_min[1] + DOLFIN_EPS_LARGE) ||
@@ -41,7 +46,12 @@ public:
               )
             );
   }
-  void map(const dolfin::Array<double>& x, dolfin::Array<double>& y) const {
+  void map(const dolfin::Array<double>& xx, dolfin::Array<double>& yy) const {
+    std::vector<double> x = {0., 0., 0.};
+    std::vector<double> y = {0., 0., 0.};
+    for (std::size_t d=0; d<dim; ++d){
+      x[d] = xx[d];
+    }
     if (periodic_x && periodic_y && periodic_z &&
         x[0] > x_max[0] - DOLFIN_EPS_LARGE &&
         x[1] > x_max[1] - DOLFIN_EPS_LARGE &&
@@ -91,6 +101,9 @@ public:
       y[1] = x[1]-1000;
       y[2] = x[2]-1000;
     }
+    for (std::size_t d=0; d<dim; ++d){
+      yy[d] = y[d];
+    }
   }
 private:
   double periodic_x;
@@ -98,6 +111,7 @@ private:
   double periodic_z;
   Vector3d x_min;
   Vector3d x_max;
+  double dim;
 };
 
 #endif

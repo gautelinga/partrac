@@ -180,11 +180,15 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    std::shared_ptr<Interpol> intp_ptr (&intp);
+    //std::shared_ptr<Interpol> intp_ptr (&intp);
 
-    std::shared_ptr<Initializer> init_state;
-    init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
-    init_state->initialize(ps);
+    //std::shared_ptr<Initializer> init_state;
+    //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
+    //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
+    //init_state->initialize(ps);
+    RandomPairsInitializer init_state(key, prm, mpi, gen);
+    init_state.probe(intp);
+    init_state.initialize(ps);
 
     // Check mesh connectivity:
     Uint id = 0;
@@ -211,7 +215,7 @@ int main(int argc, char* argv[])
     write_stats_header(mpi, statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-    H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+    H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
 
     Uint int_stat_intv = int(prm.stat_intv/dt);
     Uint int_dump_intv = int(prm.dump_intv/dt);

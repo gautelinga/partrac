@@ -2,52 +2,62 @@
 #define __MPIWRAP_HPP
 
 #include <mpi.h>
+#include "typedefs.hpp"
 
 class MPIwrap {
 public:
   MPIwrap(int argc, char* argv[]);
   ~MPIwrap();
+  void finalize();
   int rank() const { return m_rank; };
   int size() const { return m_size; };
-  MPI_Comm& comm() { return m_comm; };
-  MPI_Info& info() { return m_info; };
+  //MPI_Comm& comm() { return MPI_COMM_WORLD; };
+  //MPI_Info& info() { return MPI_INFO_NULL; };
   std::vector<int> gather(int);
   int scatter(std::vector<int>&);
   //std::vector<T> gatherVec(std::vector<T>& vec, MPI_Datatype type);
   //std::vector<int> gatherVec(std::vector<int>& vec);
   EdgesType wrapEdges(EdgesType& edges, int id_offset);
   FacesType wrapFaces(FacesType& faces, int id_offset);
-  void barrier() { MPI_Barrier(m_comm); };
+  void barrier() { MPI_Barrier(MPI_COMM_WORLD); };
   template <typename T> T sum(T &a, MPI_Datatype type){
     T a_out;
-    MPI_Reduce(&a, &a_out, 1, type, MPI_SUM, 0, m_comm);
+    MPI_Reduce(&a, &a_out, 1, type, MPI_SUM, 0, MPI_COMM_WORLD);
     return a_out;
   }
   template <typename T> T allsum(T &a, MPI_Datatype type){
     T a_out;
-    MPI_Allreduce(&a, &a_out, 1, type, MPI_SUM, m_comm);
+    MPI_Allreduce(&a, &a_out, 1, type, MPI_SUM, MPI_COMM_WORLD);
     return a_out;
   }
 private:
-  MPI_Comm m_comm = MPI_COMM_WORLD;
-  MPI_Info m_info  = MPI_INFO_NULL;
+  //MPI_Comm m_comm = MPI_COMM_WORLD;
+  //MPI_Info m_info  = MPI_INFO_NULL;
   int m_rank;
   int m_size;
 };
 
 MPIwrap::MPIwrap(int argc, char* argv[]){
   MPI_Init(&argc, &argv);
-  MPI_Comm_rank(m_comm, &m_rank);
-  MPI_Comm_size(m_comm, &m_size);
+  MPI_Comm_rank(MPI_COMM_WORLD, &m_rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &m_size);
 }
 
 MPIwrap::~MPIwrap(){
-  MPI_Finalize ( );
+  int flag = 0;
+  MPI_Finalized(&flag);
+  if ( !flag ){
+    finalize();
+  }
+}
+
+void MPIwrap::finalize(){
+  MPI_Finalize();
 }
 
 std::vector<int> MPIwrap::gather(int value){
   std::vector<int> values(size());
-  MPI_Gather(&value, 1, MPI_INT, values.data(), 1, MPI_INT, 0, comm());
+  MPI_Gather(&value, 1, MPI_INT, values.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
   return values;
 }
 
@@ -85,7 +95,7 @@ std::vector<T> gather_vector(MPIwrap& mpi, std::vector<T>& vec, MPI_Datatype typ
   if (mpi.rank() == 0)
     all_vec.resize(n_total);
   MPI_Gatherv(vec.data(), nelements, type,
-              all_vec.data(), num_elem_.data(), disps, type, 0, mpi.comm());
+              all_vec.data(), num_elem_.data(), disps, type, 0, MPI_COMM_WORLD);
   return all_vec;
 }
 
@@ -135,7 +145,7 @@ FacesType MPIwrap::wrapFaces(FacesType& faces, int id_offset){
 int MPIwrap::scatter(std::vector<int>& values){
   assert(values.size() == size());
   int value;
-  MPI_Scatter(values.data(), 1, MPI_INT, &value, 1, MPI_INT, 0, comm());
+  MPI_Scatter(values.data(), 1, MPI_INT, &value, 1, MPI_INT, 0, MPI_COMM_WORLD);
   return value;
 }
 

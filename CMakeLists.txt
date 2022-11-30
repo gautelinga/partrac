@@ -28,6 +28,10 @@ endif()
 #set(ENABLE_DOLFIN "true" CACHE STRING "Set to true to enable Dolfin import.")
 include(FeatureSummary)
 
+if (NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
+endif()
+
 set(OPTIONAL_PACKAGES "")
 list(APPEND OPTIONAL_PACKAGES "Dolfin" "mpi")
 foreach (OPTIONAL_PACKAGE ${OPTIONAL_PACKAGES})
@@ -41,7 +45,6 @@ if(PARTRAC_ENABLE_DOLFIN)
   add_definitions(-DUSE_DOLFIN)
   find_package(DOLFIN)
   include(${DOLFIN_USE_FILE})
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
 endif()
 
 if (PARTRAC_ENABLE_MPI)
@@ -50,12 +53,21 @@ if (PARTRAC_ENABLE_MPI)
   include_directories(${MPI_INCLUDE_PATH})
 endif()
 
-# # Debug build
-#set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
-# set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
+message(STATUS "****** ${CMAKE_BUILD_TYPE}")
+message(STATUS "dolfin cxx flags: ${DOLFIN_CXX_FLAGS}")
+message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
 
-# Optimized build
-set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
+if( CMAKE_BUILD_TYPE MATCHES "Release")
+  # Optimized build
+  message(STATUS "Release build")
+  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native")
+else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # # Debug build
+  message(STATUS "Debug build")
+  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O2 -march=native -ggdb3 -pedantic-errors -Wextra")
+endif()
+
+message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
 
 # Profiling: Use as LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libprofiler.so.0 CPUPROFILE=prof.txt ./partrac ...
 # pprof-symbolize --ps ./partrac prof.txt > prof.ps
@@ -63,12 +75,6 @@ set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=
 
 # Profiling build
 #set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pg -pedantic-errors -Wextra")
-
-#set(HDF5_PREFER_PARALLEL TRUE)
-#find_package(HDF5 COMPONENTS CXX)
-#set_package_properties(HDF5 PROPERTIES TYPE OPTIONAL
-#  DESCRIPTION "Hierarchical Data Format 5 (HDF5)"
-#  URL "https://www.hdfgroup.org/HDF5")
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
@@ -81,34 +87,6 @@ set(PROJECT_TARGETS ${PROJECT_NAME})
 #aux_source_directory(src SRC_LIST)
 add_subdirectory(apps)
 
-#message(STATUS ${SRC_LIST})
-#add_library(Src1 ${SRC_LIST})
-#add_executable(${PROJECT_NAME} ${SRC_LIST})
-#add_executable(${PROJECT_NAME} src/traj.cpp)
-
-#if (PARTRAC_ENABLE_DOLFIN)
-#  target_link_libraries(${PROJECT_NAME} dolfin)
-#endif()
-
-#if (PARTRAC_ENABLE_MPI)
-#  target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES})
-#endif()
-
-#if(MPI_COMPILE_FLAGS)
-#  set_target_properties(${PROJECT_NAME}  PROPERTIES
-#    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
-#endif()
-
-#if(MPI_LINK_FLAGS)
-#  set_target_properties(${PROJECT_NAME}  PROPERTIES
-#    LINK_FLAGS "${MPI_LINK_FLAGS}")
-#endif()
-
-#target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-#  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
-#target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
-
-#install(TARGETS ${PROJECT_NAME} interpol filaments filaments_felbmRK4 DESTINATION /usr/bin/)
 message(STATUS ${PROJECT_TARGETS})
 
 separate_arguments(PROJECT_TARGETS)
@@ -122,13 +100,6 @@ if (BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
-# # Get DOLFIN configuration data (DOLFINConfig.cmake must be in
-# # DOLFIN_CMAKE_CONFIG_PATH)
-# find_package(DOLFIN REQUIRED)
-# add_definitions(-DUSE_DOLFIN)
-
-# include(${DOLFIN_USE_FILE})
-# set(CMAKE_CXX_STANDARD 17)
 
 # # # Debug build
 # # set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
@@ -142,13 +113,4 @@ endif()
 # set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
 # set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
 
-# find_package(HDF5 REQUIRED COMPONENTS CXX HL)
-# find_package(Eigen3 3.3 REQUIRED NO_MODULE)
-
-# include_directories(${HDF5_INCLUDE_DIR})
-
-# aux_source_directory(src/ SRC_LIST)
-# add_executable(${PROJECT_NAME} ${SRC_LIST})
-
-# target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-#   ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${DOLFIN_LIBRARIES})
+message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")

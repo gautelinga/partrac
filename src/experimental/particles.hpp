@@ -27,15 +27,19 @@ public:
     Real &       p() { return m_p; };
     Real &       c() { return m_c; };
     Real &       tau() { return m_tau; };
+    Vector &     n() { return m_n; };  // directional vector
+    Real &       w() { return m_w; };  // accumulated scalar elongation
+    Real &       S() { return m_S; };  // stretching quantity
+    int &        cell_id() { return m_cell_id; };  // cell id (if applicable)
     Vector       get_x() const { return m_x; };
     Vector       get_u() const { return m_u; };
-    Real           get_rho() const { return m_rho; };
-    Real           get_p() const { return m_p; };
+    Real         get_rho() const { return m_rho; };
+    Real         get_p() const { return m_p; };
 
     //Uint           get_id() const { return m_id; };
     //void           set_id(Uint id) { m_id=id; };
     inline static std::vector<std::string> scalar_fields() {
-        std::vector<std::string> fields = {"rho", "p", "c", "tau"};
+        std::vector<std::string> fields = {"rho", "p", "c", "tau", "w", "S"};
         return fields;
     }
     inline static std::vector<std::string> vector_fields() {
@@ -54,6 +58,12 @@ public:
         }
         else if (field == "tau"){
             return m_tau;
+        }
+        else if (field == "w"){
+            return m_w;
+        }
+        else if (field == "S"){
+            return m_S;
         }
         // or throw exception?
         return 0.;
@@ -89,7 +99,10 @@ protected:
     Real        m_c = 0.;
     Real        m_tau = 0.;
     Vector      m_n = {0., 0., 0.};
+    Real        m_w = 0.;
+    Real        m_S = 0.;
     Uint        m_id = 0;
+    int         m_cell_id = -1;
     std::set<Uint> m_edge_ids;
     //Particles<Particle>* m_ps;
 };

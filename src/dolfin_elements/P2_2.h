@@ -468,7 +468,11 @@ public:
     const std::size_t physical_offsets[6] = {};
     for (std::size_t ip = 0; ip < num_points; ++ip)
     {
-        double transform[4][4];
+        double transform[4][4] =
+        { { 0.0, 0.0, 0.0, 0.0 },
+          { 0.0, 0.0, 0.0, 0.0 },
+          { 0.0, 0.0, 0.0, 0.0 },
+          { 0.0, 0.0, 0.0, 0.0 } };
         for (std::size_t r = 0; r < num_derivatives; ++r)
             for (std::size_t s = 0; s < num_derivatives; ++s)
                 transform[r][s] = 1.0;

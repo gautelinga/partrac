@@ -43,7 +43,7 @@ public:
     void dump_scalar(const std::string filename, const std::string fieldname) const;
     void load_positions(const std::string filename);
     void dump_positions(const std::string filename) const;
-    void dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const;
+    void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const;
     //bool integrate(const double t, const double dt);
     // void attach_integrator(std::shared_ptr<Integrator> integrator) { this->integrator = integrator; };
     //Uint get_accepted() { return integrator->get_accepted(); };
@@ -52,6 +52,8 @@ public:
     void update_fields(const double t, std::map<std::string, bool> &output_fields);
     //void reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields);
     std::shared_ptr<Interpol>& interpolator() { return intp; };
+    int get_cell_id(const Uint irw) const { return cell_id_rw[irw]; };
+    void set_cell_id(const Uint irw, const int cell_id) { cell_id_rw[irw] = cell_id; };
   private:
     //bool do_output_all = false;
     Uint Nrw = 0;
@@ -70,6 +72,8 @@ public:
     std::vector<double> rho_rw;
     std::vector<double> p_rw;
     std::vector<double> t_loc_rw;  // eigentime
+    // 
+    std::vector<int> cell_id_rw; // for speed (if applicable)
 
     MPIwrap& m_mpi;
 };
@@ -94,6 +98,8 @@ ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPI
     this->rho_rw.resize(Nrw_max);
     this->p_rw.resize(Nrw_max);
     this->t_loc_rw.resize(Nrw_max);  // eigentime
+    //
+    this->cell_id_rw.resize(Nrw_max);
 }
 /*
 ParticleSet::ParticleSet (const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
@@ -134,6 +140,7 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
       a_rw[irw] = intp->get_Ju() + intp->get_a();
     }
     */
+    cell_id_rw[irw] = -1;
   }
   Nrw += pos_init.size();
 }
@@ -437,7 +444,7 @@ void ParticleSet::update_fields(const double t, std::map<std::string, bool> &out
   }
 }
 
-void ParticleSet::dump_hdf5(H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const {
+void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const {
     vector2hdf5(h5f, groupname + "/points", x_rw, N());
     if (output_fields["u"])
         vector2hdf5(h5f, groupname + "/u", u_rw, N());

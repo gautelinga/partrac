@@ -9,7 +9,8 @@
 class Interpol {  // Abstract base class
 public:
   Interpol(const std::string& infilename) { this->infilename=infilename; };
-  virtual ~Interpol() = default;
+  //virtual ~Interpol() = default;
+  virtual ~Interpol(){ std::cout << "Destructing Interpol." << std::endl; };
   void set_folder(const std::string& folder){ this->folder=folder; };
   std::string get_folder() const { return folder; };
   void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
@@ -50,6 +51,7 @@ public:
   //
   virtual void update(const double t) = 0;
   virtual void probe(const Vector3d &x, const double t) = 0;
+  virtual void probe(const Vector3d &x, const double t, int& cell_id) = 0;
   //
   virtual bool inside_domain() const = 0;
   virtual double get_ux() = 0;

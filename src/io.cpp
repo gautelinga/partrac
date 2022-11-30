@@ -303,7 +303,7 @@ void dump_scalar_field(const std::string& output_file,
   outfile.close();
 }
 
-void tensor2hdf5(H5File& h5f, const std::string& dsetname,
+void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& axx_rw, const std::vector<double>& axy_rw, const std::vector<double>& axz_rw,
                  const std::vector<double>& ayx_rw, const std::vector<double>& ayy_rw, const std::vector<double>& ayz_rw,
                  const std::vector<double>& azx_rw, const std::vector<double>& azy_rw, const std::vector<double>& azz_rw,
@@ -311,7 +311,7 @@ void tensor2hdf5(H5File& h5f, const std::string& dsetname,
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3*3;
-  DataSpace dspace(2, dims);
+  H5::DataSpace dspace(2, dims);
   std::vector<double> data(Nrw*3*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw*3*3+0] = axx_rw[irw];
@@ -324,64 +324,64 @@ void tensor2hdf5(H5File& h5f, const std::string& dsetname,
     data[irw*3*3+7] = azy_rw[irw];
     data[irw*3*3+8] = azz_rw[irw];
   }
-  DataSet dset = h5f.createDataSet(dsetname,
-                                    PredType::NATIVE_DOUBLE,
+  H5::DataSet dset = h5f.createDataSet(dsetname,
+                                    H5::PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data.data(), PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5File& h5f, const std::string& dsetname,
+void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<double>& ax_rw, const std::vector<double>& ay_rw, const std::vector<double>& az_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3;
-  DataSpace dspace(2, dims);
+  H5::DataSpace dspace(2, dims);
   std::vector<double> data(Nrw*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw*3+0] = ax_rw[irw];
     data[irw*3+1] = ay_rw[irw];
     data[irw*3+2] = az_rw[irw];
   }
-  DataSet dset = h5f.createDataSet(dsetname,
-                                    PredType::NATIVE_DOUBLE,
+  H5::DataSet dset = h5f.createDataSet(dsetname,
+                                    H5::PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data.data(), PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
-void vector2hdf5(H5File& h5f, const std::string& dsetname,
+void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3;
-  DataSpace dspace(2, dims);
+  H5::DataSpace dspace(2, dims);
   std::vector<double> data(Nrw*3);
   for (Uint irw=0; irw < Nrw; ++irw){
     for (Uint d=0; d<3; ++d){
       data[irw*3+d] = a_rw[irw][d];
     }
   }
-  DataSet dset = h5f.createDataSet(dsetname,
-                                    PredType::NATIVE_DOUBLE,
+  H5::DataSet dset = h5f.createDataSet(dsetname,
+                                    H5::PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data.data(), PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
 
-void scalar2hdf5(H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
+void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw){
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 1;
-  DataSpace dspace(2, dims);
+  H5::DataSpace dspace(2, dims);
   std::vector<double> data(Nrw);
   for (Uint irw=0; irw < Nrw; ++irw){
     data[irw] = c_rw[irw];
   }
-  DataSet dset = h5f.createDataSet(dsetname,
-                                    PredType::NATIVE_DOUBLE,
+  H5::DataSet dset = h5f.createDataSet(dsetname,
+                                    H5::PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data.data(), PredType::NATIVE_DOUBLE);
+  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
 void print_mesh(const FacesType& faces, const EdgesType& edges,

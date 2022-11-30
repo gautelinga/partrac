@@ -469,6 +469,11 @@ public:
     for (std::size_t ip = 0; ip < num_points; ++ip)
     {
         double transform[4][4];
+        for (std::size_t r = 0; r < 4; ++r){
+            for (std::size_t s = 0; s < 4; ++s){
+                transform[r][s] = 0.;
+            }
+        }
         for (std::size_t r = 0; r < num_derivatives; ++r)
             for (std::size_t s = 0; s < num_derivatives; ++s)
                 transform[r][s] = 1.0;
@@ -592,11 +597,12 @@ public:
             { 1, 0 },
             { 1, 1 } } };
     // Declare transformation matrix
-    double transform[4][4] =
-        { { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 } };
+    double transform[4][4];
+    for (std::size_t r = 0; r < 4; ++r){
+        for (std::size_t s = 0; s < 4; ++s){
+            transform[r][s] = 1.0;
+        }
+    }
     // Construct transformation matrix
     for (std::size_t row = 0; row < num_derivatives; ++row)
         for (std::size_t col = 0; col < num_derivatives; ++col)
@@ -2012,6 +2018,11 @@ public:
     for (std::size_t ip = 0; ip < num_points; ++ip)
     {
         double transform[4][4];
+        for (std::size_t r = 0; r < 4; ++r){
+            for (std::size_t s = 0; s < 4; ++s){
+                transform[r][s] = 0.;
+            }
+        }
         for (std::size_t r = 0; r < num_derivatives; ++r)
             for (std::size_t s = 0; s < num_derivatives; ++s)
                 transform[r][s] = 1.0;
@@ -2136,11 +2147,12 @@ public:
             { 1, 0 },
             { 1, 1 } } };
     // Declare transformation matrix
-    double transform[4][4] =
-        { { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 },
-          { 1.0, 1.0, 1.0, 1.0 } };
+    double transform[4][4];
+    for (std::size_t r = 0; r < 4; ++r){
+        for (std::size_t s = 0; s < 4; ++s){
+            transform[r][s] = 1.0;
+        }
+    }
     // Construct transformation matrix
     for (std::size_t row = 0; row < num_derivatives; ++row)
         for (std::size_t col = 0; col < num_derivatives; ++col)

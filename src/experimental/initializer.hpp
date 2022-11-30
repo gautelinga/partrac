@@ -21,15 +21,17 @@ struct less_than_op {
 
 class Initializer {
 public:
-  Initializer(std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : m_intp(intp), prm(prm), m_mpi(mpi) {
+  //Initializer(IntpType& intp, Parameters& prm, MPIwrap& mpi) : m_intp(intp), prm(prm), m_mpi(mpi) {
+  Initializer(Parameters& prm, MPIwrap& mpi) : prm(prm), m_mpi(mpi) {
     x0 = {prm.x0, prm.y0, prm.z0};
-    x_min = m_intp->get_x_min();
-    x_max = m_intp->get_x_max();
-    L = x_max - x_min;
+    //x_min = intp.get_x_min();
+    //x_max = intp.get_x_max();
+    //L = x_max - x_min;
     inject = prm.inject;
     clear_initial_edges = prm.clear_initial_edges;
   };
-  ~Initializer() { nodes.clear(); edges.clear(); faces.clear(); };
+  virtual ~Initializer() { nodes.clear(); edges.clear(); faces.clear(); };
+  //virtual void probe(IntpType& intp) = 0;
   /*std::vector<Vector>::const_iterator node_begin() const { return nodes.begin(); };
   std::vector<Vector>::const_iterator node_end() const { return nodes.end(); };
   EdgesType::const_iterator edge_begin() const { return edges.begin(); };
@@ -41,10 +43,10 @@ public:
   FacesType faces;
   bool inject;
   bool clear_initial_edges;
-  std::shared_ptr<Interpol> interpolator() { return m_intp; };
+  // IntpType& interpolator() { return m_intp; };
   template<typename T> void initialize(T& particles);
 protected:
-  std::shared_ptr<Interpol> m_intp;
+  //IntpType& m_intp;
   Parameters& prm;
   Vector x0;
   Vector x_min;
@@ -56,9 +58,10 @@ protected:
 template<typename T>
 void Initializer::initialize(T& ps)
 {
+  std::cout << "Nodes: " << nodes.size() << std::endl;
   for (auto & x : nodes)
   {
-    std::cout << "adding particle" << std::endl;
+    //std::cout << "adding particle" << std::endl;
     ps.add_particle(x);
   }
   ps.color_particles(0., 1.);
@@ -68,7 +71,7 @@ void Initializer::initialize(T& ps)
     Uint j = inedge.first[1];
     Real w = inedge.second;
     //ps.add_edge(ps.particle_ptr(i), ps.particle_ptr(j), w);
-    std::cout << "adding edge" << std::endl;
+    //std::cout << "adding edge" << std::endl;
     ps.add_edge(i, j, w);
   }
   for (auto & inface : faces)
@@ -101,44 +104,58 @@ public:
 */
 
 class UniformInitializer : public Initializer {
+protected:  
+  std::vector<std::string> key;
 public:
   UniformInitializer( const std::vector<std::string>& key
-                    , std::shared_ptr<Interpol> intp
+                    //, IntpType& intp
                     , Parameters& prm
                     , MPIwrap& mpi
-                    ) : Initializer(intp, prm, mpi) {
-    Vector x_a = this->x0;
-    Vector x_b = this->x0;
-    if (key[1] == "x"){
-      x_a[0] = this->x_min[0];
-      x_b[0] = this->x_max[0];
-    }
-    else if (key[1] == "y"){
-      x_a[1] = this->x_min[1];
-      x_b[1] = this->x_max[1];
-    }
-    else if (key[1] == "z"){
-      x_a[2] = this->x_min[2];
-      x_b[2] = this->x_max[2];
-    }
-    else {
-      std::cout << "Unrecognized initialization..." << std::endl;
-      exit(0);
-    }
-    Vector Dx = (x_b - x_a) / (prm.Nrw-1);
-    for (Uint irw=0; irw < prm.Nrw; ++irw){
-      Vector x = x_a + Dx * irw;
-      intp->probe(x);
-      if (intp->inside_domain()){
-        this->nodes.push_back(x);
-      }
-    }
-    for (Uint irw=0; irw < this->nodes.size()-1; ++irw){
-      if ((this->nodes[irw] - this->nodes[irw+1]).norm() < 1.5*Dx.norm()){
-        this->edges.push_back({{irw, irw+1}, dist(this->nodes[irw], this->nodes[irw+1])});
-      }
-    }
+                    //) : Initializer(intp, prm, mpi) {
+                    ) : Initializer(prm, mpi), key(key) {
+    //probe(intp);
   };
+  template<typename IntpType> 
+  void probe(IntpType& intp);
+};
+
+template<typename IntpType>
+void UniformInitializer::probe(IntpType& intp){
+  x_min = intp.get_x_min();
+  x_max = intp.get_x_max();
+  L = x_max - x_min;
+
+  Vector x_a = this->x0;
+  Vector x_b = this->x0;
+  if (key[1] == "x"){
+    x_a[0] = x_min[0];
+    x_b[0] = x_max[0];
+  }
+  else if (key[1] == "y"){
+    x_a[1] = x_min[1];
+    x_b[1] = x_max[1];
+  }
+  else if (key[1] == "z"){
+    x_a[2] = x_min[2];
+    x_b[2] = x_max[2];
+  }
+  else {
+    std::cout << "Unrecognized initialization..." << std::endl;
+    exit(0);
+  }
+  Vector Dx = (x_b - x_a) / (prm.Nrw-1);
+  for (Uint irw=0; irw < prm.Nrw; ++irw){
+    Vector x = x_a + Dx * irw;
+    intp.probe(x);
+    if (intp.inside_domain()){
+      this->nodes.push_back(x);
+    }
+  }
+  for (Uint irw=0; irw < this->nodes.size()-1; ++irw){
+    if ((this->nodes[irw] - this->nodes[irw+1]).norm() < 1.5*Dx.norm()){
+      this->edges.push_back({{irw, irw+1}, dist(this->nodes[irw], this->nodes[irw+1])});
+    }
+  }
 };
 
 /*
@@ -345,127 +362,155 @@ public:
 class RandomPairsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
+  std::vector<std::string> key;
 public:
   RandomPairsInitializer( const std::vector<std::string>& key
-                        , std::shared_ptr<Interpol> intp
+                        //, IntpType& intp
                         , Parameters& prm
                         , MPIwrap& mpi
                         , std::mt19937 &gen
                         )
-   : Initializer(intp, prm, mpi), gen(gen) {
-    std::uniform_real_distribution<> uni_dist_x(this->x_min[0], this->x_max[0]);
-    std::uniform_real_distribution<> uni_dist_y(this->x_min[1], this->x_max[1]);
-    std::uniform_real_distribution<> uni_dist_z(this->x_min[2], this->x_max[2]);
-    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
-
-    Uint Npairs = (key[0] == "pair") ? 1 : prm.Nrw/2;
-
-    std::cout << "Npairs = " << Npairs << std::endl;
-
-    Vector x0_ = this->x0;
-    Uint ipair=0;
-    while (ipair < Npairs){
-      if (key[0] == "pairs" && key.size() == 3){
-        if (contains(key[2], "x")){
-          x0_[0] = uni_dist_x(gen);
-        }
-        if (contains(key[2], "y")){
-          x0_[1] = uni_dist_y(gen);
-        }
-        if (contains(key[2], "z")){
-          x0_[2] = uni_dist_z(gen);
-        }
-      }
-      Vector dx(0., 0., 0.);
-      if (!contains(key[1], "x")){
-        dx[0] = 0.;
-      }
-      else {
-        dx[0] = rnd_normal(gen);
-      }
-      if (!contains(key[1], "y")){
-        dx[1] = 0.;
-      }
-      else {
-        dx[1] = rnd_normal(gen);
-      }
-      if (!contains(key[1], "z")){
-        dx[2] = 0.;
-      }
-      else {
-        dx[2] = rnd_normal(gen);
-      }
-      dx *= 0.5*prm.ds_init/dx.norm();
-
-      Vector x_a = x0_ + dx;
-      intp->probe(x_a);
-      bool inside_a = intp->inside_domain();
-      Vector x_b = x0_ - dx;
-      intp->probe(x_b);
-      bool inside_b = intp->inside_domain();
-      if (inside_a && inside_b){
-        //std::cout << "INSIDE" << std::endl;
-        // std::cout << "INSIDE: " << x_a << " " << x_b << std::endl; 
-        this->nodes.push_back(x_a);
-        this->nodes.push_back(x_b);
-        Real ds0 = (x_a-x_b).norm();
-        this->edges.push_back({{2*ipair, 2*ipair+1}, ds0});
-        ++ipair;
-      }
-      else if (key[0] == "pair"){
-        std::cout << "Pair not inside domain" << std::endl;
-        exit(0);
-      }
-      //std::cout << x_a << " " << x_b << std::endl;
-    }
+   //: Initializer(intp, prm, mpi), gen(gen) {
+    : Initializer(prm, mpi), gen(gen), key(key) {
+      //probe(intp);
   };
+  template<typename IntpType>
+  void probe(IntpType& intp);
+};
+
+template<typename IntpType>
+void RandomPairsInitializer::probe(IntpType& intp){
+  x_min = intp.get_x_min();
+  x_max = intp.get_x_max();
+  L = x_max - x_min;
+
+  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
+  std::normal_distribution<Real> rnd_normal(0.0, 1.0);
+
+  Uint Npairs = (key[0] == "pair") ? 1 : prm.Nrw/2;
+
+  std::cout << "Npairs = " << Npairs << std::endl;
+
+  Vector x0_ = this->x0;
+  Uint ipair=0;
+  while (ipair < Npairs){
+    if (key[0] == "pairs" && key.size() == 3){
+      if (contains(key[2], "x")){
+        x0_[0] = uni_dist_x(gen);
+      }
+      if (contains(key[2], "y")){
+        x0_[1] = uni_dist_y(gen);
+      }
+      if (contains(key[2], "z")){
+        x0_[2] = uni_dist_z(gen);
+      }
+    }
+    Vector dx(0., 0., 0.);
+    if (!contains(key[1], "x")){
+      dx[0] = 0.;
+    }
+    else {
+      dx[0] = rnd_normal(gen);
+    }
+    if (!contains(key[1], "y")){
+      dx[1] = 0.;
+    }
+    else {
+      dx[1] = rnd_normal(gen);
+    }
+    if (!contains(key[1], "z")){
+      dx[2] = 0.;
+    }
+    else {
+      dx[2] = rnd_normal(gen);
+    }
+    dx *= 0.5*prm.ds_init/dx.norm();
+
+    Vector x_a = x0_ + dx;
+    intp.probe(x_a);
+    bool inside_a = intp.inside_domain();
+    Vector x_b = x0_ - dx;
+    intp.probe(x_b);
+    bool inside_b = intp.inside_domain();
+    if (inside_a && inside_b){
+      //std::cout << "INSIDE" << std::endl;
+      // std::cout << "INSIDE: " << x_a << " " << x_b << std::endl; 
+      this->nodes.push_back(x_a);
+      this->nodes.push_back(x_b);
+      Real ds0 = (x_a-x_b).norm();
+      this->edges.push_back({{2*ipair, 2*ipair+1}, ds0});
+      ++ipair;
+    }
+    else if (key[0] == "pair"){
+      std::cout << "Pair not inside domain" << std::endl;
+      exit(0);
+    }
+    //std::cout << x_a << " " << x_b << std::endl;
+  }
 };
 
 class RandomPointsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
+  std::vector<std::string> key;
 public:
   RandomPointsInitializer( const std::vector<std::string>& key
-                         , std::shared_ptr<Interpol> intp
+                         //, IntpType& intp
                          , Parameters& prm
                          , MPIwrap& mpi
                          , std::mt19937 &gen
                          )
-   : Initializer(intp, prm, mpi), gen(gen){
-    std::uniform_real_distribution<> uni_dist_x(this->x_min[0], this->x_max[0]);
-    std::uniform_real_distribution<> uni_dist_y(this->x_min[1], this->x_max[1]);
-    std::uniform_real_distribution<> uni_dist_z(this->x_min[2], this->x_max[2]);
+   //: Initializer(intp, prm, mpi), gen(gen){
+    : Initializer(prm, mpi), gen(gen), key(key) {
+      //probe(intp);
+  };
+  ~RandomPointsInitializer() { std::cout << "Destruct Initializer." << std::endl; };
+  template<typename IntpType>
+  void probe(IntpType& intp);
+};
 
-    Uint Nrw = prm.Nrw;
+template<typename IntpType>
+void RandomPointsInitializer::probe(IntpType& intp){
+  x_min = intp.get_x_min();
+  x_max = intp.get_x_max();
+  L = x_max - x_min;
 
-    Vector x0_ = this->x0;
-    Uint irw=0;
-    while (irw < Nrw){
-      if (key[0] == "points" && key.size() == 2){
-        if (contains(key[1], "x")){
-          x0_[0] = uni_dist_x(gen);
-        }
-        if (contains(key[1], "y")){
-          x0_[1] = uni_dist_y(gen);
-        }
-        if (contains(key[1], "z")){
-          x0_[2] = uni_dist_z(gen);
-        }
+  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
+
+  Uint Nrw = prm.Nrw;
+
+  Vector x0_ = this->x0;
+  Uint irw=0;
+  while (irw < Nrw){
+    if (key[0] == "points" && key.size() == 2){
+      if (contains(key[1], "x")){
+        x0_[0] = uni_dist_x(gen);
       }
-      
-      intp->probe(x0_);
-      bool inside = intp->inside_domain();
-      if (inside){
-        this->nodes.push_back(x0_);
-        ++irw;
+      if (contains(key[1], "y")){
+        x0_[1] = uni_dist_y(gen);
       }
-      else if (key[0] == "point"){
-        std::cout << "Point not inside domain" << std::endl;
-        exit(0);
+      if (contains(key[1], "z")){
+        x0_[2] = uni_dist_z(gen);
       }
     }
-  };
+    
+    intp.probe(x0_);
+    bool inside = intp.inside_domain();
+    if (inside){
+      this->nodes.push_back(x0_);
+      ++irw;
+    }
+    else if (key[0] == "point"){
+      std::cout << "Point not inside domain" << std::endl;
+      exit(0);
+    }
+  }
 };
+
 /*{
     bool init_rand_x = false;
     bool init_rand_y = false;
@@ -532,20 +577,20 @@ public:
           if (init_rand_x) x[0] = this->x_min[0]+(ix+0.5)*dx;
           if (init_rand_y) x[1] = this->x_min[1]+(iy+0.5)*dy;
           if (init_rand_z) x[2] = this->x_min[2]+(iz+0.5)*dz;
-          intp->probe(x);
+          intp.probe(x);
           if (prm.init_weight == "ux"){
-            ww = abs(intp->get_ux());
+            ww = abs(intp.get_ux());
           }
           else if (prm.init_weight == "uy"){
-            ww = abs(intp->get_uy());
+            ww = abs(intp.get_uy());
           }
           else if (prm.init_weight == "uz"){
-            ww = abs(intp->get_uz());
+            ww = abs(intp.get_uz());
           }
           else if (prm.init_weight == "u"){
-            ww = sqrt(pow(intp->get_ux(), 2)
-                      + pow(intp->get_uy(), 2)
-                      + pow(intp->get_uz(), 2));
+            ww = sqrt(pow(intp.get_ux(), 2)
+                      + pow(intp.get_uy(), 2)
+                      + pow(intp.get_uz(), 2));
           }
           else {
             ww = 1.;
@@ -569,9 +614,9 @@ public:
         if (init_rand_x) x[0] += uni_dist_dx(gen);
         if (init_rand_y) x[1] += uni_dist_dy(gen);
         if (init_rand_z) x[2] += uni_dist_dz(gen);
-        intp->probe(x);
+        intp.probe(x);
         //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
-      } while (!intp->inside_domain());
+      } while (!intp.inside_domain());
       this->nodes.push_back(x);
     }
 
@@ -600,14 +645,14 @@ public:
                                         EdgesType &edges,
                                         FacesType &faces
                                    ){
-  intp->update(t0);
+  intp.update(t0);
 
   Vector x;
-  Real Lx = intp->get_Lx();
-  Real Ly = intp->get_Ly();
-  Real Lz = intp->get_Lz();
-  Vector x_min = intp->get_x_min();
-  Vector x_max = intp->get_x_max();
+  Real Lx = intp.get_Lx();
+  Real Ly = intp.get_Ly();
+  Real Lz = intp.get_Lz();
+  Vector x_min = intp.get_x_min();
+  Vector x_max = intp.get_x_max();
 
   Uint Nx = 1;
   Uint Ny = 1;
@@ -622,9 +667,9 @@ public:
 
   if (key[0] == "point"){
     std::vector<Vector> pos_init;
-    intp->probe(x0);
+    intp.probe(x0);
     for (Uint irw=0; irw < Nrw; ++irw){
-      if (intp->inside_domain()){
+      if (intp.inside_domain()){
         pos_init.push_back(x0);
       }
     }
@@ -656,8 +701,8 @@ public:
     Vector Dx = (x_b - x_a) / (Nrw-1);
     for (Uint irw=0; irw < Nrw; ++irw){
       x = x_a + Dx * irw;
-      intp->probe(x);
-      if (intp->inside_domain()){
+      intp.probe(x);
+      if (intp.inside_domain()){
         pos_init.push_back(x);
       }
     }
@@ -711,14 +756,14 @@ public:
     x11[1] += - La/2*ta[1] + Lb/2*tb[1];
     x11[2] += - La/2*ta[2] + Lb/2*tb[2];
 
-    intp->probe(x00);
-    bool inside_00 = intp->inside_domain();
-    intp->probe(x01);
-    bool inside_01 = intp->inside_domain();
-    intp->probe(x10);
-    bool inside_10 = intp->inside_domain();
-    intp->probe(x11);
-    bool inside_11 = intp->inside_domain();
+    intp.probe(x00);
+    bool inside_00 = intp.inside_domain();
+    intp.probe(x01);
+    bool inside_01 = intp.inside_domain();
+    intp.probe(x10);
+    bool inside_10 = intp.inside_domain();
+    intp.probe(x11);
+    bool inside_11 = intp.inside_domain();
     if (inside_00 && inside_01 && inside_10 && inside_11){
       std::cout << "Sheet inside domain." << std::endl;
     }
@@ -796,11 +841,11 @@ public:
       dx *= 0.5*ds/dx.norm();
 
       Vector x_a = x0_ + dx;
-      intp->probe(x_a);
-      bool inside_a = intp->inside_domain();
+      intp.probe(x_a);
+      bool inside_a = intp.inside_domain();
       Vector x_b = x0_ - dx;
-      intp->probe(x_b);
-      bool inside_b = intp->inside_domain();
+      intp.probe(x_b);
+      bool inside_b = intp.inside_domain();
       if (inside_a && inside_b){
         //std::cout << "INSIDE" << std::endl;
         // std::cout << "INSIDE: " << x_a << " " << x_b << std::endl; 
@@ -890,20 +935,20 @@ public:
         if (init_rand_x) x[0] = x_min[0]+(ix+0.5)*dx;
         if (init_rand_y) x[1] = x_min[1]+(iy+0.5)*dy;
         if (init_rand_z) x[2] = x_min[2]+(iz+0.5)*dz;
-        intp->probe(x);
+        intp.probe(x);
         if (init_weight == "ux"){
-          ww = abs(intp->get_ux());
+          ww = abs(intp.get_ux());
         }
         else if (init_weight == "uy"){
-          ww = abs(intp->get_uy());
+          ww = abs(intp.get_uy());
         }
         else if (init_weight == "uz"){
-          ww = abs(intp->get_uz());
+          ww = abs(intp.get_uz());
         }
         else if (init_weight == "u"){
-          ww = sqrt(pow(intp->get_ux(), 2)
-                    + pow(intp->get_uy(), 2)
-                    + pow(intp->get_uz(), 2));
+          ww = sqrt(pow(intp.get_ux(), 2)
+                    + pow(intp.get_uy(), 2)
+                    + pow(intp.get_uz(), 2));
         }
         else {
           ww = 1.;
@@ -927,9 +972,9 @@ public:
       if (init_rand_x) x[0] += uni_dist_dx(gen);
       if (init_rand_y) x[1] += uni_dist_dy(gen);
       if (init_rand_z) x[2] += uni_dist_dz(gen);
-      intp->probe(x);
+      intp.probe(x);
       //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
-    } while (!intp->inside_domain());
+    } while (!intp.inside_domain());
     pos_init.push_back(x);
   }
 

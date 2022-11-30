@@ -12,6 +12,7 @@ public:
   StructuredConstInterpol(const std::string& infilename);
   void update(const double t);
   void probe(const Vector3d &x, const double t);
+  void probe(const Vector3d &x, const double t, int &cell_id) { probe(x, t); };
   bool inside_domain() const;
   Uint get_nx() { return n[0]; };
   Uint get_ny() { return n[1]; };

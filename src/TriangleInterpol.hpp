@@ -11,8 +11,10 @@ class TriangleInterpol
 {
 public:
   TriangleInterpol(const std::string& infilename);
+  ~TriangleInterpol() { std::cout << "Destructing TriangleInterpol." << std::endl; };
   void update(const double t);
   void probe(const Vector3d &x, const double t);
+  void probe(const Vector3d &x, const double t, int& id_prev);
   bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
@@ -42,7 +44,16 @@ public:
   double get_uzz() { return 0.; };
   Matrix3d get_grada() { return gradA; };
   void probe(const Vector3d &x){ probe(x, this->t_update); };
-
+  void print_found() {
+    long int found_sum = found_same + found_nneigh + found_other;
+    double frac_same = double(found_same) / found_sum;
+    double frac_nneigh = double(found_nneigh) / found_sum;
+    double frac_other = 1. - frac_same - frac_nneigh;
+    std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
+    found_same = 0;
+    found_nneigh = 0;
+    found_other = 0;
+  }
 protected:
   Timestamps ts;
   double t_prev = 0.;
@@ -81,6 +92,8 @@ protected:
   std::vector<dolfin::Cell> dolfin_cells_;
   std::vector<ufc::cell> ufc_cells_;
 
+  std::vector<std::set<Uint>> cell2cells_;
+
   std::vector<std::vector<double>> coordinate_dofs_;
 
   //std::array<double, 12> u_prev_coefficients_;
@@ -99,6 +112,10 @@ protected:
 
   Uint ncoeffs_u;
   Uint ncoeffs_p;
+
+  long unsigned int found_same = 0;
+  long unsigned int found_nneigh = 0;
+  long unsigned int found_other = 0;
 
 };
 

@@ -9,6 +9,7 @@
 #include "dolfin_elements/vP1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "PeriodicBC.hpp"
+#include "dolfin_helpers.hpp"
 
 using namespace H5;
 
@@ -74,6 +75,7 @@ TetInterpol::TetInterpol(const std::string& infilename)
 
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
   dim = mesh->geometry().dim();
+  mesh->init();
 
   std::vector<double> xx = mesh->coordinates();
 
@@ -99,6 +101,7 @@ TetInterpol::TetInterpol(const std::string& infilename)
   dolfin_cells_.resize(mesh->num_cells());
   ufc_cells_.resize(mesh->num_cells());
   coordinate_dofs_.resize(mesh->num_cells());
+  cell2cells_.resize(mesh->num_cells());
 
   for (std::size_t i = 0; i < mesh->num_cells(); ++i)
   {
@@ -109,6 +112,8 @@ TetInterpol::TetInterpol(const std::string& infilename)
     dolfin_cells_[i] = dolfin_cell;
     dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
+  // Build cell neighbour list for lookup speed
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
 
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
 
@@ -202,6 +207,12 @@ void TetInterpol::update(const double t)
 
 void TetInterpol::probe(const Vector3d &x, const double t)
 {
+  int cell_id = -1;
+  probe(x, t, cell_id);
+}
+
+void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
+{
   assert(t <= t_next && t >= t_prev);
   alpha_t = (t-t_prev)/(t_next-t_prev);
 
@@ -217,8 +228,43 @@ void TetInterpol::probe(const Vector3d &x, const double t)
 
   // Index of cell containing point
   const dolfin::Point point(dim, x_loc.data());
-  unsigned int id
-    = mesh->bounding_box_tree()->compute_first_entity_collision(point);
+
+  bool found = false;
+
+  unsigned int id = 0;
+  // Search in neighborhood first
+  if (id_prev >= 0){
+    dolfin::Cell prev_cell(*mesh, id_prev);
+    if (prev_cell.contains(point)){
+      id = id_prev;
+      inside = true;
+      found = true;
+      ++found_same;
+    }
+    else {
+      for ( auto neigh_id : cell2cells_[id_prev]){
+        dolfin::Cell neigh_cell(*mesh, neigh_id);
+        if (neigh_cell.contains(point)){
+          inside = true;
+          found = true;
+          id = neigh_id;
+          ++found_nneigh;
+          break;
+        }
+      }
+    }
+  }
+  if (!found){
+    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
+    inside = (id != std::numeric_limits<unsigned int>::max());
+    if (inside) {
+      found = true;
+      ++found_other;
+    }
+  }
+  if (found){
+    id_prev = id;
+  }
 
   inside = (id != std::numeric_limits<unsigned int>::max());
   if (inside)

@@ -22,6 +22,7 @@ add_library(${PROJECT_NAME}_interpol
   TriangleInterpol.cpp TriangleInterpol.hpp
   Tet.cpp Tet.hpp
   Triangle.cpp Triangle.hpp
+  dolfin_helpers.cpp dolfin_helpers.hpp
 )
 
 target_link_libraries(${PROJECT_NAME}_interpol stdc++fs ${HDF5_LIBRARIES}
