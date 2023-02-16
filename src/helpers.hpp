@@ -85,6 +85,12 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   else if (key[0] == "points"){
     init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, mpi, gen);
   }
+  else if (key[0] == "randomgaussianstrip"){
+    init_state = std::make_shared<RandomGaussianStripInitializer>(key, intp, prm, mpi, gen);
+  }
+  else if (key[0] == "randomgaussiancircle"){
+    init_state = std::make_shared<RandomGaussianCircleInitializer>(key, intp, prm, mpi, gen);
+  }
   else {
     std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
     exit(0);

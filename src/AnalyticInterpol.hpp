@@ -4,6 +4,7 @@
 #include "expressions/Expr_SineFlow.hpp"
 #include "expressions/Expr_BatchelorVortex.hpp"
 #include "expressions/Expr_ABCFlow.hpp"
+#include "expressions/Expr_InfinitePlate.hpp"
 #include <fstream>
 
 #ifndef __ANALYTICINTERPOL_HPP
@@ -87,6 +88,11 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
            expr_params["expression"] == "ABCFlow"){
     std::cout << "ABCFlow selected" << std::endl;
     expr = std::make_shared<Expr_ABCFlow>(expr_params);
+  }
+  else if (expr_params["expression"] == "infinite_plate" ||
+           expr_params["expression"] == "InfinitePlate"){
+    std::cout << "InfinitePlate selected" << std::endl;
+    expr = std::make_shared<Expr_InfinitePlane>(expr_params);
   }
   else {
     std::cout << "Could not find expression: " << expr_params[""] << std::endl;
