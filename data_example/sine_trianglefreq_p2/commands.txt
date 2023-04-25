@@ -1,0 +1,2 @@
+partrac ./dolfin_params.dat mode=trianglefreq Nrw=1e4 Nrw_max=1e6 verbose=true init_mode=uniform_x int_order=2 dt=0.01 dump_intv=0.1 stat_intv=0.1 T=10.0 interpolation_test=10000 Dm=0 refine_intv=0.1 ds_min=0.0000 ds_max=0.001 refine=true
+tracervectors_trianglefreqRK4 ./dolfin_params.dat Nrw=1e5 Nrw_max=1e5 verbose=true dt=0.01 dump_intv=0.1 stat_intv=0.1 T=10.0 Dm=0 init_mode=points_xy
