@@ -63,7 +63,7 @@ public:
   //
   double dt = 1.0;
   int int_order = 1;
-  std::string init_mode = "line_x";  // what else?
+  std::string init_mode = "uniform_x";  // what else?
   std::string init_weight = "none";
   //std::string write_mode = "hdf5";  // or text
   int interpolation_test = 0;

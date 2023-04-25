@@ -14,6 +14,7 @@
 #include "DolfInterpol.hpp"
 #include "TetInterpol.hpp"
 #include "TriangleInterpol.hpp"
+#include "TriangleFreqInterpol.hpp"
 #endif
 #include "Initializer.hpp"
 
@@ -24,13 +25,16 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     intp = std::make_shared<AnalyticInterpol>(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
-           mode == "tet" || mode == "triangle"){
+           mode == "tet" || mode == "triangle" || mode == "trianglefreq"){
 #ifdef USE_DOLFIN
     if (mode == "tet"){
       intp = std::make_shared<TetInterpol>(infilename);
     }
     else if (mode == "triangle"){
       intp = std::make_shared<TriangleInterpol>(infilename);
+    }
+    else if (mode == "trianglefreq"){
+      intp = std::make_shared<TriangleFreqInterpol>(infilename);
     }
     else if (mode == "fenics"){
       intp = std::make_shared<DolfInterpol>(infilename);
