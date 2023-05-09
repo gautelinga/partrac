@@ -141,17 +141,37 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   Nuy_.resize(ncoeffs_u);
 
   // make structures
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
-    u__.push_back(std::make_shared<dolfin::Function>(u_space_));
+  u_ = std::make_shared<dolfin::Function>(u_space_);
+  if (include_pressure)
+    p_ = std::make_shared<dolfin::Function>(p_space_);
 
-    std::vector<double> u_coeff_i(dim*ncoeffs_u);
-    u_coefficients__.push_back(u_coeff_i);
+  u_coefficients_.resize(fs.size());
+  if (include_pressure)
+    p_coefficients_.resize(fs.size());
+  
+  
+  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq)
+  {
+    u_coefficients_[iFreq].resize(mesh->num_cells());
+    if (include_pressure)
+      p_coefficients_[iFreq].resize(mesh->num_cells());
 
-    if (include_pressure){
-      p__.push_back(std::make_shared<dolfin::Function>(p_space_));
-      
-      std::vector<double> p_coeff_i(ncoeffs_p);
-      p_coefficients__.push_back(p_coeff_i);  
+    FreqStamp& f = fs.get(iFreq);
+    dolfin::HDF5File file_i(MPI_COMM_WORLD, get_folder() + "/" + f.filename, "r");
+    file_i.read(*u_, "u");
+    if (include_pressure)
+      file_i.read(*p_, "p");
+
+    for (std::size_t id = 0; id < mesh->num_cells(); ++id)
+    {
+      u_coefficients_[iFreq][id].resize(dim*ncoeffs_u);
+      u_->restrict(u_coefficients_[iFreq][id].data(), *u_space_->element(), dolfin_cells_[id],
+                   coordinate_dofs_[id].data(), ufc_cells_[id]);
+      if (include_pressure){
+        p_coefficients_[iFreq][id].resize(ncoeffs_p);
+        p_->restrict(p_coefficients_[iFreq][id].data(), *p_space_->element(), dolfin_cells_[id],
+                     coordinate_dofs_[id].data(), ufc_cells_[id]);
+      }
     }
   }
 
@@ -167,6 +187,22 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   uyx_f_.resize(fs.size());
   uyy_f_.resize(fs.size());
 
+  // todo: remove below
+  /*
+  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
+    u__.push_back(std::make_shared<dolfin::Function>(u_space_));
+
+    std::vector<double> u_coeff_i(dim*ncoeffs_u);
+    u_coefficients__.push_back(u_coeff_i);
+
+    if (include_pressure){
+      p__.push_back(std::make_shared<dolfin::Function>(p_space_));
+      
+      std::vector<double> p_coeff_i(ncoeffs_p);
+      p_coefficients__.push_back(p_coeff_i);
+    }
+  }
+
   // read files
   for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
     FreqStamp& f = fs.get(iFreq);
@@ -181,6 +217,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     if (include_pressure)
       file_i.read(*(p__[iFreq]), "p");
   }
+  */
 }
 
 void TriangleFreqInterpol::update(const double t)
@@ -293,6 +330,7 @@ void TriangleFreqInterpol::probe(const Vector3d &x, const double t, int& id_prev
     // Restricting
     //std::cout << "Restricting..." << std::endl;
 
+    /*
     for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
       // Restrict solution to cell
       u__[iFreq]->restrict(u_coefficients__[iFreq].data(), *u_space_->element(), dolfin_cells_[id],
@@ -302,15 +340,18 @@ void TriangleFreqInterpol::probe(const Vector3d &x, const double t, int& id_prev
                           coordinate_dofs_[id].data(), ufc_cells_[id]);
       }
     }
+    */
 
     // Evaluate
     //std::cout << "Evaluating U, A, P..." << std::endl;
 
     for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
-      ux_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), u_coefficients__[iFreq].begin(), 0.0);
-      uy_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), &u_coefficients__[iFreq][ncoeffs_u], 0.0);
+      //ux_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), u_coefficients__[iFreq].begin(), 0.0);
+      //uy_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), &u_coefficients__[iFreq][ncoeffs_u], 0.0);
+      ux_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
+      uy_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
       if (include_pressure)
-        p_f_[iFreq] = std::inner_product(Np_.begin(), Np_.end(), p_coefficients__[iFreq].begin(), 0.0);
+        p_f_[iFreq] = std::inner_product(Np_.begin(), Np_.end(), p_coefficients_[iFreq][id].begin(), 0.0);
     }
 
     // Update
@@ -335,10 +376,10 @@ void TriangleFreqInterpol::probe(const Vector3d &x, const double t, int& id_prev
       }
 
       for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
-        uxx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), u_coefficients__[iFreq].begin(), 0.0);
-        uxy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), u_coefficients__[iFreq].begin(), 0.0);
-        uyx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), &u_coefficients__[iFreq][ncoeffs_u], 0.0);
-        uyy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), &u_coefficients__[iFreq][ncoeffs_u], 0.0);
+        uxx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
+        uxy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
+        uyx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
+        uyy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
       }
 
       //std::cout << "Updating gradU, gradA..." << std::endl;

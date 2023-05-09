@@ -96,17 +96,18 @@ protected:
   Uint ncoeffs_u;
   Uint ncoeffs_p;
 
+  std::shared_ptr<dolfin::Function> u_;
+  std::shared_ptr<dolfin::Function> p_;
+
+  /*
   std::vector<std::shared_ptr<dolfin::Function>> u__;
   std::vector<std::shared_ptr<dolfin::Function>> p__;
-
-  //std::shared_ptr<dolfin::Function> p_1_;
-  //std::shared_ptr<dolfin::Function> u_1_;
-
   std::vector<std::vector<double>> u_coefficients__;
   std::vector<std::vector<double>> p_coefficients__;
-
-  //std::vector<double> p_1_coefficients_;
-  //std::vector<double> u_1_coefficients_;
+  */ 
+ 
+  std::vector<std::vector<std::vector<double>>> u_coefficients_;
+  std::vector<std::vector<std::vector<double>>> p_coefficients_;
 
   long unsigned int found_same = 0;
   long unsigned int found_nneigh = 0;

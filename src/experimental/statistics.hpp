@@ -209,10 +209,10 @@ void write_stats_header(MPIwrap& mpi, std::ofstream &statfile, Uint mesh_dim){
 
   statfile << "# t" << "\t"                   //  1
            << "x_mean" << "\t"                //  2
-           << "dx2_mean" << "\t"              //  3
-           << "y_mean" << "\t"                //  4
-           << "dy2_mean" << "\t"              //  5
-           << "z_mean" << "\t"                //  6
+           << "y_mean" << "\t"                //  3
+           << "z_mean" << "\t"                //  4
+           << "dx2_mean" << "\t"              //  5
+           << "dy2_mean" << "\t"              //  6
            << "dz2_mean" << "\t"              //  7
            << "ux_mean" << "\t"               //  8
            << "uy_mean" << "\t"               //  9
