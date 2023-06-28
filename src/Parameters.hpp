@@ -412,7 +412,7 @@ void Parameters::write_params_to_file(std::string filename){
 
   write_param(paramsfile, "scheme", scheme);
 
-  write_param(paramsfile, "exit_plane", scheme);
+  write_param(paramsfile, "exit_plane", exit_plane);
   write_param(paramsfile, "integrate_tau", bool2string(integrate_tau));
   write_param(paramsfile, "tau_intv", tau_intv);
   write_param(paramsfile, "tau_max", tau_max);

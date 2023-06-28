@@ -451,42 +451,51 @@ public:
     double Ly = L[1];
     double Lz = L[2];
 
-    if (Lx > tol && Ly > tol && Lz > tol){
+    std::cout << "FML: " << Lx << " " << Ly << " " << Lz << std::endl;
+
+    bool hasLx = Lx > tol and init_rand_x;
+    bool hasLy = Ly > tol and init_rand_y;
+    bool hasLz = Lz > tol and init_rand_z;
+
+    if (hasLx && hasLy && hasLz){
       dx_est = pow(Lx*Ly*Lz/N_est, 1./3);
     }
-    else if (Lx > tol && Ly > tol){
+    else if (hasLx && hasLy){
       dx_est = pow(Lx*Ly/N_est, 1./2);
     }
-    else if (Lx > tol && Lz > tol){
+    else if (hasLx && hasLz){
       dx_est = pow(Lx*Lz/N_est, 1./2);
     }
-    else if (Ly > tol && Lz > tol){
+    else if (hasLy && hasLz){
       dx_est = pow(Ly*Lz/N_est, 1./2);
     }
-    else if (Lx > tol){
+    else if (hasLx){
       dx_est = Lx/N_est;
     }
-    else if (Ly > tol){
+    else if (hasLy){
       dx_est = Ly/N_est;
     }
-    else if (Lz > tol){
+    else if (hasLz){
       dx_est = Lz/N_est;
     }
     else {
       std::cout << "Something is wrong with the domain!" << std::endl;
       exit(0);
     }
-    Uint Nx = 0;
-    Uint Ny = 0;
-    Uint Nz = 0;
-    if (init_rand_x) Nx = Lx/dx_est+1;
-    if (init_rand_y) Ny = Ly/dx_est+1;
-    if (init_rand_z) Nz = Lz/dx_est+1;
+    Uint Nx = 1;
+    Uint Ny = 1;
+    Uint Nz = 1;
+    if (hasLx) Nx = Lx/dx_est+1;
+    if (hasLy) Ny = Ly/dx_est+1;
+    if (hasLz) Nz = Lz/dx_est+1;
     double dx = Lx/Nx;
     double dy = Ly/Ny;
     double dz = Lz/Nz;
 
     double ww;
+
+    std::cout << "dx: " << dx << " " << dy << " " << dz << std::endl;
+    std::cout << "Nx: " << Nx << " " << Ny << " " << Nz << std::endl;
 
     std::vector<double> wei;
     std::vector<Vector3d> pos;
@@ -494,9 +503,9 @@ public:
       for (Uint iy=0; iy<Ny; ++iy){
         for (Uint iz=0; iz<Nz; ++iz){
           Vector3d x = x0;
-          if (init_rand_x) x[0] = x_min[0]+(ix+0.5)*dx;
-          if (init_rand_y) x[1] = x_min[1]+(iy+0.5)*dy;
-          if (init_rand_z) x[2] = x_min[2]+(iz+0.5)*dz;
+          if (hasLx) x[0] = x_min[0]+(ix+0.5)*dx;
+          if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
+          if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
           intp->probe(x);
           if (prm.init_weight == "ux"){
             ww = abs(intp->get_ux());
@@ -531,9 +540,9 @@ public:
       do {
         Uint ind = discrete_dist(gen);
         x = pos[ind];
-        if (init_rand_x) x[0] += uni_dist_dx(gen);
-        if (init_rand_y) x[1] += uni_dist_dy(gen);
-        if (init_rand_z) x[2] += uni_dist_dz(gen);
+        if (hasLx) x[0] += uni_dist_dx(gen);
+        if (hasLy) x[1] += uni_dist_dy(gen);
+        if (hasLz) x[2] += uni_dist_dz(gen);
         intp->probe(x);
         //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
       } while (!intp->inside_domain());
