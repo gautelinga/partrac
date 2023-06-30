@@ -38,17 +38,23 @@ std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm
 }
 
 template<typename T>
-std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const double Ln){
+std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const double Ln, const double Lt){
     std::set<Uint> exited_nodes;
-    Uint d;
+    Uint dn, dt1, dt2;
     if (exit_plane == "x"){
-        d = 0;
+        dn = 0;
+        dt1 = 1;
+        dt2 = 2;
     }
     else if (exit_plane == "y"){
-        d = 1;
+        dn = 1;
+        dt1 = 2;
+        dt2 = 0;
     }
     else if (exit_plane == "z"){
-        d = 2;
+        dn = 2;
+        dt1 = 0;
+        dt2 = 1;
     }
     else {
         return exited_nodes;
@@ -56,7 +62,7 @@ std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const doub
     Uint i = 0;
     for ( auto & particle : ps.particles() ){
         Vector x = particle.x();
-        if (x[d] > Ln){
+        if ( (x[dn] > Ln) || (Lt > 0. and (pow(x[dt1], 2) + pow(x[dt2], 2) > Lt*Lt)) ){
             exited_nodes.insert(i);
         }
         ++i;
@@ -65,7 +71,7 @@ std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const doub
 }
 
 template<typename T>
-void split_random_nodes(std::set<Uint>& nodes_to_replace, T& ps, std::mt19937& gen){
+void split_random_nodes(std::set<Uint>& nodes_to_replace, T& ps, std::mt19937& gen, Parameters& prm){
     std::set<Uint> good_nodes;
     for (Uint i = 0; i < ps.particles().size(); ++i)
     {
@@ -74,16 +80,16 @@ void split_random_nodes(std::set<Uint>& nodes_to_replace, T& ps, std::mt19937& g
     for ( auto & i : nodes_to_replace ){
         good_nodes.erase(i);
     }
-    // std::vector<Uint> good_nodes_vec(good_nodes.begin(), good_nodes.end());
+    std::vector<Uint> good_nodes_vec(good_nodes.begin(), good_nodes.end());
     std::vector<double> weights;
-    for ( auto &i : good_nodes ){
-        double weight = 1.;// pow(2, -ps.particles()[i].w());
+    for ( auto &i : good_nodes_vec ){
+        double weight = pow(2, -ps.particles()[i].w()); // 1
         // double weight = ps.particles()[i].w();
         weights.push_back(weight);
     }
     std::discrete_distribution<std::mt19937::result_type> discrete_dist(weights.begin(), weights.end());
     for ( auto & i : nodes_to_replace ){
-        Uint j = discrete_dist(gen);
+        Uint j = good_nodes_vec[discrete_dist(gen)];
         ps.particles()[i].x() = ps.particles()[j].x();
         double w_new = ps.particles()[j].w()+1; // ps.particles()[j].w()/2;
         ps.particles()[i].w() = w_new;
@@ -144,10 +150,12 @@ int main(int argc, char* argv[])
     newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
+    std::string sepdatafolder = newfolder + "Sepdata/";
     {
         create_folder(newfolder);
         create_folder(posfolder);
         create_folder(checkpointsfolder);
+        create_folder(sepdatafolder);
     }
     prm.folder = newfolder;
 
@@ -190,12 +198,15 @@ int main(int argc, char* argv[])
     //init_state->initialize(ps);
     //RandomPointsInitializer init_state(key, prm, mpi, gen);
     //std::shared_ptr<Initializer> init_state;
+    Uint dim;
     if (contains(key[0], "strip")){
+        dim = 2;
         RandomGaussianStripInitializer init_state(key, prm, mpi, gen);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
     else if (contains(key[0], "circle")){
+        dim = 3;
         RandomGaussianCircleInitializer init_state(key, prm, mpi, gen);
         init_state.probe(intp);
         init_state.initialize(ps);
@@ -260,6 +271,44 @@ int main(int argc, char* argv[])
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
+
+            std::string sepdatafname = sepdatafolder + "/sepdata_from_t" + std::to_string(t) + ".h5";
+            H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
+
+            std::string groupname = std::to_string(t);
+            sepdata_h5f.createGroup(groupname + "/");
+
+            std::vector<double> xyz_;
+            std::vector<double> w_;
+            xyz_.reserve(ps.particles().size() * 3);
+            w_.reserve(ps.particles().size());
+            for ( auto & particle : ps.particles() ){
+                Vector3d x = particle.x();
+                Vector3d ds = {abs(x[0]-prm.x0), abs(x[1]-prm.y0), abs(x[2]-prm.z0)};
+                if (dim == 2 && (
+                    (prm.exit_plane == "x" && (
+                     (contains(key[1], "y") && ds[1] < prm.ds_max) || 
+                     (contains(key[1], "z") && ds[2] < prm.ds_max)
+                    )) ||
+                    (prm.exit_plane == "y" && (
+                     (contains(key[1], "x") && ds[0] < prm.ds_max) ||
+                     (contains(key[1], "z") && ds[0] < prm.ds_max)
+                    ))) || 
+                   dim == 3 && (
+                    (prm.exit_plane == "x" && (std::pow(ds[1], 2) + std::pow(ds[2], 2) < std::pow(prm.ds_max, 2))) ||
+                    (prm.exit_plane == "y" && (std::pow(ds[0], 2) + std::pow(ds[2], 2) < std::pow(prm.ds_max, 2))) ||
+                    (prm.exit_plane == "z" && (std::pow(ds[0], 2) + std::pow(ds[1], 2) < std::pow(prm.ds_max, 2)))
+                   )){
+                    xyz_.push_back(x[0]);
+                    xyz_.push_back(x[1]);
+                    xyz_.push_back(x[2]);
+                    w_.push_back(particle.w());
+                }
+            }
+            vector_to_h5(sepdata_h5f, groupname + "/x", xyz_, 3);
+            scalar_to_h5(sepdata_h5f, groupname + "/w", w_);
+
+            sepdata_h5f.close();
         }
         // Checkpoint
         if (it % int_checkpoint_intv == 0){
@@ -289,10 +338,10 @@ int main(int argc, char* argv[])
             //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
         }
 
-        auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln);
+        auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
         if (exited_nodes.size() > 0){
             //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
-            split_random_nodes(exited_nodes, ps, gen);
+            split_random_nodes(exited_nodes, ps, gen, prm);
         }
 
         t += dt;

@@ -57,6 +57,7 @@ public:
   double dx_max = 1.0;
   double dxn = 0.1;
   double Ln = 1.0;
+  double Lt = 0.0;
   double u_eps = 1e-7;
   double t_frozen = 0.;
   bool cut_if_stuck = true;
@@ -231,6 +232,7 @@ void Parameters::set_param(std::string key, std::string val){
   if (key == "dx_max") dx_max = stodouble(val);
   if (key == "dxn") dxn = stodouble(val);
   if (key == "Ln") Ln = stodouble(val);
+  if (key == "Lt") Lt = stodouble(val);
   if (key == "u_eps") u_eps = stodouble(val);
   if (key == "t_frozen") t_frozen = stodouble(val);
   if (key == "cut_if_stuck") cut_if_stuck = stobool(val);
@@ -304,6 +306,7 @@ void Parameters::print(){
     print_param("dx_max             ", dx_max);
     print_param("dxn                ", dxn);
     print_param("Ln                 ", Ln);
+    print_param("Lt                 ", Lt);
     print_param("u_eps              ", u_eps);
     print_param("t_frozen           ", t_frozen);
     print_param("cut_if_stuck       ", bool2string(cut_if_stuck));
@@ -395,6 +398,7 @@ void Parameters::write_params_to_file(std::string filename){
   write_param(paramsfile, "dx_max", dx_max);
   write_param(paramsfile, "dxn", dxn);
   write_param(paramsfile, "Ln", Ln);
+  write_param(paramsfile, "Lt", Lt);
   write_param(paramsfile, "u_eps", u_eps);
   write_param(paramsfile, "t_frozen", t_frozen);
   write_param(paramsfile, "cut_if_stuck", bool2string(cut_if_stuck));
