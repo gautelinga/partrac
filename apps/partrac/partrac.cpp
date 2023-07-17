@@ -397,7 +397,7 @@ int main(int argc, char* argv[])
     
     auto outside_nodes = integrator->step(ps, t, dt);
 
-    if (outside_nodes.size() > 0)
+    if (outside_nodes.size() > 0 && prm.verbose)
       std::cout << "Some nodes are outside." << std::endl;
 
     t += dt;

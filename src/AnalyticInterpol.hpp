@@ -4,6 +4,9 @@
 #include "expressions/Expr_SineFlow.hpp"
 #include "expressions/Expr_BatchelorVortex.hpp"
 #include "expressions/Expr_ABCFlow.hpp"
+#include "expressions/Expr_InfinitePlate.hpp"
+#include "expressions/Expr_HagenPoiseuille.hpp"
+#include "expressions/Expr_BrinkmanCylinder.hpp"
 #include <fstream>
 
 #ifndef __ANALYTICINTERPOL_HPP
@@ -38,6 +41,7 @@ public:
   double get_uzy() { return expr->uzy(); };
   double get_uzz() { return expr->uzz(); };
   Matrix3d get_grada() { return expr->grada(); };
+  void probe(const Vector3d &x){ probe(x, this->t_update); };
 protected:
   std::map<std::string, std::string> expr_params;
   std::shared_ptr<Expr> expr;
@@ -88,8 +92,23 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
     std::cout << "ABCFlow selected" << std::endl;
     expr = std::make_shared<Expr_ABCFlow>(expr_params);
   }
+  else if (expr_params["expression"] == "infinite_plate" ||
+           expr_params["expression"] == "InfinitePlate"){
+    std::cout << "InfinitePlate selected" << std::endl;
+    expr = std::make_shared<Expr_InfinitePlane>(expr_params);
+  }
+  else if (expr_params["expression"] == "hagen_poiseuille" ||
+           expr_params["expression"] == "HagenPoiseuille"){
+    std::cout << "HagenPoiseuille selected" << std::endl;
+    expr = std::make_shared<Expr_HagenPoiseuille>(expr_params);
+  }
+  else if (expr_params["expression"] == "brinkman_cylinder" ||
+           expr_params["expression"] == "BrinkmanCylinder"){
+    std::cout << "BrinkmanCylinder selected" << std::endl;
+    expr = std::make_shared<Expr_BrinkmanCylinder>(expr_params);
+  }
   else {
-    std::cout << "Could not find expression: " << expr_params[""] << std::endl;
+    std::cout << "Could not find expression: " << expr_params["expression"] << std::endl;
     exit(0);
   }
 }

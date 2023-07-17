@@ -1,5 +1,6 @@
 add_library(${PROJECT_NAME}_utils
   Timestamps.cpp Timestamps.hpp
+  FreqStamps.hpp
   )
 target_link_libraries(${PROJECT_NAME}_utils Eigen3::Eigen)
 target_compile_features(${PROJECT_NAME}_utils PRIVATE cxx_std_17)
@@ -20,6 +21,7 @@ add_library(${PROJECT_NAME}_interpol
   DolfInterpol.cpp DolfInterpol.hpp
   TetInterpol.cpp TetInterpol.hpp
   TriangleInterpol.cpp TriangleInterpol.hpp
+  TriangleFreqInterpol.cpp TriangleFreqInterpol.hpp
   Tet.cpp Tet.hpp
   Triangle.cpp Triangle.hpp
   dolfin_helpers.cpp dolfin_helpers.hpp

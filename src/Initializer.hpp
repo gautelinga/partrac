@@ -104,7 +104,7 @@ class StripInitializer : public Initializer {
 public:
   StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     double La = prm.La;
-    double Lb = prm.Lb;
+    // double Lb = prm.Lb;
     Vector3d n(0., 0., 0.);
     if (key[1] == "x"){
       n[0] = 1.0;
@@ -126,27 +126,29 @@ public:
     x01[1] += La/2*n[1];
     x01[2] += La/2*n[2];
 
-    intp->probe(x00);
-    bool inside_00 = intp->inside_domain();
-    intp->probe(x01);
-    bool inside_01 = intp->inside_domain();
+    Uint irw = 0;
+    bool this_inside = false;
+    bool prev_inside = false;
 
-    if (inside_00 && inside_01){
-      std::cout << "Strip inside domain." << std::endl;
+    for (Uint i=0; i < prm.Nrw; ++i){
+      double alpha = float(i)/(prm.Nrw-1);
+      Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
+      // check if inside domain
+      intp->probe(x0i);
+      this_inside = intp->inside_domain();
+      if (this_inside){
+        nodes.push_back(x0i);
+        if (prev_inside)
+          edges.push_back({{irw-1, irw}, dist(nodes[irw], x0i)});
+        ++irw;
+      }
+      prev_inside = this_inside;
     }
-    else {
+    if (irw == 0) {
       std::cout << "Strip not inside domain" << std::endl;
       exit(0);
     }
-
-    nodes.push_back(x0);
-    for (Uint irw=0; irw < prm.Nrw; ++irw){
-      double alpha = float(irw+1)/prm.Nrw;
-      Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
-      // check if inside domain
-      nodes.push_back(x0i);
-      edges.push_back({{irw, irw+1}, dist(nodes[irw], nodes[irw+1])});
-    }
+    prm.Nrw = irw;
   };
 };
 
@@ -424,7 +426,12 @@ class RandomPointsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPointsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
+  RandomPointsInitializer( const std::vector<std::string>& key
+                         , std::shared_ptr<Interpol> intp
+                         , Parameters& prm
+                         , MPIwrap& mpi
+                         , std::mt19937 &gen
+                         ) : Initializer(intp, prm, mpi), gen(gen) {
     bool init_rand_x = false;
     bool init_rand_y = false;
     bool init_rand_z = false;
@@ -444,42 +451,51 @@ public:
     double Ly = L[1];
     double Lz = L[2];
 
-    if (Lx > tol && Ly > tol && Lz > tol){
+    std::cout << "FML: " << Lx << " " << Ly << " " << Lz << std::endl;
+
+    bool hasLx = Lx > tol and init_rand_x;
+    bool hasLy = Ly > tol and init_rand_y;
+    bool hasLz = Lz > tol and init_rand_z;
+
+    if (hasLx && hasLy && hasLz){
       dx_est = pow(Lx*Ly*Lz/N_est, 1./3);
     }
-    else if (Lx > tol && Ly > tol){
+    else if (hasLx && hasLy){
       dx_est = pow(Lx*Ly/N_est, 1./2);
     }
-    else if (Lx > tol && Lz > tol){
+    else if (hasLx && hasLz){
       dx_est = pow(Lx*Lz/N_est, 1./2);
     }
-    else if (Ly > tol && Lz > tol){
+    else if (hasLy && hasLz){
       dx_est = pow(Ly*Lz/N_est, 1./2);
     }
-    else if (Lx > tol){
+    else if (hasLx){
       dx_est = Lx/N_est;
     }
-    else if (Ly > tol){
+    else if (hasLy){
       dx_est = Ly/N_est;
     }
-    else if (Lz > tol){
+    else if (hasLz){
       dx_est = Lz/N_est;
     }
     else {
       std::cout << "Something is wrong with the domain!" << std::endl;
       exit(0);
     }
-    Uint Nx = 0;
-    Uint Ny = 0;
-    Uint Nz = 0;
-    if (init_rand_x) Nx = Lx/dx_est+1;
-    if (init_rand_y) Ny = Ly/dx_est+1;
-    if (init_rand_z) Nz = Lz/dx_est+1;
+    Uint Nx = 1;
+    Uint Ny = 1;
+    Uint Nz = 1;
+    if (hasLx) Nx = Lx/dx_est+1;
+    if (hasLy) Ny = Ly/dx_est+1;
+    if (hasLz) Nz = Lz/dx_est+1;
     double dx = Lx/Nx;
     double dy = Ly/Ny;
     double dz = Lz/Nz;
 
     double ww;
+
+    std::cout << "dx: " << dx << " " << dy << " " << dz << std::endl;
+    std::cout << "Nx: " << Nx << " " << Ny << " " << Nz << std::endl;
 
     std::vector<double> wei;
     std::vector<Vector3d> pos;
@@ -487,9 +503,9 @@ public:
       for (Uint iy=0; iy<Ny; ++iy){
         for (Uint iz=0; iz<Nz; ++iz){
           Vector3d x = x0;
-          if (init_rand_x) x[0] = x_min[0]+(ix+0.5)*dx;
-          if (init_rand_y) x[1] = x_min[1]+(iy+0.5)*dy;
-          if (init_rand_z) x[2] = x_min[2]+(iz+0.5)*dz;
+          if (hasLx) x[0] = x_min[0]+(ix+0.5)*dx;
+          if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
+          if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
           intp->probe(x);
           if (prm.init_weight == "ux"){
             ww = abs(intp->get_ux());
@@ -524,9 +540,9 @@ public:
       do {
         Uint ind = discrete_dist(gen);
         x = pos[ind];
-        if (init_rand_x) x[0] += uni_dist_dx(gen);
-        if (init_rand_y) x[1] += uni_dist_dy(gen);
-        if (init_rand_z) x[2] += uni_dist_dz(gen);
+        if (hasLx) x[0] += uni_dist_dx(gen);
+        if (hasLy) x[1] += uni_dist_dy(gen);
+        if (hasLz) x[2] += uni_dist_dz(gen);
         intp->probe(x);
         //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
       } while (!intp->inside_domain());
@@ -541,6 +557,146 @@ public:
         edges.push_back({{irw-1, irw}, ds0});
       // Needs customization for 2D/3D applications
     }
+  };
+};
+
+class RandomGaussianStripInitializer : public Initializer {
+protected:
+  std::mt19937 &gen;
+public:
+  RandomGaussianStripInitializer( const std::vector<std::string>& key
+                                , std::shared_ptr<Interpol> intp
+                                , Parameters& prm, MPIwrap& mpi
+                                , std::mt19937 &gen
+                                ) : Initializer(intp, prm, mpi), gen(gen) {
+    edges.clear();
+    faces.clear();
+
+    double La = prm.La;
+    double sigma0 = prm.Lb;
+    
+    Vector3d n(0., 0., 0.);
+    if (key[1] == "x"){
+      n[0] = 1.0;
+    }
+    if (key[1] == "y"){
+      n[1] = 1.0;
+    }
+    if (key[1] == "z"){
+      n[2] = 1.0;
+    }
+
+    bool init_rand_x = contains(key[2], "x");
+    bool init_rand_y = contains(key[2], "y");
+    bool init_rand_z = contains(key[2], "z");
+    
+    std::uniform_real_distribution<double> rnd_unit(0.0, 1.0);
+    std::normal_distribution<double> rnd_normal(0.0, 1.0);
+
+    Vector3d x00 = x0;
+    Vector3d x01 = x0;
+    for (Uint dim=0; dim < 3; ++dim){
+      x00[dim] += -La/2*n[dim];
+      x01[dim] += La/2*n[dim];
+    }
+
+    Uint failed_attempts = 0;
+    Uint max_failed_attempts = 1000000; // Maybe not hardcode?
+
+    Uint irw = 0;
+    while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+      double alpha = rnd_unit(gen);
+      Vector3d xi = alpha * x00 + (1.-alpha) * x01;
+      if (init_rand_x)
+        xi[0] += sigma0 * rnd_normal(gen);
+      if (init_rand_y)
+        xi[1] += sigma0 * rnd_normal(gen);
+      if (init_rand_z)
+        xi[2] += sigma0 * rnd_normal(gen);
+      // check if inside domain
+      intp->probe(xi);
+      if (intp->inside_domain()){
+        nodes.push_back(xi);
+        ++irw;
+        failed_attempts = 0;
+      }
+      else {
+        ++failed_attempts;
+      }
+    }
+    if (irw == 0) {
+      std::cout << "No points inside domain" << std::endl;
+      exit(0);
+    }
+    prm.Nrw = irw;
+  };
+};
+
+class RandomGaussianCircleInitializer : public Initializer {
+protected:
+  std::mt19937 &gen;
+public:
+  RandomGaussianCircleInitializer( const std::vector<std::string>& key
+                                , std::shared_ptr<Interpol> intp
+                                , Parameters& prm, MPIwrap& mpi
+                                , std::mt19937 &gen
+                                ) : Initializer(intp, prm, mpi), gen(gen) {
+    edges.clear();
+    faces.clear();
+
+    double R = prm.La/2;
+    double sigma0 = prm.Lb;
+    
+    Vector3d t1(0., 0., 0.);
+    Vector3d t2(0., 0., 0.);
+    if (key[1] == "x"){
+      t1[1] = 1.0;
+      t2[2] = 1.0;
+    }
+    if (key[1] == "y"){
+      t1[0] = 1.0;
+      t2[2] = 1.0;
+    }
+    if (key[1] == "z"){
+      t1[0] = 1.0;
+      t2[1] = 1.0;
+    }
+
+    std::uniform_real_distribution<double> rnd_unit(0.0, 1.0);
+    std::normal_distribution<double> rnd_normal(0.0, 1.0);
+
+    Uint failed_attempts = 0;
+    Uint max_failed_attempts = 1000000; // Maybe not hardcode?
+
+    Uint irw = 0;
+    while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+      double alpha1 = 1.;
+      double alpha2 = 1.;
+      while (pow(alpha1, 2) + pow(alpha2, 2) > 1){
+        alpha1 = 2*rnd_unit(gen)-1;
+        alpha2 = 2*rnd_unit(gen)-1;
+      }
+      
+      Vector3d xi = x0 + R * (alpha1 * t1 + alpha2 * t2);
+      for (Uint dim=0; dim<3; ++dim)
+        xi[dim] += sigma0 * rnd_normal(gen);
+
+      // check if inside domain
+      intp->probe(xi);
+      if (intp->inside_domain()){
+        nodes.push_back(xi);
+        ++irw;
+        failed_attempts = 0;
+      }
+      else {
+        ++failed_attempts;
+      }
+    }
+    if (irw == 0) {
+      std::cout << "No points inside domain" << std::endl;
+      exit(0);
+    }
+    prm.Nrw = irw;
   };
 };
 

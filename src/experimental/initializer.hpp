@@ -511,6 +511,167 @@ void RandomPointsInitializer::probe(IntpType& intp){
   }
 };
 
+class RandomGaussianStripInitializer : public Initializer {
+protected:
+  std::mt19937 &gen;
+  std::vector<std::string> key;
+public:
+  RandomGaussianStripInitializer( const std::vector<std::string>& key
+                                //, std::shared_ptr<Interpol> intp
+                                , Parameters& prm, MPIwrap& mpi
+                                , std::mt19937 &gen
+                                ) : Initializer(prm, mpi), gen(gen), key(key) {};
+  ~RandomGaussianStripInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
+  template<typename IntpType>
+  void probe(IntpType& intp);
+};
+
+template<typename IntpType>
+void RandomGaussianStripInitializer::probe(IntpType& intp){
+  this->edges.clear();
+  this->faces.clear();
+
+  double La = prm.La;
+  double sigma0 = prm.Lb;
+  
+  Vector3d n(0., 0., 0.);
+  if (key[1] == "x"){
+    n[0] = 1.0;
+  }
+  if (key[1] == "y"){
+    n[1] = 1.0;
+  }
+  if (key[1] == "z"){
+    n[2] = 1.0;
+  }
+
+  bool init_rand_x = contains(key[2], "x");
+  bool init_rand_y = contains(key[2], "y");
+  bool init_rand_z = contains(key[2], "z");
+  
+  std::uniform_real_distribution<double> rnd_unit(0.0, 1.0);
+  std::normal_distribution<double> rnd_normal(0.0, 1.0);
+
+  Vector3d x00 = x0;
+  Vector3d x01 = x0;
+  for (Uint dim=0; dim < 3; ++dim){
+    x00[dim] += -La/2*n[dim];
+    x01[dim] += La/2*n[dim];
+  }
+
+  Uint failed_attempts = 0;
+  Uint max_failed_attempts = 1000000; // Maybe not hardcode?
+
+  Uint irw = 0;
+  while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+    double alpha = rnd_unit(gen);
+    Vector3d xi = alpha * x00 + (1.-alpha) * x01;
+    if (init_rand_x)
+      xi[0] += sigma0 * rnd_normal(gen);
+    if (init_rand_y)
+      xi[1] += sigma0 * rnd_normal(gen);
+    if (init_rand_z)
+      xi[2] += sigma0 * rnd_normal(gen);
+    // check if inside domain
+    intp.probe(xi);
+    if (intp.inside_domain()){
+      this->nodes.push_back(xi);
+      ++irw;
+      failed_attempts = 0;
+    }
+    else {
+      ++failed_attempts;
+    }
+  }
+  if (irw == 0) {
+    std::cout << "No points inside domain" << std::endl;
+    exit(0);
+  }
+  prm.Nrw = irw;
+};
+
+class RandomGaussianCircleInitializer : public Initializer {
+protected:
+  std::mt19937 &gen;
+  std::vector<std::string> key;
+public:
+  RandomGaussianCircleInitializer( const std::vector<std::string>& key
+                                //, std::shared_ptr<Interpol> intp
+                                , Parameters& prm, MPIwrap& mpi
+                                , std::mt19937 &gen
+                                ) : Initializer(prm, mpi), gen(gen), key(key) {};
+  ~RandomGaussianCircleInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
+  template<typename IntpType>
+  void probe(IntpType& intp);
+};
+
+
+template<typename IntpType>
+void RandomGaussianCircleInitializer::probe(IntpType& intp){
+  edges.clear();
+  faces.clear();
+
+  double R = prm.La/2;
+  double sigma0 = prm.Lb;
+  
+  Vector3d t1(0., 0., 0.);
+  Vector3d t2(0., 0., 0.);
+  if (key[1] == "x"){
+    t1[1] = 1.0;
+    t2[2] = 1.0;
+  }
+  if (key[1] == "y"){
+    t1[0] = 1.0;
+    t2[2] = 1.0;
+  }
+  if (key[1] == "z"){
+    t1[0] = 1.0;
+    t2[1] = 1.0;
+  }
+
+  std::vector<bool> init_rand_x = {contains(key[2], "x"),
+                                   contains(key[2], "y"), 
+                                   contains(key[2], "z")};
+
+  std::uniform_real_distribution<double> rnd_unit(0.0, 1.0);
+  std::normal_distribution<double> rnd_normal(0.0, 1.0);
+
+  Uint failed_attempts = 0;
+  Uint max_failed_attempts = 1000000; // Maybe not hardcode?
+
+  Uint irw = 0;
+  while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+    double alpha1 = 1.;
+    double alpha2 = 1.;
+    while (pow(alpha1, 2) + pow(alpha2, 2) > 1){
+      alpha1 = 2*rnd_unit(gen)-1;
+      alpha2 = 2*rnd_unit(gen)-1;
+    }
+    
+    Vector3d xi = x0 + R * (alpha1 * t1 + alpha2 * t2);
+    for (Uint dim=0; dim<3; ++dim)
+      if (init_rand_x[dim])
+        xi[dim] += sigma0 * rnd_normal(gen);
+
+    // check if inside domain
+    intp.probe(xi);
+    if (intp.inside_domain()){
+      this->nodes.push_back(xi);
+      ++irw;
+      failed_attempts = 0;
+    }
+    else {
+      ++failed_attempts;
+    }
+  }
+  if (irw == 0) {
+    std::cout << "No points inside domain" << std::endl;
+    exit(0);
+  }
+  prm.Nrw = irw;
+};
+
+
 /*{
     bool init_rand_x = false;
     bool init_rand_y = false;
