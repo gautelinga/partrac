@@ -3,6 +3,7 @@
 
 #include "io.hpp"
 #include "typedefs.hpp"
+#include "utils.hpp"
 
 //using namespace std;
 
@@ -14,6 +15,7 @@ public:
   void set_folder(const std::string& folder){ this->folder=folder; };
   std::string get_folder() const { return folder; };
   void set_U0(const double U0) { this->U0 = U0; this->U02 = U0*U0; };
+  double get_U0() { return this->U0; };
   void set_int_order(const int int_order) { this->int_order = int_order; };
   //
   Vector3d get_u() { return { U0 * get_ux(), U0 * get_uy(), U0 * get_uz()}; };
@@ -52,6 +54,7 @@ public:
   virtual void update(const double t) = 0;
   virtual void probe(const Vector3d &x, const double t) = 0;
   virtual void probe(const Vector3d &x, const double t, int& cell_id) = 0;
+  //virtual void probe_heavy(const Vector3d &x, const double t, int& cell_id, PointValues& ptvals) = 0;
   //
   virtual bool inside_domain() const = 0;
   virtual double get_ux() = 0;
@@ -98,7 +101,7 @@ template<typename T>
 void Interpol::assign_fields(T& ps, std::map<std::string, bool>& output_fields){
   double t = t_update;
   for ( auto & particle : ps.particles() ){
-    probe(particle.x(), t);
+    probe(particle.x(), t, particle.cell_id());
     if (output_fields["u"])
       particle.u() = get_u();
     if (output_fields["rho"])

@@ -11,6 +11,8 @@
 #include "H5Cpp.h"
 //#include "hdf5.h"
 #include <ctime>
+#include <omp.h>
+#include <chrono>
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
@@ -72,22 +74,30 @@ std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const doub
 
 template<typename T>
 void split_random_nodes(std::set<Uint>& nodes_to_replace, T& ps, std::mt19937& gen, Parameters& prm){
-    std::set<Uint> good_nodes;
+    std::set<Uint> all_nodes;
     for (Uint i = 0; i < ps.particles().size(); ++i)
     {
-        good_nodes.emplace_hint(good_nodes.end(), i);
+        all_nodes.emplace_hint(all_nodes.end(), i);
     }
-    for ( auto & i : nodes_to_replace ){
-        good_nodes.erase(i);
-    }
+    //for ( auto & i : nodes_to_replace ){
+    //    good_nodes.erase(i);
+    //}
+    std::set<Uint> good_nodes;
+    std::set_difference(all_nodes.begin(), all_nodes.end(), nodes_to_replace.begin(), nodes_to_replace.end(), 
+                        std::inserter(good_nodes, good_nodes.end()));
+
     std::vector<Uint> good_nodes_vec(good_nodes.begin(), good_nodes.end());
     std::vector<double> weights;
+
     for ( auto &i : good_nodes_vec ){
         double weight = pow(2, -ps.particles()[i].w()); // 1
         // double weight = ps.particles()[i].w();
         weights.push_back(weight);
-    }
+    }   
+    
     std::discrete_distribution<std::mt19937::result_type> discrete_dist(weights.begin(), weights.end());
+    
+    //#pragma omp parallel for
     for ( auto & i : nodes_to_replace ){
         Uint j = good_nodes_vec[discrete_dist(gen)];
         ps.particles()[i].x() = ps.particles()[j].x();
@@ -121,6 +131,11 @@ int main(int argc, char* argv[])
     if (prm.restart_folder != ""){
         prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
         prm.parse_cmd(argc, argv);
+    }
+
+    if (prm.num_threads > 0){
+        omp_set_dynamic(0);
+        omp_set_num_threads(prm.num_threads);
     }
 
     std::string infilename = std::string(argv[1]);
@@ -237,6 +252,7 @@ int main(int argc, char* argv[])
 
     Uint int_stat_intv = int(prm.stat_intv/dt);
     Uint int_dump_intv = int(prm.dump_intv/dt);
+    Uint int_reinject_intv = int(prm.refine_intv/dt);
     Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
     Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
 
@@ -259,6 +275,9 @@ int main(int argc, char* argv[])
     // Simulation start
     std::clock_t clock_0 = std::clock();
 
+    double duration_par = 0;
+    double duration_split = 0;
+
     while (t <= T){
         intp.update(t);
 
@@ -269,7 +288,9 @@ int main(int argc, char* argv[])
 
         // Statistics
         if (it % int_stat_intv == 0){
-            std::cout << "Time = " << t << std::endl;
+            std::cout << "Time = " << t << " [" << duration_par << " + " << duration_split << "]" << std::endl;
+            duration_par = 0;
+            duration_split = 0;
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
 
             std::string sepdatafname = sepdatafolder + "/sepdata_from_t" + std::to_string(t) + ".h5";
@@ -332,16 +353,25 @@ int main(int argc, char* argv[])
             h5f.close();
         }
 
-        auto outside_nodes = integrator.step(intp, ps, t, dt);
+        auto ct0 = std::chrono::high_resolution_clock::now();
+        //auto outside_nodes = integrator.step(intp, ps, t, dt);
+        integrator.step_parallel(intp, ps, t, dt);
+        auto ct1 = std::chrono::high_resolution_clock::now();
+        auto dct10 = std::chrono::duration_cast<std::chrono::microseconds>(ct1-ct0);
+        duration_par += dct10.count();
 
-        if (outside_nodes.size() > 0){
-            //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-        }
-
-        auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
-        if (exited_nodes.size() > 0){
-            //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
-            split_random_nodes(exited_nodes, ps, gen, prm);
+        //if (outside_nodes.size() > 0){
+        //    //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
+        //}
+        if (it % int_reinject_intv == 0){
+            auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
+            if (exited_nodes.size() > 0){
+                //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
+                split_random_nodes(exited_nodes, ps, gen, prm);
+            }
+            auto ct2 = std::chrono::high_resolution_clock::now();
+            auto dct21 = std::chrono::duration_cast<std::chrono::microseconds>(ct2-ct1);
+            duration_split += dct21.count();
         }
 
         t += dt;

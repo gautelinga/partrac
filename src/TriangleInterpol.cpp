@@ -179,14 +179,20 @@ void TriangleInterpol::update(const double t)
     std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
     dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
     prevfile.read(*u_prev_, "u");
-    if (include_pressure)
+    u_prev_->vector()->get_local(u_prev_data_);
+    if (include_pressure){
       prevfile.read(*p_prev_, "p");
+      p_prev_->vector()->get_local(p_prev_data_);
+    }
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, "u");
-    if (include_pressure)
+    u_next_->vector()->get_local(u_next_data_);
+    if (include_pressure){
       nextfile.read(*p_next_, "p");
+      p_next_->vector()->get_local(p_next_data_);
+    }
 
     is_initialized = true;
     t_prev = sp.prev.t;
@@ -200,6 +206,17 @@ void TriangleInterpol::probe(const Vector3d &x, const double t)
 {
   int id_prev = -1;
   probe(x, t, id_prev);
+}
+
+void TriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
+  for (std::size_t i=0; i<dim; ++i){
+    if (periodic[i]){
+      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
+    }
+    else {
+      x_loc[i] = x[i];
+    }
+  }
 }
 
 void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
@@ -355,6 +372,175 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
       gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
     }
   }
-
 }
+
+bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
+{
+  assert(t <= t_next && t >= t_prev);
+  
+  // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;
+
+  dolfin::Array<double> x_loc(dim);
+  _modx(x_loc, x);
+
+  // Index of cell containing point
+  const dolfin::Point point(dim, x_loc.data());
+  
+  bool found = false;
+
+  unsigned int id = 0;
+  // Search in neighborhood first
+  if (id_prev >= 0){
+    dolfin::Cell prev_cell(*mesh, id_prev);
+    if (prev_cell.contains(point)){
+      id = id_prev;
+      inside = true;
+      found = true;
+      ++found_same;
+    }
+    else {
+      for ( auto neigh_id : cell2cells_[id_prev]){
+        dolfin::Cell neigh_cell(*mesh, neigh_id);
+        if (neigh_cell.contains(point)){
+          inside = true;
+          found = true;
+          id = neigh_id;
+          ++found_nneigh;
+          break;
+        }
+      }
+    }
+  }
+  if (!found){
+    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
+    inside = (id != std::numeric_limits<unsigned int>::max());
+    if (inside) {
+      found = true;
+      ++found_other;
+    }
+  }
+  if (found){
+    id_prev = id;
+  }
+  return inside;
+}
+
+void TriangleInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)
+{
+  dolfin::Array<double> x_loc(dim);
+  _modx(x_loc, x);
+
+  double _alpha_t = (tin-t_prev)/(t_next-t_prev);
+
+  // Compute Pk-Pl basis at x
+  double r, s, u;
+  triangles_[id].xy2bary(x_loc[0], x_loc[1], r, s, u);
+
+  std::vector<double> _Nu_(ncoeffs_u);
+  std::vector<double> _Np_(ncoeffs_p);
+  std::vector<double> _Nux_(ncoeffs_u);
+  std::vector<double> _Nuy_(ncoeffs_u);
+
+  if (ncoeffs_u == 3){
+    triangles_[id].linearbasis(r, s, u, _Nu_);
+  }
+  else if (ncoeffs_u == 6){
+    triangles_[id].quadbasis(r, s, u, _Nu_);
+  }
+  else {
+    std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+    exit(0);
+  }
+  if (include_pressure){
+    if (ncoeffs_p == 3){
+      triangles_[id].linearbasis(r, s, u, _Np_);
+    }
+    else if (ncoeffs_p == 6){
+      triangles_[id].quadbasis(r, s, u, _Np_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
+      exit(0);
+    }
+  }
+
+  std::vector<double> u_prev_block(ncoeffs_u*dim);
+  std::vector<double> u_next_block(ncoeffs_u*dim);
+  std::vector<double> p_prev_block(ncoeffs_p);
+  std::vector<double> p_next_block(ncoeffs_p);
+
+  // Restrict solution to cell
+  const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
+  auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
+
+  for (std::size_t i = 0; i < u_dofs.size(); ++i){
+      u_prev_block[i] = u_prev_data_[u_dofs[i]];
+      u_next_block[i] = u_next_data_[u_dofs[i]];
+  }
+  if (include_pressure){
+      const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
+      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
+
+      for (std::size_t i = 0; i < p_dofs.size(); ++i){
+          p_prev_block[i] = p_prev_data_[p_dofs[i]];
+          p_next_block[i] = p_next_data_[p_dofs[i]];
+      }
+  }
+
+  // Evaluate
+  Vector3d U_prev = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_prev_block.begin(), 0.0),
+                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_block[ncoeffs_u], 0.0),
+                     0.0};
+  Vector3d U_next = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_next_block.begin(), 0.0),
+                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[ncoeffs_u], 0.0),
+                     0.0 };
+
+
+  // Update
+  fields.U = _alpha_t * U_next + (1-_alpha_t) * U_prev;
+  fields.A = (U_next-U_prev)/(t_next-t_prev);
+
+  if (include_pressure){
+    // Evaluate
+    double P_prev = std::inner_product(_Np_.begin(), _Np_.end(), p_prev_block.begin(), 0.0);
+    double P_next = std::inner_product(_Np_.begin(), _Np_.end(), p_next_block.begin(), 0.0);
+    fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
+  }
+
+  if (this->int_order > 1){
+    if (ncoeffs_u == 3){
+      triangles_[id].linearderiv(r, s, u, _Nux_, _Nuy_);
+    }
+    else if (ncoeffs_u == 6){
+      triangles_[id].quadderiv(r, s, u, _Nux_, _Nuy_);
+    }
+
+    Matrix3d gradU_prev;
+    gradU_prev <<
+      std::inner_product(_Nux_.begin(), _Nux_.end(), u_prev_block.begin(), 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_prev_block.begin(), 0.0),
+      0.0,
+      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_block[ncoeffs_u], 0.0),
+      0.0,
+      0.0,
+      0.0,
+      0.0;
+    Matrix3d gradU_next;
+    gradU_next << 
+      std::inner_product(_Nux_.begin(), _Nux_.end(), u_next_block.begin(), 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_next_block.begin(), 0.0),
+      0.0,
+      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_block[ncoeffs_u], 0.0),
+      0.0,
+      0.0,
+      0.0,
+      0.0;
+
+    fields.gradU = _alpha_t * gradU_next + (1-_alpha_t) * gradU_prev;
+    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+  }
+}
+
 #endif

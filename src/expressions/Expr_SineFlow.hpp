@@ -39,6 +39,15 @@ public:
     U(j) = u_inf * sin(2*M_PI*x[k]/L[k] + chi);
     Ujk(j, k) = u_inf * 2*M_PI/L[k] * cos(2*M_PI*x[k]/L[k] + chi);
   };
+  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
+    std::cout << "Not implemented yet!" << std::endl;
+    exit(0);
+    return false;
+  };
+  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
+    std::cout << "Not implemented yet!" << std::endl;
+    exit(0);
+  };
   double ux() { return U(0); };
   double uy() { return U(1); };
   double uz() { return U(2); };

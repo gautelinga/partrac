@@ -20,6 +20,12 @@ public:
   void update(const double t) { this->t_update=t; };
   void probe(const Vector3d &x, const double t) { expr->eval(x, t); };
   void probe(const Vector3d &x, const double t, int& cell_id) { expr->eval(x, t); };
+  bool probe_light(const Vector3d &x, const double t, int& cell_id) {
+    return expr->inside(x, t);
+  };
+  void probe_heavy(const Vector3d &x, const double t, int& cell_id, PointValues& ptvals) {
+    expr->eval(x, t, ptvals);
+  };
   bool inside_domain() const { return expr->inside(); };
   double get_ux() { return expr->ux(); };
   double get_uy() { return expr->uy(); };
@@ -71,7 +77,7 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
 
   this->x_min << getd(expr_params, "x_min"), getd(expr_params, "y_min"), getd(expr_params, "z_min");
   this->x_max << getd(expr_params, "x_max"), getd(expr_params, "y_max"), getd(expr_params, "z_max");
-
+  
   if (expr_params["expression"] == "stokes_sphere" ||
       expr_params["expression"] == "StokesSphere"){
     std::cout << "StokesSphere selected" << std::endl;
@@ -102,7 +108,8 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
     std::cout << "HagenPoiseuille selected" << std::endl;
     expr = std::make_shared<Expr_HagenPoiseuille>(expr_params);
   }
-  else if (expr_params["expression"] == "brinkman_cylinder" ||
+  else
+  if (expr_params["expression"] == "brinkman_cylinder" ||
            expr_params["expression"] == "BrinkmanCylinder"){
     std::cout << "BrinkmanCylinder selected" << std::endl;
     expr = std::make_shared<Expr_BrinkmanCylinder>(expr_params);

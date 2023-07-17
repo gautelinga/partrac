@@ -11,6 +11,8 @@ public:
   ~Integrator_Explicit() {};
   template<typename InterpolType, typename T>
   std::set<Uint> step(InterpolType&, T&, Real t, Real dt);
+  template<typename InterpolType, typename T>
+  void step_parallel(InterpolType&, T&, Real t, Real dt);
 protected:
   Real Dm;
   int int_order;
@@ -42,8 +44,8 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
         }
         if (Dm > 0.0){
             Vector eta = {rnd_normal(gen),
-                            rnd_normal(gen),
-                            rnd_normal(gen)};
+                          rnd_normal(gen),
+                          rnd_normal(gen)};
             dx += sqrt2Dmdt * eta;
         }
         intp.probe(x+dx, t+dt, cell_id);
@@ -59,6 +61,39 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
         ++i;
     }
     return outside_nodes;
+}
+
+template<typename InterpolType, typename T>
+void Integrator_Explicit::step_parallel(InterpolType& intp, T& ps, const Real t, const Real dt) {
+    std::set<Uint> outside_nodes;
+    Real sqrt2Dmdt = sqrt(2*Dm*dt);
+    // Uint i = 0;
+    double U0 = intp.get_U0();
+
+    #pragma omp parallel for
+    for (auto & particle : ps.particles() ){
+        Vector3d x = particle.x();
+        int cell_id = particle.cell_id();
+        PointValues ptvals(U0);
+
+        bool is_inside = intp.probe_light(x, t, cell_id);
+        intp.probe_heavy(x, t, cell_id, ptvals);
+
+        Vector3d dx = ptvals.get_u() * dt;
+
+        // Second-order terms
+        if (int_order >= 2) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
+        if (Dm > 0.0){
+            Vector eta = {rnd_normal(gen), rnd_normal(gen), rnd_normal(gen)};
+            dx += sqrt2Dmdt * eta;
+        }
+        is_inside = intp.probe_light(x+dx, t+dt, cell_id);
+        if (is_inside){
+            //++n_accepted;
+            particle.x() = x + dx;
+            particle.cell_id() = cell_id;
+        }
+    }
 }
 
 #endif

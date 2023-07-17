@@ -42,6 +42,22 @@ public:
     Uzy = 0.;
     Uzz = 0.;
   };
+  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
+    Vector3d r = x-x0;
+    bool _is_inside = r[0] <= 0.;
+    return _is_inside;
+  };
+  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
+    Vector3d r = x-x0;
+
+    ptvals.U = {alpha * r[0] * r[0], - 2 * alpha * r[0] * r[1], 0};  // * alpha * r[0] * r[2];
+    ptvals.P = p_inf + 2.0 * mu * alpha * r[0];
+
+    // Hardcoded -- copied from consistency-checked Sympy code
+    ptvals.gradU << 2 * alpha * r[0], 0., 0.,
+                    - 2 * alpha * r[1], - 2 * alpha * r[0], 0.,
+                    0., 0., 0.;
+  };
   double ux() { return Ux; };
   double uy() { return Uy; };
   double uz() { return Uz; };
