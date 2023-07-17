@@ -8,11 +8,11 @@
 //using namespace std;
 
 inline double beta(double zeta, double r){
-  return 2*std::cyl_bessel_k(1, zeta * r)/(zeta * std::cyl_bessel_k(0, zeta));
+  return 2*std::cyl_bessel_k(1.0, zeta * r)/(zeta * std::cyl_bessel_k(0.0, zeta));
 }
 
 inline double betar(double zeta, double r){
-  return - 2 * std::cyl_bessel_k(0, zeta * r)/std::cyl_bessel_k(0, zeta) - beta(zeta, r)/r;
+  return - 2 * std::cyl_bessel_k(0.0, zeta * r)/std::cyl_bessel_k(0.0, zeta) - beta(zeta, r)/r;
 }
 
 inline double betarr(double zeta, double r){

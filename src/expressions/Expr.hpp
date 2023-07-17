@@ -1,6 +1,7 @@
 #ifndef __EXPR_HPP
 #define __EXPR_HPP
 
+#include <cmath>
 //using namespace std;
 
 class Expr {
