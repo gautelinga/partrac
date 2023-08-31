@@ -50,6 +50,44 @@ public:
     Uzy = (3.0/4.0)*R*r[1]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 + r2))/r7;
     Uzz = (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + 2*r2*(R2 - r2) + r2*(R2 + r2))/r7;
   };
+  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
+    Vector3d r = x-x0;
+    double r2 = r.squaredNorm();
+    double R2 = R*R;
+    bool _is_inside = r2 >= R2;
+    return _is_inside;
+  };
+  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
+
+    Vector3d r = x-x0;
+    double r2 = r.squaredNorm();
+    double R2 = R*R;
+    is_inside = r2 >= R2;
+
+    double eta = R/sqrt(r2);
+    double eta3 = pow(eta, 3);
+
+    double f_r = 1.0 + 1./2. * eta3 - 3./2. * eta;
+    double f_theta = -1.0 + 1./4. * eta3 + 3./4. * eta;
+
+    double r7 = pow(r2, 7.0/2.0);
+
+    ptvals.U = {r[0]*r[2]/r2 * (f_r + f_theta) * u_inf,
+                r[1]*r[2]/r2 * (f_r + f_theta) * u_inf,
+                r[2]*r[2]/r2 * (f_r + f_theta) * u_inf - f_theta * u_inf};
+    ptvals.P = p_inf - 3.0/2.0 * mu * u_inf * r[2] * eta / r2;
+
+    // Hardcoded -- copied from consistency-checked Sympy code
+    ptvals.gradU << (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[0], 2)*(R2 - r2) - pow(r[0], 2)*(3*R2 - r2) + r2*(R2 - r2))/r7,
+                    (3.0/4.0)*R*r[0]*r[1]*r[2]*u_inf*(-5*R2 + 3*r2)/r7,
+                    (3.0/4.0)*R*r[0]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 - r2))/r7,
+                    (3.0/4.0)*R*r[0]*r[1]*r[2]*u_inf*(-5*R2 + 3*r2)/r7,
+                    (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[1], 2)*(R2 - r2) - pow(r[1], 2)*(3*R2 - r2) + r2*(R2 - r2))/r7,
+                    (3.0/4.0)*R*r[1]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 - r2))/r7,
+                    (3.0/4.0)*R*r[0]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 + r2))/r7,
+                    (3.0/4.0)*R*r[1]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 + r2))/r7,
+                    (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + 2*r2*(R2 - r2) + r2*(R2 + r2))/r7;
+  };
   double ux() { return Ux; };
   double uy() { return Uy; };
   double uz() { return Uz; };

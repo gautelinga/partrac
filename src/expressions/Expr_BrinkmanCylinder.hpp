@@ -7,31 +7,31 @@
 
 //using namespace std;
 
-double beta(double zeta, double r){
-  return 2*std::cyl_bessel_k(1, zeta * r)/(zeta * std::cyl_bessel_k(0, zeta));
+inline double beta(double zeta, double r){
+  return 2*std::cyl_bessel_k(1.0, zeta * r)/(zeta * std::cyl_bessel_k(0.0, zeta));
 }
 
-double betar(double zeta, double r){
-  return - 2 * std::cyl_bessel_k(0, zeta * r)/std::cyl_bessel_k(0, zeta) - beta(zeta, r)/r;
+inline double betar(double zeta, double r){
+  return - 2 * std::cyl_bessel_k(0.0, zeta * r)/std::cyl_bessel_k(0.0, zeta) - beta(zeta, r)/r;
 }
 
-double betarr(double zeta, double r){
+inline double betarr(double zeta, double r){
   return (pow(zeta, 2) + pow(r, -2))*beta(zeta, r) - betar(zeta, r)/r;
 }
 
-double f(double zeta, double r){
+inline double f(double zeta, double r){
   return r - (1+beta(zeta, 1.0))/r + beta(zeta, r);
 }
 
-double fr(double zeta, double r){
+inline double fr(double zeta, double r){
   return 1 + (1+beta(zeta, 1.0))/pow(r, 2) + betar(zeta, r);
 }
 
-double frr(double zeta, double r){
+inline double frr(double zeta, double r){
   return -2.*(1 + beta(zeta, 1.0))/pow(r, 3) + betarr(zeta, r);
 }
 
-double prf(double zeta, double r){
+inline double prf(double zeta, double r){
   return pow(zeta, 2)*(r + (1+beta(zeta, 1.0))/r);
 }
 
@@ -91,6 +91,7 @@ public:
     frr_intp.load(&frr, 1., rmax, N, zeta);
     prf_intp.load(&prf, 1., rmax, N, zeta);
   };
+
   void eval(const Vector3d &x, const double t __attribute__((unused))) {
     //cout << "x = " << x << endl;
     //cout << "x0 = " << x0 << endl;
@@ -127,7 +128,7 @@ public:
     double frr_r = frr_intp.eval(rabs); // frr(zeta, rabs);
     double prf_r = prf_intp.eval(rabs); // prf(zeta, rabs);
 
-    Ux = u_inf * s2t*fr_r + f_r*c2t/rabs;
+    Ux = u_inf * (s2t*fr_r + f_r*c2t/rabs);
     Uy = u_inf * st*ct*(-fr_r + f_r/rabs);
 
     // Hardcoded -- copied from consistency-checked Sympy code
@@ -137,6 +138,50 @@ public:
     Uyy = u_inf/R * (-r2*s2t*frr_r + 3*rabs*s2t*fr_r - rabs*fr_r - 3*f_r*s2t + f_r)*ct/r2;
 
     P = p_inf - mu * u_inf / R * prf_r * ct;
+  };
+  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
+    Vector3d s = x-x0;
+    s[2] = 0.;
+    Vector3d r = s/R;
+    double r2 = r.squaredNorm();
+    bool _is_inside = r2 >= 1.;
+    return _is_inside;
+  };
+  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
+    Vector3d s = x-x0;
+    s[2] = 0.;
+    Vector3d r = s/R;
+    double r2 = r.squaredNorm();
+    
+    double rabs = sqrt(r2);
+
+    double st = r[1]/rabs; // sin(theta);
+    double ct = r[0]/rabs; // cos(theta);
+    double s2t = st*st;
+    double c2t = ct*ct;
+
+    // These are costly!
+    double f_r = f_intp.eval(rabs); // f(zeta, rabs);
+    double fr_r = fr_intp.eval(rabs); // fr(zeta, rabs);
+    double frr_r = frr_intp.eval(rabs); // frr(zeta, rabs);
+    double prf_r = prf_intp.eval(rabs); // prf(zeta, rabs);
+
+    ptvals.U = {u_inf * (s2t*fr_r + f_r*c2t/rabs),
+                u_inf * st*ct*(-fr_r + f_r/rabs),
+                0.};
+
+    // Hardcoded -- copied from consistency-checked Sympy code
+    ptvals.gradU << 
+      u_inf/R * (r2*s2t*frr_r - 3*rabs*s2t*fr_r + rabs*fr_r + 3*f_r*s2t - f_r)*ct/r2,
+      u_inf/R * (r2*s2t*frr_r + 3*rabs*c2t*fr_r - 3*f_r*c2t)*st/r2,
+      0.0,
+      u_inf/R * (-r2*c2t*frr_r + 3*rabs*c2t*fr_r - rabs*fr_r - 3*f_r*c2t + f_r)*st/r2,
+      u_inf/R * (-r2*s2t*frr_r + 3*rabs*s2t*fr_r - rabs*fr_r - 3*f_r*s2t + f_r)*ct/r2,
+      0.0,
+      0.0,
+      0.0,
+      0.0;
+    ptvals.P = p_inf - mu * u_inf / R * prf_r * ct;
   };
   double ux() { return Ux; };
   double uy() { return Uy; };

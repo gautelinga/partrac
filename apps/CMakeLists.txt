@@ -40,6 +40,7 @@ if (BUILD_APP_WEIGHTED_WALKERS)
 endif()
 if (BUILD_APP_TESTS)
     add_subdirectory(mpitest)
+    add_subdirectory(omp_test)
 endif()
 
 set(PROJECT_TARGETS "${PROJECT_TARGETS}" PARENT_SCOPE)

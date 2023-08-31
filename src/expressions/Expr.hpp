@@ -1,6 +1,7 @@
 #ifndef __EXPR_HPP
 #define __EXPR_HPP
 
+#include <cmath>
 //using namespace std;
 
 class Expr {
@@ -10,7 +11,9 @@ public:
   };
   ~Expr() {};
   virtual void eval(const Vector3d &x, const double t) = 0;
+  virtual void eval(const Vector3d &x, const double t, PointValues& ptvals) = 0;
   virtual bool inside() { return is_inside; };
+  virtual bool inside(const Vector3d &x, const double t) = 0;
   virtual double ux() { return 0.; };
   virtual double uy() { return 0.; };
   virtual double uz() { return 0.; };

@@ -15,6 +15,8 @@ public:
   void update(const double t);
   void probe(const Vector3d &x, const double t);
   void probe(const Vector3d &x, const double t, int& id_prev);
+  bool probe_light(const Vector3d &x, const double t, int& id_prev);
+  void probe_heavy(const Vector3d &x, const double t, const int id, PointValues& );
   bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
@@ -88,6 +90,15 @@ protected:
   std::shared_ptr<dolfin::Function> p_prev_;
   std::shared_ptr<dolfin::Function> p_next_;
 
+  // These are new:
+  std::vector<double> u_prev_data_;
+  std::vector<double> u_next_data_;
+  std::vector<double> p_prev_data_;
+  std::vector<double> p_next_data_;
+
+
+  // End
+
   std::vector<Triangle> triangles_;
   std::vector<dolfin::Cell> dolfin_cells_;
   std::vector<ufc::cell> ufc_cells_;
@@ -96,17 +107,11 @@ protected:
 
   std::vector<std::vector<double>> coordinate_dofs_;
 
-  //std::array<double, 12> u_prev_coefficients_;
-  //std::array<double, 12> u_next_coefficients_;
-  //std::array<double, 3> p_prev_coefficients_;
-  //std::array<double, 3> p_next_coefficients_;
   std::vector<double> u_prev_coefficients_;
   std::vector<double> u_next_coefficients_;
   std::vector<double> p_prev_coefficients_;
   std::vector<double> p_next_coefficients_;
 
-  //std::array<double, 6> N6_, Nx_, Ny_, Nz_;
-  //std::array<double, 3> N3_;
   std::vector<double> Nu_, Nux_, Nuy_;
   std::vector<double> Np_;
 
@@ -116,6 +121,8 @@ protected:
   long unsigned int found_same = 0;
   long unsigned int found_nneigh = 0;
   long unsigned int found_other = 0;
+
+  void _modx(dolfin::Array<double>&, const Vector3d&);
 
 };
 

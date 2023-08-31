@@ -22,8 +22,8 @@
 #include "ExplicitIntegrator.hpp"
 #include "RKIntegrator.hpp"
 #include "Initializer.hpp"
-#include "helpers.hpp"
 #include "MPIwrap.hpp"
+#include "helpers.hpp"
 
 int main(int argc, char* argv[])
 {

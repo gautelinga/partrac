@@ -279,4 +279,25 @@ static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
   return ivec;
 }
 
+class PointValues {
+public:
+  PointValues(const double U0) : U0(U0) {
+    U = {0., 0., 0.};
+    A = {0., 0., 0.};
+    gradU << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
+    gradA << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
+    P = 0.;
+  };
+  Vector3d U;
+  Vector3d A;
+  Matrix3d gradU;
+  Matrix3d gradA;
+  double P;
+  Vector3d get_u() { return U0 * U; };
+  Vector3d get_Ju() { return U0 * U0 * gradU * U; }; // check
+  Vector3d get_a() { return U0 * A; };
+private:
+  double U0;
+};
+
 #endif

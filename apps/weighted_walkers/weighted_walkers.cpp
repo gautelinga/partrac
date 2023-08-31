@@ -11,6 +11,8 @@
 #include "H5Cpp.h"
 //#include "hdf5.h"
 #include <ctime>
+#include <omp.h>
+#include <chrono>
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
@@ -38,8 +40,8 @@ std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm
 }
 
 template<typename T>
-std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const double Ln, const double Lt){
-    std::set<Uint> exited_nodes;
+std::vector<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const double Ln, const double Lt){
+    std::vector<Uint> exited_nodes;
     Uint dn, dt1, dt2;
     if (exit_plane == "x"){
         dn = 0;
@@ -59,42 +61,125 @@ std::set<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const doub
     else {
         return exited_nodes;
     }
-    Uint i = 0;
-    for ( auto & particle : ps.particles() ){
-        Vector x = particle.x();
-        if ( (x[dn] > Ln) || (Lt > 0. and (pow(x[dt1], 2) + pow(x[dt2], 2) > Lt*Lt)) ){
-            exited_nodes.insert(i);
+
+    std::vector<std::vector<Uint>> buffers;
+    
+    #pragma omp parallel
+    {
+        auto nthreads = omp_get_num_threads();
+        auto id = omp_get_thread_num();
+
+        #pragma omp single
+        {
+            buffers.resize( nthreads );
         }
-        ++i;
+
+        #pragma omp for
+        for ( Uint i = 0; i < ps.particles().size(); ++i ){
+            Vector x = ps.particles()[i].x();
+            if ( (x[dn] > Ln) || (Lt > 0. and (pow(x[dt1], 2) + pow(x[dt2], 2) > Lt*Lt)) ){
+                //exited_nodes.insert(i);
+                buffers[id].push_back(i);
+            }
+        }
+
+        #pragma omp single
+        {
+            for ( auto & buffer : buffers ) {
+                move(buffer.begin(), buffer.end(), std::back_inserter(exited_nodes));
+                //exited_nodes.insert(buffer.begin(), buffer.end());
+            }
+            //exited_nodes.insert(vec.begin(), vec.end());
+        }
     }
+    std::sort(exited_nodes.begin(), exited_nodes.end());
     return exited_nodes;
 }
 
 template<typename T>
-void split_random_nodes(std::set<Uint>& nodes_to_replace, T& ps, std::mt19937& gen, Parameters& prm){
-    std::set<Uint> good_nodes;
+void split_random_nodes(std::vector<Uint>& nodes_to_replace, T& ps, std::vector<std::mt19937>& gens, Parameters& prm){
+
+    //auto t0 = std::chrono::high_resolution_clock::now();
+
+    //std::vector<double> nodes_to_replace_vec(nodes_to_replace.begin(), nodes_to_replace.end());
+
+    /*
+    std::set<Uint> all_nodes;
     for (Uint i = 0; i < ps.particles().size(); ++i)
     {
-        good_nodes.emplace_hint(good_nodes.end(), i);
+        all_nodes.emplace_hint(all_nodes.end(), i);
     }
+    */
+
+    //auto t1 = std::chrono::high_resolution_clock::now();
+
+    /*
+    std::set<Uint> good_nodes(all_nodes.begin(), all_nodes.end());
     for ( auto & i : nodes_to_replace ){
         good_nodes.erase(i);
     }
+    */
+
+    /*
+    std::set_difference(all_nodes.begin(), all_nodes.end(), 
+                        nodes_to_replace.begin(), nodes_to_replace.end(),
+                        std::inserter(good_nodes, good_nodes.end()));
+    */
+
+
+    /*
     std::vector<Uint> good_nodes_vec(good_nodes.begin(), good_nodes.end());
-    std::vector<double> weights;
-    for ( auto &i : good_nodes_vec ){
+    */
+
+    std::vector<double> weights(ps.particles().size());
+
+    //auto t2 = std::chrono::high_resolution_clock::now();
+
+    //for ( auto &i : good_nodes_vec ){
+    #pragma omp parallel for
+    for ( Uint i = 0; i < ps.particles().size(); ++i){
+        //double weight = pow(2, -ps.particles()[i].w()); // 1
         double weight = pow(2, -ps.particles()[i].w()); // 1
         // double weight = ps.particles()[i].w();
-        weights.push_back(weight);
+        weights[i] = weight;
     }
-    std::discrete_distribution<std::mt19937::result_type> discrete_dist(weights.begin(), weights.end());
+
+    //auto t3 = std::chrono::high_resolution_clock::now();
+    
+    #pragma omp parallel for
     for ( auto & i : nodes_to_replace ){
-        Uint j = good_nodes_vec[discrete_dist(gen)];
-        ps.particles()[i].x() = ps.particles()[j].x();
-        double w_new = ps.particles()[j].w()+1; // ps.particles()[j].w()/2;
-        ps.particles()[i].w() = w_new;
-        ps.particles()[j].w() = w_new;
+        weights[i] = 0.;
     }
+    
+    //std::cout << "Weights: " << weights.size() << std::endl;
+
+    //auto t4 = std::chrono::high_resolution_clock::now();
+
+    #pragma omp parallel 
+    {
+        std::discrete_distribution<std::mt19937::result_type> discrete_dist(weights.begin(), weights.end());
+        auto & gen = gens[omp_get_thread_num()];
+
+        #pragma omp for
+        for ( auto & i : nodes_to_replace ){
+            //Uint j = good_nodes_vec[discrete_dist(gen)];
+            Uint j = discrete_dist(gen);
+            ps.particles()[i].x() = ps.particles()[j].x();
+            double w_new = ps.particles()[j].w()+1; // ps.particles()[j].w()/2;
+            ps.particles()[i].w() = w_new;
+            ps.particles()[j].w() = w_new;
+        }
+    }
+
+    //auto t5 = std::chrono::high_resolution_clock::now();
+
+    //auto dt1 = std::chrono::duration_cast<std::chrono::microseconds>(t1-t0);
+    //auto dt2 = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1);
+    //auto dt3 = std::chrono::duration_cast<std::chrono::microseconds>(t3-t2);
+    //auto dt4 = std::chrono::duration_cast<std::chrono::microseconds>(t4-t3);
+    //auto dt5 = std::chrono::duration_cast<std::chrono::microseconds>(t5-t4);
+
+    //std::cout << dt1.count() << " " << dt2.count() << " " << dt3.count() << " " << dt4.count() << " " << dt5.count() << std::endl;
 }
 
 int main(int argc, char* argv[])
@@ -104,14 +189,11 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental tracers with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized weighted walkers.                                   ||\n"
                   << "======================================================================" << std::endl;
     }
     mpi.barrier();
     
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-    mpi.barrier();
-
     // Input parameters
     if (argc < 2 && mpi.rank() == 0) {
         std::cout << "Please specify an input file." << std::endl;
@@ -121,6 +203,11 @@ int main(int argc, char* argv[])
     if (prm.restart_folder != ""){
         prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
         prm.parse_cmd(argc, argv);
+    }
+
+    if (prm.num_threads > 0){
+        omp_set_dynamic(0);
+        omp_set_num_threads(prm.num_threads);
     }
 
     std::string infilename = std::string(argv[1]);
@@ -162,15 +249,21 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
         prm.print();
 
-    std::mt19937 gen;
-    if (prm.random) {
-        std::random_device rd;
-        gen.seed(rd());
+    // Parallel generators
+    std::vector<std::mt19937> gens;
+    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
+        std::mt19937 gen;
+        if (prm.random) {
+            std::random_device rd;
+            gen.seed(rd());
+        }
+        else {
+            std::seed_seq rd{prm.seed + omp_get_thread_num() };
+            gen.seed(rd);
+        }
+        gens.emplace_back(gen);
     }
-    else {
-        std::seed_seq rd{prm.seed + mpi.rank()};
-        gen.seed(rd);
-    }
+
     std::uniform_int_distribution<std::mt19937::result_type> uniform_dist(0, prm.Nrw);
 
     Real dt = prm.dt;
@@ -181,7 +274,7 @@ int main(int argc, char* argv[])
 
     // This part is unique
     std::cout << "initializing Integrator..." << std::endl;
-    Integrator_Explicit integrator(prm.Dm, prm.int_order, gen);
+    Integrator_Explicit integrator(prm.Dm, prm.int_order, gens);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.Nrw_max);
@@ -201,13 +294,13 @@ int main(int argc, char* argv[])
     Uint dim;
     if (contains(key[0], "strip")){
         dim = 2;
-        RandomGaussianStripInitializer init_state(key, prm, mpi, gen);
+        RandomGaussianStripInitializer init_state(key, prm, mpi, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
     else if (contains(key[0], "circle")){
         dim = 3;
-        RandomGaussianCircleInitializer init_state(key, prm, mpi, gen);
+        RandomGaussianCircleInitializer init_state(key, prm, mpi, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
@@ -237,6 +330,7 @@ int main(int argc, char* argv[])
 
     Uint int_stat_intv = int(prm.stat_intv/dt);
     Uint int_dump_intv = int(prm.dump_intv/dt);
+    Uint int_reinject_intv = int(prm.refine_intv/dt);
     Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
     Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
 
@@ -257,7 +351,10 @@ int main(int argc, char* argv[])
     }
 
     // Simulation start
-    std::clock_t clock_0 = std::clock();
+    auto clock_0 = std::clock();
+
+    double duration_par = 0;
+    double duration_split = 0;
 
     while (t <= T){
         intp.update(t);
@@ -269,7 +366,9 @@ int main(int argc, char* argv[])
 
         // Statistics
         if (it % int_stat_intv == 0){
-            std::cout << "Time = " << t << std::endl;
+            std::cout << "Time = " << t << " [" << duration_par << " + " << duration_split << "]" << std::endl;
+            duration_par = 0;
+            duration_split = 0;
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
 
             std::string sepdatafname = sepdatafolder + "/sepdata_from_t" + std::to_string(t) + ".h5";
@@ -332,23 +431,32 @@ int main(int argc, char* argv[])
             h5f.close();
         }
 
-        auto outside_nodes = integrator.step(intp, ps, t, dt);
+        auto ct0 = std::chrono::high_resolution_clock::now();
+        //auto outside_nodes = integrator.step(intp, ps, t, dt);
+        integrator.step_parallel(intp, ps, t, dt);
+        auto ct1 = std::chrono::high_resolution_clock::now();
+        auto dct10 = std::chrono::duration_cast<std::chrono::microseconds>(ct1-ct0);
+        duration_par += dct10.count();
 
-        if (outside_nodes.size() > 0){
-            //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-        }
-
-        auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
-        if (exited_nodes.size() > 0){
-            //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
-            split_random_nodes(exited_nodes, ps, gen, prm);
+        //if (outside_nodes.size() > 0){
+        //    //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
+        //}
+        if (it % int_reinject_intv == 0){
+            auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
+            if (exited_nodes.size() > 0){
+                //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
+                split_random_nodes(exited_nodes, ps, gens, prm);
+            }
+            auto ct2 = std::chrono::high_resolution_clock::now();
+            auto dct21 = std::chrono::duration_cast<std::chrono::microseconds>(ct2-ct1);
+            duration_split += dct21.count();
         }
 
         t += dt;
         ++it;
     }
 
-    std::clock_t clock_1 = std::clock();
+    auto clock_1 = std::clock();
     Real duration = (clock_1-clock_0) / (Real) CLOCKS_PER_SEC;
     std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 

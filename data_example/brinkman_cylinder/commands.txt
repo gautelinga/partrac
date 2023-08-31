@@ -1,0 +1,1 @@
+weighted_walkers ./expr_params.dat Dm=1e-5 dump_intv=100 stat_intv=0.1 dt=1e-2 Nrw_max=1e6 Nrw=1e6 int_order=2 verbose=true init_mode=strip_y_x La=0.1 Lb=0.0 T=100 x0=-1 y0=0 z0=0 Ln=1 ds_max=0.02 Lt=0 exit_plane=x num_threads=1 dump_intv=0.1 refine_intv=0.1 seed=5 Nrw=10

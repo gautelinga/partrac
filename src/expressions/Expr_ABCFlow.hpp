@@ -43,6 +43,15 @@ public:
     Uzy = cy*2*M_PI/L;
     Uzz = 0.;
   };
+  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
+    std::cout << "Not implemented yet!" << std::endl;
+    exit(0);
+    return false;
+  };
+  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
+    std::cout << "Not implemented yet!" << std::endl;
+    exit(0);
+  };
   double ux() { return Ux; };
   double uy() { return Uy; };
   double uz() { return Uz; };

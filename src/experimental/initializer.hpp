@@ -10,6 +10,7 @@
 #include "../Interpol.hpp"
 #include "utils.hpp"
 #include "../MPIwrap.hpp"
+#include "../Parameters.hpp"
 //#include "particles.hpp"
 
 // TODO: Massive cleanup!
