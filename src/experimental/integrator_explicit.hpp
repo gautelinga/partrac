@@ -7,7 +7,7 @@
 
 class Integrator_Explicit : public Integrator {
 public:
-  Integrator_Explicit(const Real Dm, const int int_order, std::mt19937& gen);
+  Integrator_Explicit(const Real Dm, const int int_order, std::vector<std::mt19937>& gens);
   ~Integrator_Explicit() {};
   template<typename InterpolType, typename T>
   std::set<Uint> step(InterpolType&, T&, Real t, Real dt);
@@ -16,12 +16,12 @@ public:
 protected:
   Real Dm;
   int int_order;
-  std::mt19937& gen;
+  std::vector<std::mt19937>& gens;
   std::normal_distribution<Real> rnd_normal;
 };
 
-Integrator_Explicit::Integrator_Explicit(const Real Dm, const int int_order, std::mt19937& gen)
-  : Integrator(), gen(gen), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
+Integrator_Explicit::Integrator_Explicit(const Real Dm, const int int_order, std::vector<std::mt19937>& gens)
+  : Integrator(), gens(gens), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
     std::cout << "Choosing an explicit integrator of order " << int_order << " with diffusivity " << Dm << std::endl;
 }
 
@@ -43,6 +43,7 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
             dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
         }
         if (Dm > 0.0){
+            std::mt19937& gen = gens[0]; // Not parallel yet
             Vector eta = {rnd_normal(gen),
                           rnd_normal(gen),
                           rnd_normal(gen)};
@@ -70,28 +71,34 @@ void Integrator_Explicit::step_parallel(InterpolType& intp, T& ps, const Real t,
     // Uint i = 0;
     double U0 = intp.get_U0();
 
-    #pragma omp parallel for
-    for (auto & particle : ps.particles() ){
-        Vector3d x = particle.x();
-        int cell_id = particle.cell_id();
-        PointValues ptvals(U0);
+    #pragma omp parallel 
+    {
+        std::normal_distribution<Real> _rnd_normal(0., 1.0);
+        std::mt19937& gen = gens[omp_get_thread_num()];
 
-        bool is_inside = intp.probe_light(x, t, cell_id);
-        intp.probe_heavy(x, t, cell_id, ptvals);
+        # pragma omp for
+        for (auto & particle : ps.particles() ){
+            Vector3d x = particle.x();
+            int cell_id = particle.cell_id();
+            PointValues ptvals(U0);
 
-        Vector3d dx = ptvals.get_u() * dt;
+            bool is_inside = intp.probe_light(x, t, cell_id);
+            intp.probe_heavy(x, t, cell_id, ptvals);
 
-        // Second-order terms
-        if (int_order >= 2) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
-        if (Dm > 0.0){
-            Vector eta = {rnd_normal(gen), rnd_normal(gen), rnd_normal(gen)};
-            dx += sqrt2Dmdt * eta;
-        }
-        is_inside = intp.probe_light(x+dx, t+dt, cell_id);
-        if (is_inside){
-            //++n_accepted;
-            particle.x() = x + dx;
-            particle.cell_id() = cell_id;
+            Vector3d dx = ptvals.get_u() * dt;
+
+            // Second-order terms
+            if (int_order >= 2) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
+            if (Dm > 0.0){
+                Vector eta = {_rnd_normal(gen), _rnd_normal(gen), _rnd_normal(gen)};
+                dx += sqrt2Dmdt * eta;
+            }
+            is_inside = intp.probe_light(x+dx, t+dt, cell_id);
+            if (is_inside){
+                //++n_accepted;
+                particle.x() = x + dx;
+                particle.cell_id() = cell_id;
+            }
         }
     }
 }

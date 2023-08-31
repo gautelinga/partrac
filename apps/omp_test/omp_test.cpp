@@ -133,15 +133,15 @@ int main(int argc, char* argv[])
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.Nrw_max);
 
-    std::mt19937 gen;
-    if (prm.random) {
-        std::random_device rd;
-        gen.seed(rd());
+    std::random_device rd;
+    std::vector<std::mt19937> gens;
+    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
+        gens.emplace_back(std::mt19937(rd()));
     }
 
     auto key = split_string(prm.init_mode, "_");
 
-    RandomPointsInitializer init_state(key, prm, mpi, gen);
+    RandomPointsInitializer init_state(key, prm, mpi, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
 
@@ -218,6 +218,7 @@ int main(int argc, char* argv[])
             Vector3d dx = ptvals.get_u() * dt;
             if (prm.int_order > 1) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
             if (prm.Dm > 0) {
+                std::mt19937& gen = gens[omp_get_thread_num()];
                 Vector eta = {rnd_normal(gen), rnd_normal(gen), rnd_normal(gen)};
                 dx += sqrt2Dmdt * eta;
             }
