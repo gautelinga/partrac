@@ -443,8 +443,9 @@ int main(int argc, char* argv[])
         //}
         if (it % int_reinject_intv == 0){
             auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
+            //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
             if (exited_nodes.size() > 0){
-                //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
+                //
                 split_random_nodes(exited_nodes, ps, gens, prm);
             }
             auto ct2 = std::chrono::high_resolution_clock::now();
