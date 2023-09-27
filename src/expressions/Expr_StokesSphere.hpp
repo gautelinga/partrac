@@ -62,7 +62,7 @@ public:
     Vector3d r = x-x0;
     double r2 = r.squaredNorm();
     double R2 = R*R;
-    is_inside = r2 >= R2;
+    // is_inside = r2 >= R2;
 
     double eta = R/sqrt(r2);
     double eta3 = pow(eta, 3);
