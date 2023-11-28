@@ -11,16 +11,13 @@
 #include "H5Cpp.h"
 //#include "hdf5.h"
 #include <ctime>
-#include <omp.h>
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
 #include "MPIwrap.hpp"
 #include "Parameters.hpp"
 #include "StructuredInterpol.hpp"
-#include "TriangleInterpol.hpp"
-#include "XDMFTriangleInterpol.hpp"
-
+#include "TetInterpol.hpp"
 #include "experimental/integrator_RK.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
@@ -77,27 +74,6 @@ void reinject_nodes( const std::set<Uint>& outside_node_ids
     }
 }
 
-template<typename ParticleType>
-void spin_all( const std::vector<std::string>& key
-             , Particles<ParticleType>& ps
-             , std::mt19937 &gen){
-    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
-    for ( auto & particle : ps.particles() ){
-        Vector Dn = {0., 0., 0.};
-        if (contains(key[1], "x")){
-            Dn[0] = rnd_normal(gen);
-        }
-        if (contains(key[1], "y")){
-            Dn[1] = rnd_normal(gen);
-        }
-        if (contains(key[1], "z")){
-            Dn[2] = rnd_normal(gen);
-        }
-        Dn /= Dn.norm();
-        particle.n() = Dn;
-    }
-}
-
 int main(int argc, char* argv[])
 {
     MPIwrap mpi(argc, argv);
@@ -105,12 +81,9 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental tracer vectors with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized experimental tracer tensors                         ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
-    
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
     mpi.barrier();
 
     // Input parameters
@@ -118,30 +91,23 @@ int main(int argc, char* argv[])
         std::cout << "Please specify an input file." << std::endl;
         return 0;
     }
-
     Parameters prm(argc, argv);
     if (prm.restart_folder != ""){
         prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
         prm.parse_cmd(argc, argv);
     }
 
-    if (prm.num_threads > 0){
-        omp_set_dynamic(0);
-        omp_set_num_threads(prm.num_threads);
-    }
-
     std::string infilename = std::string(argv[1]);
 
-    std::cout << "Initializing TriangleInterpol." << std::endl;
-    //TriangleInterpol intp(infilename);
-    XDMFTriangleInterpol intp(infilename);
+    std::cout << "Initializing TetInterpol." << std::endl;
+    TetInterpol intp(infilename);
     // std::cout << "Initialized TriangleInterpol." << std::endl;
 
     intp.set_U0(prm.U0);
     intp.set_int_order(2);  // To evaluate gradients
 
     std::string folder = intp.get_folder();
-    std::string rwfolder = folder + "/TracerVectors/";
+    std::string rwfolder = folder + "/TracerTensors/";
     
     if (mpi.rank() == 0)
         create_folder(rwfolder);
@@ -202,7 +168,6 @@ int main(int argc, char* argv[])
     RandomPointsInitializer init_state(key, prm, mpi, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
-    spin_all(key, ps, gen);
 
     // Check mesh connectivity: should be uneccessary
     ps.edges().clear();
@@ -232,9 +197,10 @@ int main(int argc, char* argv[])
     output_fields["p"] = !prm.minimal_output && prm.output_all_props;
     output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
     output_fields["H"] = !prm.minimal_output && ps.dim() > 0;
-    output_fields["n"] = true;
-    output_fields["w"] = true;
-    output_fields["S"] = true;
+    output_fields["n"] = false;
+    output_fields["w"] = false;
+    output_fields["S"] = false;
+    output_fields["F"] = true;
 
     intp.update(t);
     intp.assign_fields(ps, output_fields);
@@ -242,12 +208,7 @@ int main(int argc, char* argv[])
     // Simulation start
     std::clock_t clock_0 = std::clock();
 
-    double duration_step = 0.;
-    double duration_other = 0.;
-
-    while (t < T + dt/2){
-        auto ct0 = std::chrono::high_resolution_clock::now();
-
+    while (t <= T){
         intp.update(t);
 
         // Update fields for output
@@ -258,11 +219,6 @@ int main(int argc, char* argv[])
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
-            std::cout << "(step: " << duration_step << ", other stuff: " << duration_other << ")" << std::endl;
-
-            duration_step = 0;
-            duration_other = 0;
-
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
 
             intp.print_found();
@@ -288,16 +244,10 @@ int main(int argc, char* argv[])
             ps.dump_hdf5(h5f, groupname, output_fields);
             h5f.close();
         }
-        auto ct1 = std::chrono::high_resolution_clock::now();
 
-        auto dct_other = std::chrono::duration_cast<std::chrono::microseconds>(ct1-ct0);
-        duration_other += dct_other.count();
-
-        auto outside_nodes = integrator.step_vec(intp, ps, t, dt);
-        auto ct2 = std::chrono::high_resolution_clock::now();
-        auto dct_step = std::chrono::duration_cast<std::chrono::microseconds>(ct2-ct1);
-        duration_step += dct_step.count();
-        // std::cout << dct10.count() << std::endl;
+        // auto outside_nodes = integrator.step_vec(intp, ps, t, dt);
+        
+        auto outside_nodes = integrator.step_tensor(intp, ps, t, dt);
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;

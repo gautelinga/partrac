@@ -23,7 +23,7 @@ public:
   bool probe_light(const Vector3d &x, const double t, int& cell_id) {
     return expr->inside(x, t);
   };
-  void probe_heavy(const Vector3d &x, const double t, int& cell_id, PointValues& ptvals) {
+  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) {
     expr->eval(x, t, ptvals);
   };
   bool inside_domain() const { return expr->inside(); };

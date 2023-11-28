@@ -376,6 +376,7 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
 
 bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
 {
+  // FIXME: Not thread safe
   assert(t <= t_next && t >= t_prev);
   
   // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;

@@ -85,14 +85,19 @@ int main(int argc, char* argv[])
   if (mpi.rank() == 0)
     prm.print();
 
-  std::mt19937 gen;
-  if (prm.random) {
-    std::random_device rd;
-    gen.seed(rd());
-  }
-  else {
-    std::seed_seq rd{prm.seed + mpi.rank()};
-    gen.seed(rd);
+  // Parallel generators
+  std::vector<std::mt19937> gens;
+  for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
+    std::mt19937 gen;
+    if (prm.random) {
+        std::random_device rd;
+        gen.seed(rd());
+    }
+    else {
+        std::seed_seq rd{prm.seed + omp_get_thread_num() };
+        gen.seed(rd);
+    }
+    gens.emplace_back(gen);
   }
 
   // TODO: These should not be stored in particle tracker parameters.
@@ -119,10 +124,10 @@ int main(int argc, char* argv[])
       std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
   }
-  if (prm.interpolation_test > 0 && mpi.rank() == 0){
-    std::cout << "Testing interpolation..." << std::endl;
-    test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
-  }
+  //if (prm.interpolation_test > 0 && mpi.rank() == 0){
+  //  std::cout << "Testing interpolation..." << std::endl;
+  //  test_interpolation(prm.interpolation_test, intp, newfolder, t0, gens[0]);
+  //}
 
   if (frozen_fields)
     intp->update(prm.t_frozen);
@@ -131,7 +136,7 @@ int main(int argc, char* argv[])
 
   std::shared_ptr<Integrator> integrator;
   if (prm.scheme == "explicit")
-    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gen);
+    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gens);
   else if (prm.scheme == "RK4")
     integrator = std::make_shared<RK4Integrator>();
   else {
@@ -164,10 +169,10 @@ int main(int argc, char* argv[])
       exit(0);
     }
     else if (key[0] == "pair" || key[0] == "pairs"){
-      init_state = std::make_shared<RandomPairsInitializer>(key, intp, prm, mpi, gen);
+      init_state = std::make_shared<RandomPairsInitializer>(key, intp, prm, mpi, gens[0]);
     }
     else if (key[0] == "points"){
-      init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, mpi, gen);
+      init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, mpi, gens[0]);
     }
     else {
       std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
@@ -210,7 +215,7 @@ int main(int argc, char* argv[])
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
-  while (t <= T){
+  while (t <= T + dt/2){
     if (!frozen_fields)
       intp->update(t);
 

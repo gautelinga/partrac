@@ -11,6 +11,7 @@ public:
   Timestamps() { }
   Timestamps(const std::string&);
   void initialize(const std::string&);
+  void initialize(std::vector<std::pair<double, std::string>>& );
   void update(const double);
   std::string get_folder() const { return folder; };
   std::string get_first() { return folder + "/" + stamps[0]; };

@@ -15,6 +15,8 @@ public:
   void update(const double t);
   void probe(const Vector3d &x, const double t);
   void probe(const Vector3d &x, const double t, int& id_prev);
+  bool probe_light(const Vector3d &x, const double t, int& id_prev);
+  void probe_heavy(const Vector3d &x, const double t, const int id_prev, PointValues& fields);
   bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
@@ -126,6 +128,9 @@ protected:
   std::vector<double> uyy_f_;
 
   double omega0 = 0.;
+
+  void _modx(dolfin::Array<double>&, const Vector3d&);
+
 };
 
 #endif

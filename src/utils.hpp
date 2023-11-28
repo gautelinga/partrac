@@ -287,15 +287,20 @@ public:
     gradU << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
     gradA << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
     P = 0.;
+    Rho = 0.;
   };
   Vector3d U;
   Vector3d A;
   Matrix3d gradU;
   Matrix3d gradA;
-  double P;
+  double P = 0.;
+  double Rho = 0.;
   Vector3d get_u() { return U0 * U; };
+  Matrix3d get_J() { return U0 * gradU; };
   Vector3d get_Ju() { return U0 * U0 * gradU * U; }; // check
   Vector3d get_a() { return U0 * A; };
+  double get_p() const { return P; };
+  double get_rho() const { return Rho; };
 private:
   double U0;
 };

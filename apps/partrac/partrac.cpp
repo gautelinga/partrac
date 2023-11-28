@@ -11,6 +11,7 @@
 #include "H5Cpp.h"
 //#include "hdf5.h"
 #include <ctime>
+#include <omp.h>
 
 #include "io.hpp"
 #include "utils.hpp"
@@ -44,6 +45,11 @@ int main(int argc, char* argv[])
   if (prm.restart_folder != ""){
     prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
     prm.parse_cmd(argc, argv);
+  }
+
+  if (prm.num_threads > 0){
+      omp_set_dynamic(0);
+      omp_set_num_threads(prm.num_threads);
   }
 
   std::string infilename = std::string(argv[1]);
@@ -100,14 +106,19 @@ int main(int argc, char* argv[])
   if (mpi.rank() == 0)
     prm.print();
 
-  std::mt19937 gen;
-  if (prm.random) {
-    std::random_device rd;
-    gen.seed(rd());
-  }
-  else {
-    std::seed_seq rd{prm.seed + mpi.rank()};
-    gen.seed(rd);
+  // Parallel generators
+  std::vector<std::mt19937> gens;
+  for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
+    std::mt19937 gen;
+    if (prm.random) {
+        std::random_device rd;
+        gen.seed(rd());
+    }
+    else {
+        std::seed_seq rd{prm.seed + i};
+        gen.seed(rd);
+    }
+    gens.emplace_back(gen);
   }
 
   // TODO: These should not be stored in particle tracker parameters.
@@ -151,10 +162,10 @@ int main(int argc, char* argv[])
       std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
   }
-  if (prm.interpolation_test > 0 && mpi.rank() == 0){
-    std::cout << "Testing interpolation..." << std::endl;
-    test_interpolation(prm.interpolation_test, intp, newfolder, t0, gen);
-  }
+  //if (prm.interpolation_test > 0 && mpi.rank() == 0){
+  //  std::cout << "Testing interpolation..." << std::endl;
+  //  test_interpolation(prm.interpolation_test, intp, newfolder, t0, gens[0]);
+  //}
 
   if (frozen_fields)
     intp->update(prm.t_frozen);
@@ -163,7 +174,7 @@ int main(int argc, char* argv[])
 
   std::shared_ptr<Integrator> integrator;
   if (prm.scheme == "explicit")
-    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gen);
+    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gens);
   else if (prm.scheme == "RK4")
     integrator = std::make_shared<RK4Integrator>();
   else {
@@ -190,7 +201,7 @@ int main(int argc, char* argv[])
   }
   else {
     std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, intp, mpi, prm, gen);
+    set_initial_state(init_state, intp, mpi, prm, gens[0]);
     mesh.load_initial_state(init_state);
   }
 
@@ -297,20 +308,7 @@ int main(int argc, char* argv[])
   while (t < T + dt/2){
     if (!frozen_fields)
       intp->update(t);
-    // Update fields if needed
-    if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
-      ps.update_fields(t, output_fields);
-    }
 
-    // Statistics
-    if (it % int_stat_intv == 0){
-      std::cout << "Time = " << t << std::endl;
-      mesh.write_statistics(statfile, t, prm.ds_max, *integrator);
-    }
-    // Checkpoint
-    if (it % int_checkpoint_intv == 0){
-      mesh.write_checkpoint(checkpointsfolder, t, prm);
-    }
     // Injection
     if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
       mesh.inject();
@@ -361,38 +359,43 @@ int main(int argc, char* argv[])
       if (prm.verbose)
         std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
     }
+
     // Tau integration
     if (prm.integrate_tau && it % int_tau_intv == 0){
       mesh.integrate_tau(dt * int_tau_intv, prm.tau_max);
+    }
+
+    // Update fields if needed
+    if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
+      ps.update_fields(t, output_fields);
+    }
+
+    // Statistics
+    if (it % int_stat_intv == 0){
+      std::cout << "Time = " << t << std::endl;
+      mesh.write_statistics(statfile, t, prm.ds_max, *integrator);
+    }
+
+    // Checkpoint
+    if (it % int_checkpoint_intv == 0){
+      mesh.write_checkpoint(checkpointsfolder, t, prm);
     }
 
     // Dump detailed data
     if (it % int_dump_intv == 0){
       std::string groupname = std::to_string(t);
       //if (mpi.rank() == 0) {
-      //{
         // Clear file if it exists, otherwise create
       if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
         h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-        // h5f = std::make_shared<H5::H5File>(h5fname.c_str(), H5F_ACC_TRUNC);
         h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-        //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-        //h5file.open(h5fname, "w");
       }
       else {
-        //h5f->openFile(h5fname.c_str(), H5F_ACC_RDWR);
         h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
-        //h5file.open(h5fname, "a");
       }
-      //h5f->createGroup(groupname + "/");
       h5f.createGroup(groupname + "/");
-      //}
-
       mesh.dump_hdf5(h5f, groupname, output_fields);
-
       h5f.close();
-      //h5f->close();
-      //h5file.close();
     }
     
     auto outside_nodes = integrator->step(ps, t, dt);

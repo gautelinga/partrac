@@ -22,13 +22,18 @@ add_library(${PROJECT_NAME}_interpol
   TetInterpol.cpp TetInterpol.hpp
   TriangleInterpol.cpp TriangleInterpol.hpp
   TriangleFreqInterpol.cpp TriangleFreqInterpol.hpp
+  XDMFTriangleInterpol.cpp XDMFTriangleInterpol.hpp
   Tet.cpp Tet.hpp
   Triangle.cpp Triangle.hpp
   dolfin_helpers.cpp dolfin_helpers.hpp
 )
 
+
+find_package(OpenMP REQUIRED)
+#target_link_libraries(${APP_NAME})
+
 target_link_libraries(${PROJECT_NAME}_interpol stdc++fs ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen)
+  ${HDF5_HL_LIBRARIES} Eigen3::Eigen OpenMP::OpenMP_CXX)
 if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${PROJECT_NAME}_interpol dolfin)
 endif()

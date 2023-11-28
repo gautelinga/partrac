@@ -5,6 +5,9 @@ include_directories(
 
 add_executable(${PROJECT_NAME} partrac.cpp)
 
+find_package(OpenMP REQUIRED)
+target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
+
 if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${PROJECT_NAME} dolfin)
 endif()

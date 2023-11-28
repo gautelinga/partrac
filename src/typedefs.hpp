@@ -21,9 +21,20 @@ public:
     double rho_prev = 1.0;
 };
 
+class FaceType {
+public:
+    FaceType (const std::array<Uint, 3>& a, const double b) : first(a), second(b) {};
+    FaceType (const std::array<Uint, 3>& a, const double b, const double tau, const double rho_prev) : first(a), second(b), tau(tau), rho_prev(rho_prev) {};
+    std::array<Uint, 3> first;
+    double second;
+    double tau = 0.0;
+    double rho_prev = 1.0;
+};
+
 //typedef std::vector<std::pair<std::array<Uint, 2>, double>> EdgesType;
 typedef std::vector<EdgeType> EdgesType; 
-typedef std::vector<std::pair<std::array<Uint, 3>, double>> FacesType;
+//typedef std::vector<std::pair<std::array<Uint, 3>, double>> FacesType;
+typedef std::vector<FaceType> FacesType;
 typedef std::list<Uint> FacesListType;
 typedef std::list<Uint> EdgesListType;
 typedef std::list<Uint> NodesListType;

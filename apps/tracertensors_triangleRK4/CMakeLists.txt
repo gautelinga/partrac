@@ -5,14 +5,11 @@ include_directories(
   #${HDF5_INCLUDE_DIRS}
 )
 
-set(APP_NAME tracervectors_triangleRK4)
+set(APP_NAME tracertensors_triangleRK4)
 set(PROJECT_TARGETS "${PROJECT_TARGETS} ${APP_NAME}" PARENT_SCOPE)
 #message(STATUS ${PROJECT_TARGETS})
 
-add_executable(${APP_NAME} tracervectors_triangleRK4.cpp)
-
-find_package(OpenMP REQUIRED)
-target_link_libraries(${APP_NAME} OpenMP::OpenMP_CXX)
+add_executable(${APP_NAME} tracertensors_triangleRK4.cpp)
 
 target_link_libraries(${APP_NAME} dolfin)
 

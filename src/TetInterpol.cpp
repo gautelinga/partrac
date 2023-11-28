@@ -211,12 +211,7 @@ void TetInterpol::probe(const Vector3d &x, const double t)
   probe(x, t, cell_id);
 }
 
-void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
-{
-  assert(t <= t_next && t >= t_prev);
-  alpha_t = (t-t_prev)/(t_next-t_prev);
-
-  dolfin::Array<double> x_loc(dim);
+void TetInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
@@ -225,6 +220,16 @@ void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
       x_loc[i] = x[i];
     }
   }
+}
+
+void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev) {
+  // FIXME: better interpolation than using "restrict" (see Triangle)
+
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
+
+  dolfin::Array<double> x_loc(dim);
+  _modx(x_loc, x);
 
   // Index of cell containing point
   const dolfin::Point point(dim, x_loc.data());
@@ -270,13 +275,13 @@ void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
   if (inside)
   {
     // Compute P2-P1 basis at x
-    double r, s, t, u;
-    tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r, s, t, u);
+    double r1, r2, r3, r4;
+    tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
     if (ncoeffs_u == 4){
-      tets_[id].linearbasis(r, s, t, u, Nu_);
+      tets_[id].linearbasis(r1, r2, r3, r4, Nu_);
     }
     else if (ncoeffs_u == 10){
-      tets_[id].quadbasis(r, s, t, u, Nu_);
+      tets_[id].quadbasis(r1, r2, r3, r4, Nu_);
     }
     else {
       std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
@@ -284,10 +289,10 @@ void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
     }
     if (include_pressure){
       if (ncoeffs_p == 4){
-        tets_[id].linearbasis(r, s, t, u, Np_);
+        tets_[id].linearbasis(r1, r2, r3, r4, Np_);
       }
       else if (ncoeffs_p == 10){
-        tets_[id].quadbasis(r, s, t, u, Np_);
+        tets_[id].quadbasis(r1, r2, r3, r4, Np_);
       }
       else {
         std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
@@ -335,10 +340,10 @@ void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
 
     if (this->int_order > 1){
       if (ncoeffs_u == 4){
-        tets_[id].linearderiv(r, s, t, u, Nux_, Nuy_, Nuz_);
+        tets_[id].linearderiv(r1, r2, r3, r4, Nux_, Nuy_, Nuz_);
       }
       else if (ncoeffs_u == 10){
-        tets_[id].quadderiv(r, s, t, u, Nux_, Nuy_, Nuz_);
+        tets_[id].quadderiv(r1, r2, r3, r4, Nux_, Nuy_, Nuz_);
       }
       else {
         std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
@@ -372,6 +377,165 @@ void TetInterpol::probe(const Vector3d &x, const double t, int &id_prev)
     // std::cout<<x[0]<<' '<<x[1]<<' '<<x[2]<<"   "<<x_loc[0]<<' '<<x_loc[1]<<' '<<x_loc[2]<<"    "<<id<<' '<<inside<<"   "<<P_prev<<' '<<P_next<<"    "<<U_prev[0]<<' '<<U_prev[1]<<' '<<U_prev[2]<<"   "<<U_next[0]<<' '<<U_next[1]<<' '<<U_next[2]<<"   "<<alpha_t<<"    "<<gradU<<std::endl;
     // exit(0);
   }
-
 }
+
+bool TetInterpol::probe_light(const Vector3d &x, const double t, int &id_prev)
+{
+  // FIXME: Not thread safe
+  dolfin::Array<double> x_loc(dim);
+  _modx(x_loc, x);
+
+  // Index of cell containing point
+  const dolfin::Point point(dim, x_loc.data());
+
+  bool found = false;
+
+  unsigned int id = 0;
+  // Search in neighborhood first
+  if (id_prev >= 0){
+    dolfin::Cell prev_cell(*mesh, id_prev);
+    if (prev_cell.contains(point)){
+      id = id_prev;
+      inside = true;
+      found = true;
+      ++found_same;
+    }
+    else {
+      for ( auto neigh_id : cell2cells_[id_prev]){
+        dolfin::Cell neigh_cell(*mesh, neigh_id);
+        if (neigh_cell.contains(point)){
+          inside = true;
+          found = true;
+          id = neigh_id;
+          ++found_nneigh;
+          break;
+        }
+      }
+    }
+  }
+  if (!found){
+    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
+    inside = (id != std::numeric_limits<unsigned int>::max());
+    if (inside) {
+      found = true;
+      ++found_other;
+    }
+  }
+  if (found){
+    id_prev = id;
+  }
+  return inside;
+}
+
+void TetInterpol::probe_heavy(const Vector3d &x, const double t, const int id, PointValues& fields)
+{
+  // Assuming inside fluid
+  assert(t <= t_next && t >= t_prev);
+  alpha_t = (t-t_prev)/(t_next-t_prev);
+
+  dolfin::Array<double> x_loc(dim);
+  _modx(x_loc, x);
+
+  // Compute P2-P1 basis at x
+  double r1, r2, r3, r4;
+  tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
+  if (ncoeffs_u == 4){
+    tets_[id].linearbasis(r1, r2, r3, r4, Nu_);
+  }
+  else if (ncoeffs_u == 10){
+    tets_[id].quadbasis(r1, r2, r3, r4, Nu_);
+  }
+  else {
+    std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+    exit(0);
+  }
+  if (include_pressure){
+    if (ncoeffs_p == 4){
+      tets_[id].linearbasis(r1, r2, r3, r4, Np_);
+    }
+    else if (ncoeffs_p == 10){
+      tets_[id].quadbasis(r1, r2, r3, r4, Np_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
+      exit(0);
+    }
+  }
+
+  // Restrict solution to cell
+  u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
+                    coordinate_dofs_[id].data(), ufc_cells_[id]);
+  u_next_->restrict(u_next_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
+                    coordinate_dofs_[id].data(), ufc_cells_[id]);
+
+  // Evaluate
+  Vector3d U_prev = {std::inner_product(Nu_.begin(), Nu_.end(), u_prev_coefficients_.begin(), 0.0),
+    std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+    std::inner_product(Nu_.begin(), Nu_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0)};
+  Vector3d U_next = {std::inner_product(Nu_.begin(), Nu_.end(), u_next_coefficients_.begin(), 0.0),
+    std::inner_product(Nu_.begin(), Nu_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+    std::inner_product(Nu_.begin(), Nu_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0)};
+  // else unrecognized element
+
+  // Update
+  fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
+  fields.A = (U_next-U_prev)/(t_next-t_prev);
+
+  if (include_pressure){
+    // Restrict solution to cell
+    p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+    p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
+                      coordinate_dofs_[id].data(), ufc_cells_[id]);
+
+    // Evaluate
+    double P_prev = std::inner_product(Np_.begin(), Np_.end(), p_prev_coefficients_.begin(), 0.0);
+    double P_next = std::inner_product(Np_.begin(), Np_.end(), p_next_coefficients_.begin(), 0.0);
+    // else unrecognized element
+
+    // Update
+    fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
+  }
+  else { // Unnecessary
+    fields.P = 0.;
+  }
+
+  if (this->int_order > 1){
+    if (ncoeffs_u == 4){
+      tets_[id].linearderiv(r1, r2, r3, r4, Nux_, Nuy_, Nuz_);
+    }
+    else if (ncoeffs_u == 10){
+      tets_[id].quadderiv(r1, r2, r3, r4, Nux_, Nuy_, Nuz_);
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+      exit(0);
+    }
+    Matrix3d gradU_prev;
+    gradU_prev << std::inner_product(Nux_.begin(), Nux_.end(), u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(Nux_.begin(), Nux_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nux_.begin(), Nux_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0);
+    Matrix3d gradU_next;
+    gradU_next << std::inner_product(Nux_.begin(), Nux_.end(), u_next_coefficients_.begin(), 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), u_next_coefficients_.begin(), 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), u_next_coefficients_.begin(), 0.0),
+      std::inner_product(Nux_.begin(), Nux_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(Nux_.begin(), Nux_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(Nuy_.begin(), Nuy_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(Nuz_.begin(), Nuz_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0);
+
+    // Update
+    fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
+    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+  }
+}
+
 #endif
