@@ -64,6 +64,8 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 
     std::vector<double> dA(faces_dims[0]);
     std::vector<double> dA0(faces_dims[0]);
+    std::vector<double> tau_(faces_dims[0]);
+    
     for (Uint iface=0; iface < faces_dims[0]; ++iface){
       std::set<Uint> unique_nodes;
       for (Uint i=0; i<3; ++i){
@@ -81,6 +83,9 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
       }
       dA[iface] = ps.triangle_area(iface, faces, edges);
       dA0[iface] = faces[iface].second;
+      if (output_tau){
+        tau_[iface] = faces[iface].tau;
+      }
     }
     H5::DataSet faces_dset = h5f.createDataSet(groupname + "/faces",
                                            H5::PredType::NATIVE_ULONG,
@@ -89,6 +94,9 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 
     scalar2hdf5(h5f, groupname + "/dA", dA, faces_dims[0]);
     scalar2hdf5(h5f, groupname + "/dA0", dA0, faces_dims[0]);
+
+    if (output_tau)
+      scalar2hdf5(h5f, groupname + "/tau", tau_, faces_dims[0]);
   }
   // Edges
   else if (edges.size() > 0){
@@ -325,17 +333,23 @@ Uint sheet_refinement(FacesType &faces,
           Uint kedge = faces[*itface].first[1];
           Uint ledge = faces[*itface].first[2];
           double dA0 = faces[*itface].second;
+          double tau = faces[*itface].tau;
+          double rho_prev = faces[*itface].rho_prev;
           Uint new_jedge = edges.size();
           std::array<Uint, 3> close_entities = get_close_entities(iedge, jedge, kedge, ledge, edges);
           Uint knode = close_entities[0];
           Uint medge = close_entities[1];
           Uint nedge = close_entities[2];
           edges.push_back({{new_inode, knode}, ds0/2});  // ds0/2 - or what else?
+
           edge2faces.push_back({});
 
           Uint new_iface = faces.size();
-          faces[*itface] = {{iedge, new_jedge, medge}, dA0/2};
-          faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2});
+          //faces[*itface] = {{iedge, new_jedge, medge}, dA0/2};
+          faces[*itface].first = {iedge, new_jedge, medge};
+          faces[*itface].second = dA0/2;
+          //faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2});
+          faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2, tau, rho_prev});
 
           edge2faces[nedge].remove(*itface);
           edge2faces[nedge].push_back(new_iface);

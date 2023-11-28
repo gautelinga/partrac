@@ -11,6 +11,7 @@
 #include "H5Cpp.h"
 //#include "hdf5.h"
 #include <ctime>
+#include <omp.h>
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
@@ -18,6 +19,8 @@
 #include "Parameters.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
+#include "XDMFTriangleInterpol.hpp"
+
 #include "experimental/integrator_RK.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
@@ -115,16 +118,23 @@ int main(int argc, char* argv[])
         std::cout << "Please specify an input file." << std::endl;
         return 0;
     }
+
     Parameters prm(argc, argv);
     if (prm.restart_folder != ""){
         prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
         prm.parse_cmd(argc, argv);
     }
 
+    if (prm.num_threads > 0){
+        omp_set_dynamic(0);
+        omp_set_num_threads(prm.num_threads);
+    }
+
     std::string infilename = std::string(argv[1]);
 
     std::cout << "Initializing TriangleInterpol." << std::endl;
-    TriangleInterpol intp(infilename);
+    //TriangleInterpol intp(infilename);
+    XDMFTriangleInterpol intp(infilename);
     // std::cout << "Initialized TriangleInterpol." << std::endl;
 
     intp.set_U0(prm.U0);
@@ -232,7 +242,12 @@ int main(int argc, char* argv[])
     // Simulation start
     std::clock_t clock_0 = std::clock();
 
-    while (t <= T){
+    double duration_step = 0.;
+    double duration_other = 0.;
+
+    while (t < T + dt/2){
+        auto ct0 = std::chrono::high_resolution_clock::now();
+
         intp.update(t);
 
         // Update fields for output
@@ -243,6 +258,11 @@ int main(int argc, char* argv[])
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
+            std::cout << "(step: " << duration_step << ", other stuff: " << duration_other << ")" << std::endl;
+
+            duration_step = 0;
+            duration_other = 0;
+
             write_stats(mpi, statfile, t, ps, integrator.get_declined());
 
             intp.print_found();
@@ -268,8 +288,16 @@ int main(int argc, char* argv[])
             ps.dump_hdf5(h5f, groupname, output_fields);
             h5f.close();
         }
+        auto ct1 = std::chrono::high_resolution_clock::now();
+
+        auto dct_other = std::chrono::duration_cast<std::chrono::microseconds>(ct1-ct0);
+        duration_other += dct_other.count();
 
         auto outside_nodes = integrator.step_vec(intp, ps, t, dt);
+        auto ct2 = std::chrono::high_resolution_clock::now();
+        auto dct_step = std::chrono::duration_cast<std::chrono::microseconds>(ct2-ct1);
+        duration_step += dct_step.count();
+        // std::cout << dct10.count() << std::endl;
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;

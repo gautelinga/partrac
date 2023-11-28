@@ -114,6 +114,18 @@ void Topology::integrate_tau(const double dt, const double tau_max){
       compute_node2edges(node2edges, edges, ps.N());
     }
   }
+  else {
+    for ( auto & face : faces )
+    {
+      Uint iedge = face.first[0];
+      Uint jedge = face.first[1];
+      double dA = ps.triangle_area(iedge, jedge, edges);
+      double dA0 = face.second;
+      double rho = dA/dA0;
+      face.tau += 0.5*dt*(pow(face.rho_prev, 2) + pow(rho, 2));
+      face.rho_prev = rho;
+    }
+  }
 }
 
 Uint Topology::refine(){

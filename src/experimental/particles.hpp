@@ -30,11 +30,13 @@ public:
     Vector &     n() { return m_n; };  // directional vector
     Real &       w() { return m_w; };  // accumulated scalar elongation
     Real &       S() { return m_S; };  // stretching quantity
+    Matrix &     F() { return m_F; };  // deformation tensor
     int &        cell_id() { return m_cell_id; };  // cell id (if applicable)
     Vector       get_x() const { return m_x; };
     Vector       get_u() const { return m_u; };
     Real         get_rho() const { return m_rho; };
     Real         get_p() const { return m_p; };
+    Matrix       get_F() const { return m_F; };
 
     //Uint           get_id() const { return m_id; };
     //void           set_id(Uint id) { m_id=id; };
@@ -74,6 +76,12 @@ public:
         }
         return {0., 0., 0.};
     }
+    Matrix get_tensor(const std::string& field) const {
+        if (field == "F"){
+            return m_F;
+        }
+        return Eigen::MatrixXd::Constant(3, 3, 0);
+    }
     void connect_edge(int i){
         m_edge_ids.insert(i);
     }
@@ -98,6 +106,7 @@ protected:
     Real        m_p = 0.;
     Real        m_c = 0.;
     Real        m_tau = 0.;
+    Matrix      m_F = Eigen::MatrixXd::Identity(3, 3);
     Vector      m_n = {0., 0., 0.};
     Real        m_w = 0.;
     Real        m_S = 0.;

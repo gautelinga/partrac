@@ -54,7 +54,8 @@ public:
   virtual void update(const double t) = 0;
   virtual void probe(const Vector3d &x, const double t) = 0;
   virtual void probe(const Vector3d &x, const double t, int& cell_id) = 0;
-  //virtual void probe_heavy(const Vector3d &x, const double t, int& cell_id, PointValues& ptvals) = 0;
+  virtual bool probe_light(const Vector3d &x, const double t, int& cell_id) = 0;
+  virtual void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) = 0;
   //
   virtual bool inside_domain() const = 0;
   virtual double get_ux() = 0;

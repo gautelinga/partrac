@@ -433,14 +433,25 @@ void ParticleSet::dump_positions(const std::string filename) const {
 
 //template<typename T>
 void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
+  #pragma omp for
   for (Uint irw=0; irw < N(); ++irw){
-    intp->probe(x_rw[irw], t);
-    if (output_fields["u"])
-      u_rw[irw] = intp->get_u();
-    if (output_fields["rho"])
-      rho_rw[irw] = intp->get_rho();
-    if (output_fields["p"])
-      p_rw[irw] = intp->get_p();
+    int cell_id = get_cell_id(irw);
+    PointValues ptvals(intp->get_U0());
+    //intp->probe(x_rw[irw], t);
+    bool is_inside = intp->probe_light(x_rw[irw], t, cell_id);
+    intp->probe_heavy(x_rw[irw], t, cell_id, ptvals);
+    if (output_fields["u"]){
+      //u_rw[irw] = intp->get_u();
+      u_rw[irw] = ptvals.get_u();
+    }
+    if (output_fields["rho"]){
+      //rho_rw[irw] = intp->get_rho();
+      rho_rw[irw] = ptvals.get_rho();
+    }
+    if (output_fields["p"]){
+      //p_rw[irw] = intp->get_p();
+      p_rw[irw] = ptvals.get_p();
+    }
   }
 }
 

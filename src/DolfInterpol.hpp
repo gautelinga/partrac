@@ -41,6 +41,8 @@ public:
   void update(const double t);
   void probe(const Vector3d &x, const double t);
   void probe(const Vector3d &x, const double t, int& cell_id);
+  bool probe_light(const Vector3d &x, const double t, int& cell_id);
+  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals);
   bool inside_domain() const { return inside; };
   double get_ux(){ return U[0]; };
   double get_uy(){ return U[1]; };
@@ -102,6 +104,9 @@ protected:
   std::shared_ptr<dolfin::Function> u_next_;
   std::shared_ptr<dolfin::Function> p_prev_;
   std::shared_ptr<dolfin::Function> p_next_;
+
+  void _modx(dolfin::Array<double>&, const Vector3d&);
+
 };
 
 #endif

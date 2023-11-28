@@ -15,6 +15,7 @@
 #include "TetInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
+#include "XDMFTriangleInterpol.hpp"
 #endif
 #include "Initializer.hpp"
 
@@ -25,7 +26,7 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     intp = std::make_shared<AnalyticInterpol>(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
-           mode == "tet" || mode == "triangle" || mode == "trianglefreq"){
+           mode == "tet" || mode == "triangle" || mode == "trianglefreq" || mode == "xdmftriangle"){
 #ifdef USE_DOLFIN
     if (mode == "tet"){
       intp = std::make_shared<TetInterpol>(infilename);
@@ -35,6 +36,9 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     }
     else if (mode == "trianglefreq"){
       intp = std::make_shared<TriangleFreqInterpol>(infilename);
+    }
+    else if (mode == "xdmftriangle"){
+      intp = std::make_shared<XDMFTriangleInterpol>(infilename);
     }
     else if (mode == "fenics"){
       intp = std::make_shared<DolfInterpol>(infilename);
@@ -138,6 +142,7 @@ static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
 
   std::ofstream ofile(newfolder + "/interpolation.txt");
+
   std::string sep = ",";
   ofile << "x" << sep << "y" << sep << "z" << sep
         << "ux" << sep << "uy" << sep << "uz" << sep
@@ -147,9 +152,9 @@ static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
         << "uyx" << sep << "uyy" << sep << "uyz" << sep
         << "uzx" << sep << "uzy" << sep << "uzz"
         << std::endl;
+
   while (n < num_points){
     Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    //std::cout << x << std::endl;
     intp->probe(x, t0);
     if (intp->inside_domain()){
       Vector3d u = intp->get_u();

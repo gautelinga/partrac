@@ -8,6 +8,9 @@ set(PROJECT_TARGETS "${PROJECT_TARGETS} ${APP_NAME}" PARENT_SCOPE)
 
 add_executable(${APP_NAME} interpol.cpp)
 
+find_package(OpenMP REQUIRED)
+target_link_libraries(${APP_NAME} OpenMP::OpenMP_CXX)
+
 if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${APP_NAME} dolfin)
 endif()

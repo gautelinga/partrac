@@ -33,6 +33,22 @@ void Timestamps::update(const double){
   exit(0);
 }
 
+void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
+  for ( auto & item : items ){
+    double tkey = item.first;
+    std::string val = item.second;
+    stamps[tkey] = val;
+    if (tkey < t_min){
+      t_min = tkey;
+    }
+    else if (tkey > t_max){
+      t_max = tkey;
+    }
+  }
+  folder = "";
+  filename = "";
+}
+
 StampPair Timestamps::get(const double t){
   double t_prev, t_next;
   std::string filename_prev, filename_next;

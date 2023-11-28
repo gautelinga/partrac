@@ -5,6 +5,13 @@
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
 
+void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, const Uint n[3]){
+  // Constant
+  for (Uint i=0; i<3; ++i){
+    ind_pc[i] = imodulo(round(x[i]/dx[i]), n[i]);
+  }
+}
+
 static void load_field(H5::H5File &h5file
                      , double*** u
                      , const std::string field
@@ -215,8 +222,36 @@ public:
   void update(const double t);
   void probe(const Vector3d &x, const double t);
   void probe(const Vector3d &x, const double t, int& cell_id) { probe(x, t); };
+  bool probe_light(const Vector3d &x, const double t, int& cell_id);
+  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& fields);
+  bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
+  void probe_space_bulk(const Vector3d &x, 
+    const Uint _ind[3][2],
+    const int _ix_fl[3],
+    double _w[2][2][2],
+    double _dw_x[2][2][2],
+    double _dw_y[2][2][2],
+    double _dw_z[2][2][2]);
+  void probe_space_boundary(
+    const Vector3d &x, 
+    const Uint _ind[3][2],
+    const int _ix_fl[3],
+    bool _is_solid_2[2][2][2],
+    bool _sub_x[3],
+    double _wux[2][2][2],
+    double _wuy[2][2][2],
+    double _wuz[2][2][2],
+    double _dwux_x[2][2][2],
+    double _dwux_y[2][2][2],
+    double _dwux_z[2][2][2],
+    double _dwuy_x[2][2][2],
+    double _dwuy_y[2][2][2],
+    double _dwuy_z[2][2][2],
+    double _dwuz_x[2][2][2],
+    double _dwuz_y[2][2][2],
+    double _dwuz_z[2][2][2]);
   bool inside_domain() const;
-  bool inside_domain(const Vector3d &x) const;
+  //bool inside_domain(const Vector3d &x) const;
   Uint get_nx() { return n[0]; };
   Uint get_ny() { return n[1]; };
   Uint get_nz() { return n[2]; };
@@ -530,8 +565,324 @@ void StructuredInterpol::probe(const Vector3d &x, const double t){
   Az = (Uz_next-Uz_prev)/(t_next-t_prev);
 }
 
+bool StructuredInterpol::probe_light(const Vector3d &x, const double t, int& cell_id){
+  Uint _ind_pc[3];
+  compute_ind_pc(_ind_pc, x, dx, n);
+  return !isSolid[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+}
+
+void StructuredInterpol::probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
+  // Assuming probe_light has already been called and found that the cell is not in solid
+  double Ux_prev, Uy_prev, Uz_prev;
+  double Ux_next, Uy_next, Uz_next;
+  double Rho_prev, Rho_next;
+  double P_prev, P_next;
+
+  double Uxx_prev, Uxx_next, Uxy_prev, Uxy_next, Uxz_prev, Uxz_next;
+  double Uyx_prev, Uyx_next, Uyy_prev, Uyy_next, Uyz_prev, Uyz_next;
+  double Uzx_prev, Uzx_next, Uzy_prev, Uzy_next, Uzz_prev, Uzz_next;
+
+  Uint _ind[3][2] = {{0, 0}, {0, 0}, {0, 0}};
+  int _ix_fl[3];
+  bool _is_bulk = compute_ind(x, _ind, _ix_fl);
+
+  // Precompute velocities
+  if (_is_bulk) // Bulk cell
+  {
+    //_w, _dw_x, _dw_y, _dw_z
+    double _w[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dw_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dw_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dw_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+
+    probe_space_bulk(x, _ind, _ix_fl, _w, _dw_x, _dw_y, _dw_z);
+
+    Ux_prev = weighted_sum(ux_prev, _ind, _w);
+    Ux_next = weighted_sum(ux_next, _ind, _w);
+
+    Uy_prev = weighted_sum(uy_prev, _ind, _w);
+    Uy_next = weighted_sum(uy_next, _ind, _w);
+
+    Uz_prev = weighted_sum(uz_prev, _ind, _w);
+    Uz_next = weighted_sum(uz_next, _ind, _w);
+
+    Rho_prev = weighted_sum(rho_prev, _ind, _w);
+    Rho_next = weighted_sum(rho_next, _ind, _w);
+
+    P_prev = weighted_sum(p_prev, _ind, _w);
+    P_next = weighted_sum(p_next, _ind, _w);
+
+    Uxx_prev = weighted_sum(ux_prev, _ind, _dw_x);
+    Uxx_next = weighted_sum(ux_next, _ind, _dw_x);
+    Uxy_prev = weighted_sum(ux_prev, _ind, _dw_y);
+    Uxy_next = weighted_sum(ux_next, _ind, _dw_y);
+    Uxz_prev = weighted_sum(ux_prev, _ind, _dw_z);
+    Uxz_next = weighted_sum(ux_next, _ind, _dw_z);
+    Uyx_prev = weighted_sum(uy_prev, _ind, _dw_x);
+    Uyx_next = weighted_sum(uy_next, _ind, _dw_x);
+    Uyy_prev = weighted_sum(uy_prev, _ind, _dw_y);
+    Uyy_next = weighted_sum(uy_next, _ind, _dw_y);
+    Uyz_prev = weighted_sum(uy_prev, _ind, _dw_z);
+    Uyz_next = weighted_sum(uy_next, _ind, _dw_z);
+    Uzx_prev = weighted_sum(uz_prev, _ind, _dw_x);
+    Uzx_next = weighted_sum(uz_next, _ind, _dw_x);
+    Uzy_prev = weighted_sum(uz_prev, _ind, _dw_y);
+    Uzy_next = weighted_sum(uz_next, _ind, _dw_y);
+    Uzz_prev = weighted_sum(uz_prev, _ind, _dw_z);
+    Uzz_next = weighted_sum(uz_next, _ind, _dw_z);
+  }
+  else // Close to boundary
+  {
+    bool _is_solid_2[2][2][2];
+    bool _sub_x[3];
+
+    double _wux[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwux_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwux_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwux_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+
+    double _wuy[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuy_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuy_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuy_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+
+    double _wuz[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuz_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuz_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _dwuz_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+
+    probe_space_boundary(x, _ind, _ix_fl, _is_solid_2, _sub_x,
+                         _wux, _wuy, _wuz,
+                         _dwux_x, _dwux_y, _dwux_z, 
+                         _dwuy_x, _dwuy_y, _dwuy_z,
+                         _dwuz_x, _dwuz_y, _dwuz_z);
+
+
+    double _Vx_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _Vy_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _Vz_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _Vx_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _Vy_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+    double _Vz_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+
+    compute_velocity_subcube(_Vx_prev, ux_prev, _is_solid_2, _sub_x, _ind, W);
+    compute_velocity_subcube(_Vy_prev, uy_prev, _is_solid_2, _sub_x, _ind, W);
+    compute_velocity_subcube(_Vz_prev, uz_prev, _is_solid_2, _sub_x, _ind, W);
+
+    compute_velocity_subcube(_Vx_next, ux_next, _is_solid_2, _sub_x, _ind, W);
+    compute_velocity_subcube(_Vy_next, uy_next, _is_solid_2, _sub_x, _ind, W);
+    compute_velocity_subcube(_Vz_next, uz_next, _is_solid_2, _sub_x, _ind, W);
+
+    Ux_prev = inner_product(_wux, _Vx_prev);
+    Ux_next = inner_product(_wux, _Vx_next);
+
+    Uy_prev = inner_product(_wuy, _Vy_prev);
+    Uy_next = inner_product(_wuy, _Vy_next);
+
+    Uz_prev = inner_product(_wuz, _Vz_prev);
+    Uz_next = inner_product(_wuz, _Vz_next);
+
+    Uint _ind_pc[3];
+    compute_ind_pc(_ind_pc, x, dx, n);
+    Rho_prev = rho_prev[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+    Rho_next = rho_next[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+
+    P_prev = p_prev[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+    P_next = p_next[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+
+    Uxx_prev = inner_product(_dwux_x, _Vx_prev);
+    Uxx_next = inner_product(_dwux_x, _Vx_prev);
+    Uxy_prev = inner_product(_dwux_y, _Vx_prev);
+    Uxy_next = inner_product(_dwux_y, _Vx_next);
+    Uxz_prev = inner_product(_dwux_z, _Vx_prev);
+    Uxz_next = inner_product(_dwux_z, _Vx_next);
+    Uyx_prev = inner_product(_dwux_x, _Vy_prev);
+    Uyx_next = inner_product(_dwux_x, _Vy_prev);
+    Uyy_prev = inner_product(_dwux_y, _Vy_prev);
+    Uyy_next = inner_product(_dwux_y, _Vy_next);
+    Uyz_prev = inner_product(_dwux_z, _Vy_prev);
+    Uyz_next = inner_product(_dwux_z, _Vy_next);
+    Uzx_prev = inner_product(_dwux_x, _Vz_prev);
+    Uzx_next = inner_product(_dwux_x, _Vz_prev);
+    Uzy_prev = inner_product(_dwux_y, _Vz_prev);
+    Uzy_next = inner_product(_dwux_y, _Vz_next);
+    Uzz_prev = inner_product(_dwux_z, _Vz_prev);
+    Uzz_next = inner_product(_dwux_z, _Vz_next);
+  }
+
+  fields.U = { alpha_t * Ux_next + (1-alpha_t) * Ux_prev,
+               alpha_t * Uy_next + (1-alpha_t) * Uy_prev,
+               alpha_t * Uz_next + (1-alpha_t) * Uz_prev };
+  fields.A = { (Ux_next-Ux_prev)/(t_next-t_prev),
+               (Uy_next-Uy_prev)/(t_next-t_prev),
+               (Uz_next-Uz_prev)/(t_next-t_prev) };
+
+  fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
+  fields.Rho = alpha_t * Rho_next + (1-alpha_t) * Rho_prev;
+
+  Matrix3d gradU_prev;
+  gradU_prev << Uxx_prev, Uxy_prev, Uxz_prev,
+                Uyx_prev, Uyy_prev, Uyz_prev,
+                Uzx_prev, Uzy_prev, Uzz_prev;
+
+  Matrix3d gradU_next;
+  gradU_next << Uxx_next, Uxy_next, Uxz_next,
+                Uyx_next, Uyy_next, Uyz_next,
+                Uzx_next, Uzy_next, Uzz_next;
+
+  fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
+
+}
+
 bool StructuredInterpol::inside_domain() const {
   return is_inside_domain;
+}
+
+bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
+  // Assuming this cell is not inside the solid phase
+  for (Uint i=0; i<3; ++i){
+    _ix_fl[i] = floor(x[i]/dx[i]);
+  }
+
+  //Uint _ind[3][2] = {{0, 0}, {0, 0}, {0, 0}};  // trilinear intp
+  for (Uint i=0; i<3; ++i){
+    _ind[i][0] = imodulo(_ix_fl[i], n[i]);
+    _ind[i][1] = imodulo(_ind[i][0] + 1, n[i]);
+  }
+
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        if (isSolid[_ind[0][i]][_ind[1][j]][_ind[2][k]]) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+void StructuredInterpol::probe_space_bulk(const Vector3d &x, 
+    const Uint _ind[3][2],
+    const int _ix_fl[3],
+    double _w[2][2][2],
+    double _dw_x[2][2][2],
+    double _dw_y[2][2][2],
+    double _dw_z[2][2][2]
+  ){
+  // Computes ind, w, dw...
+  double _wq[3][2];
+
+  for (Uint i=0; i<3; ++i){
+    double wxi = (x[i]-dx[i]*_ix_fl[i])/dx[i];
+    _wq[i][0] = 1 - wxi;
+    _wq[i][1] =     wxi;
+  }
+
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        _w[i][j][k] = _wq[0][i] * _wq[1][j] * _wq[2][k];
+      }
+    }
+  }
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        _dw_x[i][j][k] = dwq[0][i] * _wq[1][j] * _wq[2][k];
+        _dw_y[i][j][k] = _wq[0][i] * dwq[1][j] * _wq[2][k];
+        _dw_z[i][j][k] = _wq[0][i] * _wq[1][j] * dwq[2][k];
+      }
+    }
+  }
+}
+
+void StructuredInterpol::probe_space_boundary(
+  const Vector3d &x, 
+  const Uint _ind[3][2],
+  const int _ix_fl[3],
+  bool _is_solid_2[2][2][2],
+  bool _sub_x[3],
+  double _wux[2][2][2],
+  double _wuy[2][2][2],
+  double _wuz[2][2][2],
+  double _dwux_x[2][2][2],
+  double _dwux_y[2][2][2],
+  double _dwux_z[2][2][2],
+  double _dwuy_x[2][2][2],
+  double _dwuy_y[2][2][2],
+  double _dwuy_z[2][2][2],
+  double _dwuz_x[2][2][2],
+  double _dwuz_y[2][2][2],
+  double _dwuz_z[2][2][2]
+  )
+{
+  double xd[3];
+  for (Uint i=0; i<3; ++i){
+    xd[i] = x[i]/dx[i] - _ix_fl[i];
+  }
+
+  //bool sub_x[3];
+  for (Uint i=0; i<3; ++i){
+    _sub_x[i] = xd[i] >= 0.5;
+  }
+
+  bool is_solid_3[3][3][3];
+  //bool is_solid_2[2][2][2];
+  compute_solid_local(is_solid_3, isSolid, _ind);
+  get_subcube(_is_solid_2, is_solid_3, _sub_x);
+
+  double _wq[3][2] = {{0., 0.}, {0., 0.}, {0., 0.}};;
+  for (Uint i=0; i<3; ++i){
+    double wxi = _sub_x[i] ? 2 * xd[i] - 1.0: 2 * xd[i];
+    _wq[i][0] = 1 - wxi;
+    _wq[i][1] =     wxi;
+  }
+
+  double gamma = 2;
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        double wqux = wq[0][i];
+        double dwqux = dwq[0][i];
+        double wquy = wq[1][j];
+        double dwquy = dwq[1][j];
+        double wquz = wq[2][k];
+        double dwquz = dwq[2][k];
+
+        if (_is_solid_2[i == 0 ? 1 : 0][j][k]){
+          wqux = pow(_wq[0][i], gamma);
+          dwqux = gamma * pow(_wq[0][i], gamma-1) * dwq[0][i];
+        }
+
+        if (_is_solid_2[i][j == 0 ? 1 : 0][k]){
+          wquy = pow(_wq[1][j], gamma);
+          dwquy = gamma * pow(_wq[1][j], gamma-1) * dwq[1][j];
+        }
+
+        if (_is_solid_2[i][j][k == 0 ? 1 : 0]){
+          wquz = pow(_wq[2][k], gamma);
+          dwquz = gamma * pow(_wq[2][k], gamma-1) * dwq[2][k];
+        }
+
+        _wux[i][j][k] = wqux     * _wq[1][j] * _wq[2][k];
+        _wuy[i][j][k] = _wq[0][i] * wquy     * _wq[2][k];
+        _wuz[i][j][k] = _wq[0][i] * _wq[1][j] * wquz;
+
+        _dwux_x[i][j][k] = 2 * dwqux * _wq[1][j] * _wq[2][k];
+        _dwux_y[i][j][k] = 2 *  wqux * dwq[1][j] * _wq[2][k];
+        _dwux_z[i][j][k] = 2 *  wqux * _wq[1][j] * dwq[2][k];
+
+        _dwuy_x[i][j][k] = 2 * dwq[0][i] *  wquy * _wq[2][k];
+        _dwuy_y[i][j][k] = 2 * _wq[0][i] * dwquy * _wq[2][k];
+        _dwuy_z[i][j][k] = 2 * _wq[0][i] *  wquy * dwq[2][k];
+
+        _dwuz_x[i][j][k] = 2 * dwq[0][i] * _wq[1][j] *  wquz;
+        _dwuz_y[i][j][k] = 2 * _wq[0][i] * dwq[1][j] *  wquz;
+        _dwuz_z[i][j][k] = 2 * _wq[0][i] * _wq[1][j] * dwquz;
+      }
+    }
+  }
 }
 
 void StructuredInterpol::probe_space(const Vector3d &x){

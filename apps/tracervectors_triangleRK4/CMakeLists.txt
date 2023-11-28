@@ -11,6 +11,9 @@ set(PROJECT_TARGETS "${PROJECT_TARGETS} ${APP_NAME}" PARENT_SCOPE)
 
 add_executable(${APP_NAME} tracervectors_triangleRK4.cpp)
 
+find_package(OpenMP REQUIRED)
+target_link_libraries(${APP_NAME} OpenMP::OpenMP_CXX)
+
 target_link_libraries(${APP_NAME} dolfin)
 
 if (PARTRAC_ENABLE_MPI)
