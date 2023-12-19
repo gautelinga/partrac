@@ -64,7 +64,7 @@ if( CMAKE_BUILD_TYPE MATCHES "Release")
 else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
   # # Debug build
   message(STATUS "Debug build")
-  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O2 -march=native -ggdb3 -pedantic-errors -Wextra")
+  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O2 -march=native -ggdb3 -pedantic-errors -Wextra -pg")
 endif()
 
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")

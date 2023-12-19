@@ -273,7 +273,7 @@ int main(int argc, char* argv[])
   output_fields["u"] = !prm.minimal_output;
   output_fields["c"] = !prm.minimal_output || local_dt;
   output_fields["p"] = !prm.minimal_output && prm.output_all_props;
-  output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
+  output_fields["rho"] = !prm.minimal_output; // && prm.output_all_props;   
   output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
   output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
   output_fields["t_loc"] = local_dt;

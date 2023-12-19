@@ -294,13 +294,13 @@ int main(int argc, char* argv[])
     Uint dim;
     if (contains(key[0], "strip")){
         dim = 2;
-        RandomGaussianStripInitializer init_state(key, prm, mpi, gens[0]);
+        RandomGaussianStripInitializer init_state(key, prm, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
     else if (contains(key[0], "circle")){
         dim = 3;
-        RandomGaussianCircleInitializer init_state(key, prm, mpi, gens[0]);
+        RandomGaussianCircleInitializer init_state(key, prm, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }

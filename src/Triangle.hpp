@@ -4,6 +4,7 @@
 
 #include <dolfin.h>
 #include <array>
+#include "typedefs.hpp"
 
 class Triangle
 {
@@ -15,6 +16,8 @@ public:
 
   void xy2bary(double x, double y,
                double &r, double &s, double &t) const;
+
+  bool contains(const Vector3d& x) const;
 
   void linearbasis( double r
                   , double s

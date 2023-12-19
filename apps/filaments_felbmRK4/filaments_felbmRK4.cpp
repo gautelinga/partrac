@@ -183,7 +183,7 @@ int main(int argc, char* argv[])
     //std::shared_ptr<Initializer> init_state;
     //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
     //init_state->initialize(ps);
-    RandomPairsInitializer init_state(key, prm, mpi, gen);
+    RandomPairsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
 

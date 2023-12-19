@@ -171,7 +171,7 @@ int main(int argc, char* argv[])
     //std::shared_ptr<Initializer> init_state;
     //init_state = std::make_shared<RandomPointsInitializer>(key, intp_ptr, prm, mpi, gen);    
     //init_state->initialize(ps);
-    RandomPointsInitializer init_state(key, prm, mpi, gen);
+    RandomPointsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
 

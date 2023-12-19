@@ -81,7 +81,7 @@ public:
   virtual Matrix3d get_grada() = 0;
   //
   template<typename T>
-  void assign_fields(T&, std::map<std::string, bool>& output_fields);
+  void assign_fields(T&, const std::map<std::string, bool>& output_fields);
 protected:
   std::string infilename;
   std::string folder;
@@ -99,16 +99,24 @@ protected:
 };
 
 template<typename T>
-void Interpol::assign_fields(T& ps, std::map<std::string, bool>& output_fields){
+void Interpol::assign_fields(T& ps, const std::map<std::string, bool>& output_fields){
   double t = t_update;
+  #pragma omp parallel for
   for ( auto & particle : ps.particles() ){
-    probe(particle.x(), t, particle.cell_id());
-    if (output_fields["u"])
-      particle.u() = get_u();
-    if (output_fields["rho"])
-      particle.rho() = get_rho();
-    if (output_fields["p"])
-      particle.p() = get_p();
+    PointValues ptvals(get_U0());
+    int cell_id = particle.cell_id();
+    bool inside = true;
+    if (cell_id == -1 )
+      inside = probe_light(particle.get_x(), t, cell_id);
+    if (inside) {
+      probe_heavy(particle.get_x(), t, cell_id, ptvals);
+      if (output_fields.find("u")->second)
+        particle.u() = ptvals.get_u();
+      if (output_fields.find("rho")->second)
+        particle.rho() = ptvals.get_rho();
+      if (output_fields.find("p")->second)
+        particle.p() = ptvals.get_p();
+    }
   }
 }
 

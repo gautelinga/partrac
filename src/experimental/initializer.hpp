@@ -9,7 +9,7 @@
 #include "typedefs.hpp"
 #include "../Interpol.hpp"
 #include "utils.hpp"
-#include "../MPIwrap.hpp"
+//#include "../MPIwrap.hpp"
 #include "../Parameters.hpp"
 //#include "particles.hpp"
 
@@ -23,7 +23,8 @@ struct less_than_op {
 class Initializer {
 public:
   //Initializer(IntpType& intp, Parameters& prm, MPIwrap& mpi) : m_intp(intp), prm(prm), m_mpi(mpi) {
-  Initializer(Parameters& prm, MPIwrap& mpi) : prm(prm), m_mpi(mpi) {
+  //Initializer(Parameters& prm, MPIwrap& mpi) : prm(prm) { //, m_mpi(mpi) {
+  Initializer(Parameters& prm) : prm(prm) {
     x0 = {prm.x0, prm.y0, prm.z0};
     //x_min = intp.get_x_min();
     //x_max = intp.get_x_max();
@@ -53,7 +54,7 @@ protected:
   Vector x_min;
   Vector x_max;
   Vector L;
-  MPIwrap& m_mpi;
+  //MPIwrap& m_mpi;
 };
 
 template<typename T>
@@ -111,9 +112,9 @@ public:
   UniformInitializer( const std::vector<std::string>& key
                     //, IntpType& intp
                     , Parameters& prm
-                    , MPIwrap& mpi
+                    //, MPIwrap& mpi
                     //) : Initializer(intp, prm, mpi) {
-                    ) : Initializer(prm, mpi), key(key) {
+                    ) : Initializer(prm), key(key) {
     //probe(intp);
   };
   template<typename IntpType> 
@@ -368,11 +369,11 @@ public:
   RandomPairsInitializer( const std::vector<std::string>& key
                         //, IntpType& intp
                         , Parameters& prm
-                        , MPIwrap& mpi
+                        //, MPIwrap& mpi
                         , std::mt19937 &gen
                         )
    //: Initializer(intp, prm, mpi), gen(gen) {
-    : Initializer(prm, mpi), gen(gen), key(key) {
+    : Initializer(prm), gen(gen), key(key) {
       //probe(intp);
   };
   template<typename IntpType>
@@ -460,11 +461,11 @@ public:
   RandomPointsInitializer( const std::vector<std::string>& key
                          //, IntpType& intp
                          , Parameters& prm
-                         , MPIwrap& mpi
+                         //, MPIwrap& mpi
                          , std::mt19937 &gen
                          )
    //: Initializer(intp, prm, mpi), gen(gen){
-    : Initializer(prm, mpi), gen(gen), key(key) {
+    : Initializer(prm), gen(gen), key(key) {
       //probe(intp);
   };
   ~RandomPointsInitializer() { std::cout << "Destruct Initializer." << std::endl; };
@@ -519,9 +520,9 @@ protected:
 public:
   RandomGaussianStripInitializer( const std::vector<std::string>& key
                                 //, std::shared_ptr<Interpol> intp
-                                , Parameters& prm, MPIwrap& mpi
+                                , Parameters& prm //MPIwrap& mpi
                                 , std::mt19937 &gen
-                                ) : Initializer(prm, mpi), gen(gen), key(key) {};
+                                ) : Initializer(prm), gen(gen), key(key) {};
   ~RandomGaussianStripInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
   template<typename IntpType>
   void probe(IntpType& intp);
@@ -598,9 +599,9 @@ protected:
 public:
   RandomGaussianCircleInitializer( const std::vector<std::string>& key
                                 //, std::shared_ptr<Interpol> intp
-                                , Parameters& prm, MPIwrap& mpi
+                                , Parameters& prm //, MPIwrap& mpi
                                 , std::mt19937 &gen
-                                ) : Initializer(prm, mpi), gen(gen), key(key) {};
+                                ) : Initializer(prm), gen(gen), key(key) {};
   ~RandomGaussianCircleInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
   template<typename IntpType>
   void probe(IntpType& intp);

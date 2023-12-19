@@ -211,7 +211,7 @@ void Parameters::set_param(std::string key, std::string val){
 
   if (key == "refine") refine = stobool(val);
   if (key == "refine_intv") refine_intv = stodouble(val);
-  if (key == "resize") refine = stobool(val);
+  if (key == "resize") resize = stobool(val);
   if (key == "resize_intv") resize_intv = stodouble(val);
   if (key == "coarsen") coarsen = stobool(val);
   if (key == "coarsen_intv") coarsen_intv = stodouble(val);

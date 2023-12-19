@@ -14,7 +14,6 @@
 #include <omp.h>
 #include <chrono>
 
-#include "MPIwrap.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "experimental/integrator_RK.hpp"
@@ -92,7 +91,6 @@ std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
 
     {
         std::cout << "======================================================================\n"
@@ -141,7 +139,7 @@ int main(int argc, char* argv[])
 
     auto key = split_string(prm.init_mode, "_");
 
-    RandomPointsInitializer init_state(key, prm, mpi, gens[0]);
+    RandomPointsInitializer init_state(key, prm, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
 

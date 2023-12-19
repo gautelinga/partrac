@@ -188,7 +188,7 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    RandomPointsInitializer init_state(key, prm, mpi, gen);
+    RandomPointsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
     spin_all(key, ps, gen);

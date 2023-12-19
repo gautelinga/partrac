@@ -31,6 +31,13 @@ Triangle::Triangle(const dolfin::Cell& cell)
   g1x_ = -g2x_-g3x_;  g1y_ = -g2y_-g3y_;
 }
 
+bool Triangle::contains(const Vector3d& x) const 
+{
+  double r1, r2, r3;
+  xy2bary(x[0], x[1], r1, r2, r3);
+  return (r1 >= 0. && r2 >= 0. && r3 >= 0.);
+}
+
 void Triangle::xy2bary(double x, double y,
                        double &r, double &s, double &t) const
 {

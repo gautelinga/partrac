@@ -30,6 +30,9 @@ if(MPI_LINK_FLAGS)
     LINK_FLAGS "${MPI_LINK_FLAGS}")
 endif()
 
+set_target_properties(${APP_NAME}  PROPERTIES
+  LINK_FLAGS "${MPI_LINK_FLAGS}")
+
 target_link_libraries(${APP_NAME} ${HDF5_LIBRARIES}
   ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
 target_compile_features(${APP_NAME} PRIVATE cxx_std_17)

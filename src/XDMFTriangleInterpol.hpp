@@ -63,7 +63,7 @@ public:
     found_other = 0;
   }
 protected:
-  Timestamps ts;
+  MultiTimestamps ts;
   double t_prev = 0.;
   double t_next = 0.;
   double alpha_t;
@@ -82,6 +82,7 @@ protected:
   bool inside;
 
   bool include_pressure = true;
+  bool include_phi = true;
 
   std::map<std::string, std::string> dolfin_params;
 
@@ -90,14 +91,15 @@ protected:
 
   std::shared_ptr<dolfin::FunctionSpace> u_space_;
   std::shared_ptr<dolfin::FunctionSpace> p_space_;
+  // Assuming phi_space_ == p_space_
 
   // These are new:
   std::vector<double> u_prev_data_;
   std::vector<double> u_next_data_;
   std::vector<double> p_prev_data_;
   std::vector<double> p_next_data_;
-
-  // End
+  std::vector<double> phi_prev_data_;
+  std::vector<double> phi_next_data_;
 
   std::vector<Triangle> triangles_;
   std::vector<dolfin::Cell> dolfin_cells_;
@@ -107,13 +109,13 @@ protected:
 
   std::vector<std::vector<double>> coordinate_dofs_;
 
-  std::vector<double> u_prev_coefficients_;
-  std::vector<double> u_next_coefficients_;
-  std::vector<double> p_prev_coefficients_;
-  std::vector<double> p_next_coefficients_;
+  //std::vector<double> u_prev_coefficients_;
+  //std::vector<double> u_next_coefficients_;
+  //std::vector<double> p_prev_coefficients_;
+  //std::vector<double> p_next_coefficients_;
 
-  std::vector<double> Nu_, Nux_, Nuy_;
-  std::vector<double> Np_;
+  //std::vector<double> Nu_, Nux_, Nuy_;
+  //std::vector<double> Np_;
 
   Uint ncoeffs_u;
   Uint ncoeffs_p;
@@ -123,6 +125,7 @@ protected:
   std::vector<long unsigned int> found_other_;
 
   void _modx(dolfin::Array<double>&, const Vector3d&);
+  Vector3d _modx(const Vector3d&);
 
   std::string h5filename_u;
   std::string h5filename_p;
@@ -130,6 +133,9 @@ protected:
 
   std::vector<Uint> i2j;
   std::vector<Uint> j2i;
+
+  std::vector<std::vector<Uint>> u_dofs_;
+  std::vector<std::vector<Uint>> p_dofs_;
 
 };
 

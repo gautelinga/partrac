@@ -96,10 +96,10 @@ void read_dataset_vector(std::string& h5filename_u, std::string& field, std::vec
     dataset.read( data.data(), H5::PredType::NATIVE_DOUBLE, memspace, dataspace );
 }
 
-std::vector<std::pair<double, std::string>> parse_xdmf(const std::string& xdmffilename, 
-                                                       std::string& h5filename_u, 
-                                                       std::string& topology_path, 
-                                                       std::string& geometry_path)
+std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename, 
+                                                                    std::string& h5filename,
+                                                                    std::string& topology_path, 
+                                                                    std::string& geometry_path)
 {
   // Create empty property tree object
   pt::ptree tree;
@@ -111,20 +111,22 @@ std::vector<std::pair<double, std::string>> parse_xdmf(const std::string& xdmffi
   geometry_path = tree.get<std::string>("Xdmf.Domain.Grid.Grid.Geometry.DataItem");
 
   auto topology_pos = topology_path.find(":");
-  h5filename_u = topology_path.substr(0, topology_pos);
+  h5filename = topology_path.substr(0, topology_pos);
   topology_path.erase(0, topology_pos + 1);
-  if (h5filename_u != geometry_path.substr(0, topology_pos)){
+  if (h5filename != geometry_path.substr(0, topology_pos)){
     std::cout << "XDMF error: Not matching filenames." << std::endl;
     exit(0);
   }
   geometry_path.erase(0, topology_pos + 1);
 
-  std::vector<std::pair<double, std::string>> titems;
+  std::vector<std::pair<double, std::vector<std::string>>> titems;
   for (auto & p : tree.get_child("Xdmf.Domain.Grid")) {
-    //std :: cout << "[" << p.first << "]" << std :: endl;
+    //std :: cout << "[" << p.first << "]" << std :: endl;    
     if (p.first == "Grid"){
       double time;
+      std::string filename;
       std::string location;
+
       for (auto & pp : p.second) {
         if ( pp.first == "Time" ){
           time = pp.second.get<double>("<xmlattr>.Value");
@@ -133,16 +135,24 @@ std::vector<std::pair<double, std::string>> parse_xdmf(const std::string& xdmffi
         {
           location = pp.second.get<std::string>("DataItem");
           auto pos = location.find(":");
-          std::string filename = location.substr(0, pos);
+          filename = location.substr(0, pos);
           location.erase(0, pos + 1);
-          // Check filename == h5filename_u too
+          // Check filename == h5filename too
         }
       }
       //std::cout << " " << time << " " << location << std::endl;
-      titems.push_back({time, location});
+      //titems.push_back({time, {filename, location}});
+      std::vector<std::string> path = {filename, location};
+      titems.push_back({time, path});
     }
   }
   return titems;
+}
+
+std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename)
+{
+  std::string _dummy0, _dummy1, _dummy2;
+  return parse_xdmf(xdmffilename, _dummy0, _dummy1, _dummy2);
 }
 
 XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
@@ -155,6 +165,11 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
     exit(0);
   }
+
+  // Default params
+
+  dolfin_params["include_pf"] = "false";
+
   size_t found;
   std::string key, val;
   for (std::string line; getline(input, line); ){
@@ -179,6 +194,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
     periodic[1] = true;
   }
   include_pressure = !(dolfin_params["ignore_pressure"] == "true");
+  include_phi = (dolfin_params["include_phi"] == "true");
 
   // Make the mesh
   dolfin::Mesh mesh_in;
@@ -186,17 +202,28 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   // find velocity file
   std::string xdmffilename_u = get_folder() + "/" + dolfin_params["u"];
   std::string xdmffilename_p = get_folder() + "/" + dolfin_params["p"];
+  std::string xdmffilename_phi = get_folder() + "/" + dolfin_params["phi"];
+  //if (include_phi)
+  //std::string xdmffilename_phi = get_folder() + "/" + dolfin_params["phi"];
+
+  std::vector<std::pair<double, std::vector<std::string>>> titems_u, titems_p, titems_phi;
 
   std::string topology_path, geometry_path;
-  auto titems = parse_xdmf(xdmffilename_u, h5filename_u, topology_path, geometry_path);
-  std::cout << "mesh: " << h5filename_u << " -- " << topology_path << " " << geometry_path << std::endl; 
-  if (include_pressure){
-    std::string _dummy1, _dummy2;
-    auto titems2 = parse_xdmf(xdmffilename_p, h5filename_p, _dummy1, _dummy2);
-    std::cout << "h5filename_p = " << h5filename_p << std::endl;
-  }
+  titems_u = parse_xdmf(xdmffilename_u, h5filename_u, topology_path, geometry_path);
+  std::cout << "mesh: " << h5filename_u << ": " << topology_path << " " << geometry_path << std::endl; 
+  
+  ts.initialize(titems_u);
 
-  ts.initialize(titems);
+  if (include_pressure){
+    titems_p = parse_xdmf(xdmffilename_p);
+    // std::cout << "h5filename_p = " << h5filename_p << std::endl;
+    ts.add("p", titems_p);
+  }
+  if (include_phi){
+    titems_phi = parse_xdmf(xdmffilename_phi);
+    // std::cout << "h5filename_phi = " << h5filename_phi << std::endl;
+    ts.add("phi", titems_phi);
+  }
 
   dolfin::HDF5File meshfile(MPI_COMM_WORLD, h5filename_u, "r");
 
@@ -230,7 +257,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   // FIXME compute on the fly and save
   triangles_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
-  ufc_cells_.resize(mesh->num_cells());
+  //ufc_cells_.resize(mesh->num_cells());
   coordinate_dofs_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
@@ -241,7 +268,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
 
     triangles_[i] = Triangle(dolfin_cell);
     dolfin_cells_[i] = dolfin_cell;
-    dolfin_cell.get_cell_data(ufc_cells_[i]);
+    //dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
   // Build cell neighbour list for lookup speed
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
@@ -284,34 +311,55 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   u_next_data_.resize(xdof.size());
   p_prev_data_.resize(xdof.size()/2);
   p_next_data_.resize(xdof.size()/2);
+  phi_prev_data_.resize(xdof.size()/2);
+  phi_next_data_.resize(xdof.size()/2);
 
-  u_prev_coefficients_.resize(dim*ncoeffs_u);
-  u_next_coefficients_.resize(dim*ncoeffs_u);
+  //u_prev_coefficients_.resize(dim*ncoeffs_u);
+  //u_next_coefficients_.resize(dim*ncoeffs_u);
 
-  Nu_.resize(ncoeffs_u);
-  Nux_.resize(ncoeffs_u);
-  Nuy_.resize(ncoeffs_u);
+  //Nu_.resize(ncoeffs_u);
+  //Nux_.resize(ncoeffs_u);
+  //Nuy_.resize(ncoeffs_u);
 
-  if (include_pressure){
-    p_prev_coefficients_.resize(ncoeffs_p);
-    p_next_coefficients_.resize(ncoeffs_p);
+  //if (include_pressure){
+    //p_prev_coefficients_.resize(ncoeffs_p); // not needed?
+    //p_next_coefficients_.resize(ncoeffs_p);
     
-    Np_.resize(ncoeffs_p);
-  }
+    //Np_.resize(ncoeffs_p);
+  //}
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
   found_same_.resize(omp_get_max_threads());
   found_nneigh_.resize(omp_get_max_threads());
   found_other_.resize(omp_get_max_threads());
+
+  // Precomputing dofs
+  u_dofs_.resize(mesh->num_cells());
+  p_dofs_.resize(mesh->num_cells());
+
+  const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
+  const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
+  
+  for (Uint id = 0; id < mesh->num_cells(); ++id)
+  {
+    auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
+    u_dofs_[id].resize(u_dofs.size());
+    for (std::size_t i = 0; i < u_dofs.size(); ++i){
+      u_dofs_[id][i] = u_dofs[i];
+    }
+
+    auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
+    p_dofs_[id].resize(p_dofs.size());
+    for (std::size_t i = 0; i < p_dofs.size(); ++i){
+      p_dofs_[id][i] = p_dofs[i];
+    }
+  }
 }
 
 void XDMFTriangleInterpol::update(const double t)
 {
-  // TODO: swapping!
-
-  StampPair sp = ts.get(t);
-  // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
+  MultiStampPair sp = ts.get(t);
 
   if (( !is_initialized || t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max() )
   {
@@ -323,26 +371,44 @@ void XDMFTriangleInterpol::update(const double t)
       u_prev_data_.swap(u_next_data_);
       if (include_pressure)
         p_prev_data_.swap(p_next_data_);
+      if (include_phi)
+        phi_prev_data_.swap(phi_next_data_);
     }
     else 
     {
-      std::cout << "Prev: Timestep = " << sp.prev.t << ", file = " << h5filename_u << ":" << sp.prev.filename << std::endl;
-      read_dataset_vector(h5filename_u, sp.prev.filename, data_);
+      auto u_path_prev = ts.get_path("u", sp.prev.it);
+      std::cout << "Prev: Timestep = " << sp.prev.t << ", file = " << u_path_prev[0] << ":" << u_path_prev[1] << std::endl;
+      read_dataset_vector(u_path_prev[0], u_path_prev[1], data_);
       shuffle(u_prev_data_, data_, j2i, 2);
 
       if (include_pressure){
-        read_dataset_scalar(h5filename_p, sp.prev.filename, data_);
+        auto p_path_prev = ts.get_path("p", sp.prev.it);
+        read_dataset_scalar(p_path_prev[0], p_path_prev[1], data_);
         shuffle(p_prev_data_, data_, j2i, 1);
+      }
+
+      if (include_phi){
+        auto phi_path_prev = ts.get_path("phi", sp.prev.it);
+        read_dataset_scalar(phi_path_prev[0], phi_path_prev[1], data_);
+        shuffle(phi_prev_data_, data_, j2i, 1);
       }
     }
 
-    std::cout << "Next: Timestep = " << sp.next.t << ", file = " << h5filename_u << ":" << sp.next.filename << std::endl;
-    read_dataset_vector(h5filename_u, sp.next.filename, data_);
+    auto u_path_next = ts.get_path("u", sp.next.it);
+    std::cout << "Next: Timestep = " << sp.next.t << ", file = " << u_path_next[0] << ":" << u_path_next[1] << std::endl;
+    read_dataset_vector(u_path_next[0], u_path_next[1], data_);
     shuffle(u_next_data_, data_, j2i, 2);
 
     if (include_pressure){
-      read_dataset_scalar(h5filename_p, sp.prev.filename, data_);
+      auto p_path_next = ts.get_path("p", sp.next.it);
+      read_dataset_scalar(p_path_next[0], p_path_next[1], data_);
       shuffle(p_next_data_, data_, j2i, 1);
+    }
+
+    if (include_phi){
+      auto phi_path_next = ts.get_path("phi", sp.next.it);
+      read_dataset_scalar(phi_path_next[0], phi_path_next[1], data_);
+      shuffle(phi_next_data_, data_, j2i, 1);
     }
 
     is_initialized = true;
@@ -350,6 +416,7 @@ void XDMFTriangleInterpol::update(const double t)
     t_next = sp.next.t;
   }
   t_update = t;
+
 }
 
 void XDMFTriangleInterpol::probe(const Vector3d &x, const double t)
@@ -367,6 +434,19 @@ void XDMFTriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x
       x_loc[i] = x[i];
     }
   }
+}
+
+Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
+  Vector3d x_loc;
+  for (std::size_t i=0; i<dim; ++i){
+    if (periodic[i]){
+      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
+    }
+    else {
+      x_loc[i] = x[i];
+    }
+  }
+  return x_loc;
 }
 
 void XDMFTriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
@@ -399,12 +479,8 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
 {
   // TODO: CHECK if thread safe
   assert(t <= t_next && t >= t_prev);
-  
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
 
-  // Index of cell containing point
-  const dolfin::Point point(dim, x_loc.data());
+  auto xx_loc = _modx(x);
   
   bool found = false;
   bool inside_loc = false;
@@ -412,8 +488,8 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
 
   // Search in neighborhood first
   if (id_prev >= 0){
-    dolfin::Cell prev_cell(*mesh, id_prev);
-    if (prev_cell.contains(point)){
+    if (triangles_[id_prev].contains(xx_loc))
+    {
       id = id_prev;
       inside_loc = true;
       found = true;
@@ -421,8 +497,8 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
     }
     else {
       for ( auto neigh_id : cell2cells_[id_prev]){
-        dolfin::Cell neigh_cell(*mesh, neigh_id);
-        if (neigh_cell.contains(point)){
+        if (triangles_[neigh_id].contains(xx_loc))
+        {
           inside_loc = true;
           found = true;
           id = neigh_id;
@@ -433,6 +509,11 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
     }
   }
   if (!found){
+    // Index of cell containing point
+    dolfin::Array<double> x_loc(dim);
+    _modx(x_loc, x);
+    const dolfin::Point point(dim, x_loc.data());
+
     id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
     inside_loc = (id != std::numeric_limits<unsigned int>::max());
     if (inside_loc) {
@@ -469,26 +550,14 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
 
   std::vector<double> u_prev_block(ncoeffs_u*dim);
   std::vector<double> u_next_block(ncoeffs_u*dim);
-  std::vector<double> p_prev_block(ncoeffs_p);
-  std::vector<double> p_next_block(ncoeffs_p);
 
   // Restrict solution to cell
-  const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
-  auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
+  //const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
+  //auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
 
-  for (std::size_t i = 0; i < u_dofs.size(); ++i){
-      u_prev_block[i] = u_prev_data_[u_dofs[i]];
-      u_next_block[i] = u_next_data_[u_dofs[i]];
-  }
-
-  if (include_pressure){
-      const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
-
-      for (std::size_t i = 0; i < p_dofs.size(); ++i){
-          p_prev_block[i] = p_prev_data_[p_dofs[i]];
-          p_next_block[i] = p_next_data_[p_dofs[i]];
-      }
+  for (std::size_t i = 0; i < u_dofs_[id].size(); ++i){
+      u_prev_block[i] = u_prev_data_[u_dofs_[id][i]];
+      u_next_block[i] = u_next_data_[u_dofs_[id][i]];
   }
 
   // Evaluate
@@ -505,10 +574,32 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
   fields.A = (U_next-U_prev)/(t_next-t_prev);
 
   if (include_pressure){
+    std::vector<double> p_prev_block(ncoeffs_p);
+    std::vector<double> p_next_block(ncoeffs_p);
+    
+    for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
+        p_prev_block[i] = p_prev_data_[p_dofs_[id][i]];
+        p_next_block[i] = p_next_data_[p_dofs_[id][i]];
+    }
+    
     // Evaluate
     double P_prev = std::inner_product(_Np_.begin(), _Np_.end(), p_prev_block.begin(), 0.0);
     double P_next = std::inner_product(_Np_.begin(), _Np_.end(), p_next_block.begin(), 0.0);
     fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
+  }
+
+  if (include_phi){
+    std::vector<double> phi_prev_block(ncoeffs_p);
+    std::vector<double> phi_next_block(ncoeffs_p);
+    
+    for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
+        phi_prev_block[i] = phi_prev_data_[p_dofs_[id][i]];
+        phi_next_block[i] = phi_next_data_[p_dofs_[id][i]];
+    }
+
+    double Phi_prev = std::inner_product(_Np_.begin(), _Np_.end(), phi_prev_block.begin(), 0.0);
+    double Phi_next = std::inner_product(_Np_.begin(), _Np_.end(), phi_next_block.begin(), 0.0);
+    fields.Rho = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
   }
 
   if (this->int_order > 1){

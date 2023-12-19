@@ -15,7 +15,7 @@
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
+//#include "MPIwrap.hpp"
 #include "Parameters.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
@@ -23,7 +23,97 @@
 
 #include "experimental/integrator_RK.hpp"
 #include "experimental/initializer.hpp"
-#include "experimental/statistics.hpp"
+//#include "experimental/statistics.hpp"
+
+template<typename T>
+void write_stats( std::ofstream &statfile
+                , const Real t
+                , T& ps
+                , const unsigned long int n_declined
+                )
+{
+  Vector x_mean = {0., 0., 0.};
+  Vector dx2_mean = {0., 0., 0.};
+  Vector u_mean = {0., 0., 0.};
+
+  Uint Nrw = ps.particles().size();
+
+  Real w_mean = 0.;
+  Real w_var = 0.;
+  Uint nsum = 0;
+
+  #pragma omp parallel
+  {
+    Vector x_mean_loc = {0., 0., 0.};
+    Vector u_mean_loc = {0., 0., 0.};
+
+    #pragma omp for
+    for ( auto & particle : ps.particles() )
+    {
+        //auto & particle = ps.particles()[i];
+        // Sample mean
+        x_mean_loc += particle.get_x(); // /Nrw;
+        u_mean_loc += particle.get_u(); // /Nrw;
+    }
+    #pragma omp critical
+    {
+        x_mean += x_mean_loc;
+        u_mean += u_mean_loc;
+    } 
+  }
+  x_mean /= Nrw;
+  u_mean /= Nrw;
+
+  #pragma omp parallel
+  {
+    Vector dx2_mean_loc = {0., 0., 0.};
+
+    #pragma omp for
+    for ( auto & particle : ps.particles() )
+    {
+        // Sample variance
+        Vector dx = particle.x()-x_mean;
+        dx2_mean_loc += dx.cwiseProduct(dx);
+    }
+    #pragma omp critical
+    {
+        dx2_mean += dx2_mean_loc;
+    }
+  }
+  dx2_mean /= (Nrw-1);
+  
+  statfile << t                       << "\t"           //  1
+           << x_mean[0]               << "\t"           //  2
+           << x_mean[1]               << "\t"           //  3
+           << x_mean[2]               << "\t"           //  4
+           << dx2_mean[0]             << "\t"           //  5
+           << dx2_mean[1]             << "\t"           //  6
+           << dx2_mean[2]             << "\t"           //  7
+           << u_mean[0]               << "\t"           //  8
+           << u_mean[1]               << "\t"           //  9
+           << u_mean[2]               << "\t"           // 10
+           << Nrw                     << "\t"           // 11
+           << n_declined              << "\t";          // 12
+
+  statfile << std::endl;
+}
+
+void write_stats_header(std::ofstream &statfile, Uint mesh_dim)
+{
+  statfile << "# t" << "\t"                   //  1
+           << "x_mean" << "\t"                //  2
+           << "y_mean" << "\t"                //  3
+           << "z_mean" << "\t"                //  4
+           << "dx2_mean" << "\t"              //  5
+           << "dy2_mean" << "\t"              //  6
+           << "dz2_mean" << "\t"              //  7
+           << "ux_mean" << "\t"               //  8
+           << "uy_mean" << "\t"               //  9
+           << "uz_mean" << "\t"               // 10
+           << "Nrw" << "\t"                   // 11
+           << "n_declined" << "\t";           // 12
+  statfile << std::endl;
+}
 
 std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
@@ -100,21 +190,18 @@ void spin_all( const std::vector<std::string>& key
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
+    //MPIwrap mpi(argc, argv);
 
-    if (mpi.rank() == 0)
+    //if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental tracer vectors with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized experimental tracer vectors.                        ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
+   // mpi.barrier();
     
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-    mpi.barrier();
-
     // Input parameters
-    if (argc < 2 && mpi.rank() == 0) {
+    if (argc < 2){ // && mpi.rank() == 0) {
         std::cout << "Please specify an input file." << std::endl;
         return 0;
     }
@@ -143,7 +230,7 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/TracerVectors/";
     
-    if (mpi.rank() == 0)
+    //if (mpi.rank() == 0)
         create_folder(rwfolder);
     
     std::string newfolder;
@@ -152,12 +239,12 @@ int main(int argc, char* argv[])
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
-        mpi.barrier();
-        if (mpi.rank() == 0)
+        //mpi.barrier();
+        //if (mpi.rank() == 0)
             create_folder(newfolder);
-        mpi.barrier();
+        //mpi.barrier();
     }
-    newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+    //newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
     {
@@ -167,7 +254,7 @@ int main(int argc, char* argv[])
     }
     prm.folder = newfolder;
 
-    if (mpi.rank() == 0)
+    //if (mpi.rank() == 0)
         prm.print();
 
     std::mt19937 gen;
@@ -176,7 +263,7 @@ int main(int argc, char* argv[])
         gen.seed(rd());
     }
     else {
-        std::seed_seq rd{prm.seed + mpi.rank()};
+        std::seed_seq rd{prm.seed}; // + mpi.rank()};
         gen.seed(rd);
     }
 
@@ -199,7 +286,7 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    RandomPointsInitializer init_state(key, prm, mpi, gen);
+    RandomPointsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
     spin_all(key, ps, gen);
@@ -216,7 +303,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, ps.dim());
+    write_stats_header(statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -263,7 +350,7 @@ int main(int argc, char* argv[])
             duration_step = 0;
             duration_other = 0;
 
-            write_stats(mpi, statfile, t, ps, integrator.get_declined());
+            write_stats(statfile, t, ps, integrator.get_declined());
 
             intp.print_found();
         }
