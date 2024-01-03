@@ -37,6 +37,8 @@ public:
     Real         get_rho() const { return m_rho; };
     Real         get_p() const { return m_p; };
     Matrix       get_F() const { return m_F; };
+    Real         get_w() const { return m_w; };
+    Real         get_S() const { return m_S; };
 
     //Uint           get_id() const { return m_id; };
     //void           set_id(Uint id) { m_id=id; };

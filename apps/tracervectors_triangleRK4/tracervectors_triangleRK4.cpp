@@ -33,19 +33,56 @@ void write_stats( std::ofstream &statfile
                 )
 {
   Vector x_mean = {0., 0., 0.};
-  Vector dx2_mean = {0., 0., 0.};
+  Vector x_var = {0., 0., 0.};
+
   Vector u_mean = {0., 0., 0.};
+  Vector u_var = {0., 0., 0.};
 
   Uint Nrw = ps.particles().size();
 
   Real w_mean = 0.;
   Real w_var = 0.;
-  Uint nsum = 0;
+
+  Real S_mean = 0.;
+  Real rho_mean = 0.;
+  
+  // Phase quantities 1,2
+  Uint Nrw1 = 0;
+
+  Vector u1_mean = {0., 0., 0.};
+  Vector u2_mean = {0., 0., 0.};
+  
+  Vector u1_var = {0., 0., 0.};
+  Vector u2_var = {0., 0., 0.};
+
+  Real w1_mean = 0.;
+  Real w2_mean = 0.;
+  
+  Real w1_var = 0.;
+  Real w2_var = 0.;
+
+  Real S1_mean = 0.;
+  Real S2_mean = 0.;
 
   #pragma omp parallel
   {
     Vector x_mean_loc = {0., 0., 0.};
     Vector u_mean_loc = {0., 0., 0.};
+
+    Real w_mean_loc = 0.;
+    Real S_mean_loc = 0.;
+    Real rho_mean_loc = 0.;
+
+    // Phase quantities 1,2
+    Real w1_mean_loc = 0.;
+    Real w2_mean_loc = 0.;
+
+    Uint Nrw1_loc = 0;
+    Vector u1_mean_loc = {0., 0., 0.};
+    Vector u2_mean_loc = {0., 0., 0.};
+
+    Real S1_mean_loc = 0.;
+    Real S2_mean_loc = 0.;
 
     #pragma omp for
     for ( auto & particle : ps.particles() )
@@ -54,64 +91,208 @@ void write_stats( std::ofstream &statfile
         // Sample mean
         x_mean_loc += particle.get_x(); // /Nrw;
         u_mean_loc += particle.get_u(); // /Nrw;
+        rho_mean_loc += particle.get_rho();
+        w_mean_loc += particle.get_w();
+        S_mean_loc += particle.get_S();
+
+        double phi = particle.get_rho(); // consider renaming
+        if (phi > 0){
+            ++Nrw1_loc;
+            u1_mean_loc += particle.get_u();
+            w1_mean_loc += particle.get_w();
+            S1_mean_loc += particle.get_S();
+        }
+        else { // if (phi < 0){
+            u2_mean_loc += particle.get_u();
+            w2_mean_loc += particle.get_w();
+            S2_mean_loc += particle.get_S();
+        }
     }
     #pragma omp critical
     {
+        Nrw1 += Nrw1_loc;
+
         x_mean += x_mean_loc;
         u_mean += u_mean_loc;
+        rho_mean += rho_mean_loc;
+        w_mean += w_mean_loc;
+        S_mean += S_mean_loc;
+
+        u1_mean += u1_mean_loc;
+        w1_mean += w1_mean_loc;
+        S1_mean += S1_mean_loc;
+        
+        u2_mean += u2_mean_loc;
+        w2_mean += w2_mean_loc;
+        S2_mean += S2_mean_loc;
     } 
   }
   x_mean /= Nrw;
   u_mean /= Nrw;
+  rho_mean /= Nrw;
+  w_mean /= Nrw;
+  S_mean /= Nrw;
+
+  u1_mean /= Nrw1;
+  w1_mean /= Nrw1;
+  S1_mean /= Nrw1;
+  
+  Uint Nrw2 = Nrw - Nrw1;
+  u2_mean /= Nrw2;
+  w2_mean /= Nrw2;
+  S2_mean /= Nrw2;
 
   #pragma omp parallel
   {
-    Vector dx2_mean_loc = {0., 0., 0.};
+    Vector x_var_loc = {0., 0., 0.};
+    Vector u_var_loc = {0., 0., 0.};
+
+    Real w_var_loc = 0.;
+    
+    Vector u1_var_loc = {0., 0., 0.};
+    Real w1_var_loc = 0.;
+
+    Vector u2_var_loc = {0., 0., 0.};
+    Real w2_var_loc = 0.;
 
     #pragma omp for
     for ( auto & particle : ps.particles() )
     {
         // Sample variance
-        Vector dx = particle.x()-x_mean;
-        dx2_mean_loc += dx.cwiseProduct(dx);
+        Vector dx = particle.get_x()-x_mean;
+        x_var_loc += dx.cwiseProduct(dx);
+
+        Vector du = particle.get_u()-u_mean;
+        u_var_loc += du.cwiseProduct(du);
+
+        w_var_loc += pow(particle.get_w()-w_mean, 2);
+
+        double phi = particle.get_rho(); // consider renaming
+        if (phi > 0){
+            Vector du1 = particle.get_u()-u1_mean;
+            u1_var_loc += du1.cwiseProduct(du1);
+            w1_var_loc += pow(particle.get_w()-w1_mean, 2);
+        }
+        else {
+            Vector du2 = particle.get_u()-u2_mean;
+            u2_var_loc += du2.cwiseProduct(du2);
+            w2_var_loc += pow(particle.get_w()-w2_mean, 2);
+        }
     }
     #pragma omp critical
     {
-        dx2_mean += dx2_mean_loc;
+        x_var += x_var_loc;
+        u_var += u_var_loc;
+
+        w_var += w_var_loc;
+
+        u1_var += u1_var_loc;
+        w1_var += w1_var_loc;
+
+        u2_var += u2_var_loc;
+        w2_var += w2_var_loc;
     }
   }
-  dx2_mean /= (Nrw-1);
+  // Unbiased sample variance
+  x_var /= (Nrw-1);
+  u_var /= (Nrw-1);
+  w_var /= (Nrw-1);
+
+  u1_var /= (Nrw1-1);
+  w1_var /= (Nrw1-1);
+
+  u2_var /= (Nrw2-1);
+  w2_var /= (Nrw2-1);
   
   statfile << t                       << "\t"           //  1
            << x_mean[0]               << "\t"           //  2
            << x_mean[1]               << "\t"           //  3
            << x_mean[2]               << "\t"           //  4
-           << dx2_mean[0]             << "\t"           //  5
-           << dx2_mean[1]             << "\t"           //  6
-           << dx2_mean[2]             << "\t"           //  7
+           << x_var[0]                << "\t"           //  5
+           << x_var[1]                << "\t"           //  6
+           << x_var[2]                << "\t"           //  7
            << u_mean[0]               << "\t"           //  8
            << u_mean[1]               << "\t"           //  9
            << u_mean[2]               << "\t"           // 10
-           << Nrw                     << "\t"           // 11
-           << n_declined              << "\t";          // 12
+           << u_var[0]                << "\t"           // 11
+           << u_var[1]                << "\t"           // 12
+           << u_var[2]                << "\t"           // 13
+           << w_mean                  << "\t"           // 14
+           << w_var                   << "\t"           // 15
+           << S_mean                  << "\t"           // 16
+           << rho_mean                << "\t"           // 17
+           << Nrw                     << "\t"           // 18
+           << n_declined              << "\t";          // 19
+
+  statfile << Nrw1                    << "\t"           // 20
+           << u1_mean[0]              << "\t"           // 21
+           << u1_mean[1]              << "\t"           // 22
+           << u1_mean[2]              << "\t"           // 23
+           << u1_var[0]               << "\t"           // 24
+           << u1_var[1]               << "\t"           // 25
+           << u1_var[2]               << "\t"           // 26
+           << w1_mean                 << "\t"           // 27
+           << w1_var                  << "\t"           // 28
+           << S1_mean                 << "\t";          // 29
+
+  statfile << Nrw2                    << "\t"           // 30
+           << u2_mean[0]              << "\t"           // 31
+           << u2_mean[1]              << "\t"           // 32
+           << u2_mean[2]              << "\t"           // 33
+           << u2_var[0]               << "\t"           // 34
+           << u2_var[1]               << "\t"           // 35
+           << u2_var[2]               << "\t"           // 36
+           << w2_mean                 << "\t"           // 37
+           << w2_var                  << "\t"           // 38
+           << S2_mean                 << "\t";          // 39
 
   statfile << std::endl;
 }
 
-void write_stats_header(std::ofstream &statfile, Uint mesh_dim)
+void write_stats_header(std::ofstream &statfile)
 {
-  statfile << "# t" << "\t"                   //  1
-           << "x_mean" << "\t"                //  2
-           << "y_mean" << "\t"                //  3
-           << "z_mean" << "\t"                //  4
-           << "dx2_mean" << "\t"              //  5
-           << "dy2_mean" << "\t"              //  6
-           << "dz2_mean" << "\t"              //  7
-           << "ux_mean" << "\t"               //  8
-           << "uy_mean" << "\t"               //  9
-           << "uz_mean" << "\t"               // 10
-           << "Nrw" << "\t"                   // 11
-           << "n_declined" << "\t";           // 12
+  statfile << "# t"                   << "\t"           //  1
+           << "x_mean"                << "\t"           //  2
+           << "y_mean"                << "\t"           //  3
+           << "z_mean"                << "\t"           //  4
+           << "x_var"                 << "\t"           //  5
+           << "y_var"                 << "\t"           //  6
+           << "z_var"                 << "\t"           //  7
+           << "ux_mean"               << "\t"           //  8
+           << "uy_mean"               << "\t"           //  9
+           << "uz_mean"               << "\t"           // 10
+           << "ux_var"                << "\t"           // 11
+           << "uy_var"                << "\t"           // 12
+           << "uz_var"                << "\t"           // 13
+           << "w_mean"                << "\t"           // 14
+           << "w_var"                 << "\t"           // 15
+           << "S_mean"                << "\t"           // 16x
+           << "rho_mean"              << "\t"           // 17
+           << "Nrw"                   << "\t"           // 18
+           << "n_declined"            << "\t";          // 19
+
+  statfile << "Nrw1"                  << "\t"           // 20
+           << "u1x_mean"              << "\t"           // 21
+           << "u1y_mean"              << "\t"           // 22
+           << "u1z_mean"              << "\t"           // 23
+           << "u1x_var"               << "\t"           // 24
+           << "u1y_var"               << "\t"           // 25
+           << "u1z_var"               << "\t"           // 26
+           << "w1_mean"               << "\t"           // 27
+           << "w1_var"                << "\t"           // 28
+           << "S1_mean"               << "\t";          // 29
+
+  statfile << "Nrw2"                  << "\t"           // 30
+           << "u2x_mean"              << "\t"           // 31
+           << "u2y_mean"              << "\t"           // 32
+           << "u2z_mean"              << "\t"           // 33
+           << "u2x_var"               << "\t"           // 34
+           << "u2y_var"               << "\t"           // 35
+           << "u2z_var"               << "\t"           // 36
+           << "w2_mean"               << "\t"           // 37
+           << "w2_var"                << "\t"           // 38
+           << "S2_mean"               << "\t";          // 39
+
   statfile << std::endl;
 }
 
@@ -303,7 +484,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(statfile, ps.dim());
+    write_stats_header(statfile);
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -317,7 +498,7 @@ int main(int argc, char* argv[])
     output_fields["u"] = !prm.minimal_output;
     output_fields["c"] = !prm.minimal_output;
     output_fields["p"] = !prm.minimal_output && prm.output_all_props;
-    output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
+    output_fields["rho"] = true; // !prm.minimal_output && prm.output_all_props;        
     output_fields["H"] = !prm.minimal_output && ps.dim() > 0;
     output_fields["n"] = true;
     output_fields["w"] = true;
