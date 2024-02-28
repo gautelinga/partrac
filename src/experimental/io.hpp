@@ -77,6 +77,16 @@ void vector_to_h5(H5::H5File& h5f, const std::string dsetname,
   dset.write(a.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
+void vector_to_h5(H5::H5File& h5f, const std::string dsetname,
+                 const std::vector<int>& a, const Uint dim = 3){
+  hsize_t dims[2];
+  dims[0] = a.size()/dim;
+  dims[1] = dim;
+  H5::DataSpace dspace(2, dims);
+  H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_INT, dspace);
+  dset.write(a.data(), H5::PredType::NATIVE_INT);
+}
+
 void scalar_to_h5(H5::H5File& h5f
                 , const std::string dsetname
                 , const std::vector<Real>& c_rw
@@ -96,6 +106,10 @@ void scalar_to_h5(H5::H5File& h5f
 }
 
 void scalar_to_h5(H5::H5File& h5f, const std::string dsetname, const std::vector<Real>& c){
+  vector_to_h5(h5f, dsetname, c, 1);
+}
+
+void scalar_to_h5(H5::H5File& h5f, const std::string dsetname, const std::vector<int>& c){
   vector_to_h5(h5f, dsetname, c, 1);
 }
 

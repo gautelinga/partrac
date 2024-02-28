@@ -369,6 +369,26 @@ void spin_all( const std::vector<std::string>& key
     }
 }
 
+template<typename ParticleType>
+void align_all(const std::vector<std::string>& key, Particles<ParticleType>& ps, std::mt19937 &gen){
+    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
+    double delta = 1e-8;
+    for ( auto & particle : ps.particles() ){
+        Vector Dn = particle.get_u();
+        if (contains(key[1], "x")){
+            Dn[0] += delta * rnd_normal(gen);
+        }
+        if (contains(key[1], "y")){
+            Dn[1] += delta * rnd_normal(gen);
+        }
+        if (contains(key[1], "z")){
+            Dn[2] += delta * rnd_normal(gen);
+        }
+        Dn /= Dn.norm();
+        particle.n() = Dn;
+    }
+}
+
 int main(int argc, char* argv[])
 {
     //MPIwrap mpi(argc, argv);
@@ -470,7 +490,6 @@ int main(int argc, char* argv[])
     RandomPointsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
-    spin_all(key, ps, gen);
 
     // Check mesh connectivity: should be uneccessary
     ps.edges().clear();
@@ -504,8 +523,14 @@ int main(int argc, char* argv[])
     output_fields["w"] = true;
     output_fields["S"] = true;
 
+    // cell_type (for debugging)
+    output_fields["cell_type"] = true;
+
     intp.update(t);
     intp.assign_fields(ps, output_fields);
+
+    spin_all(key, ps, gen);
+    //align_all(key, ps, gen);
 
     // Simulation start
     std::clock_t clock_0 = std::clock();
@@ -569,7 +594,11 @@ int main(int argc, char* argv[])
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-            reinject_nodes(outside_nodes, key, ps, intp, gen);
+            // reinject_nodes(outside_nodes, key, ps, intp, gen);
+            for ( auto & node_id : outside_nodes )
+            {
+                ps.particles()[node_id].c() = 2.0;
+            }
         }
 
         t += dt;

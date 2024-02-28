@@ -301,6 +301,8 @@ public:
   Vector3d get_a() { return U0 * A; };
   double get_p() const { return P; };
   double get_rho() const { return Rho; };
+  int cell_type = 0;
+  int get_cell_type() const { return cell_type; };
 private:
   double U0;
 };

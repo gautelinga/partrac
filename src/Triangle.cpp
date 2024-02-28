@@ -24,7 +24,8 @@ Triangle::Triangle(const dolfin::Cell& cell)
   double j21 = xx_[2]-xx_[0];
   double j22 = yy_[2]-yy_[0];
 
-  double det = j11 * j22 - j12*j21;
+  det = j11 * j22 - j12*j21;
+
   double d = 1.0/det;
   g2x_ = j22*d;   g3x_ = -j12*d;
   g2y_ = -j21*d;  g3y_ = j11*d;
@@ -58,6 +59,25 @@ void Triangle::linearbasis( double r
   N[1] = s;
   N[2] = t;
 }
+
+std::vector<double> Triangle::dof_coords(const int index) const {
+  if (index < 3){
+    return {xx_[index], yy_[index]};
+  }
+  else if (index == perm_[3]){
+    return {0.5*(xx_[0] + xx_[1]), 0.5*(yy_[0] + yy_[1])};
+  }
+  else if (index == perm_[4]){
+    return {0.5*(xx_[1] + xx_[2]), 0.5*(yy_[1] + yy_[2])};
+  }
+  else if (index == perm_[5]){
+    return {0.5*(xx_[0] + xx_[2]), 0.5*(yy_[0] + yy_[2])};
+  }
+  else {
+    std::cout << "ERROR: Triangle" << std::endl;
+    exit(0);
+  }
+};
 
 void Triangle::linearderiv( double r
                           , double s
@@ -118,6 +138,31 @@ void Triangle::quadderiv( double r
   Ny[perm_[3]] = 4*(r*g2y_+s*g1y_);
   Ny[perm_[4]] = 4*(s*g3y_+t*g2y_);
   Ny[perm_[5]] = 4*(t*g1y_+r*g3y_);
+}
+
+void Triangle::dump(){
+  for (Uint i=0; i<3; ++i){
+    std::cout << xx_[i] << " " << yy_[i] << std::endl;
+  }
+  std::cout << std::endl;
+}
+
+double Triangle::dot_grad_gi(const double vx, const double vy, const int index) const
+{
+  if (index == 0){
+    return vx * g1x_ + vy * g1y_;
+  }
+  else if (index == 1){
+    return vx * g2x_ + vy * g2y_;
+  }
+  else if (index == 2){
+    return vx * g3x_ + vy * g3y_;
+  }
+  else {
+    std::cout << "ERROR: Triangle::dot_grad_gi invalid index." << std::endl;
+    exit(0);
+  }
+  return 0.0;
 }
 
 #endif

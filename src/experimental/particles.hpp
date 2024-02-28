@@ -32,6 +32,8 @@ public:
     Real &       S() { return m_S; };  // stretching quantity
     Matrix &     F() { return m_F; };  // deformation tensor
     int &        cell_id() { return m_cell_id; };  // cell id (if applicable)
+    int &        cell_type() { return m_cell_type; }; // cell type (if applicable)
+    int          get_cell_type() const { return m_cell_type; };
     Vector       get_x() const { return m_x; };
     Vector       get_u() const { return m_u; };
     Real         get_rho() const { return m_rho; };
@@ -114,6 +116,7 @@ protected:
     Real        m_S = 0.;
     Uint        m_id = 0;
     int         m_cell_id = -1;
+    int         m_cell_type = 0;
     std::set<Uint> m_edge_ids;
     //Particles<Particle>* m_ps;
 };
@@ -397,7 +400,7 @@ public:
         }
     }
 
-    void write_statistics(std::ofstream& statfile, const Real t);
+    //void write_statistics(std::ofstream& statfile, const Real t);
     void remove_edges(const std::set<Uint>& edge_ids){
         std::vector<Uint> sorted_edge_ids(edge_ids.begin(), edge_ids.end()); 
         std::sort(sorted_edge_ids.begin(), sorted_edge_ids.end()); // ascending
@@ -458,6 +461,7 @@ protected:
     void _get_u_data(std::vector<Real>&);
     void _get_scalar_data(const std::string&, std::vector<Real>&);
     void _get_vector_data(const std::string&, std::vector<Real>&);
+    void _get_cell_type_data(std::vector<int>& a);
 };
 
 template<class ParticleType>
@@ -560,6 +564,11 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
                 vector_to_h5(h5f, groupname + "/" + field, _vtmp, 3);
             }
         }
+        if (output_fields["cell_type"]){
+            std::vector<int> _ivtmp(m_particles.size());
+            _get_cell_type_data(_ivtmp);
+            scalar_to_h5(h5f, groupname + "/cell_type", _ivtmp);
+        }
     }
 }
 
@@ -591,6 +600,14 @@ void Particles<ParticleType>::_get_scalar_data(const std::string& field, std::ve
     for (auto const& particle : m_particles){
         Real s = particle.get_scalar(field);
         a.push_back(s);
+    }
+}
+
+template<class ParticleType>
+void Particles<ParticleType>::_get_cell_type_data(std::vector<int>& a){
+    a.clear();
+    for (auto const& particle : m_particles){
+        a.push_back(particle.get_cell_type());
     }
 }
 

@@ -137,6 +137,11 @@ protected:
   std::vector<std::vector<Uint>> u_dofs_;
   std::vector<std::vector<Uint>> p_dofs_;
 
+  std::vector<int> cell_type_;
+  std::vector<Vector3d> cell_normal_;
+  std::vector<Vector3d> cell_facet_midpoint_;
+  std::vector<std::vector<int>> perm_;
+
 };
 
 #endif

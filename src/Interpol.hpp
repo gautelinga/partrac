@@ -116,6 +116,8 @@ void Interpol::assign_fields(T& ps, const std::map<std::string, bool>& output_fi
         particle.rho() = ptvals.get_rho();
       if (output_fields.find("p")->second)
         particle.p() = ptvals.get_p();
+      if (output_fields.find("cell_type")->second)
+        particle.cell_type() = ptvals.get_cell_type();
     }
   }
 }
