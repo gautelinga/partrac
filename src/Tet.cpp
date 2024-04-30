@@ -51,6 +51,13 @@ void Tet::xyz2bary(double x, double y, double z,
   r = 1.-s-t-u;
 }
 
+bool Tet::contains(const Vector3d& x) const 
+{
+  double r1, r2, r3, r4;
+  xyz2bary(x[0], x[1], x[2], r1, r2, r3, r4);
+  return (r1 >= 0. && r2 >= 0. && r3 >= 0. && r4 >= 0.);
+}
+
 void Tet::linearbasis(double r,
                       double s,
                       double t,
