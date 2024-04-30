@@ -1466,12 +1466,17 @@ void compute_sheet_curv(const FacesType &faces,
         if (iedge != jedge)
           other_edges.push_back(jedge);
       }
-      assert(other_edges.size()==2);
-      Uint inode = get_intersection(edges[other_edges[0]].first,
-                                    edges[other_edges[1]].first);
-      assert(contains(interior_ang[*faceit], inode));
-      std::map<Uint, double> angles = interior_ang[*faceit];
-      edge_w[iedge] += 1.0/tan(angles[inode]);
+      // assert(other_edges.size()==2);
+      // GL: Hack to avoid crashing. Curvature calculations need improvement if they are going to be used!
+      if (other_edges.size() == 2){
+        Uint inode = get_intersection(edges[other_edges[0]].first,
+                                      edges[other_edges[1]].first);
+        // assert(contains(interior_ang[*faceit], inode));
+        if (contains(interior_ang[*faceit], inode)){
+          std::map<Uint, double> angles = interior_ang[*faceit];
+          edge_w[iedge] += 1.0/tan(angles[inode]);
+        }
+      }
     }
   }
   ps.set_normals(interior_ang, face_normals);

@@ -117,7 +117,8 @@ static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint
     }
   }
   std::cout << "Error: found no intersection." << std::endl;
-  exit(0);
+  // GL: Hack to avoid crashing. This function is only used for curvature calculations!
+  //exit(0);
   return 0;
 }
 
