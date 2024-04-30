@@ -16,6 +16,7 @@
 #include "TriangleInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
 #include "XDMFTriangleInterpol.hpp"
+#include "XDMFTetInterpol.hpp"
 #endif
 #include "Initializer.hpp"
 
@@ -26,7 +27,7 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     intp = std::make_shared<AnalyticInterpol>(infilename);
   }
   else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf" ||
-           mode == "tet" || mode == "triangle" || mode == "trianglefreq" || mode == "xdmftriangle"){
+           mode == "tet" || mode == "triangle" || mode == "trianglefreq" || mode == "xdmftriangle" || mode == "xdmftet"){
 #ifdef USE_DOLFIN
     if (mode == "tet"){
       intp = std::make_shared<TetInterpol>(infilename);
@@ -36,6 +37,9 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     }
     else if (mode == "trianglefreq"){
       intp = std::make_shared<TriangleFreqInterpol>(infilename);
+    }
+    else if (mode == "xdmftet"){
+      intp = std::make_shared<XDMFTetInterpol>(infilename);
     }
     else if (mode == "xdmftriangle"){
       intp = std::make_shared<XDMFTriangleInterpol>(infilename);

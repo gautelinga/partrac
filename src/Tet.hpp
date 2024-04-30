@@ -4,6 +4,7 @@
 
 #include <dolfin.h>
 #include <array>
+#include "typedefs.hpp"
 
 class Tet
 {
@@ -15,6 +16,8 @@ public:
 
   void xyz2bary(double x, double y, double z,
                 double &r, double &s, double &t, double &u) const;
+
+  bool contains(const Vector3d& x) const;
 
   void linearbasis(double r, double s, double t, double u,
                    //std::array<double, 4> &N) const;

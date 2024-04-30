@@ -23,9 +23,11 @@ add_library(${PROJECT_NAME}_interpol
   TriangleInterpol.cpp TriangleInterpol.hpp
   TriangleFreqInterpol.cpp TriangleFreqInterpol.hpp
   XDMFTriangleInterpol.cpp XDMFTriangleInterpol.hpp
+  XDMFTetInterpol.cpp XDMFTetInterpol.hpp
   Tet.cpp Tet.hpp
   Triangle.cpp Triangle.hpp
   dolfin_helpers.cpp dolfin_helpers.hpp
+  xdmf_helpers.cpp xdmf_helpers.hpp
 )
 
 

@@ -257,10 +257,12 @@ public:
 
     double R = sqrt(La*Lb);
 
-    Vector3d x_0 = {-R/sqrt(2.),  -R/sqrt(6.0), -R/sqrt(3.0)/2};
-    Vector3d x_1 = { R/sqrt(2.),  -R/sqrt(6.0), -R/sqrt(3.0)/2};
-    Vector3d x_2 = {         0., R*sqrt(2./3.), -R/sqrt(3.0)/2};
-    Vector3d x_3 = {         0.,            0.,  R*sqrt(3.0)/2};
+    Vector3d x_c = {prm.x0, prm.y0, prm.z0};
+
+    Vector3d x_0 = {prm.x0 - R/sqrt(2.), prm.y0 - R/sqrt(6.0),   prm.z0 - R/sqrt(3.0)/2};
+    Vector3d x_1 = {prm.x0 + R/sqrt(2.), prm.y0 - R/sqrt(6.0),   prm.z0 - R/sqrt(3.0)/2};
+    Vector3d x_2 = {prm.x0,              prm.y0 + R*sqrt(2./3.), prm.z0 - R/sqrt(3.0)/2};
+    Vector3d x_3 = {prm.x0,              prm.y0,                 prm.z0 + R*sqrt(3.0)/2};
 
     std::cout << x_0.norm() << std::endl;
     std::cout << x_1.norm() << std::endl;
@@ -273,7 +275,7 @@ public:
     std::cout << (x_3-x_1).norm() << std::endl;
     std::cout << (x_3-x_2).norm() << std::endl;
 
-
+    /*
     intp->probe(x_0);
     bool inside_0 = intp->inside_domain();
     intp->probe(x_1);
@@ -282,12 +284,24 @@ public:
     bool inside_2 = intp->inside_domain();
     intp->probe(x_3);
     bool inside_3 = intp->inside_domain();
+    */
+
+    double t0 = 0.;  // Not used in practice
+    int cell_id = -1;
+
+    bool inside_0 = intp->probe_light(x_0, t0, cell_id);
+    bool inside_1 = intp->probe_light(x_1, t0, cell_id);
+    bool inside_2 = intp->probe_light(x_2, t0, cell_id);
+    bool inside_3 = intp->probe_light(x_3, t0, cell_id);
 
     if (inside_0 && inside_1 && inside_2 && inside_3){
       std::cout << "Ellipsoid inside domain." << std::endl;
     }
     else {
       std::cout << "Ellipsoid not inside domain" << std::endl;
+      
+      
+
       exit(0);
     }
 
@@ -323,9 +337,9 @@ public:
                                     pset_loc, prm.ds_max, 0.0, false);
       for (Uint irw=0; irw<pset_loc.N(); ++irw){
         Vector3d x = pset_loc.x(irw);
-        Vector3d nn = x / x.norm();
+        Vector3d nn = (x - x_c)/ (x - x_c).norm();
         double rad = 1./sqrt(nn[0]*nn[0]/lx2 + nn[1]*nn[1]/ly2 + nn[2]*nn[2]/lz2);
-        pset_loc.set_x(irw, rad * nn);
+        pset_loc.set_x(irw, x_c + rad * nn);
       }
       n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
                                pset_loc, prm.ds_min, 0.0);

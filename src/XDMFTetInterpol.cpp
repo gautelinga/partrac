@@ -1,20 +1,20 @@
 #ifdef USE_DOLFIN
-#include "XDMFTriangleInterpol.hpp"
+#include "XDMFTetInterpol.hpp"
 #include "Timestamps.hpp"
 //#include "H5Cpp.h"
 #include <boost/algorithm/string.hpp>
 #include <cassert>
-#include "dolfin_elements/P1_2.h"
-#include "dolfin_elements/P2_2.h"
-#include "dolfin_elements/vP1_2.h"
-#include "dolfin_elements/vP2_2.h"
+#include "dolfin_elements/P1_3.h"
+//#include "dolfin_elements/P2_3.h"
+#include "dolfin_elements/vP1_3.h"
+//#include "dolfin_elements/vP2_3.h"
 #include "PeriodicBC.hpp"
 #include "dolfin_helpers.hpp"
 #include "xdmf_helpers.hpp"
 
 //using namespace H5;
 
-XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
+XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   : Interpol(infilename)
 {
 
@@ -52,6 +52,9 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   if (dolfin_params["periodic_y"] == "true"){
     periodic[1] = true;
   }
+  if (dolfin_params["periodic_z"] == "true"){
+    periodic[2] = true;
+  }
   include_pressure = !(dolfin_params["ignore_pressure"] == "true");
   include_phi = (dolfin_params["include_phi"] == "true");
 
@@ -86,18 +89,18 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
 
   dolfin::HDF5File meshfile(MPI_COMM_WORLD, h5filename_u, "r");
 
-  std::string cell_type_str = "triangle";
+  std::string cell_type_str = "tetrahedron";
+  Uint gdim = 3;
+
   std::unique_ptr<dolfin::CellType> cell_type(dolfin::CellType::create(cell_type_str));
 
   std::vector<std::int64_t> coords_shape = dolfin::HDF5Interface::get_dataset_shape(meshfile.h5_id(), geometry_path);
-
-  Uint gdim = 2;
 
   meshfile.read(mesh_in, topology_path, geometry_path, gdim, *cell_type, -1, coords_shape[0], false);
 
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
   dim = mesh->geometry().dim();
-  assert(dim == gdim);
+  assert(gdim == dim);
   mesh->init();
 
   std::vector<double> xx = mesh->coordinates();
@@ -113,11 +116,10 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
 
-  // Precompute all triangles Taylor-Hood P2-P1
+  // Precompute all tets Taylor-Hood P2-P1
   // FIXME compute on the fly and save
-  triangles_.resize(mesh->num_cells());
+  tets_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
-  //ufc_cells_.resize(mesh->num_cells());
   coordinate_dofs_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
@@ -126,24 +128,21 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
     dolfin::Cell dolfin_cell(*mesh, i);
     dolfin_cell.get_coordinate_dofs(coordinate_dofs_[i]);
 
-    triangles_[i] = Triangle(dolfin_cell);
+    tets_[i] = Tet(dolfin_cell);
     dolfin_cells_[i] = dolfin_cell;
-    //dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
   // Build cell neighbour list for lookup speed
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
 
   // Identify edge cells
   cell_type_.resize(mesh->num_cells());
-  //label_cell_type(cell_type_, cell2cells_, dim);
 
-  double tol = 1e-12; // heuristic
+  double tol = 1e-4; // 1e-12; // heuristic
 
   apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
 
   label_cell_type(cell_type_, cell2cells_, dim);
 
-  //compute_normals(cell_type_, triangles_);
   cell_normal_.resize(mesh->num_cells());
   cell_facet_midpoint_.resize(mesh->num_cells());
   perm_.resize(mesh->num_cells());
@@ -182,56 +181,40 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
   std::cout << "Made periodic domain." << std::endl;
-
-  std::string u_el = dolfin_params["velocity_space"];
-  std::string p_el = dolfin_params["pressure_space"];
   
   // Velocity
-  u_space_ = std::make_shared<vP1_2::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_u = 3;
+  u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh, constrained_domain);
+  //u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh);
+  ncoeffs_u = 4;
 
   // Pressure
-  p_space_ = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_p = 3;
+  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+  //p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh);
+  ncoeffs_p = 4;
 
   // const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
   auto xdof = p_space_->tabulate_dof_coordinates();
 
-  std::map<std::tuple<double, double>, Uint> xmap;
-  for ( Uint j=0; j < xdof.size()/2; ++j ){
-    //std::cout << " " << x_dof[i] << " " << x_dof[i+1] << std::endl;
-    xmap[{xdof[2*j], xdof[2*j+1]}] = j;
+  std::map<std::tuple<double, double, double>, Uint> xmap;
+  for ( Uint j=0; j < xdof.size()/dim; ++j ){
+    xmap[{xdof[dim*j], xdof[dim*j+1], xdof[dim*j+2]}] = j;
   }
 
   std::vector<double> xdata;
   read_dataset_vector(h5filename_u, geometry_path, xdata, dim);
 
-  j2i.resize(xdof.size()/2);
-  for ( Uint i=0; i < xdata.size()/2; ++i ){
-    Uint j = xmap[{xdata[2*i], xdata[2*i+1]}];
+  j2i.resize(xdof.size()/dim);
+  for ( Uint i=0; i < xdata.size()/dim; ++i ){
+    Uint j = xmap[{xdata[dim*i], xdata[dim*i+1], xdata[dim*i+2]}];
     j2i[j] = i;
   }
 
   u_prev_data_.resize(xdof.size());
   u_next_data_.resize(xdof.size());
-  p_prev_data_.resize(xdof.size()/2);
-  p_next_data_.resize(xdof.size()/2);
-  phi_prev_data_.resize(xdof.size()/2);
-  phi_next_data_.resize(xdof.size()/2);
-
-  //u_prev_coefficients_.resize(dim*ncoeffs_u);
-  //u_next_coefficients_.resize(dim*ncoeffs_u);
-
-  //Nu_.resize(ncoeffs_u);
-  //Nux_.resize(ncoeffs_u);
-  //Nuy_.resize(ncoeffs_u);
-
-  //if (include_pressure){
-    //p_prev_coefficients_.resize(ncoeffs_p); // not needed?
-    //p_next_coefficients_.resize(ncoeffs_p);
-    
-    //Np_.resize(ncoeffs_p);
-  //}
+  p_prev_data_.resize(xdof.size()/dim);
+  p_next_data_.resize(xdof.size()/dim);
+  phi_prev_data_.resize(xdof.size()/dim);
+  phi_next_data_.resize(xdof.size()/dim);
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
@@ -262,7 +245,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   }
 }
 
-void XDMFTriangleInterpol::update(const double t)
+void XDMFTetInterpol::update(const double t)
 {
   MultiStampPair sp = ts.get(t);
 
@@ -324,13 +307,13 @@ void XDMFTriangleInterpol::update(const double t)
 
 }
 
-void XDMFTriangleInterpol::probe(const Vector3d &x, const double t)
+void XDMFTetInterpol::probe(const Vector3d &x, const double t)
 {
   int id_prev = -1;
   probe(x, t, id_prev);
 }
 
-void XDMFTriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
+void XDMFTetInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
@@ -341,7 +324,7 @@ void XDMFTriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x
   }
 }
 
-Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
+Vector3d XDMFTetInterpol::_modx(const Vector3d &x){
   Vector3d x_loc;
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
@@ -354,7 +337,7 @@ Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-void XDMFTriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
+void XDMFTetInterpol::probe(const Vector3d &x, const double t, int& id_prev)
 {
   // Not good for parallelization
   inside = probe_light(x, t, id_prev);
@@ -380,7 +363,7 @@ void XDMFTriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev
   }
 }
 
-bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
+bool XDMFTetInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
 {
   // TODO: CHECK if thread safe
   assert(t <= t_next && t >= t_prev);
@@ -393,7 +376,7 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
 
   // Search in neighborhood first
   if (id_prev >= 0){
-    if (triangles_[id_prev].contains(xx_loc))
+    if (tets_[id_prev].contains(xx_loc))
     {
       id = id_prev;
       inside_loc = true;
@@ -402,7 +385,7 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
     }
     else {
       for ( auto neigh_id : cell2cells_[id_prev]){
-        if (triangles_[neigh_id].contains(xx_loc))
+        if (tets_[neigh_id].contains(xx_loc))
         {
           inside_loc = true;
           found = true;
@@ -432,7 +415,7 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
   return inside_loc;
 }
 
-void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void XDMFTetInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
   dolfin::Array<double> x_loc(dim);
   _modx(x_loc, x);
@@ -440,18 +423,19 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
   double _alpha_t = (tin-t_prev)/(t_next-t_prev);
 
   // Compute Pk-Pl basis at x
-  double r1, r2, r3;
-  triangles_[id].xy2bary(x_loc[0], x_loc[1], r1, r2, r3);
+  double r1, r2, r3, r4;
+  tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
 
   std::vector<double> _Nu_(ncoeffs_u);
   std::vector<double> _Np_(ncoeffs_p);
   std::vector<double> _Nux_(ncoeffs_u);
   std::vector<double> _Nuy_(ncoeffs_u);
+  std::vector<double> _Nuz_(ncoeffs_u);
 
-  triangles_[id].linearbasis(r1, r2, r3, _Nu_);
+  tets_[id].linearbasis(r1, r2, r3, r4, _Nu_);
 
   if (include_pressure){
-    triangles_[id].linearbasis(r1, r2, r3, _Np_);
+    tets_[id].linearbasis(r1, r2, r3, r4, _Np_);
   }
 
   std::vector<double> u_prev_block(ncoeffs_u*dim);
@@ -469,42 +453,43 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
   // Evaluate
   Vector3d U_prev = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_prev_block.begin(), 0.0),
                      std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_block[ncoeffs_u], 0.0),
-                     0.0};
+                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_block[2*ncoeffs_u], 0.0)};
   Vector3d U_next = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_next_block.begin(), 0.0),
                      std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[ncoeffs_u], 0.0),
-                     0.0 };
+                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[2*ncoeffs_u], 0.0)};
 
   Matrix3d gradU_prev, gradU_next;
   if (this->int_order > 1){
-    triangles_[id].linearderiv(r1, r2, r3, _Nux_, _Nuy_);
+    tets_[id].linearderiv(r1, r2, r3, r4, _Nux_, _Nuy_, _Nuz_);
 
     gradU_prev <<
       std::inner_product(_Nux_.begin(), _Nux_.end(), u_prev_block.begin(), 0.0),
       std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_prev_block.begin(), 0.0),
-      0.0,
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), u_prev_block.begin(), 0.0),
       std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_block[ncoeffs_u], 0.0),
       std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_block[ncoeffs_u], 0.0),
-      0.0,
-      0.0,
-      0.0,
-      0.0;
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_prev_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_block[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_block[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_prev_block[2*ncoeffs_u], 0.0);
     gradU_next << 
       std::inner_product(_Nux_.begin(), _Nux_.end(), u_next_block.begin(), 0.0),
       std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_next_block.begin(), 0.0),
-      0.0,
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), u_next_block.begin(), 0.0),
       std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_block[ncoeffs_u], 0.0),
       std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_block[ncoeffs_u], 0.0),
-      0.0,
-      0.0,
-      0.0,
-      0.0;
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_next_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_block[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_block[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_next_block[2*ncoeffs_u], 0.0);
   }
 
+  /*
   if (cell_type_[id] == 1 && true){
     const Uint ncoeffs_u_2 = 6;
     std::vector<double> _Nu2_(ncoeffs_u_2);
 
-    triangles_[id].quadbasis(r1, r2, r3, _Nu2_);
+    tets_[id].quadbasis(r1, r2, r3, _Nu2_);
     std::vector<double> u_prev_block_2(ncoeffs_u_2*dim);
     std::vector<double> u_next_block_2(ncoeffs_u_2*dim);
     
@@ -591,23 +576,6 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
           u_next_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_next * cell_normal_[id][j];
         }
       }
-      /*
-      double n_dot_grad_g_uu = triangles_[id].dot_grad_gi(cell_normal_[id][0], cell_normal_[id][1], id_uu);
-      std::vector<double> tau = {cell_normal_[id][1], -cell_normal_[id][0]};
-      std::vector<double> t_dot_grad_g = {triangles_[id].dot_grad_gi(tau[0], tau[1], (id_uu + 1) % (dim+1)),
-                                          triangles_[id].dot_grad_gi(tau[0], tau[1], (id_uu + 2) % (dim+1))};
-
-      for (Uint i=0; i<dim+1; ++i){
-        for (Uint j=0; j<dim; ++j){
-          // Tangential correction
-          if (t_dot_grad_g[i] > 1e-12){
-            // std::cout << "Larger" << std::endl;
-            u_prev_block_2[j*ncoeffs_u_2 + neigh_dof_loc[id_uu][i]] += -0.25 * n_dot_grad_g_uu / t_dot_grad_g[i] * tau[j] * un_prev;
-            u_next_block_2[j*ncoeffs_u_2 + neigh_dof_loc[id_uu][i]] += -0.25 * n_dot_grad_g_uu / t_dot_grad_g[i] * tau[j] * un_next;
-          }
-        }
-      }
-      */
     }
     else {
       // Linear combination
@@ -646,7 +614,7 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
       std::vector<double> _Nu2x_(ncoeffs_u_2);
       std::vector<double> _Nu2y_(ncoeffs_u_2);
 
-      triangles_[id].quadderiv(r1, r2, r3, _Nu2x_, _Nu2y_);
+      tets_[id].quadderiv(r1, r2, r3, _Nu2x_, _Nu2y_);
 
       gradU_prev2 <<
         std::inner_product(_Nu2x_.begin(), _Nu2x_.end(), u_prev_block_2.begin(), 0.0),
@@ -673,6 +641,7 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
       gradU_next = gradU_next2;
     }
   }
+  */
 
   // Update
   fields.U = _alpha_t * U_next + (1-_alpha_t) * U_prev;
