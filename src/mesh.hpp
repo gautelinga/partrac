@@ -76,9 +76,8 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
         }
       }
       Uint count = 0;
-      for (std::set<Uint>::const_iterator sit=unique_nodes.begin();
-           sit != unique_nodes.end(); ++sit){
-        faces_arr[iface*faces_dims[1] + count] = *sit;
+      for ( auto & inode : unique_nodes ){
+        faces_arr[iface*faces_dims[1] + count] = inode;
         ++count;
       }
       dA[iface] = ps.triangle_area(iface, faces, edges);
@@ -187,6 +186,7 @@ std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint 
   return {knode, mnedges[0], mnedges[1]};
 }
 
+/*
 bool append_new_node(const Uint inode, const Uint jnode,
                      std::vector<Vector3d>& x_rw,
                      std::vector<Vector3d>& u_rw,
@@ -197,6 +197,9 @@ bool append_new_node(const Uint inode, const Uint jnode,
                      Interpol *intp,
                      const int int_order){
                        // To become obsolete...
+
+  std::cout << "Shouldn't use this" << std::endl;
+
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
   int refinement_insertion_levels = 10;
   intp->probe(x_rw_new);
@@ -258,6 +261,7 @@ bool append_new_node(const Uint inode, const Uint jnode,
   ++Nrw;
   return true;
 }
+*/
 
 Uint sheet_refinement(FacesType &faces,
                       EdgesType &edges,
@@ -267,7 +271,8 @@ Uint sheet_refinement(FacesType &faces,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
-                      const bool cut_if_stuck){
+                      const bool cut_if_stuck,
+                      const bool check_if_inside=true){
   bool changed;
   Uint n_add = 0;
   std::set<Uint> edges_to_remove;
@@ -276,10 +281,9 @@ Uint sheet_refinement(FacesType &faces,
     changed = false;
 
     std::vector<double> ds_ratio_;
-    for (EdgesType::const_iterator edgeit = edges.begin();
-         edgeit != edges.end(); ++edgeit){
-      Uint inode = edgeit->first[0];
-      Uint jnode = edgeit->first[1];
+    for ( auto & edge : edges ){
+      Uint inode = edge.first[0];
+      Uint jnode = edge.first[1];
       double ds = ps.dist(inode, jnode);
       // std::cout << inode << " " << jnode << " " << ds << std::endl;
       //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
@@ -290,15 +294,12 @@ Uint sheet_refinement(FacesType &faces,
     std::vector<size_t> ids_ = argsort_descending(ds_ratio_);
 
     // Don't refine inlet edges
-    for (EdgesListType::const_iterator nodeit = edges_inlet.begin();
-         nodeit != edges_inlet.end(); ++nodeit){
-      ds_ratio_[*nodeit] = 0.0;
+    for ( auto & inode : edges_inlet ){
+      ds_ratio_[inode] = 0.0;
     }
 
-    for (std::vector<size_t>::iterator itedge = ids_.begin();
-         itedge != ids_.end(); ++itedge){
+    for ( auto & iedge : ids_ ){
 
-      Uint iedge = *itedge;
       if (!ps.has_space()){
         // No more points can fit
         break;
@@ -313,7 +314,7 @@ Uint sheet_refinement(FacesType &faces,
 
       Uint new_inode = ps.N();
       // Add point
-      bool added = ps.insert_node_between(inode, jnode);
+      bool added = ps.insert_node_between(inode, jnode, check_if_inside);
       if (added){
         changed = true;
         ++n_add;
@@ -362,25 +363,24 @@ Uint sheet_refinement(FacesType &faces,
         }
       }
       else {
-        std::cout << "Here we should remove this edge." << std::endl;
+        //std::cout << "Here we should remove this edge." << std::endl;
         //exit(0);
-        edges_to_remove.insert(iedge);
+        if (cut_if_stuck)
+          edges_to_remove.insert(iedge);
       }
     }
   } while (changed);
   if (edges_to_remove.size() > 0){
-    if (!cut_if_stuck){
-      std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
-      exit(0);
-    }
+    //if (!cut_if_stuck){
+    //  std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
+    //  exit(0);
+    //}
     std::vector<bool> edge_isactive(edges.size(), true);
     std::vector<bool> face_isactive(faces.size(), true);
-    for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
-         sit != edges_to_remove.end(); ++sit){
-      edge_isactive[*sit] = false;
-      for (FacesListType::const_iterator jfaceit=edge2faces[*sit].begin();
-           jfaceit != edge2faces[*sit].end(); ++jfaceit){
-          face_isactive[*jfaceit] = false;
+    for (auto & jedge : edges_to_remove ){
+      edge_isactive[jedge] = false;
+      for ( auto & jface : edge2faces[jedge] ){
+          face_isactive[jface] = false;
       }
     }
     NodesListType nodes_inlet_dummy;
@@ -496,10 +496,8 @@ void compute_edge2faces(Edge2FacesType &edge2faces,
                         const FacesType &faces,
                         const EdgesType &edges){
   edge2faces.clear();
-  for (EdgesType::const_iterator edgeit = edges.begin();
-       edgeit != edges.end(); ++edgeit){
-    edge2faces.push_back({});
-  }
+  edge2faces.resize(edges.size());
+
   for (Uint iface=0; iface < faces.size(); ++iface){
     for (Uint i=0; i < 3; ++i){
       edge2faces[faces[iface].first[i]].push_back(iface);
@@ -511,9 +509,8 @@ void compute_node2edges(Node2EdgesType &node2edges,
                         const EdgesType &edges,
                         const Uint Nrw){
   node2edges.clear();
-  for (Uint irw=0; irw<Nrw; ++irw){
-    node2edges.push_back({});
-  }
+  node2edges.resize(Nrw);
+  
   for (Uint iedge=0; iedge < edges.size(); ++iedge){
     for (Uint i=0; i < 2; ++i){
       node2edges[edges[iedge].first[i]].push_back(iedge);
@@ -521,6 +518,15 @@ void compute_node2edges(Node2EdgesType &node2edges,
   }
 }
 
+// GL: Template this
+template<typename T>
+void print(const T vec){
+  for ( auto & elem : vec ){
+    std::cout << elem << " ";
+  }
+  std::cout << std::endl;
+}
+/*
 void print(const std::vector<Uint> vec){
   for (std::vector<Uint>::const_iterator vit = vec.begin();
        vit != vec.end(); ++vit){
@@ -544,25 +550,27 @@ void print(const std::list<Uint> vec){
   }
   std::cout << std::endl;
 }
+*/
 
 void get_conodes(std::set<Uint> &inodes,
                  std::map<Uint, Uint> &icoedges,
                  const Uint inode,
                  const Node2EdgesType &node2edges,
-                 const EdgesType &edges){
+                 const EdgesType &edges,
+                 const std::vector<bool>& edge_isactive){
   //std::cout << "Getting conodes of " << inode << std::endl;
   inodes.clear();
   icoedges.clear();
 
   //print(inodes);
 
-  for (EdgesListType::const_iterator edgeit=node2edges[inode].begin();
-       edgeit != node2edges[inode].end(); ++edgeit){
-    for (Uint j=0; j < 2; ++j){
-      Uint jnode = edges[*edgeit].first[j];
-      if (jnode != inode){
-        inodes.insert(jnode);
-        icoedges[jnode] = *edgeit;
+  for ( auto & iedge : node2edges[inode] ){
+    if (edge_isactive[iedge]){
+      for ( auto & jnode : edges[iedge].first ){
+        if (jnode != inode){
+          inodes.insert(jnode);
+          icoedges[jnode] = iedge;
+        }
       }
     }
   }
@@ -574,15 +582,12 @@ std::set<Uint> get_cofaces(const Uint iedge,
                       const FacesType &faces){
   FacesListType ifaces = edge2faces[iedge];
   std::set<Uint> jfaces;
-  for (FacesListType::const_iterator ifaceit=edge2faces[iedge].begin();
-       ifaceit != edge2faces[iedge].end(); ++ifaceit){
-    for (Uint k=0; k<3; ++k){
-      Uint kedge = faces[*ifaceit].first[k];
+  for ( auto & iface : edge2faces[iedge] ){
+    for ( auto & kedge : faces[iface].first ){
       if (kedge != iedge){
-        for (FacesListType::const_iterator kfaceit=edge2faces[kedge].begin();
-             kfaceit != edge2faces[kedge].end(); ++kfaceit){
-          if (*kfaceit != *ifaceit){
-            jfaces.insert(*kfaceit);
+        for (auto & kface : edge2faces[kedge] ){
+          if (kface != iface){
+            jfaces.insert(kface);
           }
         }
       }
@@ -594,9 +599,8 @@ std::set<Uint> get_cofaces(const Uint iedge,
 bool is_border_node(const Uint inode,
                     const Node2EdgesType &node2edges,
                     const Edge2FacesType &edge2faces){
-  for (EdgesListType::const_iterator edgeit=node2edges[inode].begin();
-       edgeit != node2edges[inode].end(); ++edgeit){
-    if (edge2faces[*edgeit].size() == 1){
+  for ( auto & iedge : node2edges[inode] ){
+    if (edge2faces[iedge].size() == 1){
       return true;
     }
   }
@@ -643,10 +647,9 @@ bool normals_are_ok(const Uint iedge,
   Uint inode = edges[iedge].first[0];
   Uint jnode = edges[iedge].first[1];
 
-  for (std::set<Uint>::const_iterator jfaceit=jfaces.begin();
-       jfaceit != jfaces.end(); ++jfaceit){
-    Uint jedge = faces[*jfaceit].first[0];
-    Uint kedge = faces[*jfaceit].first[1];
+  for ( auto & jface : jfaces ){
+    Uint jedge = faces[jface].first[0];
+    Uint kedge = faces[jface].first[1];
 
     Vector3d n_before = get_normal(jedge, kedge, edges, x_rw, {}, x);
     Vector3d n_after = get_normal(jedge, kedge, edges, x_rw,
@@ -664,23 +667,18 @@ std::vector<Uint> get_incident_faces(const Uint iedge,
   Uint inode = edges[iedge].first[0];
   Uint jnode = edges[iedge].first[1];
   std::set<Uint> kfaces_set;
-  for (EdgesListType::const_iterator edgeit=node2edges[inode].begin();
-       edgeit != node2edges[inode].end(); ++edgeit){
-    for (FacesListType::const_iterator faceit=edge2faces[*edgeit].begin();
-         faceit != edge2faces[*edgeit].end(); ++faceit){
-      kfaces_set.insert(*faceit);
+  for ( auto & kedge : node2edges[inode] ){
+    for ( auto & kface : edge2faces[kedge] ){
+      kfaces_set.insert(kface);
     }
   }
-  for (EdgesListType::const_iterator edgeit=node2edges[jnode].begin();
-       edgeit != node2edges[jnode].end(); ++edgeit){
-    for (FacesListType::const_iterator faceit=edge2faces[*edgeit].begin();
-         faceit != edge2faces[*edgeit].end(); ++faceit){
-      kfaces_set.insert(*faceit);
+  for ( auto & kedge : node2edges[jnode] ){
+    for ( auto & kface : edge2faces[kedge] ){
+      kfaces_set.insert(kface);
     }
   }
-  for (FacesListType::const_iterator faceit=edge2faces[iedge].begin();
-       faceit != edge2faces[iedge].end(); ++faceit){
-    kfaces_set.erase(*faceit);
+  for ( auto & kface : edge2faces[iedge] ){
+    kfaces_set.erase(kface);
   }
   std::vector<Uint> kfaces(kfaces_set.begin(), kfaces_set.end());
   return kfaces;
@@ -696,18 +694,32 @@ bool collapse_edge(const Uint iedge,
                    std::vector<bool> &node_isactive,
                    ParticleSet& ps){
 
+  // This function will collapse the edge 'iedge' and thus remove it.
+  // The 1-2 facets next to it will be removed.
+  // The two nodes it connects to will be replaced by one of them.
+  // The dicts node2edges and edge2faces will be updated.
+
+  // Should only be called if edge is active (collapsable).
   assert(edge_isactive[iedge]);
 
-  Uint inode = edges[iedge].first[0];
-  Uint jnode = edges[iedge].first[1];
+  // Get nodes of that edge
+  Uint inode = std::min(edges[iedge].first[0], edges[iedge].first[1]);
+  Uint jnode = std::max(edges[iedge].first[0], edges[iedge].first[1]);
   // double ds0 = edges[iedge].second;
+  
+  // Nodes that are connected to the respective nodes
   std::set<Uint> inodes;
   std::set<Uint> jnodes;
+
+  // Edges that are connected to the respective nodes 
   std::map<Uint, Uint> icoedges;
   std::map<Uint, Uint> jcoedges;
-  get_conodes(inodes, icoedges, inode, node2edges, edges);
-  get_conodes(jnodes, jcoedges, jnode, node2edges, edges);
+
+  get_conodes(inodes, icoedges, inode, node2edges, edges, edge_isactive);
+  get_conodes(jnodes, jcoedges, jnode, node2edges, edges, edge_isactive);
   std::vector<Uint> joint_nodes;
+  
+  // Nodes that are connected to both nodes (should be <= 2)
   set_intersection(inodes.begin(), inodes.end(),
                    jnodes.begin(), jnodes.end(),
                    back_inserter(joint_nodes));
@@ -718,11 +730,18 @@ bool collapse_edge(const Uint iedge,
   //print(joint_nodes);
 
   // Check if it has too many/too few common joint nodes.
-  if (joint_nodes.size() > 2){
+  int num_faces = edge2faces[iedge].size();
+
+  // std::cout << "num_faces=" << num_faces << std::endl;
+
+  if (joint_nodes.size() > num_faces ){
     // Wrong number of joint nodes
-    // std::cout << "Wrong number of joint nodes." << std::endl;
+    //std::cout << "Wrong number of joint nodes: " << joint_nodes.size() << std::endl;
     return false;
   }
+
+  //if ()
+
   Vector3d x;
   bool new_node_is_good = get_new_pos(x, ps, iedge, edges, edge2faces, node2edges);
   //bool new_node_is_good = ps.get_new_pos ...?
@@ -739,11 +758,10 @@ bool collapse_edge(const Uint iedge,
 
   double dA_res = 0.;
   double dA0_res = 0.;
-  for (FacesListType::const_iterator faceit=edge2faces[iedge].begin();
-       faceit != edge2faces[iedge].end(); ++faceit){
+  for ( auto & iface : edge2faces[iedge] ){
     //dA_res += area(*faceit, x_rw, faces, edges);
-    dA_res += ps.triangle_area(*faceit, faces, edges);
-    dA0_res += faces[*faceit].second;
+    dA_res += ps.triangle_area(iface, faces, edges);
+    dA0_res += faces[iface].second;
     //faces[*faceit].second = 0.;
   }
 
@@ -785,11 +803,10 @@ bool collapse_edge(const Uint iedge,
   */
   ps.replace_nodes(x, inode, jnode);
 
-  for (EdgesListType::const_iterator edgeit=node2edges[std::max(inode, jnode)].begin();
-       edgeit != node2edges[std::max(inode, jnode)].end(); ++edgeit){
+  for (auto & jedge : node2edges[jnode] ){
     for (Uint j=0; j<2; ++j){
-      if (edges[*edgeit].first[j] == std::max(inode, jnode)){
-        edges[*edgeit].first[j] = std::min(inode, jnode);
+      if ( edges[jedge].first[j] == jnode ){
+        edges[jedge].first[j] = inode;
       }
     }
   }
@@ -806,11 +823,11 @@ bool collapse_edge(const Uint iedge,
   //print(iedges_set);
 
   std::map<Uint, Uint> replace_edges;
-  for (std::vector<Uint>::const_iterator joint_node_it=joint_nodes.begin();
-       joint_node_it != joint_nodes.end(); ++joint_node_it){
-    Uint kedge_min = std::min(icoedges[*joint_node_it], jcoedges[*joint_node_it]);
-    Uint kedge_max = std::max(icoedges[*joint_node_it], jcoedges[*joint_node_it]);
+  for (auto & knode : joint_nodes ){
+    Uint kedge_min = std::min(icoedges[knode], jcoedges[knode]);
+    Uint kedge_max = std::max(icoedges[knode], jcoedges[knode]);
     replace_edges[kedge_max] = kedge_min;
+
     assert(edge_isactive[kedge_max]);
     edge_isactive[kedge_max] = false;
     if (contains(iedges_set, kedge_max))
@@ -819,18 +836,13 @@ bool collapse_edge(const Uint iedge,
   }
   //print(iedges_set);
 
-  assert(edge_isactive[iedge]);
+  //assert(edge_isactive[iedge]);
   edge_isactive[iedge] = false;
 
-  for (std::set<Uint>::const_iterator jfaceit=jfaces.begin();
-       jfaceit != jfaces.end(); ++jfaceit){
-    //std::cout << "faces[" << *jfaceit << "].first="
-    //     << faces[*jfaceit].first[0] << " "
-    //     << faces[*jfaceit].first[1] << " "
-    //     << faces[*jfaceit].first[2] << std::endl;
+  for (auto & jface : jfaces ){
     for (Uint j=0; j<3; ++j){
-      if (contains(replace_edges, faces[*jfaceit].first[j])){
-        faces[*jfaceit].first[j] = replace_edges[faces[*jfaceit].first[j]];
+      if (contains(replace_edges, faces[jface].first[j])){
+        faces[jface].first[j] = replace_edges[faces[jface].first[j]];
       }
     }
     //std::cout << "faces[" << *jfaceit << "].first="
@@ -867,35 +879,33 @@ bool collapse_edge(const Uint iedge,
     faces[kface].second += dA0_res*w_[k]/wsum;
   }
 
-  for (FacesListType::const_iterator jfaceit=edge2faces[iedge].begin();
-       jfaceit != edge2faces[iedge].end(); ++jfaceit){
-    assert(face_isactive[*jfaceit]);
-    face_isactive[*jfaceit] = false;
+  // Deactivate faces adjacent to iedge
+  for (auto & jface : edge2faces[iedge] ){
+    assert(face_isactive[jface]);
+    face_isactive[jface] = false;
   }
 
   //print(node2edges[std::min(inode, jnode)]);
-  node2edges[std::min(inode, jnode)].assign(iedges_set.begin(), iedges_set.end());
+  node2edges[inode].assign(iedges_set.begin(), iedges_set.end());
   //print(node2edges[std::min(inode, jnode)]);
-  node2edges[std::max(inode, jnode)].clear();
-  assert(node_isactive[std::max(inode, jnode)]);
-  node_isactive[std::max(inode, jnode)] = false;
-  for (std::vector<Uint>::const_iterator joint_node_it=joint_nodes.begin();
-       joint_node_it != joint_nodes.end(); ++joint_node_it){
-    std::set<Uint> tmp_set(node2edges[*joint_node_it].begin(),
-                      node2edges[*joint_node_it].end());
+  node2edges[jnode].clear();
+  assert(node_isactive[jnode]);
+  node_isactive[jnode] = false;
+  
+  for (auto & knode : joint_nodes){
+    std::set<Uint> tmp_set(node2edges[knode].begin(), node2edges[knode].end());
     //print(node2edges[*joint_node_it]);
-    for (std::map<Uint, Uint>::const_iterator mit=replace_edges.begin();
-         mit != replace_edges.end(); ++mit){
-      tmp_set.erase(mit->first);
+    for (auto & mit : replace_edges ){
+      tmp_set.erase(mit.first);
     }
-    node2edges[*joint_node_it].assign(tmp_set.begin(), tmp_set.end());
+
+    node2edges[knode].assign(tmp_set.begin(), tmp_set.end());
     //print(node2edges[*joint_node_it]);
   }
 
-  for (std::map<Uint, Uint>::const_iterator mit=replace_edges.begin();
-       mit != replace_edges.end(); ++mit){
-    Uint kedge_max = mit->first;
-    Uint kedge_min = mit->second;
+  for (auto & mit : replace_edges ){
+    Uint kedge_max = mit.first;
+    Uint kedge_min = mit.second;
     std::vector<Uint> ifaces;
     set_symmetric_difference(edge2faces[kedge_min].begin(),
                              edge2faces[kedge_min].end(),
@@ -908,6 +918,7 @@ bool collapse_edge(const Uint iedge,
     //print(edge2faces[kedge_min]);
     edge2faces[kedge_max].clear();
   }
+
   edge2faces[iedge].clear();
 
   return true;
@@ -1037,9 +1048,8 @@ void remove_nodes_safely(FacesType &faces, EdgesType &edges,
   std::vector<bool> edge_isactive(edges.size(), true);
   for (Uint i=0; i<ps.N(); ++i){
     if (!node_isactive[i]){
-      for (EdgesListType::const_iterator edgeit = node2edges[i].begin();
-           edgeit != node2edges[i].end(); ++edgeit){
-        edge_isactive[*edgeit] = false;
+      for ( auto & iedge : node2edges[i] ){
+        edge_isactive[iedge] = false;
       }
     }
   }
@@ -1048,11 +1058,10 @@ void remove_nodes_safely(FacesType &faces, EdgesType &edges,
     exit(0);
     // Remove node from sheet (cut hole)
     std::vector<bool> face_isactive(faces.size(), true);
-    for (Uint iedge=0; iedge<edges.size(); ++iedge){
+    for (Uint iedge=0; iedge < edges.size(); ++iedge){
       if (!edge_isactive[iedge]){
-        for (FacesListType::const_iterator faceit = edge2faces[iedge].begin();
-             faceit != edge2faces[iedge].end(); ++faceit){
-          face_isactive[*faceit] = false;
+        for ( auto & iface : edge2faces[iedge] ){
+          face_isactive[iface] = false;
         }
       }
     }
@@ -1072,6 +1081,32 @@ void remove_nodes_safely(FacesType &faces, EdgesType &edges,
   }
 }
 
+void check_geometry(FacesType& faces, EdgesType& edges, std::vector<bool>& face_isactive, std::vector<bool>& edge_isactive){
+  std::vector<std::vector<Uint>> e2f(edges.size());
+
+  for ( Uint iface=0; iface < faces.size(); ++iface ){
+    //std::cout << iface << " ";
+    if (face_isactive[iface]){
+      for ( auto & iedge : faces[iface].first ){
+        //std::cout << iedge << " ";
+        e2f[iedge].push_back(iface);
+      }
+    }
+    //std::cout << std::endl;
+  }
+
+  for ( Uint iedge=0; iedge < e2f.size(); ++iedge ){
+    //std::cout << iedge << " " << e2f[iedge].size() << std::endl;
+    if (e2f[iedge].size() > 2) {
+      std::cout << "Non-manifold!" << std::endl;
+      break;
+    }
+    if (!edge_isactive[iedge] && e2f[iedge].size() > 0){
+      std::cout << "Active face points to inactive edge!" << std::endl;
+    }
+  }
+}
+
 Uint sheet_coarsening(FacesType &faces,
                       EdgesType &edges,
                       Edge2FacesType &edge2faces,
@@ -1081,9 +1116,6 @@ Uint sheet_coarsening(FacesType &faces,
                       ParticleSet& ps,
                       const double ds_min,
                       const double curv_refine_factor){
-  bool changed;
-  Uint n_coll = 0;
-  Uint iedge;
 
   std::vector<bool> face_isactive(faces.size(), true);
   std::vector<bool> edge_isactive(edges.size(), true);
@@ -1091,14 +1123,19 @@ Uint sheet_coarsening(FacesType &faces,
 
   // Do not allow inlet edges or adjacent edges to be collapsed
   std::vector<bool> edge_allow_collapse(edges.size(), true);
-  for (NodesListType::const_iterator nodeit=nodes_inlet.begin();
-       nodeit != nodes_inlet.end(); ++nodeit){
-    for (EdgesListType::const_iterator edgeit = node2edges[*nodeit].begin();
-         edgeit != node2edges[*nodeit].end(); ++edgeit){
-      edge_allow_collapse[*edgeit] = false;
+  for ( auto & inode : nodes_inlet ){
+    for ( auto & jedge : node2edges[inode] ){
+      edge_allow_collapse[jedge] = false;
     }
   }
   //
+
+  check_geometry(faces, edges, face_isactive, edge_isactive);
+
+  bool changed;
+  Uint n_coll = 0;
+  Uint iedge;
+
   do {
     changed = false;
     iedge = 0;
@@ -1113,6 +1150,7 @@ Uint sheet_coarsening(FacesType &faces,
       if (ds < ds_min_loc && edge_isactive[iedge] && edge_allow_collapse[iedge]){
         // std::cout << "TRYING to collapse edge " << iedge
         //      << ". ds = " << ds << " and ds_min = " << ds_min << std::endl;
+
         bool coll = collapse_edge(iedge, faces, edges,
                                   edge2faces,
                                   node2edges,
@@ -1120,12 +1158,15 @@ Uint sheet_coarsening(FacesType &faces,
                                   edge_isactive,
                                   node_isactive,
                                   ps);
+
+        check_geometry(faces, edges, face_isactive, edge_isactive);
+
         // what's wrong?
         //compute_edge2faces(edge2faces, faces, edges);
         //Edge2FacesType edge2faces_alt;
         //compute_edge2faces(edge2faces_alt, faces, edges);
         //assert_equal(edge2faces_alt, edge2faces);
-        //compute_node2edges(node2edges, edges, Nrw);
+        //compute_node2edges(node2edges, edges, ps.N());
         if (coll){
           changed = true;
           ++n_coll;
@@ -1161,11 +1202,9 @@ Uint strip_coarsening(EdgesType &edges,
   std::vector<bool> node_isactive(ps.N(), true);
 
   std::vector<bool> edge_allow_collapse(edges.size(), true);
-  for (NodesListType::const_iterator nodeit=nodes_inlet.begin();
-       nodeit != nodes_inlet.end(); ++nodeit){
-    for (EdgesListType::const_iterator edgeit=node2edges[*nodeit].begin();
-         edgeit != node2edges[*nodeit].end(); ++edgeit){
-      edge_allow_collapse[*edgeit] = false;
+  for ( auto & inode : nodes_inlet ){
+    for ( auto & jedge : node2edges[inode] ){
+      edge_allow_collapse[jedge] = false;
     }
   }
 

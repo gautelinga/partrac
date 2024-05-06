@@ -80,6 +80,8 @@ public:
   //
   virtual Matrix3d get_grada() = 0;
   //
+  virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded
+  //
   template<typename T>
   void assign_fields(T&, const std::map<std::string, bool>& output_fields);
 protected:

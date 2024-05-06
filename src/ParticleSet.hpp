@@ -15,7 +15,7 @@ public:
     //ParticleSet(const Uint Nrw_max, MPIwrap& mpi);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
     //template<typename T>
-    bool insert_node_between(const Uint, const Uint);
+    bool insert_node_between(const Uint, const Uint, const bool check_if_inside);
     double dist(const Uint inode, const Uint jnode) const { Vector3d dx = x_rw[inode]-x_rw[jnode]; return dx.norm(); };
     void copy_node(const Uint, const Uint);
     double triangle_area(const Uint iface, const FacesType& faces, const EdgesType& edges) const;
@@ -146,44 +146,86 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
 }
 
 //template<typename T>
-bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
+bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
-  int refinement_insertion_levels = 10;
-  intp->probe(x_rw_new);
-  if (!intp->inside_domain()){
-    std::cout << "Insertion failed! Need something more refined here." << std::endl;
-    return false;
-    exit(0);
-    Vector3d dx_rw_new = x_rw[inode]-x_rw[jnode];
-    double dx0 = dx_rw_new.norm();
-    Vector3d n0 = u_rw[inode]+u_rw[jnode];
-    n0 /= -n0.norm();
-    intp->probe(x_rw_new + dx0*n0);
+  int refinement_insertion_levels = 10; // 10;
+  
+  if (check_if_inside){
+    double t0 = 0.; // not needed?
+    int cell_id = cell_id_rw[inode];
+    
+    bool inside = intp->probe_light(x_rw_new, t0, cell_id);
+    if (!inside){
+      std::cout << "Insertion failed! Need something more refined here." << std::endl;
+      //return false;
+      //exit(0);
 
-    if (!intp->inside_domain()){
-      std::cout << "Insertion failed! Information:" << std::endl;
-      std::cout << n0 << std::endl;
-      std::cout << dx0 << std::endl;
-      std::cout << x_rw_new << std::endl;
-      std::cout << x_rw_new + dx0*n0 << std::endl;
-      exit(0);
+      Vector3d dx_rw_new = x_rw[inode]-x_rw[jnode];
+      double dx0 = dx_rw_new.norm();
 
-      return false;
-    }
-    double ddx = dx0/2;
-    double dx1 = dx0;
-    for (int i=2; i<(2+refinement_insertion_levels); ++i){
-      intp->probe(x_rw_new + ddx*n0);
-      if (intp->inside_domain()){
-        ddx -= dx0/pow(2, i);
-        dx1 = ddx;
+      // tangent vector
+      Vector3d tau0 = dx_rw_new / dx0;
+
+      //Vector3d n0 = u_rw[inode]+u_rw[jnode];
+      Vector3d n0 = intp->get_boundary_normal(x_rw[inode], cell_id_rw[inode]) + intp->get_boundary_normal(x_rw[jnode], cell_id_rw[jnode]);
+
+      // Check that normal is valid.
+      if (n0.norm() < 1e-2){
+        return false;
       }
-      else {
-        ddx += dx0/pow(2, i);
+
+      n0 -= n0.dot(tau0) * tau0;
+      n0 /= -n0.norm();
+      
+      double ddx = 1e-2 * dx0;
+      double dx1 = 0;
+
+      for (Uint iddx=1; iddx < 1000; ++iddx){
+        dx1 = iddx * ddx;
+        inside = intp->probe_light(x_rw_new + dx1 * n0, t0, cell_id);
+        if (inside){
+          break;
+        }
       }
+
+      if (!inside){
+        return false;
+      }
+
+      /*
+
+      inside = intp->probe_light(x_rw_new + dx0*n0, t0, cell_id);
+
+      if (!inside){
+        std::cout << "Insertion failed! Information:" << std::endl;
+        std::cout << n0 << std::endl;
+        std::cout << dx0 << std::endl;
+        std::cout << x_rw_new << std::endl;
+        std::cout << x_rw_new + dx0*n0 << std::endl;
+        exit(0);
+
+        return false;
+      }
+
+      double ddx = dx0/2;
+      double dx1 = dx0;
+      for (int i=2; i<(2+refinement_insertion_levels); ++i){
+        inside = intp->probe_light(x_rw_new + ddx*n0, t0, cell_id);
+        if (inside){
+          ddx -= dx0/pow(2, i);
+          dx1 = ddx;
+        }
+        else {
+          ddx += dx0/pow(2, i);
+        }
+      }
+      */
+
+      x_rw_new += dx1*n0;
+      // inside = intp->probe_light(x_rw_new, t0, cell_id);
+
     }
-    x_rw_new += dx1*n0;
-    intp->probe(x_rw_new);
+
   }
 
   x_rw[Nrw] = x_rw_new;
@@ -194,6 +236,9 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode){
   H_rw[Nrw] = 0.5*(H_rw[inode]+H_rw[jnode]);
   n_rw[Nrw] = 0.5*(n_rw[inode]+n_rw[jnode]);
   n_rw[Nrw] /= n_rw[Nrw].norm();
+
+  u_rw[Nrw] = {0., 0., 0.}; // 0.5*(u_rw[inode]+u_rw[jnode]);
+
 
   /*
   // u_rw[Nrw] = intp->get_u();  // For some reason this goes wrong?

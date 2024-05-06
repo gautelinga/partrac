@@ -196,6 +196,7 @@ public:
     x11[1] += - La/2*ta[1] + Lb/2*tb[1];
     x11[2] += - La/2*ta[2] + Lb/2*tb[2];
 
+    /*
     intp->probe(x00);
     bool inside_00 = intp->inside_domain();
     intp->probe(x01);
@@ -211,6 +212,7 @@ public:
       std::cout << "Sheet not inside domain" << std::endl;
       exit(0);
     }
+    */
 
     nodes.push_back(x00);
     nodes.push_back(x01);
@@ -225,6 +227,125 @@ public:
 
     faces.push_back({{0, 2, 1}, La*Lb/2});
     faces.push_back({{1, 3, 4}, La*Lb/2});
+
+    ParticleSet pset_loc(intp, prm.Nrw_max, m_mpi);
+    pset_loc.add(nodes, 0);
+
+    Edge2FacesType edge2faces_loc;
+    Node2EdgesType node2edges_loc;
+
+    compute_edge2faces(edge2faces_loc, faces, edges);
+    compute_node2edges(node2edges_loc, edges, pset_loc.N());
+
+    NodesListType nodes_inlet_dummy;
+    EdgesListType edges_inlet_dummy;
+
+    Uint n_add = 0;
+    Uint n_rem = 0;
+    do {
+      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
+                                    pset_loc, prm.ds_init, 0.0, false, false);
+
+      std::cout << "Added " << n_add << " edges." << std::endl;
+    } while (n_add > 0);
+
+    for (Uint iedge=0; iedge<edges.size(); ++iedge){
+      Uint inode = edges[iedge].first[0];
+      Uint jnode = edges[iedge].first[1];
+      edges[iedge].second = pset_loc.dist(inode, jnode);
+    }
+    for (Uint iface=0; iface<faces.size(); ++iface){
+      Uint iedge = faces[iface].first[0];
+      Uint jedge = faces[iface].first[1];
+      faces[iface].second = pset_loc.triangle_area(iedge, jedge, edges);
+    }
+
+    compute_edge2faces(edge2faces_loc, faces, edges);
+    compute_node2edges(node2edges_loc, edges, pset_loc.N());
+
+    std::set<Uint> edges_to_remove;
+
+    for (Uint irw=0; irw < pset_loc.N(); ++irw){
+      int cell_id = pset_loc.get_cell_id(irw);
+      bool inside = intp->probe_light(pset_loc.x(irw), 0., cell_id);
+      if (!inside){
+        edges_to_remove.insert(node2edges_loc[irw].begin(), node2edges_loc[irw].end());
+      }
+    }
+
+    std::cout << "Marking faces." << std::endl;
+
+    std::vector<bool> edge_isactive(edges.size(), true);
+    std::vector<bool> face_isactive(faces.size(), true);
+    for (auto & jedge : edges_to_remove ){
+      edge_isactive[jedge] = false;
+      for ( auto & jface : edge2faces_loc[jedge] ){
+          face_isactive[jface] = false;
+      }
+    }
+    std::cout << "Removing faces." << std::endl;
+
+    remove_faces(faces, face_isactive);
+    // remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
+  
+    remove_unused_edges(faces, edges, edges_inlet_dummy);
+    remove_unused_nodes(edges, nodes_inlet_dummy, pset_loc);
+    compute_edge2faces(edge2faces_loc, faces, edges);
+    compute_node2edges(node2edges_loc, edges, pset_loc.N());
+
+    std::cout << "Removed faces in solid." << std::endl;
+
+    std::vector<Uint> nums = {}; // 7 ? but doesn't work properly
+
+    Uint init_num_edges = edges.size();
+
+    for ( auto & num : nums ){
+      for (Uint inode=0; inode < pset_loc.N(); ++inode){
+        if (node2edges_loc[inode].size() == num){
+          std::vector<Uint> free_edges;
+          for (auto & iedge : node2edges_loc[inode]){
+            if (edge2faces_loc[iedge].size() == 1){
+              free_edges.push_back(iedge);
+            }
+          }
+
+          if ( free_edges.size() == 2 ){
+            std::vector<Uint> unique_nodes;
+            std::set_symmetric_difference(
+              edges[free_edges[0]].first.begin(), edges[free_edges[0]].first.end(),
+              edges[free_edges[1]].first.begin(), edges[free_edges[1]].first.end(),
+              back_inserter(unique_nodes)
+            );
+
+            Uint iedge = edges.size();
+            edges.push_back({{unique_nodes[0], unique_nodes[1]}, dist(nodes[unique_nodes[0]], nodes[unique_nodes[1]])});
+            
+            Uint iface = faces.size();
+            faces.push_back({{iedge, free_edges[0], free_edges[1]}, pset_loc.triangle_area(free_edges[0], free_edges[1], edges)});
+          }
+        }
+      }
+
+      compute_edge2faces(edge2faces_loc, faces, edges);
+      compute_node2edges(node2edges_loc, edges, pset_loc.N());
+    }
+
+    //n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+    //                         pset_loc, prm.ds_max, 0.0);
+    do {
+      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
+                                    pset_loc, prm.ds_max, 0.0, false, true);
+      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+                               pset_loc, prm.ds_min, 0.0);
+
+      std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
+    } while (n_add > 0 || n_rem > 0);
+
+    nodes.clear();
+    for (Uint irw=0; irw<pset_loc.N(); ++irw){
+      nodes.push_back(pset_loc.x(irw));
+    }
+
   };
 };
 

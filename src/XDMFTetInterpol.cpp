@@ -4,6 +4,7 @@
 //#include "H5Cpp.h"
 #include <boost/algorithm/string.hpp>
 #include <cassert>
+
 #include "dolfin_elements/P1_3.h"
 //#include "dolfin_elements/P2_3.h"
 #include "dolfin_elements/vP1_3.h"
@@ -72,6 +73,7 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
 
   std::string topology_path, geometry_path;
   titems_u = parse_xdmf(xdmffilename_u, h5filename_u, topology_path, geometry_path);
+
   std::cout << "mesh: " << h5filename_u << ": " << topology_path << " " << geometry_path << std::endl; 
   
   ts.initialize(titems_u);

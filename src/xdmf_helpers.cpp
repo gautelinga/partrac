@@ -1,4 +1,5 @@
 #include "xdmf_helpers.hpp"
+#include <filesystem>
 
 namespace pt = boost::property_tree;
 
@@ -86,6 +87,9 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
   // Create empty property tree object
   pt::ptree tree;
 
+  std::filesystem::path ppath = xdmffilename;
+  std::string dirname = std::string(ppath.parent_path()) + "/";
+
   // Parse the XML into the property tree.
   pt::read_xml(xdmffilename, tree);
 
@@ -100,6 +104,8 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
     exit(0);
   }
   geometry_path.erase(0, topology_pos + 1);
+
+  h5filename = dirname + h5filename;
 
   std::vector<std::pair<double, std::vector<std::string>>> titems;
   for (auto & p : tree.get_child("Xdmf.Domain.Grid")) {
@@ -124,7 +130,7 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
       }
       //std::cout << " " << time << " " << location << std::endl;
       //titems.push_back({time, {filename, location}});
-      std::vector<std::string> path = {filename, location};
+      std::vector<std::string> path = {dirname + filename, location};
       titems.push_back({time, path});
     }
   }

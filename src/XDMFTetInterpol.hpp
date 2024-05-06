@@ -62,6 +62,10 @@ public:
     found_nneigh = 0;
     found_other = 0;
   }
+  Vector3d get_boundary_normal(const Vector3d &x, int & cell_id)
+  {
+    return cell_normal_[cell_id];
+  }
 protected:
   MultiTimestamps ts;
   double t_prev = 0.;
