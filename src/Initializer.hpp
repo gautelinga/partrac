@@ -277,18 +277,22 @@ public:
 
     std::vector<bool> edge_isactive(edges.size(), true);
     std::vector<bool> face_isactive(faces.size(), true);
+
     for (auto & jedge : edges_to_remove ){
       edge_isactive[jedge] = false;
       for ( auto & jface : edge2faces_loc[jedge] ){
           face_isactive[jface] = false;
       }
     }
+
+    
+
     std::cout << "Removing faces." << std::endl;
 
     remove_faces(faces, face_isactive);
-    // remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
+    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
   
-    remove_unused_edges(faces, edges, edges_inlet_dummy);
+    // remove_unused_edges(faces, edges, edges_inlet_dummy);
     remove_unused_nodes(edges, nodes_inlet_dummy, pset_loc);
     compute_edge2faces(edge2faces_loc, faces, edges);
     compute_node2edges(node2edges_loc, edges, pset_loc.N());
@@ -332,14 +336,20 @@ public:
 
     //n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
     //                         pset_loc, prm.ds_max, 0.0);
+
+    int attempt = 0;
+    int max_attempts = 100;
     do {
+      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+                               pset_loc, attempt == 0 ? prm.ds_min : prm.ds_min, 0.0);
+
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
                                     pset_loc, prm.ds_max, 0.0, false, true);
-      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
-                               pset_loc, prm.ds_min, 0.0);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
-    } while (n_add > 0 || n_rem > 0);
+
+      ++attempt;
+    } while ( (n_add > 0 || n_rem > 0) && attempt < max_attempts );
 
     nodes.clear();
     for (Uint irw=0; irw<pset_loc.N(); ++irw){

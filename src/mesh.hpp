@@ -1128,9 +1128,8 @@ Uint sheet_coarsening(FacesType &faces,
       edge_allow_collapse[jedge] = false;
     }
   }
-  //
-
-  check_geometry(faces, edges, face_isactive, edge_isactive);
+  // This one is for debugging topology:
+  // check_geometry(faces, edges, face_isactive, edge_isactive);
 
   bool changed;
   Uint n_coll = 0;
@@ -1159,7 +1158,8 @@ Uint sheet_coarsening(FacesType &faces,
                                   node_isactive,
                                   ps);
 
-        check_geometry(faces, edges, face_isactive, edge_isactive);
+        // Debugging topology:
+        // check_geometry(faces, edges, face_isactive, edge_isactive);
 
         // what's wrong?
         //compute_edge2faces(edge2faces, faces, edges);
@@ -1320,6 +1320,7 @@ bool sheet_filtering(FacesType &faces,
     return false;
   std::vector<Uint> ids(faces.size());
   iota(ids.begin(), ids.end(), 0);
+
   random_shuffle(ids.begin(), ids.end());
 
   std::vector<bool> face_isactive(faces.size(), false);
