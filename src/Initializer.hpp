@@ -845,6 +845,62 @@ public:
   };
 };
 
+class FileInitializer : public Initializer {
+public:
+  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+
+    std::string h5filename = key_col[1];
+
+    verify_file_exists(h5filename);
+
+    H5::H5File h5file(h5filename, H5F_ACC_RDONLY);
+    H5::DataSet dset_nodes = h5file.openDataSet("nodes");
+    H5::DataSpace dspace_nodes = dset_nodes.getSpace();
+    hsize_t dims_nodes[2];
+    dspace_nodes.getSimpleExtentDims(dims_nodes, NULL);
+    
+    std::vector<double> nodes_buf(dims_nodes[0]*dims_nodes[1]);
+    dset_nodes.read(nodes_buf.data(), H5::PredType::NATIVE_DOUBLE, dspace_nodes, dspace_nodes);
+
+    /*
+    H5::DataSet dset_edges = h5file.openDataSet("nodes");
+    H5::DataSpace dspace_edges = dset_edges.getSpace();
+    hsize_t dims_edges[2];
+    dspace_edges.getSimpleExtentDims(dims_edges, NULL);
+    std::vector<int> edges_buf(dims_edges[0]*dims_edges[1]);
+    dset_edges.read(edges_buf.data(), H5::PredType::NATIVE_INT, dspace_edges, dspace_edges);
+    */
+   
+    h5file.close();
+
+    bool this_inside = false;
+    bool prev_inside = false; 
+    Uint irw = 0;
+
+    int cell_id = -1;
+    for (Uint i=0; i < dims_nodes[0]; ++i){
+      Vector3d xi = {prm.x0, prm.y0, prm.z0};
+      for (Uint j=0; j < dims_nodes[1]; ++j){
+        xi[j] = nodes_buf[i * dims_nodes[1] + j];
+      }
+      // check if inside domain
+      this_inside = intp->probe_light(xi, prm.t0, cell_id);
+      if (this_inside){
+        nodes.push_back(xi);
+        if (prev_inside)
+          edges.push_back({{irw-1, irw}, dist(nodes[irw-1], xi)});
+        ++irw;
+      }
+      prev_inside = this_inside;
+    }
+    if (irw == 0) {
+      std::cout << "No points inside domain" << std::endl;
+      exit(0);
+    }
+    prm.Nrw = irw;
+  };
+};
+
 /*std::vector<Vector3d> initial_positions(const std::string init_mode,
                                         const std::string init_weight,
                                         Uint &Nrw,

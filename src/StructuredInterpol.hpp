@@ -463,6 +463,7 @@ StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol
   }
 
   load_int_field_as_bool(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
+  solid_file.close();
 
   double wwx[3][2];
   for (Uint i=0; i<3; ++i){

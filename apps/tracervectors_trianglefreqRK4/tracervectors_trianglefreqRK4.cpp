@@ -19,6 +19,7 @@
 #include "StructuredInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
 #include "experimental/integrator_RK.hpp"
+#include "experimental/integrator_explicit.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
 
@@ -120,6 +121,10 @@ int main(int argc, char* argv[])
         prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
         prm.parse_cmd(argc, argv);
     }
+    if (prm.num_threads > 0){
+        omp_set_dynamic(0);
+        omp_set_num_threads(prm.num_threads);
+    }
 
     std::string infilename = std::string(argv[1]);
 
@@ -159,14 +164,19 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
         prm.print();
 
-    std::mt19937 gen;
-    if (prm.random) {
-        std::random_device rd;
-        gen.seed(rd());
-    }
-    else {
-        std::seed_seq rd{prm.seed + mpi.rank()};
-        gen.seed(rd);
+    // Parallel generators
+    std::vector<std::mt19937> gens;
+    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
+        std::mt19937 gen;
+        if (prm.random) {
+            std::random_device rd;
+            gen.seed(rd());
+        }
+        else {
+            std::seed_seq rd{prm.seed + omp_get_thread_num() };
+            gen.seed(rd);
+        }
+        gens.emplace_back(gen);
     }
 
     Real dt = prm.dt;
@@ -177,7 +187,8 @@ int main(int argc, char* argv[])
 
     // This part is unique
     std::cout << "Initializing Integrator..." << std::endl;
-    Integrator_RK4 integrator;
+    // Integrator_RK4 integrator;
+    Integrator_Explicit integrator(prm.Dm, 2, gens);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.Nrw_max);
@@ -188,10 +199,10 @@ int main(int argc, char* argv[])
         exit(0);
     }
 
-    RandomPointsInitializer init_state(key, prm, gen);
+    RandomPointsInitializer init_state(key, prm, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
-    spin_all(key, ps, gen);
+    spin_all(key, ps, gens[0]);
 
     // Check mesh connectivity: should be uneccessary
     ps.edges().clear();
@@ -272,7 +283,7 @@ int main(int argc, char* argv[])
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-            reinject_nodes(outside_nodes, key, ps, intp, gen);
+            reinject_nodes(outside_nodes, key, ps, intp, gens[0]);
         }
 
         t += dt;

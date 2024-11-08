@@ -103,6 +103,15 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   else if (key[0] == "randomgaussiancircle"){
     init_state = std::make_shared<RandomGaussianCircleInitializer>(key, intp, prm, mpi, gen);
   }
+  else if (key[0] == "from"){
+    std::vector<std::string> key_col = split_string(prm.init_mode, ":");
+    if (key_col[0] == "from_file"){
+      init_state = std::make_shared<FileInitializer>(key_col, intp, prm, mpi);
+    }
+    else {
+      std::cout << "Unknown init_mode ('from' type): " << prm.init_mode << std::endl;
+    }
+  }
   else {
     std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
     exit(0);

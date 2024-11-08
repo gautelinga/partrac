@@ -58,9 +58,9 @@ public:
     auto frac_nneigh = double(found_nneigh) / found_sum;
     auto frac_other = 1. - frac_same - frac_nneigh;
     std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
-    found_same = 0;
-    found_nneigh = 0;
-    found_other = 0;
+    std::fill(found_same_.begin(), found_same_.end(), 0);
+    std::fill(found_nneigh_.begin(), found_nneigh_.end(), 0);
+    std::fill(found_other_.begin(), found_other_.end(), 0);
   }
 protected:
   MultiTimestamps ts;

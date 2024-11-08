@@ -300,6 +300,7 @@ public:
   Matrix3d get_J() { return U0 * gradU; };
   Vector3d get_Ju() { return U0 * U0 * gradU * U; }; // check
   Vector3d get_a() { return U0 * A; };
+  Matrix3d get_grada() { return U0 * gradA; }
   double get_p() const { return P; };
   double get_rho() const { return Rho; };
   int cell_type = 0;
