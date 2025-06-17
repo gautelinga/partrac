@@ -1321,7 +1321,10 @@ bool sheet_filtering(FacesType &faces,
   std::vector<Uint> ids(faces.size());
   iota(ids.begin(), ids.end(), 0);
 
-  random_shuffle(ids.begin(), ids.end());
+  // FIXME: Should be made thread safe
+  std::random_device rd;
+  std::mt19937 g(rd());
+  std::shuffle(ids.begin(), ids.end(), g);
 
   std::vector<bool> face_isactive(faces.size(), false);
   for (Uint iface=0; iface < filter_target; ++iface){

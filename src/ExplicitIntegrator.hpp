@@ -99,12 +99,18 @@ std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const d
                 dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
             }
             if (Dm > 0.0){
+                // TODO: Consider trying multiple times
                 Vector3d eta = {_rnd_normal(gen),
                                 _rnd_normal(gen),
                                 _rnd_normal(gen)};
                 dx_rw += sqrt2Dmdt * eta;
             }
             is_inside = intp.probe_light(x+dx_rw, t+dt, cell_id);
+            if (!is_inside && intp.can_reflect){
+                cell_id = ps.get_cell_id(i);
+                intp.reflect(x, dx_rw, t, dt, cell_id);
+                is_inside = intp.probe_light(x+dx_rw, t+dt, cell_id);
+            }
             if (is_inside){
                 ps.set_x(i, x + dx_rw);
                 ps.set_t_loc(i, ps.t_loc(i) + dt);

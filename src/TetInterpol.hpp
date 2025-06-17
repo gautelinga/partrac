@@ -47,21 +47,26 @@ public:
   double get_uzz() { return gradU(2, 2); };
   Matrix3d get_grada() { return gradA; };
   void print_found() {
+    auto found_same = std::reduce(found_same_.begin(), found_same_.end());
+    auto found_nneigh = std::reduce(found_nneigh_.begin(), found_nneigh_.end());
+    auto found_other = std::reduce(found_other_.begin(), found_other_.end());
+
     long int found_sum = found_same + found_nneigh + found_other;
     double frac_same = double(found_same) / found_sum;
     double frac_nneigh = double(found_nneigh) / found_sum;
     double frac_other = 1. - frac_same - frac_nneigh;
     std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
-    found_same = 0;
-    found_nneigh = 0;
-    found_other = 0;
+    std::fill(found_same_.begin(), found_same_.end(), 0);
+    std::fill(found_nneigh_.begin(), found_nneigh_.end(), 0);
+    std::fill(found_other_.begin(), found_other_.end(), 0);
   }
+  void reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id);
 protected:
 
   Timestamps ts;
   double t_prev = 0.;
   double t_next = 0.;
-  double alpha_t;
+  // double alpha_t;
 
   std::vector<bool> periodic = {false, false, false};
   //Vector3d x_min = {0., 0., 0.};
@@ -91,6 +96,11 @@ protected:
   std::shared_ptr<dolfin::Function> p_prev_;
   std::shared_ptr<dolfin::Function> p_next_;
 
+  std::vector<double> u_prev_vec;
+  std::vector<double> u_next_vec;
+  std::vector<double> p_prev_vec;
+  std::vector<double> p_next_vec;
+
   std::vector<Tet> tets_;
   std::vector<dolfin::Cell> dolfin_cells_;
   std::vector<ufc::cell> ufc_cells_;
@@ -103,25 +113,39 @@ protected:
   // std::array<double, 30> u_next_coefficients_;
   // std::array<double, 4> p_prev_coefficients_;
   // std::array<double, 4> p_next_coefficients_;
-  std::vector<double> u_prev_coefficients_;
-  std::vector<double> u_next_coefficients_;
-  std::vector<double> p_prev_coefficients_;
-  std::vector<double> p_next_coefficients_;
+  
+  // std::vector<double> u_prev_coefficients_;
+  // std::vector<double> u_next_coefficients_;
+  // std::vector<double> p_prev_coefficients_;
+  // std::vector<double> p_next_coefficients_;
 
   // std::array<double, 10> N10_, Nx_, Ny_, Nz_;
   // std::array<double, 4> N4_;
-  std::vector<double> Nu_, Nux_, Nuy_, Nuz_;
-  std::vector<double> Np_;
+  // std::vector<double> Nu_, Nux_, Nuy_, Nuz_;
+  // std::vector<double> Np_;
 
   Uint ncoeffs_u;
   Uint ncoeffs_p;
 
-  long unsigned int found_same = 0;
-  long unsigned int found_nneigh = 0;
-  long unsigned int found_other = 0;
+  //long unsigned int found_same = 0;
+  //long unsigned int found_nneigh = 0;
+  //long unsigned int found_other = 0;
+  std::vector<long unsigned int> found_same_;
+  std::vector<long unsigned int> found_nneigh_;
+  std::vector<long unsigned int> found_other_;
+
+  std::vector<std::vector<Uint>> u_dofs_;
+  std::vector<std::vector<Uint>> p_dofs_;
 
   void _modx(dolfin::Array<double>&, const Vector3d&);
+  Vector3d _modx(const Vector3d&);
 
+  std::vector<int> cell_type_;
+  std::vector<std::vector<int>> cell_facets_;
+  std::vector<std::vector<Vector3d>> facets_;
+
+  double hmin;
+  bool _cross_facet(double& beta, Vector3d& N, const Vector3d& x, const Vector3d &dx_new, std::vector<Vector3d> &facet);
 };
 
 #endif

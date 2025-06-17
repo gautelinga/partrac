@@ -17,9 +17,8 @@
 #include "MPIwrap.hpp"
 #include "Parameters.hpp"
 #include "StructuredInterpol.hpp"
-#include "TriangleFreqInterpol.hpp"
-#include "experimental/integrator_RK.hpp"
-#include "experimental/integrator_explicit.hpp"
+#include "TriangleInterpol.hpp"
+#include "experimental/integrator_spatial.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
 
@@ -39,42 +38,6 @@ std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm
   return newfoldername;
 }
 
-template<typename ParticleType, typename InterpolatorType>
-void reinject_nodes( const std::set<Uint>& outside_node_ids
-                   , const std::vector<std::string>& key
-                   , Particles<ParticleType>& ps
-                   , InterpolatorType& intp
-                   , std::mt19937 &gen){
-    assert(outside_node_ids.size() > 0);
-
-    Vector Dx_max = 0.5*(intp.get_x_max()-intp.get_x_min());
-    std::uniform_real_distribution<> uni_dist_x(-Dx_max[0], Dx_max[0]);
-    std::uniform_real_distribution<> uni_dist_y(-Dx_max[1], Dx_max[1]);
-    std::uniform_real_distribution<> uni_dist_z(-Dx_max[2], Dx_max[2]);
-    for ( auto node_id : outside_node_ids ){
-        auto & node = ps.particles()[node_id];
-
-        bool outside = true;
-        Vector Dx = {0., 0., 0.};
-        while (outside)
-        {
-            if (contains(key[1], "x")){
-                Dx[0] = uni_dist_x(gen);
-            }
-            if (contains(key[1], "y")){
-                Dx[1] = uni_dist_y(gen);
-            }
-            if (contains(key[1], "z")){
-                Dx[2] = uni_dist_z(gen);
-            }
-            Vector x0 = node.x();
-            intp.probe(x0 + Dx);
-            outside = !intp.inside_domain();
-        }
-        node.x() += Dx;
-    }
-}
-
 int main(int argc, char* argv[])
 {
     MPIwrap mpi(argc, argv);
@@ -82,12 +45,9 @@ int main(int argc, char* argv[])
     if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental tracer vectors with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized experimental tracer vectors.                        ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
-    
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
     mpi.barrier();
 
     // Input parameters
@@ -107,14 +67,14 @@ int main(int argc, char* argv[])
 
     std::string infilename = std::string(argv[1]);
 
-    std::cout << "Initializing TriangleFreqInterpol." << std::endl;
-    TriangleFreqInterpol intp(infilename);
+    std::cout << "Initializing TriangleInterpol." << std::endl;
+    TriangleInterpol intp(infilename);
 
     intp.set_U0(prm.U0);
     intp.set_int_order(2);  // To evaluate gradients
 
     std::string folder = intp.get_folder();
-    std::string rwfolder = folder + "/TracerVectors/";
+    std::string rwfolder = folder + "/SpatialTracerVectors/";
     
     if (mpi.rank() == 0)
         create_folder(rwfolder);
@@ -167,7 +127,7 @@ int main(int argc, char* argv[])
     // This part is unique
     std::cout << "Initializing Integrator..." << std::endl;
     // Integrator_RK4 integrator;
-    Integrator_Explicit integrator(prm.Dm, 2, gens);
+    Integrator_Spatial integrator(2, prm.u_eps, prm.ds_max);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.Nrw_max);
@@ -214,6 +174,8 @@ int main(int argc, char* argv[])
     output_fields["n"] = true;
     output_fields["w"] = true;
     output_fields["S"] = true;
+    output_fields["tau"] = true;
+    output_fields["J"] = true;
 
     intp.update(t);
     intp.assign_fields(ps, output_fields);
@@ -221,8 +183,13 @@ int main(int argc, char* argv[])
     // Simulation start
     std::clock_t clock_0 = std::clock();
 
-    while (t <= T){
-        intp.update(t);
+    double ds_est = dt; //prm.ds_max;
+    double Lt = prm.Lt;
+
+    double s = 0.;
+    while (s <= Lt){
+        // Frozen for now
+        //intp.update(t);
 
         // Update fields for output
         if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
@@ -231,8 +198,8 @@ int main(int argc, char* argv[])
 
         // Statistics
         if (it % int_stat_intv == 0){
-            std::cout << "Time = " << t << std::endl;
-            write_stats(mpi, statfile, t, ps, integrator.get_declined());
+            std::cout << "Streamline length = " << s << std::endl;
+            write_stats(mpi, statfile, s, ps, integrator.get_declined());
 
             intp.print_found();
         }
@@ -243,7 +210,7 @@ int main(int argc, char* argv[])
 
         // Dump detailed data
         if (it % int_dump_intv == 0){
-            std::string groupname = std::to_string(t);
+            std::string groupname = std::to_string(s);
 
             // Clear file if it exists, otherwise create
             if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
@@ -258,14 +225,14 @@ int main(int argc, char* argv[])
             h5f.close();
         }
 
-        auto outside_nodes = integrator.step_vec(intp, ps, t, dt);
+        auto outside_nodes = integrator.step_vec(intp, ps, t, ds_est);
 
         if (outside_nodes.size() > 0){
             std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
-            reinject_nodes(outside_nodes, key, ps, intp, gens[0]);
+            //reinject_nodes(outside_nodes, key, ps, intp, gens[0]);
         }
 
-        t += dt;
+        s += ds_est;
         ++it;
     }
 

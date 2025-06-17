@@ -488,7 +488,7 @@ void RandomPointsInitializer::probe(IntpType& intp){
   Vector x0_ = this->x0;
   Uint irw=0;
   while (irw < Nrw){
-    if (key[0] == "points" && key.size() == 2){
+    if (key[0] == "points"){ // && key.size() == 2){
       if (contains(key[1], "x")){
         x0_[0] = uni_dist_x(gen);
       }

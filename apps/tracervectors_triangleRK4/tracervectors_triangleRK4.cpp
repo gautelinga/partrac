@@ -349,27 +349,6 @@ void reinject_nodes( const std::set<Uint>& outside_node_ids
 }
 
 template<typename ParticleType>
-void spin_all( const std::vector<std::string>& key
-             , Particles<ParticleType>& ps
-             , std::mt19937 &gen){
-    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
-    for ( auto & particle : ps.particles() ){
-        Vector Dn = {0., 0., 0.};
-        if (contains(key[1], "x")){
-            Dn[0] = rnd_normal(gen);
-        }
-        if (contains(key[1], "y")){
-            Dn[1] = rnd_normal(gen);
-        }
-        if (contains(key[1], "z")){
-            Dn[2] = rnd_normal(gen);
-        }
-        Dn /= Dn.norm();
-        particle.n() = Dn;
-    }
-}
-
-template<typename ParticleType>
 void align_all(const std::vector<std::string>& key, Particles<ParticleType>& ps, std::mt19937 &gen){
     std::normal_distribution<Real> rnd_normal(0.0, 1.0);
     double delta = 1e-8;

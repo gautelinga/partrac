@@ -6,6 +6,7 @@
 
 #include "typedefs.hpp"
 #include "io.hpp"
+#include "utils.hpp"
 
 // Declarations
 class Particle;
@@ -31,6 +32,7 @@ public:
     Real &       w() { return m_w; };  // accumulated scalar elongation
     Real &       S() { return m_S; };  // stretching quantity
     Matrix &     F() { return m_F; };  // deformation tensor
+    Matrix &     J() { return m_J; };  // velocity gradient
     int &        cell_id() { return m_cell_id; };  // cell id (if applicable)
     int &        cell_type() { return m_cell_type; }; // cell type (if applicable)
     int          get_cell_type() const { return m_cell_type; };
@@ -50,6 +52,10 @@ public:
     }
     inline static std::vector<std::string> vector_fields() {
         std::vector<std::string> fields = {"n"};
+        return fields;
+    }
+    inline static std::vector<std::string> tensor_fields() {
+        std::vector<std::string> fields = {"F", "J"};
         return fields;
     }
     Real get_scalar(const std::string& field) const {
@@ -84,6 +90,9 @@ public:
         if (field == "F"){
             return m_F;
         }
+        if (field == "J"){
+            return m_J;
+        }
         return Eigen::MatrixXd::Constant(3, 3, 0);
     }
     void connect_edge(int i){
@@ -111,6 +120,7 @@ protected:
     Real        m_c = 0.;
     Real        m_tau = 0.;
     Matrix      m_F = Eigen::MatrixXd::Identity(3, 3);
+    Matrix      m_J = Eigen::MatrixXd::Identity(3, 3);
     Vector      m_n = {0., 0., 0.};
     Real        m_w = 0.;
     Real        m_S = 0.;
@@ -461,6 +471,7 @@ protected:
     void _get_u_data(std::vector<Real>&);
     void _get_scalar_data(const std::string&, std::vector<Real>&);
     void _get_vector_data(const std::string&, std::vector<Real>&);
+    void _get_tensor_data(const std::string&, std::vector<Real>&);
     void _get_cell_type_data(std::vector<int>& a);
 };
 
@@ -564,6 +575,14 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
                 vector_to_h5(h5f, groupname + "/" + field, _vtmp, 3);
             }
         }
+        for ( auto const& field : ParticleType::tensor_fields() ){
+            if (output_fields[field]){
+                std::vector<Real> _ttmp;
+                _ttmp.reserve(m_particles.size() * 3 * 3);
+                _get_tensor_data(field, _ttmp);
+                vector_to_h5(h5f, groupname + "/" + field, _ttmp, 9);
+            }
+        }
         if (output_fields["cell_type"]){
             std::vector<int> _ivtmp(m_particles.size());
             _get_cell_type_data(_ivtmp);
@@ -619,6 +638,46 @@ void Particles<ParticleType>::_get_vector_data(const std::string& field, std::ve
         a.push_back(v[0]);
         a.push_back(v[1]);
         a.push_back(v[2]);
+    }
+}
+
+template<class ParticleType>
+void Particles<ParticleType>::_get_tensor_data(const std::string& field, std::vector<Real>& a){
+    a.clear();
+    for (auto const& particle : m_particles){
+        Matrix M = particle.get_tensor(field);
+        a.push_back(M(0, 0));
+        a.push_back(M(0, 1));
+        a.push_back(M(0, 2));
+        a.push_back(M(1, 0));
+        a.push_back(M(1, 1));
+        a.push_back(M(1, 2));
+        a.push_back(M(2, 0));
+        a.push_back(M(2, 1));
+        a.push_back(M(2, 2));
+    }
+}
+
+template<typename ParticleType>
+void spin_all( const std::vector<std::string>& key
+             , Particles<ParticleType>& ps
+             , std::mt19937 &gen){
+    std::normal_distribution<Real> rnd_normal(0.0, 1.0);
+    auto key_spin = key[key.size()-1];
+
+    for ( auto & particle : ps.particles() ){
+        Vector Dn = {0., 0., 0.};
+        if (contains(key_spin, "x")){
+            Dn[0] = rnd_normal(gen);
+        }
+        if (contains(key_spin, "y")){
+            Dn[1] = rnd_normal(gen);
+        }
+        if (contains(key_spin, "z")){
+            Dn[2] = rnd_normal(gen);
+        }
+        Dn /= Dn.norm();
+        particle.n() = Dn;
     }
 }
 

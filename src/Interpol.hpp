@@ -84,6 +84,8 @@ public:
   //
   template<typename T>
   void assign_fields(T&, const std::map<std::string, bool>& output_fields);
+  virtual void reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id) { };
+  bool can_reflect = false;
 protected:
   std::string infilename;
   std::string folder;
@@ -120,6 +122,8 @@ void Interpol::assign_fields(T& ps, const std::map<std::string, bool>& output_fi
         particle.p() = ptvals.get_p();
       if (output_fields.find("cell_type")->second)
         particle.cell_type() = ptvals.get_cell_type();
+      if (output_fields.find("J")->second)
+        particle.J() = ptvals.get_J();
     }
   }
 }

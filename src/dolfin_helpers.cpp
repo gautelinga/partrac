@@ -71,6 +71,11 @@ std::tuple<Uint, bool> locate_cell( int &id_prev
 
 void label_cell_type(std::vector<int>& cell_type_, std::vector<std::set<Uint>>& cell2cells_, const Uint dim){
   //cell_type_.clear(); // set all to zero
+  // Cell types:
+  // 0: bulk cell
+  // 1: boundary cell
+  // 2: next to boundary cell
+
   for ( Uint i=0; i < cell2cells_.size(); ++i)
   {
     cell_type_[i] = 0;
