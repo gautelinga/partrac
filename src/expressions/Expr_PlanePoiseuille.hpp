@@ -1,13 +1,13 @@
 #include "Expr.hpp"
 
-#ifndef __EXPR_HAGENPOISEUILLE_HPP
-#define __EXPR_HAGENPOISEUILLE_HPP
+#ifndef __EXPR_PLANEPOISEUILLE_HPP
+#define __EXPR_PLANEPOISEUILLE_HPP
 
 //using namespace std;
 
-class Expr_HagenPoiseuille : public Expr {
+class Expr_PlanePoiseuille : public Expr {
 public:
-  Expr_HagenPoiseuille(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
+  Expr_PlanePoiseuille(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     //R = getd(expr_params, "R");
     x0 = {getd(expr_params, "x0"),
           getd(expr_params, "y0"),
@@ -25,12 +25,12 @@ public:
     //cout << "u_inf = " << u_inf << endl;
 
     Vector3d r = x-x0;
-    double chi = pow(r[0]/R, 2) + pow(r[1]/R, 2);
+    double chi = pow(r[0]/R, 2);
     is_inside = chi <= 1.;
 
     Ux = 0.;
     Uy = 0.;
-    Uz = 2*u_inf*(1.0 - chi); // * alpha * r[0] * r[2];
+    Uz = 3./2*u_inf*(1.0 - chi);
     P = p_inf;
 
     Uxx = 0.;
@@ -39,13 +39,13 @@ public:
     Uyx = 0.;
     Uyy = 0.;
     Uyz = 0.;
-    Uzx = - 4 * u_inf * r[0]/pow(R, 2);
-    Uzy = - 4 * u_inf * r[1]/pow(R, 2);
+    Uzx = - 3 * u_inf * r[0]/pow(R, 2);
+    Uzy = 0.;
     Uzz = 0.;
   };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
-    double chi = pow(r[0]/R, 2) + pow(r[1]/R, 2);
+    double chi = pow(r[0]/R, 2);
     bool _is_inside = chi <= 1.;
     return _is_inside;
   };
@@ -56,8 +56,8 @@ public:
     ptvals.P = p_inf;
     ptvals.gradU << 0., 0., 0.,
                     0., 0., 0.,
-                    - 4 * u_inf * r[0]/pow(R, 2),
-                    - 4 * u_inf * r[1]/pow(R, 2),
+                    - 3 * u_inf * r[0]/pow(R, 2),
+                    0.,
                     0.;
   };
   double ux() { return Ux; };

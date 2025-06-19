@@ -6,6 +6,7 @@
 #include "expressions/Expr_ABCFlow.hpp"
 #include "expressions/Expr_InfinitePlate.hpp"
 #include "expressions/Expr_HagenPoiseuille.hpp"
+#include "expressions/Expr_PlanePoiseuille.hpp"
 #include "expressions/Expr_BrinkmanCylinder.hpp"
 #include <fstream>
 
@@ -108,8 +109,12 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
     std::cout << "HagenPoiseuille selected" << std::endl;
     expr = std::make_shared<Expr_HagenPoiseuille>(expr_params);
   }
-  else
-  if (expr_params["expression"] == "brinkman_cylinder" ||
+  else if (expr_params["expression"] == "plane_poiseuille" ||
+           expr_params["expression"] == "PlanePoiseuille"){
+    std::cout << "PlanePoiseuille selected" << std::endl;
+    expr = std::make_shared<Expr_PlanePoiseuille>(expr_params);
+  }
+  else if (expr_params["expression"] == "brinkman_cylinder" ||
            expr_params["expression"] == "BrinkmanCylinder"){
     std::cout << "BrinkmanCylinder selected" << std::endl;
     expr = std::make_shared<Expr_BrinkmanCylinder>(expr_params);
