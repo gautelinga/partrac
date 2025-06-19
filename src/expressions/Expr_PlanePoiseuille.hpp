@@ -52,7 +52,7 @@ public:
   void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
     Vector3d r = x-x0;
     double chi = pow(r[0]/R, 2) + pow(r[1]/R, 2);
-    ptvals.U = {0., 0., 2*u_inf*(1.0 - chi)}; // * alpha * r[0] * r[2];
+    ptvals.U = {0., 0., 3./2*u_inf*(1.0 - chi)}; // * alpha * r[0] * r[2];
     ptvals.P = p_inf;
     ptvals.gradU << 0., 0., 0.,
                     0., 0., 0.,
