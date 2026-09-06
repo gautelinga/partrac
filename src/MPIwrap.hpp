@@ -4,6 +4,10 @@
 #include <mpi.h>
 #include "typedefs.hpp"
 
+#ifdef USE_DOLFIN
+#include <dolfin/common/SubSystemsManager.h>
+#endif
+
 class MPIwrap {
 public:
   MPIwrap(int argc, char* argv[]);
@@ -52,6 +56,9 @@ MPIwrap::~MPIwrap(){
 }
 
 void MPIwrap::finalize(){
+#ifdef USE_DOLFIN
+  dolfin::SubSystemsManager::finalize();
+#endif
   MPI_Finalize();
 }
 
@@ -60,25 +67,6 @@ std::vector<int> MPIwrap::gather(int value){
   MPI_Gather(&value, 1, MPI_INT, values.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
   return values;
 }
-
-/*
-std::vector<int> MPIwrap::gatherVec(std::vector<int>& vec){
-  int nelements = (int)vec.size();
-  std::vector<int> num_elem_ = gather(nelements);
-
-  // Displacements in the receive buffer for MPI_GATHERV
-  int* disps = new int[size()];
-  for (int i = 0; i < size(); i++)
-    disps[i] = (i > 0) ? (disps[i-1] + num_elem_[i-1]) : 0;
-  
-  int n_total = disps[size()-1] + num_elem_[size()-1];
-  std::vector<int> all_vec;
-  if (m_rank == 0)
-    all_vec.resize(n_total);
-  MPI_Gatherv(vec.data(), nelements, MPI_INT,
-              all_vec.data(), num_elem_.data(), disps, MPI_INT, 0, m_comm);
-  return all_vec;
-}*/
 
 template <typename T>
 std::vector<T> gather_vector(MPIwrap& mpi, std::vector<T>& vec, MPI_Datatype type){

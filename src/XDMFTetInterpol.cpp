@@ -104,6 +104,7 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   dim = mesh->geometry().dim();
   assert(gdim == dim);
   mesh->init();
+  mesh->bounding_box_tree();
 
   std::vector<double> xx = mesh->coordinates();
 

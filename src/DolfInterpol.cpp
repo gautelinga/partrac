@@ -53,6 +53,7 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
   dim = mesh->geometry().dim();
   mesh->init();
+  mesh->bounding_box_tree();
 
   std::vector<double> xx = mesh->coordinates();
 

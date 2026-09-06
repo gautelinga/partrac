@@ -5,15 +5,15 @@
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 
-#include "H5Cpp.h"
-#define hid_t aa_hid_t
-#undef hid_t
+//#include "H5Cpp.h"
+//#define hid_t aa_hid_t
+//#undef hid_t
 #include <dolfin.h>
-#define hid_t bb_hid_t
+//#define hid_t bb_hid_t
 //#include <dolfin/io/HDF5File.h>
 //#include <dolfin/io/XDMFFile.h>
-#undef hid_t
-#define hid_t ambiguous use aa_hid_t or bb_hid_t
+//#undef hid_t
+//#define hid_t ambiguous use aa_hid_t or bb_hid_t
 
 #include "dolfin_elements/vP1_2.h"
 #include "dolfin_elements/vP2_2.h"

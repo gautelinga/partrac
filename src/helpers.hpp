@@ -2,7 +2,8 @@
 #define __HELPERS_HPP
 
 #include <random>
-#include "H5Cpp.h"
+//#include "H5Cpp.h"
+#include <hdf5.h>
 
 #include "typedefs.hpp"
 
@@ -118,11 +119,44 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   }
 }
 
+static void write_h5part(const std::string& path,
+                         const std::vector<std::string>& ptheader,
+                         const std::vector<double>& ptdata_,
+                         const double t0 = 0.0) {
+
+    const hsize_t num_cols = ptheader.size();
+    const hsize_t num_rows = ptdata_.size() / num_cols;
+
+    auto file = H5Fcreate(path.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    auto grp  = H5Gcreate2(file, "Step#0", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+    std::vector<double> col_data(num_rows);
+
+    for (hsize_t ic = 0; ic < num_cols; ++ic) {
+        for (hsize_t ir = 0; ir < num_rows; ++ir)
+            col_data[ir] = ptdata_[ir * num_cols + ic];
+        auto space = H5Screate_simple(1, &num_rows, nullptr);
+        auto dset  = H5Dcreate2(grp, ptheader[ic].c_str(), H5T_NATIVE_DOUBLE, space,
+                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, col_data.data());
+        H5Dclose(dset);
+        H5Sclose(space);
+    }
+
+    auto s = H5Screate(H5S_SCALAR);
+    auto a = H5Acreate2(grp, "TimeValue", H5T_NATIVE_DOUBLE, s,
+                         H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(a, H5T_NATIVE_DOUBLE, &t0);
+    H5Aclose(a);
+    H5Sclose(s);
+
+    H5Gclose(grp);
+    H5Fclose(file);
+}
+
 static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
                         const std::string &newfolder, const double t0,
-                        std::mt19937 &gen){
-  Uint n = 0;
-  Uint n_inside = 0;
+                        std::vector<std::mt19937>& gens){
 
   Vector3d x_min = intp->get_x_min();
   Vector3d x_max = intp->get_x_max();
@@ -135,27 +169,11 @@ static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
   intp->update(t0);
 
-  // std::ofstream nodalfile(newfolder + "/nodal_values.dat");
-  // for (Uint ix=0; ix<intp->get_nx(); ++ix){
-  //   for (Uint iy=0; iy<intp->get_ny(); ++iy){
-  //     for (Uint iz=0; iz<intp->get_nz(); ++iz){
-  //       bool inside = intp->get_nodal_inside(ix, iy, iz);
-  //       Vector3d u(intp->get_nodal_ux(ix, iy, iz),
-  //                  intp->get_nodal_uy(ix, iy, iz),
-  //                  intp->get_nodal_uz(ix, iy, iz));
-  //       nodalfile << ix << " " << iy << " " << iz << " " << inside << " "
-  //                 << u[0] << " " << u[1] << " " << u[2] << std::endl;
-  //     }
-  //   }
-  // }
-  // nodalfile.close();
+  // std::ofstream ofile(newfolder + "/interpolation.txt");
 
-  std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
-  std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
-  std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
+  std::vector<std::vector<double>> ptdata_threads_;
 
-  std::ofstream ofile(newfolder + "/interpolation.txt");
-
+  /*
   std::string sep = ",";
   ofile << "x" << sep << "y" << sep << "z" << sep
         << "ux" << sep << "uy" << sep << "uz" << sep
@@ -165,32 +183,78 @@ static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
         << "uyx" << sep << "uyy" << sep << "uyz" << sep
         << "uzx" << sep << "uzy" << sep << "uzz"
         << std::endl;
+  */
 
-  while (n < num_points){
-    Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-    intp->probe(x, t0);
-    if (intp->inside_domain()){
-      Vector3d u = intp->get_u();
-      double rho = intp->get_rho();
-      double p = intp->get_p();
-      double divu = intp->get_divu();
-      double vortz = intp->get_vortz();
-      ofile << x[0] << sep << x[1] << sep << x[2] << sep
-            << u[0] << sep << u[1] << sep << u[2] << sep
-            << rho << sep << p << sep << divu << sep
-            << vortz << sep
-            << intp->get_uxx() << sep << intp->get_uxy() << sep << intp->get_uxz() << sep
-            << intp->get_uyx() << sep << intp->get_uyy() << sep << intp->get_uyz() << sep
-            << intp->get_uzx() << sep << intp->get_uzy() << sep << intp->get_uzz()
-            << std::endl;
-      ++n_inside;
+  std::vector<std::string> ptheader = {
+    "x", "y", "z",
+    "ux", "uy", "uz",
+    "rho", "p", "divu", "vortz",
+    "uxx", "uxy", "uxz",
+    "uyx", "uyy", "uyz",
+    "uzx", "uzy", "uzz"
+  };
+
+  #pragma omp parallel 
+  {
+    #pragma omp single
+    ptdata_threads_.resize(omp_get_num_threads());
+
+    std::mt19937 &gen = gens[omp_get_thread_num()];
+    auto& ptdata_loc_ = ptdata_threads_[omp_get_thread_num()];
+    ptdata_loc_.reserve(num_points * ptheader.size() / omp_get_num_threads());
+
+    std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
+    std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
+    std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
+
+    #pragma omp for
+    for (Uint i = 0; i < num_points; ++i){
+      int cell_id = -1;
+
+      Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
+      
+      bool inside = intp->probe_light(x, t0, cell_id);
+      if (inside){
+        PointValues ptvals(intp->get_U0());
+        intp->probe_heavy(x, t0, cell_id, ptvals);
+
+        Vector3d u = ptvals.get_u();
+        Matrix3d gradu = ptvals.get_J();
+
+        ptdata_loc_.insert(ptdata_loc_.end(), {
+          x[0], x[1], x[2],
+          u[0], u[1], u[2],
+          ptvals.get_rho(), ptvals.get_p(),
+          gradu(0,0) + gradu(1,1) + gradu(2,2), 
+          gradu(1,0) - gradu(0,1),
+          gradu(0,0), gradu(0,1), gradu(0,2),
+          gradu(1,0), gradu(1,1), gradu(1,2),
+          gradu(2,0), gradu(2,1), gradu(2,2)
+        });
+      }
     }
-    ++n;
   }
-  std::cout << "Inside: " << n_inside << "/" << n << std::endl;
-  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/n << std::endl;
-  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/n << std::endl;
-  ofile.close();
+  std::cout << "Done probing." << std::endl;
+
+  Uint n_inside = 0;
+  for (auto& v : ptdata_threads_)
+    n_inside += v.size() / ptheader.size();
+
+  std::cout << "Inside:             " << n_inside << "/" << num_points << std::endl;
+  std::cout << "Approximate volume: " << (n_inside*Lx*Ly*Lz)/num_points << std::endl;
+  std::cout << "Approximate area:   " << (n_inside*Lx*Ly)/num_points << std::endl;
+
+  std::vector<double> ptdata_;
+  ptdata_.reserve(n_inside * ptheader.size());
+
+  for (auto& v : ptdata_threads_)
+    ptdata_.insert(ptdata_.end(), v.begin(), v.end());
+
+  write_h5part(newfolder + "/interpolation.h5part", ptheader, ptdata_);
+
+  std::cout << "Done writing." << std::endl;
+
+  // ofile.close();
 }
 
 /*std::vector<double> areas(const std::vector<Uint> &kfaces,

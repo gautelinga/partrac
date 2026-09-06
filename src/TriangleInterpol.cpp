@@ -57,6 +57,7 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
   dim = mesh->geometry().dim();
   mesh->init();
+  mesh->bounding_box_tree();
 
   std::vector<double> xx = mesh->coordinates();
 
@@ -166,6 +167,12 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
     
     Np_.resize(ncoeffs_p);
   }
+
+  std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
+
+  found_same_.resize(omp_get_max_threads());
+  found_nneigh_.resize(omp_get_max_threads());
+  found_other_.resize(omp_get_max_threads());
 }
 
 void TriangleInterpol::update(const double t)
@@ -249,7 +256,7 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
       id = id_prev;
       inside = true;
       found = true;
-      ++found_same;
+      ++found_same_[omp_get_thread_num()];
     }
     else {
       for ( auto neigh_id : cell2cells_[id_prev]){
@@ -258,7 +265,7 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
           inside = true;
           found = true;
           id = neigh_id;
-          ++found_nneigh;
+          ++found_nneigh_[omp_get_thread_num()];
           break;
         }
       }
@@ -269,7 +276,7 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
     inside = (id != std::numeric_limits<unsigned int>::max());
     if (inside) {
       found = true;
-      ++found_other;
+      ++found_other_[omp_get_thread_num()];
     }
   }
   if (found){
@@ -376,7 +383,6 @@ void TriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
 
 bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
 {
-  // FIXME: Not thread safe
   assert(t <= t_next && t >= t_prev);
   
   // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;
@@ -388,6 +394,7 @@ bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_pr
   const dolfin::Point point(dim, x_loc.data());
   
   bool found = false;
+  bool inside_loc = false;
 
   unsigned int id = 0;
   // Search in neighborhood first
@@ -395,18 +402,18 @@ bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_pr
     dolfin::Cell prev_cell(*mesh, id_prev);
     if (prev_cell.contains(point)){
       id = id_prev;
-      inside = true;
+      inside_loc = true;
       found = true;
-      ++found_same;
+      ++found_same_[omp_get_thread_num()];
     }
     else {
       for ( auto neigh_id : cell2cells_[id_prev]){
         dolfin::Cell neigh_cell(*mesh, neigh_id);
         if (neigh_cell.contains(point)){
-          inside = true;
+          inside_loc = true;
           found = true;
           id = neigh_id;
-          ++found_nneigh;
+          ++found_nneigh_[omp_get_thread_num()];
           break;
         }
       }
@@ -414,16 +421,16 @@ bool TriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_pr
   }
   if (!found){
     id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-    inside = (id != std::numeric_limits<unsigned int>::max());
-    if (inside) {
+    inside_loc = (id != std::numeric_limits<unsigned int>::max());
+    if (inside_loc) {
       found = true;
-      ++found_other;
+      ++found_other_[omp_get_thread_num()];
     }
   }
   if (found){
     id_prev = id;
   }
-  return inside;
+  return inside_loc;
 }
 
 void TriangleInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)

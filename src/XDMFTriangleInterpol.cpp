@@ -99,6 +99,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   dim = mesh->geometry().dim();
   assert(dim == gdim);
   mesh->init();
+  mesh->bounding_box_tree();
 
   std::vector<double> xx = mesh->coordinates();
 

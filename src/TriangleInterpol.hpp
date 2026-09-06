@@ -5,6 +5,8 @@
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 #include "Triangle.hpp"
+#include <numeric>
+#include <omp.h>
 
 class TriangleInterpol
   : public Interpol
@@ -47,14 +49,18 @@ public:
   Matrix3d get_grada() { return gradA; };
   void probe(const Vector3d &x){ probe(x, this->t_update); };
   void print_found() {
-    long int found_sum = found_same + found_nneigh + found_other;
+    auto found_same = std::reduce(found_same_.begin(), found_same_.end());
+    auto found_nneigh = std::reduce(found_nneigh_.begin(), found_nneigh_.end());
+    auto found_other = std::reduce(found_other_.begin(), found_other_.end());
+
+    auto found_sum = found_same + found_nneigh + found_other;
     double frac_same = double(found_same) / found_sum;
     double frac_nneigh = double(found_nneigh) / found_sum;
     double frac_other = 1. - frac_same - frac_nneigh;
     std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
-    found_same = 0;
-    found_nneigh = 0;
-    found_other = 0;
+    std::fill(found_same_.begin(), found_same_.end(), 0);
+    std::fill(found_nneigh_.begin(), found_nneigh_.end(), 0);
+    std::fill(found_other_.begin(), found_other_.end(), 0);
   }
 protected:
   Timestamps ts;
@@ -118,9 +124,10 @@ protected:
   Uint ncoeffs_u;
   Uint ncoeffs_p;
 
-  long unsigned int found_same = 0;
-  long unsigned int found_nneigh = 0;
-  long unsigned int found_other = 0;
+  // One counter per thread, to avoid races in probe_light
+  std::vector<long unsigned int> found_same_;
+  std::vector<long unsigned int> found_nneigh_;
+  std::vector<long unsigned int> found_other_;
 
   void _modx(dolfin::Array<double>&, const Vector3d&);
 
