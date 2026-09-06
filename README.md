@@ -13,82 +13,55 @@
 This creates a file `timestamps.dat` in the same folder as `output.xdmf` that is used as input for **partrac**.
 
 ## Compilation
-Straightforward:
+Build out of tree, so the source folder stays clean:
 ```
-cmake .
-make
-sudo make install
+cmake -S . -B build
+make -C build -j
+```
+The executables end up in `bin/`. To run the tests:
+```
+ctest --test-dir build --output-on-failure
 ```
 
 ## Running
 Passive tracers example:
-`./trace data_example/L64x256_a1/felbm_output/timestamps.dat Dm=0 T=591000 dt=1.0 Nrw=10000 dump_intv=100.0 stat_intv=100.0 checkpoint_intv=1000 verbose=true x0=0 y0=0 z0=0 int_order=1 init_mode=line_x init_weight=uy write_mode=hdf5 interpolation_test=0 dump_chunk_size=10 refine=false refine_intv=10 hist_chunk_size=0 ds_max=0.05 Nrw_max=10000`
-This creates the folder `data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0..../` and puts the simulation data into it.
+`./bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
+This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` and puts the simulation data into it.
 
 ## Visualization
 Plotting the position:
 `python3 plot_pos.py data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0..../`
 
 ## Parameters
-| Parameter          |  Default value | Description                                              |
-|--------------------|----------------|----------------------------------------------------------|
-| folder             | ""             | Folder to store files in                                 |
-| restart_folder     | ""             | Folder to restart from                                   |
-| Dm                 | 1.0            | Diffusion constant                                       |
-| t0                 | 0.0            | Initial simulation time                                  |
-| T                  | 10000000.0     | Total simulation time                                    |
-| Nrw                | 100            | Initial number of particles                              |
-| dump_intv          | 100.0          | Time interval between dumping particle data              |
-| stat_intv          | 100.0          | Time interval between dumpting ensemble statistics       |
-| checkpoint_intv    | 1000.0         | Time interval between each checkpoint                    |
-| dump_chunk_size    | 50             | Number of time stamps in a single hdf5 file              |
-| verbose            | false          | Verbose output                                           |
-| U0                 | 1.0            | Rescale velocity (not active)                            |
-| x0                 | 0.0            | x parameter for initial distribution                     |
-| y0                 | 0.0            | y parameter for initial distribution                     |
-| z0                 | 0.0            | z parameter for initial distribution                     |
-| dt                 | 1.0            | Time step size                                           |
-| int_order          | 1              | Explicit integration order (1 or 2)                      |
-| init_mode          | "line_x"       | Initialization mode (see below)                          |
-| init_weight        | "none"         | Initialization weighting ("none", "ux", "uy", "uz", "u") |
-| write_mode         | "hdf5"         | Dump mode ("hdf5" or "txt")                              |
-| interpolation_test | 0              | Number of particles to test the interpolation with       |
-| refine             | false          | Refine edges                                             |
-| refine_intv        | 100.0          | Time interval between when to refine                     |
-| hist_chunk_size    | 10             | Number of stats_intv between when to output histograms   |
-| ds_max             | 1.0            | Maximum accepted edge length                             |
-| Nrw_max            | -1             | Maximum number of particles                              |
+Each app declares the parameters it accepts, so the set differs between them and
+an unrecognised parameter is an error rather than being silently ignored. Run an
+app with `--help` for its own list, with types, defaults and which parameters are
+required:
+```
+./bin/partrac --help
+```
+Parameters are given as `key=value` after the input file. A parameter is either
+required, optional with a default, or computed by the program (`folder`, `t`,
+`Lx`, `Ly`, `Lz`) and then only read back when restarting. Some are required only
+in certain configurations, for instance `La` when `init_mode` is a strip, sheet or
+ellipsoid.
 
-Parameters that are also stored in the event of a restart:
-`t, Lx, Ly, Lz, nx, ny, nz, n_accepted, n_declined`
+### Initialization modes
+Set with `init_mode`. The trailing axes select the direction(s) involved.
 
-### Initializaton modes
-| Mode          | Description                                                                           | Depends on |
-|---------------|---------------------------------------------------------------------------------------|------------|
-| "line_x"      | Nrw particles along x                                                                 | init_weight, y0, z0     |
-| "line_y"      | Nrw particles along y                                                                 | init_weight, x0, z0     |
-| "line_z"      | Nrw particles along z                                                                 | init_weight, x0, y0     |
-| "plane_xy"    | Nrw particles in the xy plane                                                         | init_weight, z0         |
-| "plane_xz"    | Nrw particles in the xz plane                                                         | init_weight, y0         |
-| "plane_yz"    | Nrw particles in the yz plane                                                         | init_weight, x0         |
-| "volume"      | Nrw particles in the whole domain                                                     | init_weight        |
-| "pair_xyz"    | Two particles separated by ds_max rotated randomly in 3D                              | x0, y0, z0   |
-| "pair_xy"     | Two particles separated by ds_max rotated randomly in the xy plane                    | x0, y0, z0   |
-| "pair_xz"     | Two particles separated by ds_max rotated randomly in the xz plane                    | x0, y0, z0   |
-| "pair_yz"     | Two particles separated by ds_max rotated randomly in the yz plane                    | x0, y0, z0   |
-| "pairs_xyz_x" | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in 3D           | y0, z0       |
-| "pairs_xyz_y" | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in 3D           | x0, z0       |
-| "pairs_xyz_z" | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in 3D           | x0, y0       |
-| "pairs_xy_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xy plane | y0, z0       |
-| "pairs_xy_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xy plane | x0, z0       |
-| "pairs_xy_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xy plane | x0, y0       |
-| "pairs_xz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the xz plane | y0, z0       |
-| "pairs_xz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the xz plane | x0, z0       |
-| "pairs_xz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the xz plane | x0, y0       |
-| "pairs_yz_x"  | Nrw/2 pairs of particles along x separated by ds_max rotated randomly in the yz plane | y0, z0       |
-| "pairs_yz_y"  | Nrw/2 pairs of particles along y separated by ds_max rotated randomly in the yz plane | x0, z0       |
-| "pairs_yz_z"  | Nrw/2 pairs of particles along z separated by ds_max rotated randomly in the yz plane | x0, y0       |
-| `pairs_[xyz]_[xyz]` | Nrw/2 pairs of particles in `[xyz]`(1) space rotated randomly in `[xyz]`(2) space |`[x0, y0, z0]`|
-| "uniform_x"   | Nrw particles separated uniformly along x                                             | y0, z0 |
-| "uniform_y"   | Nrw particles separated uniformly along y                                             | x0, z0 |
-| "uniform_z"   | Nrw particles separated uniformly along z                                             | x0, y0 |
+| Mode                         | Description                                             | Also reads              |
+|------------------------------|---------------------------------------------------------|-------------------------|
+| `point`                      | Nrw particles at a single point                          | x0, y0, z0              |
+| `uniform_[xyz]`              | Nrw particles spread uniformly along an axis             |                         |
+| `strip_[xyz]`                | Nrw particles along a strip of length La                 | La                      |
+| `sheet_[xy,xz,yz]`           | A refined sheet spanning La by Lb                        | La, Lb, ds_init         |
+| `ellipsoid_[xy,xz,yz]`       | A refined ellipsoid with semi-axes La and Lb             | La, Lb, x0, y0, z0      |
+| `pair_[xyz]`                 | Two particles separated by ds_init, randomly oriented    | ds_init, x0, y0, z0     |
+| `pairs_[xyz]_[xyz]`          | Nrw/2 pairs separated by ds_init, randomly oriented      | ds_init                 |
+| `points_[xyz]`               | Nrw particles at random positions                        | init_weight, ds_init    |
+| `randomgaussianstrip_[xyz]_[xyz]` | A strip of length La with gaussian spread Lb        | La, Lb                  |
+| `randomgaussiancircle_[xyz]` | A circle of diameter La with gaussian spread Lb          | La, Lb                  |
+| `from_file:<file.h5>`        | Positions read from a file                               | x0, y0, z0, t0          |
+
+`init_weight` selects how `points_*` samples positions: `none` (uniform), `u`, or
+one velocity component `ux`, `uy`, `uz`.

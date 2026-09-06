@@ -70,8 +70,9 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
   }
 }
 
-void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr<Interpol> intp, MPIwrap& mpi, Parameters& prm, std::mt19937& gen){
-  std::vector<std::string> key = split_string(prm.init_mode, "_");
+void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr<Interpol> intp, MPIwrap& mpi, partrac::Params& prm, std::mt19937& gen){
+  const std::string init_mode = prm.get<std::string>("init_mode");
+  std::vector<std::string> key = split_string(init_mode, "_");
   if (key.size() == 0){
     std::cout << "init_mode not specified." << std::endl;
     exit(0);
@@ -105,16 +106,16 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
     init_state = std::make_shared<RandomGaussianCircleInitializer>(key, intp, prm, mpi, gen);
   }
   else if (key[0] == "from"){
-    std::vector<std::string> key_col = split_string(prm.init_mode, ":");
+    std::vector<std::string> key_col = split_string(init_mode, ":");
     if (key_col[0] == "from_file"){
       init_state = std::make_shared<FileInitializer>(key_col, intp, prm, mpi);
     }
     else {
-      std::cout << "Unknown init_mode ('from' type): " << prm.init_mode << std::endl;
+      std::cout << "Unknown init_mode ('from' type): " << init_mode << std::endl;
     }
   }
   else {
-    std::cout << "Unknown init_mode: " << prm.init_mode << std::endl;
+    std::cout << "Unknown init_mode: " << init_mode << std::endl;
     exit(0);
   }
 }
@@ -326,18 +327,18 @@ void load_checkpoint(const Parameters &prm, ParticleSet& ps,
   }
 }*/
 
-std::string get_newfoldername(const std::string rwfolder, Parameters& prm){
+std::string get_newfoldername(const std::string rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.Dm;
-  ss_dt << std::scientific << std::setprecision(7) << prm.dt;
-  ss_Nrw << prm.Nrw;
-  ss_seed << prm.seed;
+  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
+  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
+  ss_Nrw << prm.get<Uint>("Nrw");
+  ss_seed << prm.get<int>("seed");
   std::string newfoldername = rwfolder +
                             "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                             "_dt" + ss_dt.str() +
                             "_Nrw" + ss_Nrw.str() +
                             "_seed" + ss_seed.str() +
-                            prm.tag +
+                            prm.get<std::string>("tag") +
                             "/";
   return newfoldername;
 }

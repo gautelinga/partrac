@@ -16,7 +16,7 @@
 #include "experimental/particles.hpp"
 #include "utils.hpp"
 //#include "MPIwrap.hpp"
-#include "Parameters.hpp"
+#include "Params.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "XDMFTriangleInterpol.hpp"
@@ -296,18 +296,18 @@ void write_stats_header(std::ofstream &statfile)
   statfile << std::endl;
 }
 
-std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm){
+std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.Dm;
-  ss_dt << std::scientific << std::setprecision(7) << prm.dt;
-  ss_Nrw << prm.Nrw;
-  ss_seed << prm.seed;
+  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
+  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
+  ss_Nrw << prm.get<Uint>("Nrw");
+  ss_seed << prm.get<int>("seed");
   std::string newfoldername = rwfolder +
                             "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                             "_dt" + ss_dt.str() +
                             "_Nrw" + ss_Nrw.str() +
                             "_seed" + ss_seed.str() +
-                            prm.tag +
+                            prm.get<std::string>("tag") +
                             "/";
   return newfoldername;
 }
@@ -368,6 +368,16 @@ void align_all(const std::vector<std::string>& key, Particles<ParticleType>& ps,
     }
 }
 
+// Parameters accepted by this app
+partrac::Schema tracervectors_triangleRK4_schema(){
+  partrac::Schema s("tracervectors_triangleRK4");
+  add_common_app_params(s);
+  add_experimental_initializer_params(s);
+  add_restart_params(s);
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  return s;
+}
+
 int main(int argc, char* argv[])
 {
     //MPIwrap mpi(argc, argv);
@@ -386,15 +396,11 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    Parameters prm(argc, argv);
-    if (prm.restart_folder != ""){
-        prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
-        prm.parse_cmd(argc, argv);
-    }
+    partrac::Params prm = partrac::parse_or_exit(tracervectors_triangleRK4_schema(), argc, argv);
 
-    if (prm.num_threads > 0){
+    if (prm.get<int>("num_threads") > 0){
         omp_set_dynamic(0);
-        omp_set_num_threads(prm.num_threads);
+        omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
     std::string infilename = std::string(argv[1]);
@@ -404,7 +410,7 @@ int main(int argc, char* argv[])
     XDMFTriangleInterpol intp(infilename);
     // std::cout << "Initialized TriangleInterpol." << std::endl;
 
-    intp.set_U0(prm.U0);
+    intp.set_U0(prm.get<double>("U"));
     intp.set_int_order(2);  // To evaluate gradients
 
     std::string folder = intp.get_folder();
@@ -414,8 +420,8 @@ int main(int argc, char* argv[])
         create_folder(rwfolder);
     
     std::string newfolder;
-    if (prm.restart_folder != ""){
-        newfolder = prm.folder;
+    if (prm.get<std::string>("restart_folder") != ""){
+        newfolder = prm.get<std::string>("folder");
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
@@ -432,35 +438,35 @@ int main(int argc, char* argv[])
         create_folder(posfolder);
         create_folder(checkpointsfolder);
     }
-    prm.folder = newfolder;
+    prm.set<std::string>("folder", newfolder);
 
     //if (mpi.rank() == 0)
-        prm.print();
+        if (prm.get<bool>("verbose")) prm.print();
 
     std::mt19937 gen;
-    if (prm.random) {
+    if (prm.get<bool>("random")) {
         std::random_device rd;
         gen.seed(rd());
     }
     else {
-        std::seed_seq rd{prm.seed}; // + mpi.rank()};
+        std::seed_seq rd{prm.get<int>("seed")}; // + mpi.rank()};
         gen.seed(rd);
     }
 
-    Real dt = prm.dt;
-    Real t0 = std::max(intp.get_t_min(), prm.t0);
-    Real T = std::min(intp.get_t_max(), prm.T);
-    prm.t0 = t0;
-    prm.T = T;
+    Real dt = prm.get<double>("dt");
+    Real t0 = std::max(intp.get_t_min(), prm.get<double>("t0"));
+    Real T = std::min(intp.get_t_max(), prm.get<double>("T"));
+    prm.set<double>("t0", t0);
+    prm.set<double>("T", T);
 
     // This part is unique
     std::cout << "Initializing Integrator..." << std::endl;
     Integrator_RK4 integrator;
 
     std::cout << "Initializing ParticleSet..." << std::endl;
-    Particles<Particle> ps(prm.Nrw_max);
+    Particles<Particle> ps(prm.get<Uint>("Nrw_max"));
 
-    auto key = split_string(prm.init_mode, "_");
+    auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
         exit(0);
@@ -476,8 +482,8 @@ int main(int argc, char* argv[])
 
     int it = 0;
     Real t = t0;
-    if (prm.restart_folder != ""){
-        t = prm.t;
+    if (prm.get<std::string>("restart_folder") != ""){
+        t = prm.get<double>("t");
     }
     prm.dump(newfolder, t);
 
@@ -487,17 +493,17 @@ int main(int argc, char* argv[])
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
 
-    Uint int_stat_intv = int(prm.stat_intv/dt);
-    Uint int_dump_intv = int(prm.dump_intv/dt);
-    Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
-    Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
+    Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
+    Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
+    Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
+    Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
 
     std::map<std::string, bool> output_fields;
-    output_fields["u"] = !prm.minimal_output;
-    output_fields["c"] = !prm.minimal_output;
-    output_fields["p"] = !prm.minimal_output && prm.output_all_props;
+    output_fields["u"] = !prm.get<bool>("minimal_output");
+    output_fields["c"] = !prm.get<bool>("minimal_output");
+    output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
     output_fields["rho"] = true; // !prm.minimal_output && prm.output_all_props;        
-    output_fields["H"] = !prm.minimal_output && ps.dim() > 0;
+    output_fields["H"] = !prm.get<bool>("minimal_output") && ps.dim() > 0;
     output_fields["n"] = true;
     output_fields["w"] = true;
     output_fields["S"] = true;

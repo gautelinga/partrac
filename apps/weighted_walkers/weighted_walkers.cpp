@@ -17,24 +17,24 @@
 #include "experimental/particles.hpp"
 #include "utils.hpp"
 #include "MPIwrap.hpp"
-#include "Parameters.hpp"
+#include "Params.hpp"
 #include "AnalyticInterpol.hpp"
 #include "experimental/integrator_explicit.hpp"
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
 
-std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm){
+std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.Dm;
-  ss_dt << std::scientific << std::setprecision(7) << prm.dt;
-  ss_Nrw << prm.Nrw;
-  ss_seed << prm.seed;
+  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
+  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
+  ss_Nrw << prm.get<Uint>("Nrw");
+  ss_seed << prm.get<int>("seed");
   std::string newfoldername = rwfolder +
                             "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                             "_dt" + ss_dt.str() +
                             "_Nrw" + ss_Nrw.str() +
                             "_seed" + ss_seed.str() +
-                            prm.tag +
+                            prm.get<std::string>("tag") +
                             "/";
   return newfoldername;
 }
@@ -97,7 +97,7 @@ std::vector<Uint> get_exited_nodes(T& ps, const std::string& exit_plane, const d
 }
 
 template<typename T>
-void split_random_nodes(std::vector<Uint>& nodes_to_replace, T& ps, std::vector<std::mt19937>& gens, Parameters& prm){
+void split_random_nodes(std::vector<Uint>& nodes_to_replace, T& ps, std::vector<std::mt19937>& gens, partrac::Params& prm){
 
     //auto t0 = std::chrono::high_resolution_clock::now();
 
@@ -182,6 +182,25 @@ void split_random_nodes(std::vector<Uint>& nodes_to_replace, T& ps, std::vector<
     //std::cout << dt1.count() << " " << dt2.count() << " " << dt3.count() << " " << dt4.count() << " " << dt5.count() << std::endl;
 }
 
+// Parameters accepted by this app
+partrac::Schema weighted_walkers_schema(){
+  partrac::Schema s("weighted_walkers");
+  add_common_app_params(s);
+  add_experimental_initializer_params(s);
+  add_restart_params(s);
+  s.require<int>("int_order", "integration order");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  s.require<double>("ds_max", "max edge length");
+  s.opt<double>("Lt", 0.0, "tangential extent of the exit plane");
+  s.require<double>("La", "principal extent");
+  s.require<double>("Lb", "gaussian width");
+  s.opt<double>("Ln", 0.0, "exit plane position");
+  s.opt<double>("refine_intv", 100.0, "refinement interval");
+  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
+  s.choices("exit_plane", {"none", "x", "y", "z"});
+  return s;
+}
+
 int main(int argc, char* argv[])
 {
     MPIwrap mpi(argc, argv);
@@ -199,23 +218,19 @@ int main(int argc, char* argv[])
         std::cout << "Please specify an input file." << std::endl;
         return 0;
     }
-    Parameters prm(argc, argv);
-    if (prm.restart_folder != ""){
-        prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
-        prm.parse_cmd(argc, argv);
-    }
+    partrac::Params prm = partrac::parse_or_exit(weighted_walkers_schema(), argc, argv);
 
-    if (prm.num_threads > 0){
+    if (prm.get<int>("num_threads") > 0){
         omp_set_dynamic(0);
-        omp_set_num_threads(prm.num_threads);
+        omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
     std::string infilename = std::string(argv[1]);
 
     AnalyticInterpol intp(infilename);
 
-    intp.set_U0(prm.U0);
-    intp.set_int_order(prm.int_order);
+    intp.set_U0(prm.get<double>("U"));
+    intp.set_int_order(prm.get<int>("int_order"));
 
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/WeightedWalkers/";
@@ -224,8 +239,8 @@ int main(int argc, char* argv[])
         create_folder(rwfolder);
     
     std::string newfolder;
-    if (prm.restart_folder != ""){
-        newfolder = prm.folder;
+    if (prm.get<std::string>("restart_folder") != ""){
+        newfolder = prm.get<std::string>("folder");
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
@@ -244,42 +259,42 @@ int main(int argc, char* argv[])
         create_folder(checkpointsfolder);
         create_folder(sepdatafolder);
     }
-    prm.folder = newfolder;
+    prm.set<std::string>("folder", newfolder);
 
     if (mpi.rank() == 0)
-        prm.print();
+        if (prm.get<bool>("verbose")) prm.print();
 
     // Parallel generators
     std::vector<std::mt19937> gens;
     for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
         std::mt19937 gen;
-        if (prm.random) {
+        if (prm.get<bool>("random")) {
             std::random_device rd;
             gen.seed(rd());
         }
         else {
-            std::seed_seq rd{prm.seed + omp_get_thread_num() };
+            std::seed_seq rd{prm.get<int>("seed") + omp_get_thread_num() };
             gen.seed(rd);
         }
         gens.emplace_back(gen);
     }
 
-    std::uniform_int_distribution<std::mt19937::result_type> uniform_dist(0, prm.Nrw);
+    std::uniform_int_distribution<std::mt19937::result_type> uniform_dist(0, prm.get<Uint>("Nrw"));
 
-    Real dt = prm.dt;
-    Real t0 = std::max(intp.get_t_min(), prm.t0);
-    Real T = std::min(intp.get_t_max(), prm.T);
-    prm.t0 = t0;
-    prm.T = T;
+    Real dt = prm.get<double>("dt");
+    Real t0 = std::max(intp.get_t_min(), prm.get<double>("t0"));
+    Real T = std::min(intp.get_t_max(), prm.get<double>("T"));
+    prm.set<double>("t0", t0);
+    prm.set<double>("T", T);
 
     // This part is unique
     std::cout << "initializing Integrator..." << std::endl;
-    Integrator_Explicit integrator(prm.Dm, prm.int_order, gens);
+    Integrator_Explicit integrator(prm.get<double>("Dm"), prm.get<int>("int_order"), gens);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
-    Particles<Particle> ps(prm.Nrw_max);
+    Particles<Particle> ps(prm.get<Uint>("Nrw_max"));
 
-    auto key = split_string(prm.init_mode, "_");
+    auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
         exit(0);
@@ -317,8 +332,8 @@ int main(int argc, char* argv[])
 
     int it = 0;
     Real t = t0;
-    if (prm.restart_folder != ""){
-        t = prm.t;
+    if (prm.get<std::string>("restart_folder") != ""){
+        t = prm.get<double>("t");
     }
     prm.dump(newfolder, t);
 
@@ -328,15 +343,15 @@ int main(int argc, char* argv[])
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
 
-    Uint int_stat_intv = int(prm.stat_intv/dt);
-    Uint int_dump_intv = int(prm.dump_intv/dt);
-    Uint int_reinject_intv = int(prm.refine_intv/dt);
-    Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
-    Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
+    Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
+    Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
+    Uint int_reinject_intv = int(prm.get<double>("refine_intv")/dt);
+    Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
+    Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
 
     std::map<std::string, bool> output_fields;
     output_fields["u"] = false; // !prm.minimal_output;
-    output_fields["c"] = !prm.minimal_output;
+    output_fields["c"] = !prm.get<bool>("minimal_output");
     output_fields["p"] = false; // !prm.minimal_output && prm.output_all_props;
     output_fields["rho"] = false;  // !prm.minimal_output && prm.output_all_props;        
     output_fields["H"] = false;  //& !prm.minimal_output && ps.dim() > 0;
@@ -383,20 +398,20 @@ int main(int argc, char* argv[])
             w_.reserve(ps.particles().size());
             for ( auto & particle : ps.particles() ){
                 Vector3d x = particle.x();
-                Vector3d ds = {abs(x[0]-prm.x0), abs(x[1]-prm.y0), abs(x[2]-prm.z0)};
+                Vector3d ds = {abs(x[0]-prm.get<double>("x0")), abs(x[1]-prm.get<double>("y0")), abs(x[2]-prm.get<double>("z0"))};
                 if (dim == 2 && (
-                    (prm.exit_plane == "x" && (
-                     (contains(key[1], "y") && ds[1] < prm.ds_max) || 
-                     (contains(key[1], "z") && ds[2] < prm.ds_max)
+                    (prm.get<std::string>("exit_plane") == "x" && (
+                     (contains(key[1], "y") && ds[1] < prm.get<double>("ds_max")) || 
+                     (contains(key[1], "z") && ds[2] < prm.get<double>("ds_max"))
                     )) ||
-                    (prm.exit_plane == "y" && (
-                     (contains(key[1], "x") && ds[0] < prm.ds_max) ||
-                     (contains(key[1], "z") && ds[0] < prm.ds_max)
+                    (prm.get<std::string>("exit_plane") == "y" && (
+                     (contains(key[1], "x") && ds[0] < prm.get<double>("ds_max")) ||
+                     (contains(key[1], "z") && ds[0] < prm.get<double>("ds_max"))
                     ))) || 
                    dim == 3 && (
-                    (prm.exit_plane == "x" && (std::pow(ds[1], 2) + std::pow(ds[2], 2) < std::pow(prm.ds_max, 2))) ||
-                    (prm.exit_plane == "y" && (std::pow(ds[0], 2) + std::pow(ds[2], 2) < std::pow(prm.ds_max, 2))) ||
-                    (prm.exit_plane == "z" && (std::pow(ds[0], 2) + std::pow(ds[1], 2) < std::pow(prm.ds_max, 2)))
+                    (prm.get<std::string>("exit_plane") == "x" && (std::pow(ds[1], 2) + std::pow(ds[2], 2) < std::pow(prm.get<double>("ds_max"), 2))) ||
+                    (prm.get<std::string>("exit_plane") == "y" && (std::pow(ds[0], 2) + std::pow(ds[2], 2) < std::pow(prm.get<double>("ds_max"), 2))) ||
+                    (prm.get<std::string>("exit_plane") == "z" && (std::pow(ds[0], 2) + std::pow(ds[1], 2) < std::pow(prm.get<double>("ds_max"), 2)))
                    )){
                     xyz_.push_back(x[0]);
                     xyz_.push_back(x[1]);
@@ -442,7 +457,7 @@ int main(int argc, char* argv[])
         //    //std::cout << outside_nodes.size() << " nodes are outside." << std::endl;
         //}
         if (it % int_reinject_intv == 0){
-            auto exited_nodes = get_exited_nodes(ps, prm.exit_plane, prm.Ln, prm.Lt);
+            auto exited_nodes = get_exited_nodes(ps, prm.get<std::string>("exit_plane"), prm.get<double>("Ln"), prm.get<double>("Lt"));
             //std::cout << exited_nodes.size() << " nodes have crossed the " << prm.exit_plane << " plane." << std::endl;
             if (exited_nodes.size() > 0){
                 //

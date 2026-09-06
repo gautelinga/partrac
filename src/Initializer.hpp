@@ -9,6 +9,59 @@
 #include "Interpol.hpp"
 #include "utils.hpp"
 #include "MPIwrap.hpp"
+#include "Params.hpp"
+
+// true if init_mode starts with one of the given kinds
+inline bool init_mode_is(const partrac::Params& prm, const std::vector<std::string>& kinds){
+  const std::string kind = split_string(prm.get<std::string>("init_mode"), "_")[0];
+  return std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
+}
+
+// Parameters read by set_initial_state and the initializers it dispatches to.
+// La, Lb, ds_init and init_weight are only read by some init_modes, and their
+// old defaults were degenerate: La = 0 divides by zero in EllipsoidInitializer
+// and collapses strip_* onto a single point.
+inline void add_initializer_params(partrac::Schema& s){
+  s.require<std::string>("init_mode", "initial distribution");
+  s.require<Uint>("Nrw", "number of particles");
+  s.require<Uint>("Nrw_max", "max number of particles");
+  s.require<double>("ds_max", "max edge length");
+  s.require<double>("ds_min", "min edge length");
+  s.require_if<double>("La",
+                       [](const partrac::Params& p){
+                         return init_mode_is(p, {"strip", "sheet", "ellipsoid",
+                                                 "randomgaussianstrip",
+                                                 "randomgaussiancircle"});
+                       },
+                       "init_mode is a strip, sheet, ellipsoid or gaussian",
+                       "principal extent");
+  s.require_if<double>("Lb",
+                       [](const partrac::Params& p){
+                         return init_mode_is(p, {"sheet", "ellipsoid",
+                                                 "randomgaussianstrip",
+                                                 "randomgaussiancircle"});
+                       },
+                       "init_mode is a sheet, ellipsoid or gaussian",
+                       "second extent");
+  s.require_if<double>("ds_init",
+                       [](const partrac::Params& p){
+                         return init_mode_is(p, {"sheet", "pair", "pairs", "points"});
+                       },
+                       "init_mode is a sheet, pair or points distribution",
+                       "initial edge length");
+  s.require_if<std::string>("init_weight",
+                            [](const partrac::Params& p){
+                              return init_mode_is(p, {"points"});
+                            },
+                            "init_mode is a points distribution",
+                            "sampling weight");
+  s.opt<double>("t0", 0.0, "start time");
+  s.opt<double>("x0", 0.0, "initial position");
+  s.opt<double>("y0", 0.0, "initial position");
+  s.opt<double>("z0", 0.0, "initial position");
+  s.opt<bool>("inject", false, "inject new particles");
+  s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
+}
 
 // TODO: Massive cleanup!
 struct less_than_op {
@@ -19,13 +72,13 @@ struct less_than_op {
 
 class Initializer {
 public:
-  Initializer(std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : intp(intp), prm(prm), m_mpi(mpi) {
-    x0 = {prm.x0, prm.y0, prm.z0};
+  Initializer(std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : intp(intp), prm(prm), m_mpi(mpi) {
+    x0 = {prm.get<double>("x0"), prm.get<double>("y0"), prm.get<double>("z0")};
     x_min = intp->get_x_min();
     x_max = intp->get_x_max();
     L = x_max - x_min;
-    inject = prm.inject;
-    clear_initial_edges = prm.clear_initial_edges;
+    inject = prm.get<bool>("inject");
+    clear_initial_edges = prm.get<bool>("clear_initial_edges");
   };
   ~Initializer() { nodes.clear(); edges.clear(); faces.clear(); };
   /*std::vector<Vector3d>::const_iterator node_begin() const { return nodes.begin(); };
@@ -41,7 +94,7 @@ public:
   bool clear_initial_edges;
 protected:
   std::shared_ptr<Interpol> intp;
-  Parameters& prm;
+  partrac::Params& prm;
   Vector3d x0;
   Vector3d x_min;
   Vector3d x_max;
@@ -51,9 +104,9 @@ protected:
 
 class PointInitializer : public Initializer {
 public:
-  PointInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  PointInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     intp->probe(x0);
-    for (Uint irw=0; irw < prm.Nrw; ++irw){
+    for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
       if (intp->inside_domain()){
         nodes.push_back(x0);
       }
@@ -65,7 +118,7 @@ public:
 
 class UniformInitializer : public Initializer {
 public:
-  UniformInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  UniformInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
     Vector3d x_a = x0;
     Vector3d x_b = x0;
     if (key[1] == "x"){
@@ -84,8 +137,8 @@ public:
       std::cout << "Unrecognized initialization..." << std::endl;
       exit(0);
     }
-    Vector3d Dx = (x_b - x_a) / (prm.Nrw-1);
-    for (Uint irw=0; irw < prm.Nrw; ++irw){
+    Vector3d Dx = (x_b - x_a) / (prm.get<Uint>("Nrw")-1);
+    for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
       Vector3d x = x_a + Dx * irw;
       intp->probe(x);
       if (intp->inside_domain()){
@@ -102,8 +155,8 @@ public:
 
 class StripInitializer : public Initializer {
 public:
-  StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
-    double La = prm.La;
+  StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+    double La = prm.get<double>("La");
     // double Lb = prm.Lb;
     Vector3d n(0., 0., 0.);
     if (key[1] == "x"){
@@ -130,8 +183,8 @@ public:
     bool this_inside = false;
     bool prev_inside = false;
 
-    for (Uint i=0; i < prm.Nrw; ++i){
-      double alpha = float(i)/(prm.Nrw-1);
+    for (Uint i=0; i < prm.get<Uint>("Nrw"); ++i){
+      double alpha = float(i)/(prm.get<Uint>("Nrw")-1);
       Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
       // check if inside domain
       intp->probe(x0i);
@@ -148,15 +201,15 @@ public:
       std::cout << "Strip not inside domain" << std::endl;
       exit(0);
     }
-    prm.Nrw = irw;
+    prm.set<Uint>("Nrw", irw);
   };
 };
 
 class SheetInitializer : public Initializer {
 public:
-  SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
-    double La = prm.La;
-    double Lb = prm.Lb;
+  SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+    double La = prm.get<double>("La");
+    double Lb = prm.get<double>("Lb");
     Vector3d n(0., 0., 0.);
     Vector3d ta(0., 0., 0.);
     Vector3d tb(0., 0., 0.);
@@ -228,7 +281,7 @@ public:
     faces.push_back({{0, 2, 1}, La*Lb/2});
     faces.push_back({{1, 3, 4}, La*Lb/2});
 
-    ParticleSet pset_loc(intp, prm.Nrw_max, m_mpi);
+    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"), m_mpi);
     pset_loc.add(nodes, 0);
 
     Edge2FacesType edge2faces_loc;
@@ -244,7 +297,7 @@ public:
     Uint n_rem = 0;
     do {
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
-                                    pset_loc, prm.ds_init, 0.0, false, false);
+                                    pset_loc, prm.get<double>("ds_init"), 0.0, false, false);
 
       std::cout << "Added " << n_add << " edges." << std::endl;
     } while (n_add > 0);
@@ -341,10 +394,10 @@ public:
     int max_attempts = 100;
     do {
       n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
-                               pset_loc, attempt == 0 ? prm.ds_min : prm.ds_min, 0.0);
+                               pset_loc, attempt == 0 ? prm.get<double>("ds_min") : prm.get<double>("ds_min"), 0.0);
 
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
-                                    pset_loc, prm.ds_max, 0.0, false, true);
+                                    pset_loc, prm.get<double>("ds_max"), 0.0, false, true);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
 
@@ -361,9 +414,9 @@ public:
 
 class EllipsoidInitializer : public Initializer {
 public:
-  EllipsoidInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
-    double La = prm.La;
-    double Lb = prm.Lb;
+  EllipsoidInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+    double La = prm.get<double>("La");
+    double Lb = prm.get<double>("Lb");
     double lx2 = Lb*Lb;
     double ly2 = Lb*Lb;
     double lz2 = Lb*Lb;
@@ -388,12 +441,12 @@ public:
 
     double R = sqrt(La*Lb);
 
-    Vector3d x_c = {prm.x0, prm.y0, prm.z0};
+    Vector3d x_c = {prm.get<double>("x0"), prm.get<double>("y0"), prm.get<double>("z0")};
 
-    Vector3d x_0 = {prm.x0 - R/sqrt(2.), prm.y0 - R/sqrt(6.0),   prm.z0 - R/sqrt(3.0)/2};
-    Vector3d x_1 = {prm.x0 + R/sqrt(2.), prm.y0 - R/sqrt(6.0),   prm.z0 - R/sqrt(3.0)/2};
-    Vector3d x_2 = {prm.x0,              prm.y0 + R*sqrt(2./3.), prm.z0 - R/sqrt(3.0)/2};
-    Vector3d x_3 = {prm.x0,              prm.y0,                 prm.z0 + R*sqrt(3.0)/2};
+    Vector3d x_0 = {prm.get<double>("x0") - R/sqrt(2.), prm.get<double>("y0") - R/sqrt(6.0),   prm.get<double>("z0") - R/sqrt(3.0)/2};
+    Vector3d x_1 = {prm.get<double>("x0") + R/sqrt(2.), prm.get<double>("y0") - R/sqrt(6.0),   prm.get<double>("z0") - R/sqrt(3.0)/2};
+    Vector3d x_2 = {prm.get<double>("x0"),              prm.get<double>("y0") + R*sqrt(2./3.), prm.get<double>("z0") - R/sqrt(3.0)/2};
+    Vector3d x_3 = {prm.get<double>("x0"),              prm.get<double>("y0"),                 prm.get<double>("z0") + R*sqrt(3.0)/2};
 
     std::cout << x_0.norm() << std::endl;
     std::cout << x_1.norm() << std::endl;
@@ -442,7 +495,7 @@ public:
     nodes_loc.push_back(x_2);
     nodes_loc.push_back(x_3);
 
-    ParticleSet pset_loc(intp, prm.Nrw_max, m_mpi);
+    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"), m_mpi);
     pset_loc.add(nodes_loc, 0);
 
     edges.push_back({{0, 1}, dist(nodes_loc[0], nodes_loc[1])});
@@ -465,7 +518,7 @@ public:
     Uint n_add, n_rem;
     do {
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
-                                    pset_loc, prm.ds_max, 0.0, false);
+                                    pset_loc, prm.get<double>("ds_max"), 0.0, false);
       for (Uint irw=0; irw<pset_loc.N(); ++irw){
         Vector3d x = pset_loc.x(irw);
         Vector3d nn = (x - x_c)/ (x - x_c).norm();
@@ -473,7 +526,7 @@ public:
         pset_loc.set_x(irw, x_c + rad * nn);
       }
       n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
-                               pset_loc, prm.ds_min, 0.0);
+                               pset_loc, prm.get<double>("ds_min"), 0.0);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
     } while (n_add > 0 || n_rem > 0);
@@ -498,13 +551,13 @@ class RandomPairsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPairsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
+  RandomPairsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
     std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
     std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
     std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
     std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
-    Uint Npairs = (key[0] == "pair") ? 1 : prm.Nrw/2;
+    Uint Npairs = (key[0] == "pair") ? 1 : prm.get<Uint>("Nrw")/2;
 
     std::cout << "Npairs = " << Npairs << std::endl;
 
@@ -541,7 +594,7 @@ public:
       else {
         dx[2] = rnd_normal(gen);
       }
-      dx *= 0.5*prm.ds_init/dx.norm();
+      dx *= 0.5*prm.get<double>("ds_init")/dx.norm();
 
       Vector3d x_a = x0_ + dx;
       intp->probe(x_a);
@@ -573,7 +626,7 @@ protected:
 public:
   RandomPointsInitializer( const std::vector<std::string>& key
                          , std::shared_ptr<Interpol> intp
-                         , Parameters& prm
+                         , partrac::Params& prm
                          , MPIwrap& mpi
                          , std::mt19937 &gen
                          ) : Initializer(intp, prm, mpi), gen(gen) {
@@ -652,16 +705,16 @@ public:
           if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
           if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
           intp->probe(x);
-          if (prm.init_weight == "ux"){
+          if (prm.get<std::string>("init_weight") == "ux"){
             ww = abs(intp->get_ux());
           }
-          else if (prm.init_weight == "uy"){
+          else if (prm.get<std::string>("init_weight") == "uy"){
             ww = abs(intp->get_uy());
           }
-          else if (prm.init_weight == "uz"){
+          else if (prm.get<std::string>("init_weight") == "uz"){
             ww = abs(intp->get_uz());
           }
-          else if (prm.init_weight == "u"){
+          else if (prm.get<std::string>("init_weight") == "u"){
             ww = sqrt(pow(intp->get_ux(), 2)
                       + pow(intp->get_uy(), 2)
                       + pow(intp->get_uz(), 2));
@@ -680,7 +733,7 @@ public:
     std::uniform_real_distribution<> uni_dist_dz(-0.5*dz, 0.5*dz);
     std::discrete_distribution<Uint> discrete_dist(wei.begin(), wei.end());
 
-    for (Uint irw=0; irw<prm.Nrw; ++irw){
+    for (Uint irw=0; irw<prm.get<Uint>("Nrw"); ++irw){
       Vector3d x;
       do {
         Uint ind = discrete_dist(gen);
@@ -696,9 +749,9 @@ public:
 
     sort(nodes.begin(), nodes.end(), less_than_op());
 
-    for (Uint irw=1; irw < prm.Nrw; ++irw){
+    for (Uint irw=1; irw < prm.get<Uint>("Nrw"); ++irw){
       double ds0 = dist(nodes[irw-1], nodes[irw]);
-      if (ds0 < 10*prm.ds_init)  // 2 lattice units (before) --> 10 x ds_max (now)
+      if (ds0 < 10*prm.get<double>("ds_init"))  // 2 lattice units (before) --> 10 x ds_max (now)
         edges.push_back({{irw-1, irw}, ds0});
       // Needs customization for 2D/3D applications
     }
@@ -711,14 +764,14 @@ protected:
 public:
   RandomGaussianStripInitializer( const std::vector<std::string>& key
                                 , std::shared_ptr<Interpol> intp
-                                , Parameters& prm, MPIwrap& mpi
+                                , partrac::Params& prm, MPIwrap& mpi
                                 , std::mt19937 &gen
                                 ) : Initializer(intp, prm, mpi), gen(gen) {
     edges.clear();
     faces.clear();
 
-    double La = prm.La;
-    double sigma0 = prm.Lb;
+    double La = prm.get<double>("La");
+    double sigma0 = prm.get<double>("Lb");
     
     Vector3d n(0., 0., 0.);
     if (key[1] == "x"){
@@ -749,7 +802,7 @@ public:
     Uint max_failed_attempts = 1000000; // Maybe not hardcode?
 
     Uint irw = 0;
-    while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+    while (irw < prm.get<Uint>("Nrw") && failed_attempts < max_failed_attempts){
       double alpha = rnd_unit(gen);
       Vector3d xi = alpha * x00 + (1.-alpha) * x01;
       if (init_rand_x)
@@ -773,7 +826,7 @@ public:
       std::cout << "No points inside domain" << std::endl;
       exit(0);
     }
-    prm.Nrw = irw;
+    prm.set<Uint>("Nrw", irw);
   };
 };
 
@@ -783,14 +836,14 @@ protected:
 public:
   RandomGaussianCircleInitializer( const std::vector<std::string>& key
                                 , std::shared_ptr<Interpol> intp
-                                , Parameters& prm, MPIwrap& mpi
+                                , partrac::Params& prm, MPIwrap& mpi
                                 , std::mt19937 &gen
                                 ) : Initializer(intp, prm, mpi), gen(gen) {
     edges.clear();
     faces.clear();
 
-    double R = prm.La/2;
-    double sigma0 = prm.Lb;
+    double R = prm.get<double>("La")/2;
+    double sigma0 = prm.get<double>("Lb");
     
     Vector3d t1(0., 0., 0.);
     Vector3d t2(0., 0., 0.);
@@ -814,7 +867,7 @@ public:
     Uint max_failed_attempts = 1000000; // Maybe not hardcode?
 
     Uint irw = 0;
-    while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+    while (irw < prm.get<Uint>("Nrw") && failed_attempts < max_failed_attempts){
       double alpha1 = 1.;
       double alpha2 = 1.;
       while (pow(alpha1, 2) + pow(alpha2, 2) > 1){
@@ -841,13 +894,13 @@ public:
       std::cout << "No points inside domain" << std::endl;
       exit(0);
     }
-    prm.Nrw = irw;
+    prm.set<Uint>("Nrw", irw);
   };
 };
 
 class FileInitializer : public Initializer {
 public:
-  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, Parameters& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
 
     std::string h5filename = key_col[1];
 
@@ -879,12 +932,12 @@ public:
 
     int cell_id = -1;
     for (Uint i=0; i < dims_nodes[0]; ++i){
-      Vector3d xi = {prm.x0, prm.y0, prm.z0};
+      Vector3d xi = {prm.get<double>("x0"), prm.get<double>("y0"), prm.get<double>("z0")};
       for (Uint j=0; j < dims_nodes[1]; ++j){
         xi[j] = nodes_buf[i * dims_nodes[1] + j];
       }
       // check if inside domain
-      this_inside = intp->probe_light(xi, prm.t0, cell_id);
+      this_inside = intp->probe_light(xi, prm.get<double>("t0"), cell_id);
       if (this_inside){
         nodes.push_back(xi);
         if (prev_inside)
@@ -897,7 +950,7 @@ public:
       std::cout << "No points inside domain" << std::endl;
       exit(0);
     }
-    prm.Nrw = irw;
+    prm.set<Uint>("Nrw", irw);
   };
 };
 

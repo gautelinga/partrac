@@ -10,8 +10,56 @@
 #include "../Interpol.hpp"
 #include "utils.hpp"
 //#include "../MPIwrap.hpp"
-#include "../Parameters.hpp"
+#include "../Params.hpp"
 //#include "particles.hpp"
+
+// Parameters read by the experimental initializers. La and Lb are only read by
+// the gaussian strip and circle initializers, so the apps that use those
+// declare them themselves.
+inline void add_experimental_initializer_params(partrac::Schema& s){
+  s.require<std::string>("init_mode", "initial distribution");
+  s.require<Uint>("Nrw", "number of particles");
+  s.opt<double>("x0", 0.0, "initial position");
+  s.opt<double>("y0", 0.0, "initial position");
+  s.opt<double>("z0", 0.0, "initial position");
+  s.opt<bool>("inject", false, "inject new particles");
+  s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
+}
+
+// Parameters every app in this family reads
+inline void add_common_app_params(partrac::Schema& s){
+  s.require<double>("Dm", "molecular diffusivity");
+  s.require<double>("dt", "timestep");
+  s.require<double>("T", "final time");
+  s.require<Uint>("Nrw_max", "max number of particles");
+  s.opt<double>("t0", 0.0, "start time");
+  s.opt<double>("U", 1.0, "velocity scale");
+  s.opt<double>("dump_intv", 100.0, "dump interval");
+  s.opt<double>("stat_intv", 100.0, "statistics interval");
+  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
+  s.opt<int>("seed", 0, "random seed");
+  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
+  s.opt<bool>("minimal_output", false, "dump less");
+  s.opt<bool>("verbose", false, "print the parameters");
+  s.opt<std::string>("tag", "", "appended to the folder name");
+  // dump_intv and stat_intv become integer step counts, so they must not round
+  // down to zero
+  s.finalize([](partrac::Params& p){
+    const double dt = p.get<double>("dt");
+    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
+  });
+}
+
+// Parameters used by the restart path
+inline void add_restart_params(partrac::Schema& s){
+  s.opt<bool>("random", true, "draw the seed randomly");
+  s.opt<bool>("output_all_props", true, "dump all properties");
+  s.opt<std::string>("restart_folder", "", "folder to restart from");
+  s.runtime<std::string>("folder", "", "output folder");
+  s.runtime<double>("t", 0.0, "current time");
+}
 
 // TODO: Massive cleanup!
 struct less_than_op {
@@ -24,13 +72,13 @@ class Initializer {
 public:
   //Initializer(IntpType& intp, Parameters& prm, MPIwrap& mpi) : m_intp(intp), prm(prm), m_mpi(mpi) {
   //Initializer(Parameters& prm, MPIwrap& mpi) : prm(prm) { //, m_mpi(mpi) {
-  Initializer(Parameters& prm) : prm(prm) {
-    x0 = {prm.x0, prm.y0, prm.z0};
+  Initializer(partrac::Params& prm) : prm(prm) {
+    x0 = {prm.get<double>("x0"), prm.get<double>("y0"), prm.get<double>("z0")};
     //x_min = intp.get_x_min();
     //x_max = intp.get_x_max();
     //L = x_max - x_min;
-    inject = prm.inject;
-    clear_initial_edges = prm.clear_initial_edges;
+    inject = prm.get<bool>("inject");
+    clear_initial_edges = prm.get<bool>("clear_initial_edges");
   };
   virtual ~Initializer() { nodes.clear(); edges.clear(); faces.clear(); };
   //virtual void probe(IntpType& intp) = 0;
@@ -49,7 +97,7 @@ public:
   template<typename T> void initialize(T& particles);
 protected:
   //IntpType& m_intp;
-  Parameters& prm;
+  partrac::Params& prm;
   Vector x0;
   Vector x_min;
   Vector x_max;
@@ -111,7 +159,7 @@ protected:
 public:
   UniformInitializer( const std::vector<std::string>& key
                     //, IntpType& intp
-                    , Parameters& prm
+                    , partrac::Params& prm
                     //, MPIwrap& mpi
                     //) : Initializer(intp, prm, mpi) {
                     ) : Initializer(prm), key(key) {
@@ -145,8 +193,8 @@ void UniformInitializer::probe(IntpType& intp){
     std::cout << "Unrecognized initialization..." << std::endl;
     exit(0);
   }
-  Vector Dx = (x_b - x_a) / (prm.Nrw-1);
-  for (Uint irw=0; irw < prm.Nrw; ++irw){
+  Vector Dx = (x_b - x_a) / (prm.get<Uint>("Nrw")-1);
+  for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
     Vector x = x_a + Dx * irw;
     intp.probe(x);
     if (intp.inside_domain()){
@@ -368,7 +416,7 @@ protected:
 public:
   RandomPairsInitializer( const std::vector<std::string>& key
                         //, IntpType& intp
-                        , Parameters& prm
+                        , partrac::Params& prm
                         //, MPIwrap& mpi
                         , std::mt19937 &gen
                         )
@@ -391,7 +439,7 @@ void RandomPairsInitializer::probe(IntpType& intp){
   std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
   std::normal_distribution<Real> rnd_normal(0.0, 1.0);
 
-  Uint Npairs = (key[0] == "pair") ? 1 : prm.Nrw/2;
+  Uint Npairs = (key[0] == "pair") ? 1 : prm.get<Uint>("Nrw")/2;
 
   std::cout << "Npairs = " << Npairs << std::endl;
 
@@ -428,7 +476,7 @@ void RandomPairsInitializer::probe(IntpType& intp){
     else {
       dx[2] = rnd_normal(gen);
     }
-    dx *= 0.5*prm.ds_init/dx.norm();
+    dx *= 0.5*prm.get<double>("ds_init")/dx.norm();
 
     Vector x_a = x0_ + dx;
     intp.probe(x_a);
@@ -460,7 +508,7 @@ protected:
 public:
   RandomPointsInitializer( const std::vector<std::string>& key
                          //, IntpType& intp
-                         , Parameters& prm
+                         , partrac::Params& prm
                          //, MPIwrap& mpi
                          , std::mt19937 &gen
                          )
@@ -483,7 +531,7 @@ void RandomPointsInitializer::probe(IntpType& intp){
   std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
   std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
 
-  Uint Nrw = prm.Nrw;
+  Uint Nrw = prm.get<Uint>("Nrw");
 
   Vector x0_ = this->x0;
   Uint irw=0;
@@ -520,7 +568,7 @@ protected:
 public:
   RandomGaussianStripInitializer( const std::vector<std::string>& key
                                 //, std::shared_ptr<Interpol> intp
-                                , Parameters& prm //MPIwrap& mpi
+                                , partrac::Params& prm //MPIwrap& mpi
                                 , std::mt19937 &gen
                                 ) : Initializer(prm), gen(gen), key(key) {};
   ~RandomGaussianStripInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
@@ -533,8 +581,8 @@ void RandomGaussianStripInitializer::probe(IntpType& intp){
   this->edges.clear();
   this->faces.clear();
 
-  double La = prm.La;
-  double sigma0 = prm.Lb;
+  double La = prm.get<double>("La");
+  double sigma0 = prm.get<double>("Lb");
   
   Vector3d n(0., 0., 0.);
   if (key[1] == "x"){
@@ -565,7 +613,7 @@ void RandomGaussianStripInitializer::probe(IntpType& intp){
   Uint max_failed_attempts = 1000000; // Maybe not hardcode?
 
   Uint irw = 0;
-  while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+  while (irw < prm.get<Uint>("Nrw") && failed_attempts < max_failed_attempts){
     double alpha = rnd_unit(gen);
     Vector3d xi = alpha * x00 + (1.-alpha) * x01;
     if (init_rand_x)
@@ -589,7 +637,7 @@ void RandomGaussianStripInitializer::probe(IntpType& intp){
     std::cout << "No points inside domain" << std::endl;
     exit(0);
   }
-  prm.Nrw = irw;
+  prm.set<Uint>("Nrw", irw);
 };
 
 class RandomGaussianCircleInitializer : public Initializer {
@@ -599,7 +647,7 @@ protected:
 public:
   RandomGaussianCircleInitializer( const std::vector<std::string>& key
                                 //, std::shared_ptr<Interpol> intp
-                                , Parameters& prm //, MPIwrap& mpi
+                                , partrac::Params& prm //, MPIwrap& mpi
                                 , std::mt19937 &gen
                                 ) : Initializer(prm), gen(gen), key(key) {};
   ~RandomGaussianCircleInitializer(){ std::cout << "Destructing initializer!" << std::endl; };
@@ -613,8 +661,8 @@ void RandomGaussianCircleInitializer::probe(IntpType& intp){
   edges.clear();
   faces.clear();
 
-  double R = prm.La/2;
-  double sigma0 = prm.Lb;
+  double R = prm.get<double>("La")/2;
+  double sigma0 = prm.get<double>("Lb");
   
   Vector3d t1(0., 0., 0.);
   Vector3d t2(0., 0., 0.);
@@ -642,7 +690,7 @@ void RandomGaussianCircleInitializer::probe(IntpType& intp){
   Uint max_failed_attempts = 1000000; // Maybe not hardcode?
 
   Uint irw = 0;
-  while (irw < prm.Nrw && failed_attempts < max_failed_attempts){
+  while (irw < prm.get<Uint>("Nrw") && failed_attempts < max_failed_attempts){
     double alpha1 = 1.;
     double alpha2 = 1.;
     while (pow(alpha1, 2) + pow(alpha2, 2) > 1){
@@ -670,7 +718,7 @@ void RandomGaussianCircleInitializer::probe(IntpType& intp){
     std::cout << "No points inside domain" << std::endl;
     exit(0);
   }
-  prm.Nrw = irw;
+  prm.set<Uint>("Nrw", irw);
 };
 
 

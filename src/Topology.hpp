@@ -11,7 +11,7 @@
 
 class Topology {
 public:
-  Topology(ParticleSet& ps, const Parameters &prm, MPIwrap& mpi);
+  Topology(ParticleSet& ps, const partrac::Params& prm, MPIwrap& mpi);
   int dim();
   void compute_maps();
   void clear();
@@ -36,8 +36,8 @@ public:
   InteriorAnglesType interior_ang;
   std::vector<double> mixed_areas;
   std::vector<Vector3d> face_normals;
-  void write_checkpoint(const std::string& checkpointsfolder, const double t, Parameters &prm) const;
-  void load_checkpoint(const std::string& checkpointsfolder, const Parameters &prm);
+  void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
+  void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(std::shared_ptr<Initializer> init_state);
   template<typename T>
@@ -57,14 +57,14 @@ private:
   MPIwrap& m_mpi;
 };
 
-Topology::Topology(ParticleSet& ps, const Parameters &prm, MPIwrap& mpi) : ps(ps), m_mpi(mpi) {
-  ds_min = prm.ds_min;
-  ds_max = prm.ds_max;
-  curv_refine_factor = prm.curv_refine_factor;
-  cut_if_stuck = prm.cut_if_stuck;
-  inject_edges = prm.inject_edges;
-  verbose = prm.verbose;
-  filter_target = prm.filter_target;
+Topology::Topology(ParticleSet& ps, const partrac::Params& prm, MPIwrap& mpi) : ps(ps), m_mpi(mpi) {
+  ds_min = prm.get<double>("ds_min");
+  ds_max = prm.get<double>("ds_max");
+  curv_refine_factor = prm.get<double>("curv_refine_factor");
+  cut_if_stuck = prm.get<bool>("cut_if_stuck");
+  inject_edges = prm.get<bool>("inject_edges");
+  verbose = prm.get<bool>("verbose");
+  filter_target = prm.get<int>("filter_target");
 }
 
 int Topology::dim(){
@@ -205,8 +205,8 @@ bool Topology::resize(const double ds){
   return resizing(edges, node2edges, ps, ds);
 }
 
-void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, Parameters &prm) const {
-  prm.t = t;
+void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const {
+  prm.set<double>("t", t);
   //prm.n_accepted = ps.get_accepted();
   //prm.n_declined = ps.get_declined();
   //prm.Nrw = Nrw;
@@ -217,19 +217,19 @@ void Topology::write_checkpoint(const std::string& checkpointsfolder, const doub
   dump_edges(checkpointsfolder + "/edges.edge", edges);
   //dump_colors(checkpointsfolder + "/colors.col", ps.c_rw, ps.Nrw);
   ps.dump_scalar(checkpointsfolder + "/colors.col", "c");
-  if (prm.inject){
+  if (prm.get<bool>("inject")){
     dump_vector_field(checkpointsfolder + "/positions_inj.pos", pos_inj);
     dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
     dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
     dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
   }
-  if (prm.local_dt){
+  if (prm.get<bool>("local_dt")){
     //dump_colors(checkpointsfolder + "/tau.dat", ps.tau_rw, ps.Nrw);
     ps.dump_scalar(checkpointsfolder + "/tau.dat", "tau");
   }
 }
 
-void Topology::load_checkpoint(const std::string& checkpointsfolder, const Parameters &prm){
+void Topology::load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm){
   std::string posfile = checkpointsfolder + "/positions.pos";
   //load_positions(posfile, pos_init, prm.Nrw);
   ps.load_positions(posfile);
@@ -240,7 +240,7 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const Param
   std::string colfile = checkpointsfolder + "/colors.col";
   //load_colors(colfile, ps.c_rw, prm.Nrw);
   ps.load_scalar(colfile, "c");
-  if (prm.inject){
+  if (prm.get<bool>("inject")){
     std::string posinjfile = checkpointsfolder + "/positions_inj.pos";
     load_vector_field(posinjfile, pos_inj);
     std::string edgesinjfile = checkpointsfolder + "/edges_inj.edge";
@@ -250,7 +250,7 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const Param
     load_list(edgesinletfile, edges_inlet);
     load_list(nodesinletfile, nodes_inlet);
   }
-  if (prm.local_dt){
+  if (prm.get<bool>("local_dt")){
     std::string taufile = checkpointsfolder + "/tau.dat";
     //load_colors(taufile, ps.tau_rw, prm.Nrw);
     ps.load_scalar(taufile, "tau");

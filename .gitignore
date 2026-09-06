@@ -1,0 +1,19 @@
+# built executables, but keep the note that explains the folder
+bin/*
+!bin/README.md
+
+# out-of-tree build
+build/
+
+# artifacts from an in-source "cmake ."
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+Makefile
+_deps/
+
+# python
+__pycache__/
+.pytest_cache/

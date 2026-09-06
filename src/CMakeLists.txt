@@ -1,3 +1,14 @@
+# Parameter schema layer.  Deliberately has no dependencies -- no HDF5, no
+# DOLFIN, no MPI, no boost -- so the unit tests link it on its own.  New code,
+# so it is held to stricter warnings than the legacy tree (which is built with
+# -fpermissive inherited from DOLFIN_CXX_FLAGS).
+add_library(${PROJECT_NAME}_params
+  Params.cpp Params.hpp
+  )
+target_include_directories(${PROJECT_NAME}_params PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(${PROJECT_NAME}_params PUBLIC cxx_std_17)
+target_compile_options(${PROJECT_NAME}_params PRIVATE -Wall -Wextra)
+
 add_library(${PROJECT_NAME}_utils
   Timestamps.cpp Timestamps.hpp
   FreqStamps.hpp

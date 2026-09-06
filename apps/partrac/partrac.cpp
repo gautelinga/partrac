@@ -15,7 +15,7 @@
 
 #include "io.hpp"
 #include "utils.hpp"
-#include "Parameters.hpp"
+#include "Params.hpp"
 
 #include "ParticleSet.hpp"
 #include "Topology.hpp"
@@ -25,6 +25,99 @@
 #include "RKIntegrator.hpp"
 #include "helpers.hpp"
 #include "MPIwrap.hpp"
+
+// Parameters accepted by this app
+partrac::Schema partrac_schema(){
+  partrac::Schema s("partrac");
+  add_initializer_params(s);
+  s.require<std::string>("mode", "interpolator type");
+  s.require<double>("Dm", "molecular diffusivity");
+  s.require<double>("dt", "timestep");
+  s.require<double>("T", "final time");
+  s.require<int>("int_order", "integration order");
+  // exit_plane divides by int_filter_intv, and cuts at Ln
+  s.require_if<double>("Ln", 0.0,
+                       [](const partrac::Params& p){
+                         return p.get<std::string>("exit_plane") != "none";
+                       },
+                       "exit_plane is set", "exit plane position");
+  s.require_if<double>("filter_intv", 0.0,
+                       [](const partrac::Params& p){
+                         return p.get<std::string>("exit_plane") != "none" ||
+                                p.get<bool>("filter");
+                       },
+                       "exit_plane or filter is set", "filter interval");
+  s.require_if<double>("inject_intv", 0.0,
+                       [](const partrac::Params& p){ return p.get<bool>("inject"); },
+                       "inject is set", "injection interval");
+  s.require_if<double>("tau_intv", 0.0,
+                       [](const partrac::Params& p){ return p.get<bool>("integrate_tau"); },
+                       "integrate_tau is set", "tau interval");
+  s.opt<double>("U", 1.0, "velocity scale");
+  s.opt<double>("T_inject", 1e10, "time to stop injecting at");
+  s.opt<double>("tau_max", 0.0, "max tau");
+  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
+  s.opt<double>("dump_intv", 100.0, "dump interval");
+  s.opt<double>("stat_intv", 100.0, "statistics interval");
+  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
+  s.opt<double>("refine_intv", 100.0, "refinement interval");
+  s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
+  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
+  s.opt<int>("seed", 0, "random seed");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
+  s.opt<int>("filter_target", 0, "filter target");
+  s.opt<bool>("verbose", false, "print the parameters");
+  s.opt<bool>("random", true, "draw the seed randomly");
+  s.opt<bool>("refine", false, "refine the mesh");
+  s.opt<bool>("coarsen", false, "coarsen the mesh");
+  s.opt<bool>("filter", false, "filter the mesh");
+  s.opt<bool>("inject_edges", true, "inject edges too");
+  s.opt<bool>("frozen_fields", false, "freeze the velocity field");
+  s.opt<bool>("local_dt", false, "use a local timestep");
+  s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
+  s.opt<bool>("integrate_tau", false, "integrate the eigentime");
+  s.opt<bool>("output_all_props", true, "dump all properties");
+  s.opt<bool>("minimal_output", false, "dump less");
+  s.opt<std::string>("scheme", "explicit", "ODE integration scheme");
+  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
+  s.opt<std::string>("tag", "", "appended to the folder name");
+  s.opt<std::string>("restart_folder", "", "folder to restart from");
+  s.runtime<std::string>("folder", "", "output folder");
+  s.runtime<double>("t", 0.0, "current time");
+  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
+  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
+  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
+  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
+                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+  s.choices("scheme", {"explicit", "RK4"});
+  s.choices("exit_plane", {"none", "x", "y", "z"});
+  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
+          "int_order must be 1 or 2");
+  s.check([](const partrac::Params& p){
+            return !(p.get<bool>("inject") && p.get<bool>("filter"));
+          },
+          "cannot inject and filter at the same time");
+  s.check([](const partrac::Params& p){
+            return !p.get<bool>("local_dt") ||
+                   (p.get<bool>("frozen_fields") && p.get<double>("Dm") == 0.0);
+          },
+          "local_dt requires frozen_fields and Dm = 0");
+  // RK4Integrator takes no arguments, so Dm is dropped
+  s.warn([](const partrac::Params& p){
+           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
+         },
+         "scheme=RK4 ignores Dm");
+  // dump_intv and stat_intv become integer step counts, so they must not round
+  // down to zero
+  s.finalize([](partrac::Params& p){
+    const double dt = p.get<double>("dt");
+    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
+  });
+  return s;
+}
 
 int main(int argc, char* argv[])
 {
@@ -41,15 +134,11 @@ int main(int argc, char* argv[])
     std::cout << "Specify an input file." << std::endl;
     return 0;
   }
-  Parameters prm(argc, argv);
-  if (prm.restart_folder != ""){
-    prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
-    prm.parse_cmd(argc, argv);
-  }
+  partrac::Params prm = partrac::parse_or_exit(partrac_schema(), argc, argv);
 
-  if (prm.num_threads > 0){
+  if (prm.get<int>("num_threads") > 0){
       omp_set_dynamic(0);
-      omp_set_num_threads(prm.num_threads);
+      omp_set_num_threads(prm.get<int>("num_threads"));
   }
 
   std::string infilename = std::string(argv[1]);
@@ -57,36 +146,39 @@ int main(int argc, char* argv[])
   std::cout << "Setting interpolator..." << std::endl;
 
   std::shared_ptr<Interpol> intp;
-  set_interpolate_mode(intp, prm.mode, infilename);
+  set_interpolate_mode(intp, prm.get<std::string>("mode"), infilename);
   
-  intp->set_U0(prm.U0);
-  intp->set_int_order(prm.int_order);
+  intp->set_U0(prm.get<double>("U"));
+  intp->set_int_order(prm.get<int>("int_order"));
 
-  double Dm = prm.Dm;
-  double dt = prm.dt;
+  double Dm = prm.get<double>("Dm");
+  double dt = prm.get<double>("dt");
 
-  bool refine = prm.refine;
-  bool coarsen = prm.coarsen;
-  bool filter = prm.filter;
+  bool refine = prm.get<bool>("refine");
+  bool coarsen = prm.get<bool>("coarsen");
+  bool filter = prm.get<bool>("filter");
 
-  bool frozen_fields = prm.frozen_fields;
-  bool local_dt = prm.local_dt;
+  bool frozen_fields = prm.get<bool>("frozen_fields");
+  bool local_dt = prm.get<bool>("local_dt");
   //double dl_max = prm.dl_max;
 
   std::cout << "Creating folders..." << std::endl;
 
+  // --check must not leave anything behind
+  const bool dry_run = prm.check_only();
+
   std::string folder = intp->get_folder();
-  std::string rwfolder = folder + "/RandomWalkers/"; 
-  if (mpi.rank() == 0)
+  std::string rwfolder = folder + "/RandomWalkers/";
+  if (mpi.rank() == 0 && !dry_run)
     create_folder(rwfolder);
   std::string newfolder;
-  if (prm.restart_folder != ""){
-    newfolder = prm.folder;
+  if (prm.get<std::string>("restart_folder") != ""){
+    newfolder = prm.get<std::string>("folder");
   }
   else {
     newfolder = get_newfoldername(rwfolder, prm);
     mpi.barrier();
-    if (mpi.rank() == 0)
+    if (mpi.rank() == 0 && !dry_run)
       create_folder(newfolder);
     mpi.barrier();
   }
@@ -95,43 +187,43 @@ int main(int argc, char* argv[])
   std::string checkpointsfolder = newfolder + "Checkpoints/";
   //std::string histfolder = newfolder + "Histograms/";
   //if (mpi.rank() == 0){ // Might change in the future!
-  {
+  if (!dry_run){
     create_folder(newfolder);
     create_folder(posfolder);
     create_folder(checkpointsfolder);
     //create_folder(histfolder);
   }
-  prm.folder = newfolder;
+  prm.set<std::string>("folder", newfolder);
 
-  if (mpi.rank() == 0)
+  if (mpi.rank() == 0 && prm.get<bool>("verbose"))
     prm.print();
 
   // Parallel generators
   std::vector<std::mt19937> gens;
   for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
     std::mt19937 gen;
-    if (prm.random) {
+    if (prm.get<bool>("random")) {
         std::random_device rd;
         gen.seed(rd());
     }
     else {
-        std::seed_seq rd{prm.seed + i};
+        std::seed_seq rd{prm.get<int>("seed") + i};
         gen.seed(rd);
     }
     gens.emplace_back(gen);
   }
 
   // TODO: These should not be stored in particle tracker parameters.
-  prm.Lx = intp->get_Lx();
-  prm.Ly = intp->get_Ly();
-  prm.Lz = intp->get_Lz();
+  prm.set<double>("Lx", intp->get_Lx());
+  prm.set<double>("Ly", intp->get_Ly());
+  prm.set<double>("Lz", intp->get_Lz());
 
-  double t0 = std::max(intp->get_t_min(), prm.t0);
-  double T = std::min(intp->get_t_max(), prm.T);
+  double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
+  double T = std::min(intp->get_t_max(), prm.get<double>("T"));
   if (frozen_fields)
-    T = prm.T;
-  prm.t0 = t0;
-  prm.T = T;
+    T = prm.get<double>("T");
+  prm.set<double>("t0", t0);
+  prm.set<double>("T", T);
 
   /*
   if (prm.resize && (prm.refine || prm.coarsen || prm.filter)){
@@ -150,14 +242,14 @@ int main(int argc, char* argv[])
     exit(0);
   }*/
 
-  if (prm.inject && prm.filter){
+  if (prm.get<bool>("inject") && prm.get<bool>("filter")){
     if (mpi.rank() == 0)
       std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
     exit(0);
   }
 
   // Higher-order time integration?
-  if (prm.int_order > 2){
+  if (prm.get<int>("int_order") > 2){
     if (mpi.rank() == 0)
       std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
@@ -168,36 +260,36 @@ int main(int argc, char* argv[])
   //}
 
   if (frozen_fields)
-    intp->update(prm.t_frozen);
+    intp->update(prm.get<double>("t_frozen"));
   else
     intp->update(t0);
 
   std::shared_ptr<Integrator> integrator;
-  if (prm.scheme == "explicit")
-    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.int_order, gens);
-  else if (prm.scheme == "RK4")
+  if (prm.get<std::string>("scheme") == "explicit")
+    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.get<int>("int_order"), gens);
+  else if (prm.get<std::string>("scheme") == "RK4")
     integrator = std::make_shared<RK4Integrator>();
   else {
-    std::cout << "Unrecognized (ODE integration) scheme: " << prm.scheme << std::endl;
+    std::cout << "Unrecognized (ODE integration) scheme: " << prm.get<std::string>("scheme") << std::endl;
     exit(0);
   }
 
-  ParticleSet ps(intp, prm.Nrw_max, mpi);
+  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"), mpi);
   Topology mesh(ps, prm, mpi);
 
-  if (prm.inject){
-    std::vector<std::string> key = split_string(prm.init_mode, "_");
+  if (prm.get<bool>("inject")){
+    std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key[0] == "uniform" || key[0] == "point"){
       std::cout << "Injection activated!" << std::endl;
     }
     else {
-      std::cout << "init_mode " << prm.init_mode << " incompatible with injection." << std::endl;
+      std::cout << "init_mode " << prm.get<std::string>("init_mode") << " incompatible with injection." << std::endl;
       exit(0);
     }
   }
 
-  if (prm.restart_folder != ""){
-    mesh.load_checkpoint(prm.restart_folder + "/Checkpoints", prm);
+  if (prm.get<std::string>("restart_folder") != ""){
+    mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
   }
   else {
     std::shared_ptr<Initializer> init_state;
@@ -207,17 +299,24 @@ int main(int argc, char* argv[])
 
   mesh.compute_maps();
 
+  // Everything that reads parameters has now been constructed, so stop here
+  if (dry_run){
+    if (mpi.rank() == 0)
+      std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
+    return 0;
+  }
+
   // Initial refinement
-  if (refine && !prm.inject && mesh.dim() > 0){
+  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
-    if (prm.verbose && mpi.rank() == 0)
+    if (prm.get<bool>("verbose") && mpi.rank() == 0)
       std::cout << "Added " << n_add << " edges." << std::endl;
   }
-  if (coarsen && !prm.inject && mesh.dim() > 0){
+  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
-    if (prm.verbose && mpi.rank() == 0)
+    if (prm.get<bool>("verbose") && mpi.rank() == 0)
       std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
 
@@ -234,14 +333,14 @@ int main(int argc, char* argv[])
   //double dt2 = dt*dt;
 
   double sqrt2Dmdt = sqrt(2*Dm*dt);
-  if (prm.verbose && mpi.rank() == 0){
+  if (prm.get<bool>("verbose") && mpi.rank() == 0){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
-    print_param("U*dt         ", prm.U0*dt);
+    print_param("U*dt         ", prm.get<double>("U")*dt);
   }
 
   double t = t0;
-  if (prm.restart_folder != ""){
-    t = prm.t;
+  if (prm.get<std::string>("restart_folder") != ""){
+    t = prm.get<double>("t");
   }
 
   //if (mpi.rank() == 0)
@@ -257,27 +356,27 @@ int main(int argc, char* argv[])
   //H5wrap h5file(mpi);
   //h5file.open(h5fname, "w");
 
-  Uint int_stat_intv = int(prm.stat_intv/dt);
-  Uint int_dump_intv = int(prm.dump_intv/dt);
-  Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
-  Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
-  Uint int_refine_intv = int(prm.refine_intv/dt);
-  Uint int_coarsen_intv = int(prm.coarsen_intv/dt);
+  Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
+  Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
+  Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
+  Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
+  Uint int_refine_intv = int(prm.get<double>("refine_intv")/dt);
+  Uint int_coarsen_intv = int(prm.get<double>("coarsen_intv")/dt);
   //Uint int_hist_intv = int_stat_intv*prm.hist_chunk_size;
-  Uint int_inject_intv = int(prm.inject_intv/dt);
-  Uint int_filter_intv = int(prm.filter_intv/dt);
+  Uint int_inject_intv = int(prm.get<double>("inject_intv")/dt);
+  Uint int_filter_intv = int(prm.get<double>("filter_intv")/dt);
   //Uint int_resize_intv = int(prm.resize_intv/dt);
-  Uint int_tau_intv = int(prm.tau_intv/dt);
+  Uint int_tau_intv = int(prm.get<double>("tau_intv")/dt);
 
   std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.minimal_output;
-  output_fields["c"] = !prm.minimal_output || local_dt;
-  output_fields["p"] = !prm.minimal_output && prm.output_all_props;
-  output_fields["rho"] = !prm.minimal_output; // && prm.output_all_props;   
-  output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
-  output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
+  output_fields["u"] = !prm.get<bool>("minimal_output");
+  output_fields["c"] = !prm.get<bool>("minimal_output") || local_dt;
+  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
+  output_fields["rho"] = !prm.get<bool>("minimal_output"); // && prm.output_all_props;   
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
   output_fields["t_loc"] = local_dt;
-  output_fields["tau"] = prm.integrate_tau;
+  output_fields["tau"] = prm.get<bool>("integrate_tau");
 
   if (local_dt && !frozen_fields){
     std::cout << "Error: local_dt=true requires the use of frozen_fields=true!" << std::endl;
@@ -290,8 +389,8 @@ int main(int argc, char* argv[])
     std::cout << "Note: Using local time steps. Time t should now be considered only as a parametrizing variable." << std::endl;
   }
 
-  bool any_exit_plane = (prm.exit_plane == "x" || prm.exit_plane == "y" || prm.exit_plane == "z") && prm.Ln > 0;
-  int exit_dim = prm.exit_plane == "x" ? 0 : (prm.exit_plane == "y" ? 1 : 2);
+  bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && prm.get<double>("Ln") > 0;
+  int exit_dim = prm.get<std::string>("exit_plane") == "x" ? 0 : (prm.get<std::string>("exit_plane") == "y" ? 1 : 2);
 
   //std::string write_mode = prm.write_mode;
 
@@ -310,7 +409,7 @@ int main(int argc, char* argv[])
       intp->update(t);
 
     // Injection
-    if (prm.inject && it > 0 && it % int_inject_intv == 0 && t <= prm.T_inject){
+    if (prm.get<bool>("inject") && it > 0 && it % int_inject_intv == 0 && t <= prm.get<double>("T_inject")){
       mesh.inject();
     }
     // Curvature computation
@@ -324,7 +423,7 @@ int main(int argc, char* argv[])
       /*Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               ps, ds_max,
                               prm.curv_refine_factor, prm.cut_if_stuck);*/
-      if (prm.verbose)
+      if (prm.get<bool>("verbose"))
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
@@ -335,7 +434,7 @@ int main(int argc, char* argv[])
                               edges_inlet, nodes_inlet,
                               ps, ds_min,
                               prm.curv_refine_factor);*/
-      if (prm.verbose)
+      if (prm.get<bool>("verbose"))
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
     // Filtering
@@ -344,7 +443,7 @@ int main(int argc, char* argv[])
       /*bool filtered = filtering(faces, edges,
                                 edge2faces, node2edges,
                                 ps, prm.filter_target);*/
-      if (prm.verbose && filtered)
+      if (prm.get<bool>("verbose") && filtered)
         std::cout << "Filtered edges." << std::endl;
     }
     // Resizing
@@ -355,14 +454,14 @@ int main(int argc, char* argv[])
     }*/
     // Removal
     if (any_exit_plane && it % int_filter_intv == 0){
-      Uint n_rem = mesh.remove_beyond(exit_dim, prm.Ln);
-      if (prm.verbose)
+      Uint n_rem = mesh.remove_beyond(exit_dim, prm.get<double>("Ln"));
+      if (prm.get<bool>("verbose"))
         std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
     }
 
     // Tau integration
-    if (prm.integrate_tau && it % int_tau_intv == 0){
-      mesh.integrate_tau(dt * int_tau_intv, prm.tau_max);
+    if (prm.get<bool>("integrate_tau") && it % int_tau_intv == 0){
+      mesh.integrate_tau(dt * int_tau_intv, prm.get<double>("tau_max"));
     }
 
     // Update fields if needed
@@ -373,7 +472,7 @@ int main(int argc, char* argv[])
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Time = " << t << std::endl;
-      mesh.write_statistics(statfile, t, prm.ds_max, *integrator);
+      mesh.write_statistics(statfile, t, prm.get<double>("ds_max"), *integrator);
     }
 
     // Checkpoint

@@ -14,7 +14,7 @@
 
 #include "io.hpp"
 #include "utils.hpp"
-#include "Parameters.hpp"
+#include "Params.hpp"
 
 #include "ParticleSet.hpp"
 #include "Topology.hpp"
@@ -163,6 +163,60 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
     return outside_nodes;
 }
 
+// Parameters accepted by this app
+partrac::Schema spatial_schema(){
+  partrac::Schema s("static_space_stepper");
+  add_initializer_params(s);
+  s.require<std::string>("mode", "interpolator type");
+  s.require<double>("T", "final position");
+  s.require<int>("int_order", "interpolation order");
+  s.require<double>("dx_max", "max step length");
+  s.require<double>("dxn", "normal step length");
+  s.opt<double>("Dm", 0.0, "diffusivity, enters the folder name only");
+  s.opt<double>("dt", 1.0, "timestep, enters the folder name only");
+  s.opt<double>("U", 1.0, "velocity scale");
+  s.opt<double>("Ln", 0.0, "exit plane position");
+  s.opt<double>("u_eps", 1e-7, "velocity cutoff");
+  s.opt<double>("dump_intv", 100.0, "dump interval");
+  s.opt<double>("stat_intv", 100.0, "statistics interval");
+  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
+  s.opt<double>("refine_intv", 100.0, "refinement interval");
+  s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
+  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
+  s.opt<int>("seed", 0, "random seed");
+  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
+  s.opt<int>("filter_target", 0, "filter target");
+  s.opt<bool>("verbose", false, "print the parameters");
+  s.opt<bool>("random", true, "draw the seed randomly");
+  s.opt<bool>("refine", false, "refine the mesh");
+  s.opt<bool>("coarsen", false, "coarsen the mesh");
+  s.opt<bool>("inject_edges", true, "inject edges too");
+  s.opt<bool>("local_dt", false, "use a local timestep");
+  s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
+  s.opt<bool>("output_all_props", true, "dump all properties");
+  s.opt<bool>("minimal_output", false, "dump less");
+  s.opt<std::string>("tag", "", "appended to the folder name");
+  s.opt<std::string>("restart_folder", "", "folder to restart from");
+  s.runtime<std::string>("folder", "", "output folder");
+  s.runtime<double>("t", 0.0, "current time");
+  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
+  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
+  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
+  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
+                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
+          "int_order must be 1 or 2");
+  // dump_intv and stat_intv become integer step counts, so they must not round
+  // down to zero
+  s.finalize([](partrac::Params& p){
+    const double dt = p.get<double>("dt");
+    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
+  });
+  return s;
+}
+
 int main(int argc, char* argv[])
 {
   MPIwrap mpi(argc, argv);
@@ -178,24 +232,20 @@ int main(int argc, char* argv[])
     std::cout << "Specify an input file." << std::endl;
     return 0;
   }
-  Parameters prm(argc, argv);
-  if (prm.restart_folder != ""){
-    prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
-    prm.parse_cmd(argc, argv);
-  }
+  partrac::Params prm = partrac::parse_or_exit(spatial_schema(), argc, argv);
 
   std::string infilename = std::string(argv[1]);
 
   std::cout << "Setting interpolator..." << std::endl;
 
   std::shared_ptr<Interpol> intp;
-  set_interpolate_mode(intp, prm.mode, infilename);
+  set_interpolate_mode(intp, prm.get<std::string>("mode"), infilename);
   
-  intp->set_U0(prm.U0);
-  intp->set_int_order(prm.int_order);
+  intp->set_U0(prm.get<double>("U"));
+  intp->set_int_order(prm.get<int>("int_order"));
 
-  bool refine = prm.refine;
-  bool coarsen = prm.coarsen;
+  bool refine = prm.get<bool>("refine");
+  bool coarsen = prm.get<bool>("coarsen");
 
   std::cout << "Creating folders..." << std::endl;
 
@@ -204,8 +254,8 @@ int main(int argc, char* argv[])
   if (mpi.rank() == 0)
     create_folder(rwfolder);
   std::string newfolder;
-  if (prm.restart_folder != ""){
-    newfolder = prm.folder;
+  if (prm.get<std::string>("restart_folder") != ""){
+    newfolder = prm.get<std::string>("folder");
   }
   else {
     newfolder = get_newfoldername(rwfolder, prm);
@@ -225,31 +275,31 @@ int main(int argc, char* argv[])
     create_folder(checkpointsfolder);
     //create_folder(histfolder);
   }
-  prm.folder = newfolder;
+  prm.set<std::string>("folder", newfolder);
 
-  if (mpi.rank() == 0)
+  if (mpi.rank() == 0 && prm.get<bool>("verbose"))
     prm.print();
 
   std::mt19937 gen;
-  if (prm.random) {
+  if (prm.get<bool>("random")) {
     std::random_device rd;
     gen.seed(rd());
   }
   else {
-    std::seed_seq rd{prm.seed + mpi.rank()};
+    std::seed_seq rd{prm.get<int>("seed") + mpi.rank()};
     gen.seed(rd);
   }
 
   // TODO: These should not be stored in particle tracker parameters.
-  prm.Lx = intp->get_Lx();
-  prm.Ly = intp->get_Ly();
-  prm.Lz = intp->get_Lz();
+  prm.set<double>("Lx", intp->get_Lx());
+  prm.set<double>("Ly", intp->get_Ly());
+  prm.set<double>("Lz", intp->get_Lz());
 
-  double t0 = std::max(intp->get_t_min(), prm.t0);
-  prm.t0 = t0;
+  double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
+  prm.set<double>("t0", t0);
 
   // Higher-order time integration?
-  if (prm.int_order > 2){
+  if (prm.get<int>("int_order") > 2){
     if (mpi.rank() == 0)
       std::cout << "No support for such high temporal integration order." << std::endl;
     exit(0);
@@ -261,13 +311,13 @@ int main(int argc, char* argv[])
 
   //std::shared_ptr<Integrator> integrator;
   //integrator = std::make_shared<DirectionalIntegrator>(direction, prm.int_order);
-  Integrator_Spatial integrator(prm.int_order, prm.u_eps, prm.dx_max, prm.T);
+  Integrator_Spatial integrator(prm.get<int>("int_order"), prm.get<double>("u_eps"), prm.get<double>("dx_max"), prm.get<double>("T"));
 
-  ParticleSet ps(intp, prm.Nrw_max, mpi);
+  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"), mpi);
   Topology mesh(ps, prm, mpi);
 
-  if (prm.restart_folder != ""){
-    mesh.load_checkpoint(prm.restart_folder + "/Checkpoints", prm);
+  if (prm.get<std::string>("restart_folder") != ""){
+    mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
   }
   else {
     std::shared_ptr<Initializer> init_state;
@@ -278,14 +328,14 @@ int main(int argc, char* argv[])
   mesh.compute_maps();
 
   // Initial refinement
-  if (refine && !prm.inject && mesh.dim() > 0){
+  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
 
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
 
-    if (prm.verbose && mpi.rank() == 0)
+    if (prm.get<bool>("verbose") && mpi.rank() == 0)
       std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
   }
 
@@ -293,8 +343,8 @@ int main(int argc, char* argv[])
 
   int it = 0;
 
-  double xn = prm.x0;
-  double dxn = prm.dxn;
+  double xn = prm.get<double>("x0");
+  double dxn = prm.get<double>("dxn");
 
   //if (mpi.rank() == 0)
   prm.dump(newfolder, xn);
@@ -309,20 +359,20 @@ int main(int argc, char* argv[])
   //H5wrap h5file(mpi);
   //h5file.open(h5fname, "w");
 
-  Uint int_stat_intv = int(prm.stat_intv/dxn);
-  Uint int_dump_intv = int(prm.dump_intv/dxn);
-  Uint int_checkpoint_intv = int(prm.checkpoint_intv/dxn);
-  Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
-  Uint int_refine_intv = int(prm.refine_intv/dxn);
-  Uint int_coarsen_intv = int(prm.coarsen_intv/dxn);
+  Uint int_stat_intv = int(prm.get<double>("stat_intv")/dxn);
+  Uint int_dump_intv = int(prm.get<double>("dump_intv")/dxn);
+  Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dxn);
+  Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
+  Uint int_refine_intv = int(prm.get<double>("refine_intv")/dxn);
+  Uint int_coarsen_intv = int(prm.get<double>("coarsen_intv")/dxn);
 
   std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.minimal_output;
+  output_fields["u"] = !prm.get<bool>("minimal_output");
   output_fields["c"] = true;
-  output_fields["p"] = !prm.minimal_output && prm.output_all_props;
-  output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
-  output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
-  output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
+  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
+  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");        
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
   output_fields["t_loc"] = true;
   output_fields["tau"] = true;
 
@@ -338,11 +388,11 @@ int main(int argc, char* argv[])
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
-  while (xn <= prm.Ln){
+  while (xn <= prm.get<double>("Ln")){
     // Statistics
     if (it % int_stat_intv == 0){
       std::cout << "Position = " << xn << std::endl;
-      mesh.write_statistics(statfile, xn, prm.ds_max, integrator);
+      mesh.write_statistics(statfile, xn, prm.get<double>("ds_max"), integrator);
     }
     // Checkpoint
     if (it % int_checkpoint_intv == 0){
@@ -358,13 +408,13 @@ int main(int argc, char* argv[])
     // Refinement
     if (refine && it % int_refine_intv == 0 && it > 0){
       Uint n_add = mesh.refine();
-      if (prm.verbose)
+      if (prm.get<bool>("verbose"))
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
     if (coarsen && it % int_coarsen_intv == 0){
       Uint n_rem = mesh.coarsen();
-      if (prm.verbose)
+      if (prm.get<bool>("verbose"))
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
 

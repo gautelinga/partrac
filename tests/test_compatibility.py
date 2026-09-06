@@ -10,11 +10,14 @@ These tests just tests that partrac runs on the current system.
 """
 
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PARTRAC = os.path.join(REPO, "bin", "partrac")
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_run():
-    cmd = "partrac"
-    out = subprocess.check_output(cmd, shell=True)
-    ref = b'Specify an input timestamps file.\n'
-    assert out == ref
+    out = subprocess.check_output(PARTRAC, shell=True).decode("utf-8")
+    assert "Specify an input file." in out
 
 
 if __name__ == "__main__":

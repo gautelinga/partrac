@@ -16,16 +16,19 @@ add_executable(unittest
   ${TEST_SOURCES}
 )
 
-if (PARTRAC_ENABLE_DOLFIN)
-  target_link_libraries(${PROJECT_NAME} dolfin)
-endif()
-target_link_libraries(${PROJECT_NAME} ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen)
-target_link_libraries(unittest 
-	PRIVATE 
+target_link_libraries(unittest
+	PRIVATE
 	Catch2::Catch2
-	partrac_io)
+	partrac_io
+	partrac_params)
 target_include_directories(unittest PRIVATE ../src/)
 target_compile_features(unittest PRIVATE cxx_std_17)
 
 add_test(NAME unittesttest COMMAND unittest)
+
+# The python tests drive the built apps, and skip themselves if bin/ is empty
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test(NAME pytest
+    COMMAND ${Python3_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR} -q)
+endif()

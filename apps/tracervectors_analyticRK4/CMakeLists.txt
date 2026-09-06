@@ -23,7 +23,7 @@ if(MPI_LINK_FLAGS)
 endif()
 
 target_link_libraries(${APP_NAME} ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol)
+  ${HDF5_HL_LIBRARIES} Eigen3::Eigen ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_interpol ${PROJECT_NAME}_params)
 target_compile_features(${APP_NAME} PRIVATE cxx_std_17)
 
 set_target_properties(${APP_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin/")

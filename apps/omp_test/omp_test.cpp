@@ -19,7 +19,7 @@
 #include "experimental/integrator_RK.hpp"
 #include "experimental/particles.hpp"
 #include "experimental/initializer.hpp"
-#include "Parameters.hpp"
+#include "Params.hpp"
 // #include "Integrator.hpp"
 
 
@@ -73,20 +73,30 @@ std::set<Uint> Integrator_Omp::step(InterpolType& intp, T& ps, const double t, c
 }
 */
 
-std::string get_newfoldername(const std::string& rwfolder, const Parameters& prm){
+std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.Dm;
-  ss_dt << std::scientific << std::setprecision(7) << prm.dt;
-  ss_Nrw << prm.Nrw;
-  ss_seed << prm.seed;
+  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
+  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
+  ss_Nrw << prm.get<Uint>("Nrw");
+  ss_seed << prm.get<int>("seed");
   std::string newfoldername = rwfolder +
                             "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
                             "_dt" + ss_dt.str() +
                             "_Nrw" + ss_Nrw.str() +
                             "_seed" + ss_seed.str() +
-                            prm.tag +
+                            prm.get<std::string>("tag") +
                             "/";
   return newfoldername;
+}
+
+// Parameters accepted by this app
+partrac::Schema omp_test_schema(){
+  partrac::Schema s("omp_test");
+  add_common_app_params(s);
+  add_experimental_initializer_params(s);
+  s.require<int>("int_order", "integration order");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  return s;
 }
 
 int main(int argc, char* argv[])
@@ -104,22 +114,22 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    Parameters prm(argc, argv);
+    partrac::Params prm = partrac::parse_or_exit(omp_test_schema(), argc, argv);
 
-    double dt = prm.dt;
+    double dt = prm.get<double>("dt");
     Uint it = 0;
-    double t = prm.t0;
-    double T = prm.T;
+    double t = prm.get<double>("t0");
+    double T = prm.get<double>("T");
 
-    if (prm.num_threads > 0){
+    if (prm.get<int>("num_threads") > 0){
         omp_set_dynamic(0);
-        omp_set_num_threads(prm.num_threads);
+        omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
     std::string infilename = std::string(argv[1]);
     TriangleInterpol intp(infilename);
-    intp.set_U0(prm.U0);
-    intp.set_int_order(prm.int_order);
+    intp.set_U0(prm.get<double>("U"));
+    intp.set_int_order(prm.get<int>("int_order"));
 
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/OMPTest/";
@@ -129,7 +139,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::cout << "Initializing ParticleSet..." << std::endl;
-    Particles<Particle> ps(prm.Nrw_max);
+    Particles<Particle> ps(prm.get<Uint>("Nrw_max"));
 
     std::random_device rd;
     std::vector<std::mt19937> gens;
@@ -137,13 +147,13 @@ int main(int argc, char* argv[])
         gens.emplace_back(std::mt19937(rd()));
     }
 
-    auto key = split_string(prm.init_mode, "_");
+    auto key = split_string(prm.get<std::string>("init_mode"), "_");
 
     RandomPointsInitializer init_state(key, prm, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
 
-    prm.print();
+    if (prm.get<bool>("verbose")) prm.print();
 
     #pragma omp parallel
     {
@@ -158,14 +168,14 @@ int main(int argc, char* argv[])
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
 
-    Uint int_stat_intv = int(prm.stat_intv/dt);
-    Uint int_dump_intv = int(prm.dump_intv/dt);
-    Uint int_checkpoint_intv = int(prm.checkpoint_intv/dt);
-    Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
+    Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
+    Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
+    Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
+    Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
 
     std::map<std::string, bool> output_fields;
     output_fields["u"] = true; // !prm.minimal_output;
-    output_fields["c"] = !prm.minimal_output;
+    output_fields["c"] = !prm.get<bool>("minimal_output");
     output_fields["p"] = true; // !prm.minimal_output && prm.output_all_props;
     output_fields["rho"] = false;  // !prm.minimal_output && prm.output_all_props;        
     output_fields["H"] = false;  //& !prm.minimal_output && ps.dim() > 0;
@@ -175,7 +185,7 @@ int main(int argc, char* argv[])
     intp.update(t);
     intp.assign_fields(ps, output_fields);
 
-    double sqrt2Dmdt = sqrt(2 * prm.Dm * dt);
+    double sqrt2Dmdt = sqrt(2 * prm.get<double>("Dm") * dt);
 
     std::normal_distribution<double> rnd_normal(0.0, 1.0);
 
@@ -209,13 +219,13 @@ int main(int argc, char* argv[])
         for ( auto & particle : ps.particles() ){
             Vector3d x = particle.x();
             int cell_id = particle.cell_id();
-            PointValues ptvals(prm.U0);
+            PointValues ptvals(prm.get<double>("U"));
             bool is_inside = intp.probe_light(x, t, cell_id);
             intp.probe_heavy(x, t, cell_id, ptvals);
             
             Vector3d dx = ptvals.get_u() * dt;
-            if (prm.int_order > 1) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
-            if (prm.Dm > 0) {
+            if (prm.get<int>("int_order") > 1) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
+            if (prm.get<double>("Dm") > 0) {
                 std::mt19937& gen = gens[omp_get_thread_num()];
                 Vector eta = {rnd_normal(gen), rnd_normal(gen), rnd_normal(gen)};
                 dx += sqrt2Dmdt * eta;
