@@ -1,7 +1,4 @@
-# Parameter schema layer.  Deliberately has no dependencies -- no HDF5, no
-# DOLFIN, no MPI, no boost -- so the unit tests link it on its own.  New code,
-# so it is held to stricter warnings than the legacy tree (which is built with
-# -fpermissive inherited from DOLFIN_CXX_FLAGS).
+# Parameter schema layer. No dependencies, so the unit tests link it on its own.
 add_library(${PROJECT_NAME}_params
   Params.cpp Params.hpp
   )
@@ -23,7 +20,9 @@ target_link_libraries(${PROJECT_NAME}_io stdc++fs ${HDF5_LIBRARIES}
   ${HDF5_HL_LIBRARIES})
 target_compile_features(${PROJECT_NAME}_io PRIVATE cxx_std_17)
 
-#add_subdirectory(interpol)
+# Only the analytic and structured interpolators are header-only; every source
+# file here needs dolfin, so the library exists only when dolfin is enabled.
+if (PARTRAC_ENABLE_DOLFIN)
 add_library(${PROJECT_NAME}_interpol
   Interpol.hpp
   AnalyticInterpol.hpp
@@ -42,12 +41,23 @@ add_library(${PROJECT_NAME}_interpol
 )
 
 
-find_package(OpenMP REQUIRED)
-#target_link_libraries(${APP_NAME})
-
-target_link_libraries(${PROJECT_NAME}_interpol stdc++fs ${HDF5_LIBRARIES}
-  ${HDF5_HL_LIBRARIES} Eigen3::Eigen OpenMP::OpenMP_CXX)
-if (PARTRAC_ENABLE_DOLFIN)
-  target_link_libraries(${PROJECT_NAME}_interpol dolfin)
-endif()
+target_link_libraries(${PROJECT_NAME}_interpol PUBLIC stdc++fs ${HDF5_LIBRARIES}
+  ${HDF5_HL_LIBRARIES} Eigen3::Eigen OpenMP::OpenMP_CXX dolfin)
 target_compile_features(${PROJECT_NAME}_interpol PRIVATE cxx_std_17)
+endif()
+
+# What every app links against
+add_library(${PROJECT_NAME}_core INTERFACE)
+target_link_libraries(${PROJECT_NAME}_core INTERFACE
+  ${PROJECT_NAME}_io ${PROJECT_NAME}_utils ${PROJECT_NAME}_params
+  stdc++fs ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES}
+  Eigen3::Eigen OpenMP::OpenMP_CXX)
+target_include_directories(${PROJECT_NAME}_core INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR} ${HDF5_INCLUDE_DIRS})
+target_compile_features(${PROJECT_NAME}_core INTERFACE cxx_std_17)
+if (PARTRAC_ENABLE_DOLFIN)
+  target_link_libraries(${PROJECT_NAME}_core INTERFACE ${PROJECT_NAME}_interpol)
+endif()
+if (PARTRAC_ENABLE_MPI)
+  target_link_libraries(${PROJECT_NAME}_core INTERFACE ${MPI_LIBRARIES})
+endif()

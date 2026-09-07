@@ -45,33 +45,6 @@ void write_param(std::ofstream &ofile, const std::string& key, double val);
 void write_param(std::ofstream &ofile, const std::string& key, int val);
 void write_param(std::ofstream &ofile, const std::string& key, long int val);
 void write_param(std::ofstream &ofile, const std::string& key, const std::string& val);
-/*void load_field(H5::H5File &h5file,
-                //double*** u,
-                std::vector<double>&,
-                const std::string field
-                //, const int nx, const int ny, const int nz
-                );
-void load_int_field(H5::H5File &h5file,
-                    //int*** u,
-                    std::vector<int>&,
-                    const std::string field
-                    //, const int nx, const int ny, const int nz
-                    );
-void load_h5(const std::string h5filename,
-             //double*** ux,
-             //double*** uy,
-             //double*** uz,
-             //double*** rho,
-             //double*** p,
-             //const int nx,
-             //const int ny,
-             //const int nz,
-             std::vector<double>& ux,
-             std::vector<double>& uy,
-             std::vector<double>& uz,
-             std::vector<double>& rho,
-             std::vector<double>& p,
-             const bool verbose, const bool, const bool, const bool);*/
 
 // Recently moved here
 

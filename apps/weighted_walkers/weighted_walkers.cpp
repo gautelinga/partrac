@@ -16,8 +16,8 @@
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
 #include "Params.hpp"
+#include "rng.hpp"
 #include "AnalyticInterpol.hpp"
 #include "experimental/integrator_explicit.hpp"
 #include "experimental/initializer.hpp"
@@ -182,41 +182,21 @@ void split_random_nodes(std::vector<Uint>& nodes_to_replace, T& ps, std::vector<
     //std::cout << dt1.count() << " " << dt2.count() << " " << dt3.count() << " " << dt4.count() << " " << dt5.count() << std::endl;
 }
 
-// Parameters accepted by this app
-partrac::Schema weighted_walkers_schema(){
-  partrac::Schema s("weighted_walkers");
-  add_common_app_params(s);
-  add_experimental_initializer_params(s);
-  add_restart_params(s);
-  s.require<int>("int_order", "integration order");
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  s.require<double>("ds_max", "max edge length");
-  s.opt<double>("Lt", 0.0, "tangential extent of the exit plane");
-  s.require<double>("La", "principal extent");
-  s.require<double>("Lb", "gaussian width");
-  s.opt<double>("Ln", 0.0, "exit plane position");
-  s.opt<double>("refine_intv", 100.0, "refinement interval");
-  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
-  s.choices("exit_plane", {"none", "x", "y", "z"});
-  return s;
-}
+#include "weighted_walkers_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
 
-    if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
                   << "||  Initialized weighted walkers.                                   ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
     
     // Input parameters
-    if (argc < 2 && mpi.rank() == 0) {
+    if (argc < 2) {
         std::cout << "Please specify an input file." << std::endl;
-        return 0;
+        return 1;
     }
     partrac::Params prm = partrac::parse_or_exit(weighted_walkers_schema(), argc, argv);
 
@@ -225,7 +205,7 @@ int main(int argc, char* argv[])
         omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
-    std::string infilename = std::string(argv[1]);
+    std::string infilename = prm.input_file();
 
     AnalyticInterpol intp(infilename);
 
@@ -235,7 +215,6 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/WeightedWalkers/";
     
-    if (mpi.rank() == 0)
         create_folder(rwfolder);
     
     std::string newfolder;
@@ -244,12 +223,9 @@ int main(int argc, char* argv[])
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
-        mpi.barrier();
-        if (mpi.rank() == 0)
             create_folder(newfolder);
-        mpi.barrier();
     }
-    newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+    newfolder = newfolder + "" + "0" + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
     std::string sepdatafolder = newfolder + "Sepdata/";
@@ -261,23 +237,10 @@ int main(int argc, char* argv[])
     }
     prm.set<std::string>("folder", newfolder);
 
-    if (mpi.rank() == 0)
         if (prm.get<bool>("verbose")) prm.print();
 
     // Parallel generators
-    std::vector<std::mt19937> gens;
-    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
-        std::mt19937 gen;
-        if (prm.get<bool>("random")) {
-            std::random_device rd;
-            gen.seed(rd());
-        }
-        else {
-            std::seed_seq rd{prm.get<int>("seed") + omp_get_thread_num() };
-            gen.seed(rd);
-        }
-        gens.emplace_back(gen);
-    }
+    std::vector<std::mt19937> gens = make_generators(prm);
 
     std::uniform_int_distribution<std::mt19937::result_type> uniform_dist(0, prm.get<Uint>("Nrw"));
 
@@ -297,34 +260,27 @@ int main(int argc, char* argv[])
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
-        exit(0);
+        exit(1);
     }
 
-    //std::shared_ptr<Interpol> intp_ptr (&intp);
-    //std::shared_ptr<Initializer> init_state;
-    //init_state = std::make_shared<RandomPointsInitializer>(key, intp_ptr, prm, mpi, gen);    
-    //init_state->initialize(ps);
-    //RandomPointsInitializer init_state(key, prm, mpi, gen);
-    //std::shared_ptr<Initializer> init_state;
     Uint dim;
     if (contains(key[0], "strip")){
         dim = 2;
-        RandomGaussianStripInitializer init_state(key, prm, gens[0]);
+        experimental::RandomGaussianStripInitializer init_state(key, prm, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
     else if (contains(key[0], "circle")){
         dim = 3;
-        RandomGaussianCircleInitializer init_state(key, prm, gens[0]);
+        experimental::RandomGaussianCircleInitializer init_state(key, prm, gens[0]);
         init_state.probe(intp);
         init_state.initialize(ps);
     }
     else {
         std::cout << "Unknown initial state: " << key[0] << "." << std::endl;
-        exit(0);
+        exit(1);
     }
 
-    //RandomGaussianCircleInitializer init_state(key, prm, mpi, gen);
     
     // Check mesh connectivity: should be uneccessary
     ps.edges().clear();
@@ -338,7 +294,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, ps.dim());
+    write_stats_header(statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -384,7 +340,7 @@ int main(int argc, char* argv[])
             std::cout << "Time = " << t << " [" << duration_par << " + " << duration_split << "]" << std::endl;
             duration_par = 0;
             duration_split = 0;
-            write_stats(mpi, statfile, t, ps, integrator.get_declined());
+            write_stats(statfile, t, ps, integrator.get_declined());
 
             std::string sepdatafname = sepdatafolder + "/sepdata_from_t" + std::to_string(t) + ".h5";
             H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
@@ -399,20 +355,24 @@ int main(int argc, char* argv[])
             for ( auto & particle : ps.particles() ){
                 Vector3d x = particle.x();
                 Vector3d ds = {abs(x[0]-prm.get<double>("x0")), abs(x[1]-prm.get<double>("y0")), abs(x[2]-prm.get<double>("z0"))};
-                if (dim == 2 && (
+                if ((dim == 2 && (
                     (prm.get<std::string>("exit_plane") == "x" && (
                      (contains(key[1], "y") && ds[1] < prm.get<double>("ds_max")) || 
                      (contains(key[1], "z") && ds[2] < prm.get<double>("ds_max"))
                     )) ||
                     (prm.get<std::string>("exit_plane") == "y" && (
                      (contains(key[1], "x") && ds[0] < prm.get<double>("ds_max")) ||
-                     (contains(key[1], "z") && ds[0] < prm.get<double>("ds_max"))
-                    ))) || 
-                   dim == 3 && (
+                     (contains(key[1], "z") && ds[2] < prm.get<double>("ds_max"))
+                    )) ||
+                    (prm.get<std::string>("exit_plane") == "z" && (
+                     (contains(key[1], "x") && ds[0] < prm.get<double>("ds_max")) ||
+                     (contains(key[1], "y") && ds[1] < prm.get<double>("ds_max"))
+                    )))) ||
+                   (dim == 3 && (
                     (prm.get<std::string>("exit_plane") == "x" && (std::pow(ds[1], 2) + std::pow(ds[2], 2) < std::pow(prm.get<double>("ds_max"), 2))) ||
                     (prm.get<std::string>("exit_plane") == "y" && (std::pow(ds[0], 2) + std::pow(ds[2], 2) < std::pow(prm.get<double>("ds_max"), 2))) ||
                     (prm.get<std::string>("exit_plane") == "z" && (std::pow(ds[0], 2) + std::pow(ds[1], 2) < std::pow(prm.get<double>("ds_max"), 2)))
-                   )){
+                   ))){
                     xyz_.push_back(x[0]);
                     xyz_.push_back(x[1]);
                     xyz_.push_back(x[2]);

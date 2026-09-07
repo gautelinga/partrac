@@ -10,6 +10,7 @@ public:
   Expr_StokesSphere(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R = getd(expr_params, "R");
     mu = getd(expr_params, "mu");
+    Rho = getd(expr_params, "rho");
     x0 = {getd(expr_params, "x0"),
           getd(expr_params, "y0"),
           getd(expr_params, "z0")};
@@ -76,6 +77,7 @@ public:
                 r[1]*r[2]/r2 * (f_r + f_theta) * u_inf,
                 r[2]*r[2]/r2 * (f_r + f_theta) * u_inf - f_theta * u_inf};
     ptvals.P = p_inf - 3.0/2.0 * mu * u_inf * r[2] * eta / r2;
+    ptvals.Rho = Rho;
 
     // Hardcoded -- copied from consistency-checked Sympy code
     ptvals.gradU << (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[0], 2)*(R2 - r2) - pow(r[0], 2)*(3*R2 - r2) + r2*(R2 - r2))/r7,
@@ -91,7 +93,7 @@ public:
   double ux() { return Ux; };
   double uy() { return Uy; };
   double uz() { return Uz; };
-  double rho() { return getd(expr_params, "rho"); };
+  double rho() { return Rho; };
   double p() { return P; };
   double uxx() { return Uxx; };
   double uxy() { return Uxy; };
@@ -108,6 +110,7 @@ private:
   Vector3d x0;  // Center of sphere
   double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
+  double Rho;
   // Useful quantitites
   double Ux;
   double Uy;

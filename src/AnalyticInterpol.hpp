@@ -19,36 +19,16 @@ class AnalyticInterpol : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t_update=t; };
-  void probe(const Vector3d &x, const double t) { expr->eval(x, t); };
-  void probe(const Vector3d &x, const double t, int& cell_id) { expr->eval(x, t); };
-  bool probe_light(const Vector3d &x, const double t, int& cell_id) {
+  bool locate(const Vector3d &x, const double t, int& cell_id) {
     return expr->inside(x, t);
   };
-  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) {
+  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) {
     expr->eval(x, t, ptvals);
   };
-  bool inside_domain() const { return expr->inside(); };
-  double get_ux() { return expr->ux(); };
-  double get_uy() { return expr->uy(); };
-  double get_uz() { return expr->uz(); };
-  double get_ax() { return expr->ax(); };
-  double get_ay() { return expr->ay(); };
-  double get_az() { return expr->az(); };
   double get_t_min() { return getd(expr_params, "t_min"); };
   double get_t_max() { return getd(expr_params, "t_max"); };
-  double get_rho() { return expr->rho(); };
-  double get_p() { return expr->p(); };
-  double get_uxx() { return expr->uxx(); };
-  double get_uxy() { return expr->uxy(); };
-  double get_uxz() { return expr->uxz(); };
-  double get_uyx() { return expr->uyx(); };
-  double get_uyy() { return expr->uyy(); };
-  double get_uyz() { return expr->uyz(); };
-  double get_uzx() { return expr->uzx(); };
-  double get_uzy() { return expr->uzy(); };
-  double get_uzz() { return expr->uzz(); };
-  Matrix3d get_grada() { return expr->grada(); };
-  void probe(const Vector3d &x){ probe(x, this->t_update); };
+  using Interpol::locate;
+  using Interpol::evaluate;
 protected:
   std::map<std::string, std::string> expr_params;
   std::shared_ptr<Expr> expr;
@@ -58,7 +38,7 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
   size_t found;
   std::string key, val;
@@ -121,7 +101,7 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
   }
   else {
     std::cout << "Could not find expression: " << expr_params["expression"] << std::endl;
-    exit(0);
+    exit(1);
   }
 }
 

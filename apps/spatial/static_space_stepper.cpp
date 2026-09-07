@@ -24,14 +24,13 @@
 //#include "ExplicitIntegrator.hpp"
 //#include "RKIntegrator.hpp"
 #include "helpers.hpp"
-#include "MPIwrap.hpp"
 
 class Integrator_Spatial : public Integrator {
 public:
   Integrator_Spatial(const int int_order, const double u_min, const double dl_max, const double T);
   ~Integrator_Spatial() {};
   template<typename InterpolType, typename T>
-  std::set<Uint> step(InterpolType&, T&, double t, double s);
+  std::set<Uint> step_vec(InterpolType&, T&, double t, double s);
   std::set<Uint> step(ParticleSet&, double t, double s) { std::set<Uint> dummy; return dummy; };
 protected:
   double   m_u_min;
@@ -46,18 +45,18 @@ public:
   Integrator_Directional(const Vector3d& direction, const int int_order, const double un_min, const double dl_max, const double T);
   ~Integrator_Directional() {};
   template<typename InterpolType, typename T>
-  std::set<Uint> step(InterpolType&, T&, double t, double s);
+  std::set<Uint> step_vec(InterpolType&, T&, double t, double s);
 protected:
   Vector3d m_direction;
 };
 
 Integrator_Spatial::Integrator_Spatial(const int int_order, const double u_min, const double dl_max, const double T)
-  : Integrator(), m_int_order(int_order), m_u_min(u_min), m_dl_max(dl_max), m_T(T) {
+  : Integrator(), m_u_min(u_min), m_dl_max(dl_max), m_int_order(int_order), m_T(T) {
     std::cout << "Choosing a spatial integrator of order " << int_order << "." << std::endl;
 }
 
 template<typename InterpolType, typename T>
-std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double t, const double ds) {
+std::set<Uint> Integrator_Spatial::step_vec(InterpolType& intp, T& ps, const double t, const double ds) {
     std::set<Uint> outside_nodes;
     bool is_inside;
     double uabs_est, dt;
@@ -67,9 +66,11 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
         Vector3d x = ps.x(i);
         int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t, cell_id);
+        PointValues ptvals(intp.get_U0());
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
 
-        Vector3d u_1 = intp.get_u();
+        Vector3d u_1 = ptvals.get_u();
 
         uabs_est = u_1.norm();
 
@@ -81,12 +82,12 @@ std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double 
 
             // Second-order terms
             if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
+                dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
             }
 
             if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
-                is_inside = intp.inside_domain();
+                // Frozen time, otherwise: locate(x+dx, t+dt, cell_id)
+                is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
@@ -113,7 +114,7 @@ Integrator_Directional::Integrator_Directional(const Vector3d& direction, const 
 }
 
 template<typename InterpolType, typename T>
-std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const double t, const double s) {
+std::set<Uint> Integrator_Directional::step_vec(InterpolType& intp, T& ps, const double t, const double s) {
     std::set<Uint> outside_nodes;
     bool is_inside;
     double s_prev, un_est, dt;
@@ -123,9 +124,11 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
         Vector3d x = ps.x(i);
         int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t, cell_id);
+        PointValues ptvals(intp.get_U0());
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
 
-        Vector3d u_1 = intp.get_u();
+        Vector3d u_1 = ptvals.get_u();
 
         un_est = u_1.dot(m_direction);
 
@@ -137,12 +140,12 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
 
             // Second-order terms
             if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
+                dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
             }
 
             if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
-                is_inside = intp.inside_domain();
+                // Frozen time, otherwise: locate(x+dx, t+dt, cell_id)
+                is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
@@ -163,78 +166,21 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const dou
     return outside_nodes;
 }
 
-// Parameters accepted by this app
-partrac::Schema spatial_schema(){
-  partrac::Schema s("static_space_stepper");
-  add_initializer_params(s);
-  s.require<std::string>("mode", "interpolator type");
-  s.require<double>("T", "final position");
-  s.require<int>("int_order", "interpolation order");
-  s.require<double>("dx_max", "max step length");
-  s.require<double>("dxn", "normal step length");
-  s.opt<double>("Dm", 0.0, "diffusivity, enters the folder name only");
-  s.opt<double>("dt", 1.0, "timestep, enters the folder name only");
-  s.opt<double>("U", 1.0, "velocity scale");
-  s.opt<double>("Ln", 0.0, "exit plane position");
-  s.opt<double>("u_eps", 1e-7, "velocity cutoff");
-  s.opt<double>("dump_intv", 100.0, "dump interval");
-  s.opt<double>("stat_intv", 100.0, "statistics interval");
-  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
-  s.opt<double>("refine_intv", 100.0, "refinement interval");
-  s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
-  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("seed", 0, "random seed");
-  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
-  s.opt<int>("filter_target", 0, "filter target");
-  s.opt<bool>("verbose", false, "print the parameters");
-  s.opt<bool>("random", true, "draw the seed randomly");
-  s.opt<bool>("refine", false, "refine the mesh");
-  s.opt<bool>("coarsen", false, "coarsen the mesh");
-  s.opt<bool>("inject_edges", true, "inject edges too");
-  s.opt<bool>("local_dt", false, "use a local timestep");
-  s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
-  s.opt<bool>("output_all_props", true, "dump all properties");
-  s.opt<bool>("minimal_output", false, "dump less");
-  s.opt<std::string>("tag", "", "appended to the folder name");
-  s.opt<std::string>("restart_folder", "", "folder to restart from");
-  s.runtime<std::string>("folder", "", "output folder");
-  s.runtime<double>("t", 0.0, "current time");
-  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
-  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
-  // dump_intv and stat_intv become integer step counts, so they must not round
-  // down to zero
-  s.finalize([](partrac::Params& p){
-    const double dt = p.get<double>("dt");
-    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
-    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
-  });
-  return s;
-}
+#include "static_space_stepper_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-  MPIwrap mpi(argc, argv);
 
-  if (mpi.rank() == 0)
-    std::cout << "Initialized spatial stepper with " << mpi.size() << " processes." << std::endl;
-  mpi.barrier();
-  std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-  mpi.barrier();
+    std::cout << "Initialized spatial stepper." << std::endl;
 
   // Input parameters
-  if (argc < 2 && mpi.rank() == 0) {
+  if (argc < 2) {
     std::cout << "Specify an input file." << std::endl;
-    return 0;
+    return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(spatial_schema(), argc, argv);
 
-  std::string infilename = std::string(argv[1]);
+  std::string infilename = prm.input_file();
 
   std::cout << "Setting interpolator..." << std::endl;
 
@@ -251,7 +197,6 @@ int main(int argc, char* argv[])
 
   std::string folder = intp->get_folder();
   std::string rwfolder = folder + "/StaticSpaceStepper/"; 
-  if (mpi.rank() == 0)
     create_folder(rwfolder);
   std::string newfolder;
   if (prm.get<std::string>("restart_folder") != ""){
@@ -259,16 +204,12 @@ int main(int argc, char* argv[])
   }
   else {
     newfolder = get_newfoldername(rwfolder, prm);
-    mpi.barrier();
-    if (mpi.rank() == 0)
       create_folder(newfolder);
-    mpi.barrier();
   }
-  newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+  newfolder = newfolder + "" + "0" + "/";
   std::string posfolder = newfolder + "Positions/";
   std::string checkpointsfolder = newfolder + "Checkpoints/";
   //std::string histfolder = newfolder + "Histograms/";
-  //if (mpi.rank() == 0){ // Might change in the future!
   {
     create_folder(newfolder);
     create_folder(posfolder);
@@ -277,7 +218,7 @@ int main(int argc, char* argv[])
   }
   prm.set<std::string>("folder", newfolder);
 
-  if (mpi.rank() == 0 && prm.get<bool>("verbose"))
+  if (prm.get<bool>("verbose"))
     prm.print();
 
   std::mt19937 gen;
@@ -286,7 +227,7 @@ int main(int argc, char* argv[])
     gen.seed(rd());
   }
   else {
-    std::seed_seq rd{prm.get<int>("seed") + mpi.rank()};
+    std::seed_seq rd{prm.get<int>("seed") + 0};
     gen.seed(rd);
   }
 
@@ -300,9 +241,8 @@ int main(int argc, char* argv[])
 
   // Higher-order time integration?
   if (prm.get<int>("int_order") > 2){
-    if (mpi.rank() == 0)
       std::cout << "No support for such high temporal integration order." << std::endl;
-    exit(0);
+    exit(1);
   }
 
   intp->update(t0);
@@ -313,16 +253,16 @@ int main(int argc, char* argv[])
   //integrator = std::make_shared<DirectionalIntegrator>(direction, prm.int_order);
   Integrator_Spatial integrator(prm.get<int>("int_order"), prm.get<double>("u_eps"), prm.get<double>("dx_max"), prm.get<double>("T"));
 
-  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"), mpi);
-  Topology mesh(ps, prm, mpi);
+  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"));
+  Topology mesh(ps, prm);
 
   if (prm.get<std::string>("restart_folder") != ""){
     mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
   }
   else {
     std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, intp, mpi, prm, gen);
-    mesh.load_initial_state(init_state);
+    set_initial_state(init_state, intp, prm, gen);
+    mesh.load_initial_state(init_state, prm);
   }
 
   mesh.compute_maps();
@@ -335,7 +275,7 @@ int main(int argc, char* argv[])
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
 
-    if (prm.get<bool>("verbose") && mpi.rank() == 0)
+    if (prm.get<bool>("verbose"))
       std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
   }
 
@@ -346,7 +286,6 @@ int main(int argc, char* argv[])
   double xn = prm.get<double>("x0");
   double dxn = prm.get<double>("dxn");
 
-  //if (mpi.rank() == 0)
   prm.dump(newfolder, xn);
 
   // Should not be taken from parameters
@@ -356,7 +295,7 @@ int main(int argc, char* argv[])
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
   H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
   //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-  //H5wrap h5file(mpi);
+  //H5wrap h5file();
   //h5file.open(h5fname, "w");
 
   Uint int_stat_intv = int(prm.get<double>("stat_intv")/dxn);
@@ -379,10 +318,9 @@ int main(int argc, char* argv[])
   //std::string write_mode = prm.write_mode;
 
   std::ofstream statfile;
-  //if (mpi.rank() == 0){
   {
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(xn) + ".dat");
-    write_stats_header(mpi, statfile, mesh.dim());
+    write_stats_header(statfile, mesh.dim());
   }
   std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(xn) + ".dat");
 
@@ -439,7 +377,7 @@ int main(int argc, char* argv[])
 
     xn += dxn;
 
-    auto nodes_to_remove = integrator.step(*intp, ps, t0, dxn);
+    auto nodes_to_remove = integrator.step_vec(*intp, ps, t0, dxn);
 
     if (nodes_to_remove.size() > 0){
       std::vector<bool> node_isactive(ps.N(), true);

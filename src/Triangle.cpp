@@ -75,7 +75,7 @@ std::vector<double> Triangle::dof_coords(const int index) const {
   }
   else {
     std::cout << "ERROR: Triangle" << std::endl;
-    exit(0);
+    exit(1);
   }
 };
 
@@ -160,7 +160,7 @@ double Triangle::dot_grad_gi(const double vx, const double vy, const int index) 
   }
   else {
     std::cout << "ERROR: Triangle::dot_grad_gi invalid index." << std::endl;
-    exit(0);
+    exit(1);
   }
   return 0.0;
 }

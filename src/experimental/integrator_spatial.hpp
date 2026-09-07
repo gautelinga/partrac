@@ -18,7 +18,7 @@ protected:
 };
 
 Integrator_Spatial::Integrator_Spatial(const int int_order, const Real un_min, const Real dl_max)
-  : Integrator(), m_int_order(int_order), m_un_min(un_min), m_dl_max(dl_max) {
+  : Integrator(), m_un_min(un_min), m_dl_max(dl_max), m_int_order(int_order) {
     std::cout << "Choosing a spatial integrator of order " << int_order << "." << std::endl;
 }
 
@@ -46,10 +46,10 @@ std::set<Uint> Integrator_Spatial::step_vec(InterpolType& intp, T& ps, const Rea
 
             PointValues ptvals(intp.get_U0());
 
-            bool is_inside = intp.probe_light(x, t, cell_id);
+            bool is_inside = intp.locate(x, t, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x, t, cell_id, ptvals);
+                intp.evaluate(x, t, cell_id, ptvals);
                 Vector u1 = ptvals.get_u();
                 Matrix J1 = ptvals.get_J();
 
@@ -63,14 +63,14 @@ std::set<Uint> Integrator_Spatial::step_vec(InterpolType& intp, T& ps, const Rea
                     dx += 0.5*(J1*u1 + ptvals.get_a()) * dt * dt;
                     el += 0.5*(J1*(J1*n) + ptvals.get_grada()*n) * dt * dt;
                 }
-                is_inside = intp.probe_light(x + dx, t+dt, cell_id);
+                is_inside = intp.locate(x + dx, t+dt, cell_id);
                 if (is_inside){
                     ++n_accepted_loc;
                     particle.x() = x + dx;
                     particle.n() = el/el.norm();
                     particle.w() += log(el.norm());
 
-                    intp.probe_heavy(x + dx, t+dt, cell_id, ptvals);
+                    intp.evaluate(x + dx, t+dt, cell_id, ptvals);
                     Matrix J = ptvals.get_J();
                     particle.S() = particle.n().transpose() * J * particle.n();
                     particle.cell_id() = cell_id;

@@ -39,17 +39,8 @@ class DolfInterpol : public Interpol {
 public:
   DolfInterpol(const std::string& infilename);
   void update(const double t);
-  void probe(const Vector3d &x, const double t);
-  void probe(const Vector3d &x, const double t, int& cell_id);
-  bool probe_light(const Vector3d &x, const double t, int& cell_id);
-  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals);
-  bool inside_domain() const { return inside; };
-  double get_ux(){ return U[0]; };
-  double get_uy(){ return U[1]; };
-  double get_uz(){ return U[2]; };
-  double get_ax() { return A[0]; };
-  double get_ay() { return A[1];};
-  double get_az() { return A[2];};
+  bool locate(const Vector3d &x, const double t, int& cell_id);
+  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double get_rho() {
@@ -57,21 +48,8 @@ public:
       return stod(dolfin_params["rho"]);
     else {
       std::cout << "dolfin_params does not contain \"rho\"" << std::endl;
-      exit(0);
+      exit(1);
     }
-  };
-  double get_p() { return P;};
-  double get_uxx() { return gradU(0, 0); };
-  double get_uxy() { return gradU(0, 1); };
-  double get_uxz() { return gradU(0, 2); };
-  double get_uyx() { return gradU(1, 0); };
-  double get_uyy() { return gradU(1, 1); };
-  double get_uyz() { return gradU(1, 2); };
-  double get_uzx() { return gradU(2, 0); };
-  double get_uzy() { return gradU(2, 1); };
-  double get_uzz() { return gradU(2, 2); };
-  Matrix3d get_grada() {
-    return gradA;
   };
 protected:
   Timestamps ts;

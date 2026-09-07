@@ -14,17 +14,8 @@ public:
   XDMFTetInterpol(const std::string& infilename);
   ~XDMFTetInterpol() { std::cout << "Destructing XDMFTetInterpol." << std::endl; };
   void update(const double t);
-  void probe(const Vector3d &x, const double t);
-  void probe(const Vector3d &x, const double t, int& id_prev);
-  bool probe_light(const Vector3d &x, const double t, int& id_prev);
-  void probe_heavy(const Vector3d &x, const double t, const int id, PointValues& );
-  bool inside_domain() const { return inside; };
-  double get_ux(){ return U[0]; };
-  double get_uy(){ return U[1]; };
-  double get_uz(){ return U[2]; };
-  double get_ax() { return A[0]; };
-  double get_ay() { return A[1]; };
-  double get_az() { return A[2]; };
+  bool locate(const Vector3d &x, const double t, int& id_prev);
+  void evaluate(const Vector3d &x, const double t, const int id, PointValues& );
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double get_rho() {
@@ -32,21 +23,11 @@ public:
       return stod(dolfin_params["rho"]);
     else {
       std::cout << "dolfin_params does not contain \"rho\"" << std::endl;
-      exit(0);
+      exit(1);
     }
   };
-  double get_p() { return P;};
-  double get_uxx() { return gradU(0, 0); };
-  double get_uxy() { return gradU(0, 1); };
-  double get_uxz() { return gradU(0, 2); };
-  double get_uyx() { return gradU(1, 0); };
-  double get_uyy() { return gradU(1, 1); };
-  double get_uyz() { return gradU(1, 2); };
-  double get_uzx() { return gradU(2, 0); };
-  double get_uzy() { return gradU(2, 1); };
-  double get_uzz() { return gradU(2, 2); };
-  Matrix3d get_grada() { return gradA; };
-  void probe(const Vector3d &x){ probe(x, this->t_update); };
+  using Interpol::locate;
+  using Interpol::evaluate;
   void print_found()
   {
     auto found_same = std::reduce(found_same_.begin(), found_same_.end());

@@ -22,7 +22,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
 
   // Default params
@@ -161,7 +161,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
           Vector3d pt(dolfin_facet.midpoint().coordinates());
 
           bool periodic_facet = false;
-          for ( Uint k=0; k < dim; ++k)
+          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
           {
             if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
             {
@@ -251,13 +251,13 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   {
     auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
     u_dofs_[id].resize(u_dofs.size());
-    for (std::size_t i = 0; i < u_dofs.size(); ++i){
+    for (std::size_t i = 0; i < static_cast<std::size_t>(u_dofs.size()); ++i){
       u_dofs_[id][i] = u_dofs[i];
     }
 
     auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
     p_dofs_[id].resize(p_dofs.size());
-    for (std::size_t i = 0; i < p_dofs.size(); ++i){
+    for (std::size_t i = 0; i < static_cast<std::size_t>(p_dofs.size()); ++i){
       p_dofs_[id][i] = p_dofs[i];
     }
   }
@@ -325,11 +325,6 @@ void XDMFTriangleInterpol::update(const double t)
 
 }
 
-void XDMFTriangleInterpol::probe(const Vector3d &x, const double t)
-{
-  int id_prev = -1;
-  probe(x, t, id_prev);
-}
 
 void XDMFTriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
   for (std::size_t i=0; i<dim; ++i){
@@ -355,33 +350,8 @@ Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-void XDMFTriangleInterpol::probe(const Vector3d &x, const double t, int& id_prev)
-{
-  // Not good for parallelization
-  inside = probe_light(x, t, id_prev);
 
-  if (inside)
-  {
-    PointValues fields(U0);
-    probe_heavy(x, t, id_prev, fields);
-
-    // Update
-    U = fields.U;
-    A = fields.A;
-
-    if (include_pressure){
-      // Evaluate
-      P = fields.P;
-    }
-
-    if (this->int_order > 1){
-      gradU = fields.gradU;
-      gradA = fields.gradA;
-    }
-  }
-}
-
-bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
+bool XDMFTriangleInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 {
   // TODO: CHECK if thread safe
   assert(t <= t_next && t >= t_prev);
@@ -433,7 +403,7 @@ bool XDMFTriangleInterpol::probe_light(const Vector3d &x, const double t, int& i
   return inside_loc;
 }
 
-void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
   dolfin::Array<double> x_loc(dim);
   _modx(x_loc, x);
@@ -475,7 +445,8 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
                      std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[ncoeffs_u], 0.0),
                      0.0 };
 
-  Matrix3d gradU_prev, gradU_next;
+  // only filled when int_order > 1, and only read under the same test
+  Matrix3d gradU_prev = Matrix3d::Zero(), gradU_next = Matrix3d::Zero();
   if (this->int_order > 1){
     triangles_[id].linearderiv(r1, r2, r3, _Nux_, _Nuy_);
 
@@ -552,7 +523,7 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
 
       const std::vector<std::vector<int>> perm_loc = {{3, 4, 5}, {3, 5, 4}, {4, 3, 5}, {4, 5, 3}, {5, 3, 4}, {5, 4, 3}};
 
-      for (int iperm = 0; iperm < perm_loc.size(); ++iperm){
+      for (std::size_t iperm = 0; iperm < perm_loc.size(); ++iperm){
         u_block_2[perm_loc[iperm][0]] = 0.5*(u_block[0] + u_block[1]);
         u_block_2[perm_loc[iperm][1]] = 0.5*(u_block[0] + u_block[2]);
         u_block_2[perm_loc[iperm][2]] = 0.5*(u_block[1] + u_block[2]);
@@ -566,7 +537,7 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
     }
     if (perm_[id].size() == 0){
       std::cout << "ERROR: No permutations worked" << std::endl;
-      exit(0);
+      exit(1);
     }
 
     if (count_uu == 1 && true)
@@ -592,23 +563,6 @@ void XDMFTriangleInterpol::probe_heavy(const Vector3d &x, const double tin, cons
           u_next_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_next * cell_normal_[id][j];
         }
       }
-      /*
-      double n_dot_grad_g_uu = triangles_[id].dot_grad_gi(cell_normal_[id][0], cell_normal_[id][1], id_uu);
-      std::vector<double> tau = {cell_normal_[id][1], -cell_normal_[id][0]};
-      std::vector<double> t_dot_grad_g = {triangles_[id].dot_grad_gi(tau[0], tau[1], (id_uu + 1) % (dim+1)),
-                                          triangles_[id].dot_grad_gi(tau[0], tau[1], (id_uu + 2) % (dim+1))};
-
-      for (Uint i=0; i<dim+1; ++i){
-        for (Uint j=0; j<dim; ++j){
-          // Tangential correction
-          if (t_dot_grad_g[i] > 1e-12){
-            // std::cout << "Larger" << std::endl;
-            u_prev_block_2[j*ncoeffs_u_2 + neigh_dof_loc[id_uu][i]] += -0.25 * n_dot_grad_g_uu / t_dot_grad_g[i] * tau[j] * un_prev;
-            u_next_block_2[j*ncoeffs_u_2 + neigh_dof_loc[id_uu][i]] += -0.25 * n_dot_grad_g_uu / t_dot_grad_g[i] * tau[j] * un_next;
-          }
-        }
-      }
-      */
     }
     else {
       // Linear combination

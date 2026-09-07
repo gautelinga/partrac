@@ -14,7 +14,6 @@
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
 #include "Params.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
@@ -50,7 +49,7 @@ void reinject_edges(const std::set<Uint>& outside_node_ids, const std::vector<st
     }
 
     if (! (outside_node_ids.size() <= outside_edge_ids.size()*2) ){
-        exit(0);
+        exit(1);
     }
 
     Vector Dx_max = 0.5*(intp.get_x_max()-intp.get_x_min());
@@ -76,52 +75,35 @@ void reinject_edges(const std::set<Uint>& outside_node_ids, const std::vector<st
             }
             Vector x0 = edge.midpoint(ps);
             Vector dx = edge.vector(ps);
-            intp.probe(x0 + Dx + 0.5*dx);
-            bool inside_a = intp.inside_domain();
-            intp.probe(x0 + Dx - 0.5*dx);
-            bool inside_b = intp.inside_domain();
+            bool inside_a = intp.locate(x0 + Dx + 0.5*dx);
+            bool inside_b = intp.locate(x0 + Dx - 0.5*dx);
             outside = !(inside_a && inside_b);
         }
         edge.move(ps, Dx);
     }
 }
 
-// Parameters accepted by this app
-partrac::Schema filaments_triangleRK4_schema(){
-  partrac::Schema s("filaments_triangleRK4");
-  add_common_app_params(s);
-  add_experimental_initializer_params(s);
-  add_restart_params(s);
-  s.require<int>("int_order", "integration order");
-  s.require<double>("ds_init", "initial edge length");
-  s.opt<double>("resize_intv", 0.0, "resize interval");
-  return s;
-}
+#include "filaments_triangleRK4_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
 
-    if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental filaments with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized experimental filaments.\t\t\t\t\t ||\n"
                   //<< "||  With FILAMENTS, RK4 and FELBM piecewise CONSTANT interpolation. ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
     
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-    mpi.barrier();
 
     // Input parameters
-    if (argc < 2 && mpi.rank() == 0) {
+    if (argc < 2) {
         std::cout << "Please specify an input file." << std::endl;
-        return 0;
+        return 1;
     }
     partrac::Params prm = partrac::parse_or_exit(filaments_triangleRK4_schema(), argc, argv);
 
-    std::string infilename = std::string(argv[1]);
+    std::string infilename = prm.input_file();
 
     TriangleInterpol intp(infilename);
 
@@ -131,7 +113,6 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/Filaments/"; 
     
-    if (mpi.rank() == 0)
         create_folder(rwfolder);
     
     std::string newfolder;
@@ -140,12 +121,9 @@ int main(int argc, char* argv[])
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
-        mpi.barrier();
-        if (mpi.rank() == 0)
             create_folder(newfolder);
-        mpi.barrier();
     }
-    newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+    newfolder = newfolder + "" + "0" + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
     {
@@ -155,7 +133,6 @@ int main(int argc, char* argv[])
     }
     prm.set<std::string>("folder", newfolder);
 
-    if (mpi.rank() == 0)
         if (prm.get<bool>("verbose")) prm.print();
 
     std::mt19937 gen;
@@ -164,7 +141,7 @@ int main(int argc, char* argv[])
         gen.seed(rd());
     }
     else {
-        std::seed_seq rd{prm.get<int>("seed") + mpi.rank()};
+        std::seed_seq rd{prm.get<int>("seed") + 0};
         gen.seed(rd);
     }
 
@@ -185,16 +162,11 @@ int main(int argc, char* argv[])
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
-        exit(0);
+        exit(1);
     }
 
-    //std::shared_ptr<Interpol> intp_ptr (&intp);
 
-    //std::shared_ptr<Initializer> init_state;
-    //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
-    //init_state = std::make_shared<RandomPairsInitializer>(key, intp_ptr, prm, mpi, gen);
-    //init_state->initialize(ps);
-    RandomPairsInitializer init_state(key, prm, gen);
+    experimental::RandomPairsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
 
@@ -220,7 +192,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, ps.dim());
+    write_stats_header(statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -259,7 +231,7 @@ int main(int argc, char* argv[])
             std::cout << "Time = " << t << std::endl;
             // mesh.write_statistics(statfile, t, prm.ds_max, integrator);
             //ps.write_statistics(statfile, t, integrator);
-            write_stats(mpi, statfile, t, ps, integrator.get_declined());
+            write_stats(statfile, t, ps, integrator.get_declined());
         }
         // Checkpoint
         if (it % int_checkpoint_intv == 0){

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 namespace partrac {
@@ -23,9 +24,7 @@ std::string trim(const std::string& s) {
   return s.substr(b, e - b + 1);
 }
 
-// Parse a real, requiring the whole string to be consumed.  The old
-// stodouble() used `ss >> d` without checking eof, so "10meters" silently
-// parsed as 10.
+// Parse a real, requiring the whole string to be consumed
 bool try_parse_real(const std::string& s, double& out) {
   if (s.empty()) return false;
   errno = 0;
@@ -39,9 +38,7 @@ bool try_parse_real(const std::string& s, double& out) {
   return true;
 }
 
-// Integers go through double so that scientific notation keeps working
-// (Nrw=1e6 is used throughout commands.txt), then we insist the value is a
-// whole number that survives the round trip exactly.
+// Via double, so scientific notation works; must round-trip as a whole number
 bool try_parse_int(const std::string& s, long long& out) {
   double d;
   if (!try_parse_real(s, d)) return false;
@@ -153,9 +150,7 @@ std::string to_string(Source s) {
   return "?";
 }
 
-// Reals are written at full precision: the old write_param used the default
-// ostream precision of 6 significant digits, so a checkpoint written at
-// t = 1234567.89 read back as 1.23457e+06.
+// Reals are written at full precision so that a dump round-trips exactly
 std::string value_to_string(const Value& v) {
   std::ostringstream ss;
   if (std::holds_alternative<bool>(v)) {
@@ -387,18 +382,20 @@ Params Schema::parse(const std::vector<std::string>& args) const {
 
   // --- 1. tokenize -------------------------------------------------------
   std::map<std::string, std::string> cmd;
-  std::size_t i = 1;
-  if (i < args.size() && args[i].rfind("-", 0) != 0 &&
-      args[i].find('=') == std::string::npos) {
-    ++i;  // argv[1] is the positional interpolator file
-  }
-  for (; i < args.size(); ++i) {
+  bool positional_seen = false;
+  for (std::size_t i = 1; i < args.size(); ++i) {
     const std::string a = trim(args[i]);
     if (a.empty()) continue;
     if (a == "--check" || a == "--dry-run") { p.m_check_only = true; continue; }
     if (a == "--help" || a == "-h") { p.m_help = true; continue; }
     const auto eq = a.find('=');
     if (eq == std::string::npos) {
+      // the first bare argument is the interpolator file, wherever it appears
+      if (!positional_seen && a.rfind("-", 0) != 0) {
+        positional_seen = true;
+        p.m_positional = a;
+        continue;
+      }
       problems.push_back("unrecognised argument '" + a + "' (expected key=value)");
       continue;
     }
@@ -412,6 +409,9 @@ Params Schema::parse(const std::vector<std::string>& args) const {
   // --help short-circuits everything: the caller prints the schema and exits,
   // so it must work even when required parameters are absent.
   if (p.m_help) return p;
+
+  if (!positional_seen && !m_impl->positional_doc.empty())
+    problems.push_back("no input file given, expected " + m_impl->positional_doc);
 
   // --- 2. validate command-line keys -------------------------------------
   for (const auto& kv : cmd) {
@@ -438,11 +438,14 @@ Params Schema::parse(const std::vector<std::string>& args) const {
     if (!in) {
       problems.push_back("restart file '" + path + "' does not exist");
     } else {
+      std::set<std::string> seen;
       for (std::string line; std::getline(in, line);) {
         const auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = trim(line.substr(0, eq));
         const std::string val = trim(line.substr(eq + 1));
+        if (!seen.insert(key).second)
+          problems.push_back("parameter '" + key + "' given more than once in " + path);
         const detail::Entry* e = m_impl->find(key);
         if (!e) {
           const std::string msg = "unknown parameter '" + key + "' in " + path;

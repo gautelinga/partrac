@@ -23,7 +23,7 @@ protected:
 };
 
 Integrator_Explicit::Integrator_Explicit(const Real Dm, const int int_order, std::vector<std::mt19937>& gens)
-  : Integrator(), gens(gens), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
+  : Integrator(), Dm(Dm), int_order(int_order), gens(gens), rnd_normal(0.0, 1.0) {
     std::cout << "Choosing an explicit integrator of order " << int_order << " with diffusivity " << Dm << std::endl;
 }
 
@@ -36,13 +36,15 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
         Vector x = particle.x();
         int cell_id = particle.cell_id();
 
-        intp.probe(x, t, cell_id);
-        Vector dx = intp.get_u() * dt;
+        PointValues ptvals(intp.get_U0());
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
+        Vector dx = ptvals.get_u() * dt;
 
         // Second-order terms
         if (int_order >= 2){
             //dx_rw += 0.5*a_rw[irw]*dt2;
-            dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
+            dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
         }
         if (Dm > 0.0){
             std::mt19937& gen = gens[0]; // Not parallel yet
@@ -51,8 +53,7 @@ std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t
                           rnd_normal(gen)};
             dx += sqrt2Dmdt * eta;
         }
-        intp.probe(x+dx, t+dt, cell_id);
-        if (intp.inside_domain()){
+        if (intp.locate(x+dx, t+dt, cell_id)){
             ++n_accepted;
             particle.x() = x + dx;
             particle.cell_id() = cell_id;
@@ -84,8 +85,8 @@ void Integrator_Explicit::step_parallel(InterpolType& intp, T& ps, const Real t,
             int cell_id = particle.cell_id();
             PointValues ptvals(U0);
 
-            bool is_inside = intp.probe_light(x, t, cell_id);
-            intp.probe_heavy(x, t, cell_id, ptvals);
+            bool is_inside = intp.locate(x, t, cell_id);
+            intp.evaluate(x, t, cell_id, ptvals);
 
             Vector3d dx = ptvals.get_u() * dt;
 
@@ -95,7 +96,7 @@ void Integrator_Explicit::step_parallel(InterpolType& intp, T& ps, const Real t,
                 Vector eta = {_rnd_normal(gen), _rnd_normal(gen), _rnd_normal(gen)};
                 dx += sqrt2Dmdt * eta;
             }
-            is_inside = intp.probe_light(x+dx, t+dt, cell_id);
+            is_inside = intp.locate(x+dx, t+dt, cell_id);
             if (is_inside){
                 //++n_accepted;
                 particle.x() = x + dx;
@@ -124,15 +125,16 @@ std::set<Uint> Integrator_Explicit::step_vec(InterpolType& intp, T& ps, const Re
             Vector n = particle.n();
             int cell_id = particle.cell_id(); // to accelerate search
 
-            Vector dx;
+            // zero: a particle that starts outside is not moved, just declined
+            Vector dx = Vector::Zero();
             Vector el = n;
 
             PointValues ptvals(intp.get_U0());
 
-            bool is_inside = intp.probe_light(x, t, cell_id);
+            bool is_inside = intp.locate(x, t, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x, t, cell_id, ptvals);
+                intp.evaluate(x, t, cell_id, ptvals);
                 Vector u1 = ptvals.get_u();
                 Matrix J1 = ptvals.get_J();
 
@@ -144,14 +146,14 @@ std::set<Uint> Integrator_Explicit::step_vec(InterpolType& intp, T& ps, const Re
                     el += 0.5*(J1*(J1*n) + ptvals.get_grada()*n) * dt * dt;
                 }
             }
-            is_inside = intp.probe_light(x + dx, t+dt, cell_id);
+            is_inside = intp.locate(x + dx, t+dt, cell_id);
             if (is_inside){
                 ++n_accepted_loc;
                 particle.x() = x + dx;
                 particle.n() = el/el.norm();
                 particle.w() += log(el.norm());
 
-                intp.probe_heavy(x + dx, t+dt, cell_id, ptvals);
+                intp.evaluate(x + dx, t+dt, cell_id, ptvals);
                 Matrix J = ptvals.get_J();
                 particle.S() = particle.n().transpose() * J * particle.n();
                 particle.cell_id() = cell_id;

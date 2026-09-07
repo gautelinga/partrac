@@ -118,7 +118,7 @@ static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint
   }
   std::cout << "Error: found no intersection." << std::endl;
   // GL: Hack to avoid crashing. This function is only used for curvature calculations!
-  //exit(0);
+  //exit(1);
   return 0;
 }
 
@@ -191,7 +191,7 @@ static double getd(std::map<std::string, std::string> &expr_params, const std::s
   }
   else {
     std::cout << "Missing key: " << key << std::endl;
-    exit(0);
+    exit(1);
     return 0.;
   }
 }
@@ -202,7 +202,7 @@ static double geti(std::map<std::string, std::string> &expr_params, const std::s
   }
   else {
     std::cout << "Missing key: " << key << std::endl;
-    exit(0);
+    exit(1);
     return 0;
   }
 }
@@ -247,7 +247,7 @@ static std::vector<double> getdvec(std::map<std::string, std::string> &expr_para
   }
   else {
     std::cout << "Missing key: " << key << std::endl;
-    exit(0);
+    exit(1);
   }
   return dvec;
 }
@@ -275,7 +275,7 @@ static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
   }
   else {
     std::cout << "Missing key: " << key << std::endl;
-    exit(0);
+    exit(1);
   }
   return ivec;
 }

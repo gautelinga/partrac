@@ -11,33 +11,13 @@ class StructuredConstInterpol : public Interpol {
 public:
   StructuredConstInterpol(const std::string& infilename);
   void update(const double t);
-  void probe(const Vector3d &x, const double t);
-  void probe(const Vector3d &x, const double t, int &cell_id) { probe(x, t); };
-  bool inside_domain() const;
   Uint get_nx() { return n[0]; };
   Uint get_ny() { return n[1]; };
   Uint get_nz() { return n[2]; };
-  double get_ux();
-  double get_uy();
-  double get_uz();
-  double get_ax();
-  double get_ay();
-  double get_az();
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
-  double get_rho();
-  double get_p();
-  double get_uxx() { return 0.; };
-  double get_uxy() { return 0.; };
-  double get_uxz() { return 0.; };
-  double get_uyx() { return 0.; };
-  double get_uyy() { return 0.; };
-  double get_uyz() { return 0.; };
-  double get_uzx() { return 0.; };
-  double get_uzy() { return 0.; };
-  double get_uzz() { return 0.; };
-  Matrix3d get_grada()  { Matrix3d gradA; gradA << 0., 0., 0., 0., 0., 0., 0., 0., 0.; return gradA; };
-  void probe(const Vector3d &x){ probe(x, this->t_update); };
+  using Interpol::locate;
+  using Interpol::evaluate;
 protected:
   void probe_space(const Vector3d &x);
   void probe_grad();
@@ -83,7 +63,7 @@ StructuredConstInterpol::StructuredConstInterpol(const std::string& infilename) 
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
   // Default params
   felbm_params["timestamps"] = "timestamps.dat";
@@ -223,75 +203,15 @@ void StructuredConstInterpol::update(const double t){
   t_update = t;
 }
 
-void StructuredConstInterpol::probe(const Vector3d &x, const double t){
-  assert(t <= t_next && t >= t_prev);
-  alpha_t = (t-t_prev)/(t_next-t_prev);
 
-  for (Uint i=0; i<3; ++i){
-    ind_pc[i] = imodulo(round(x[i]/dx[i]), n[i]);
-  }
-
-  // Precompute inside factor
-  inside = !isSolid[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-
-  // Precompute velocities
-  double Ux_prev = ux_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  double Ux_next = ux_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  Ux = alpha_t * Ux_next + (1-alpha_t) * Ux_prev;
-  Ax = (Ux_next-Ux_prev)/(t_next-t_prev);
-
-  double Uy_prev = uy_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  double Uy_next = uy_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  Uy = alpha_t * Uy_next + (1-alpha_t) * Uy_prev;
-  Ay = (Uy_next-Uy_prev)/(t_next-t_prev);
-
-  if (!ignore_uz){
-    double Uz_prev = uz_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-    double Uz_next = uz_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-    Uz = alpha_t * Uz_next + (1-alpha_t) * Uz_prev;
-    Az = (Uz_next-Uz_prev)/(t_next-t_prev);
-  }
-}
-
-bool StructuredConstInterpol::inside_domain() const {
-  return inside;
-}
 
 // Interpolate in space and time and enforce BCs
-double StructuredConstInterpol::get_ux(){
-  return Ux;
-}
 
-double StructuredConstInterpol::get_uy(){
-  return Uy;
-}
 
-double StructuredConstInterpol::get_uz(){
-  return Uz;
-}
 
-double StructuredConstInterpol::get_ax(){
-  return Ax;
-}
 
-double StructuredConstInterpol::get_ay(){
-  return Ay;
-}
 
-double StructuredConstInterpol::get_az(){
-  return Az;
-}
 
-double StructuredConstInterpol::get_rho(){
-  double Rho_prev = rho_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  double Rho_next = rho_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  return alpha_t * Rho_next + (1-alpha_t) * Rho_prev;
-}
 
-double StructuredConstInterpol::get_p(){
-  double P_prev = p_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  double P_next = p_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  return alpha_t * P_next + (1-alpha_t) * P_prev;
-}
 
 #endif

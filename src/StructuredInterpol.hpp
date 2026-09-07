@@ -220,10 +220,8 @@ class StructuredInterpol : public Interpol {
 public:
   StructuredInterpol(const std::string& infilename);
   void update(const double t);
-  void probe(const Vector3d &x, const double t);
-  void probe(const Vector3d &x, const double t, int& cell_id) { probe(x, t); };
-  bool probe_light(const Vector3d &x, const double t, int& cell_id);
-  void probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& fields);
+  bool locate(const Vector3d &x, const double t, int& cell_id);
+  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields);
   bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
   void probe_space_bulk(const Vector3d &x, 
     const Uint _ind[3][2],
@@ -250,32 +248,14 @@ public:
     double _dwuz_x[2][2][2],
     double _dwuz_y[2][2][2],
     double _dwuz_z[2][2][2]);
-  bool inside_domain() const;
   //bool inside_domain(const Vector3d &x) const;
   Uint get_nx() { return n[0]; };
   Uint get_ny() { return n[1]; };
   Uint get_nz() { return n[2]; };
-  double get_ux();
-  double get_uy();
-  double get_uz();
-  double get_ax();
-  double get_ay();
-  double get_az();
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
-  double get_rho();
-  double get_p();
-  double get_uxx();
-  double get_uxy();
-  double get_uxz();
-  double get_uyx();
-  double get_uyy();
-  double get_uyz();
-  double get_uzx();
-  double get_uzy();
-  double get_uzz();
-  Matrix3d get_grada();
-  void probe(const Vector3d &x){ probe(x, this->t_update); };
+  using Interpol::locate;
+  using Interpol::evaluate;
 protected:
   void probe_space(const Vector3d &x);
   Timestamps ts;
@@ -355,7 +335,7 @@ StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
   // Default params
   felbm_params["timestamps"] = "timestamps.dat";
@@ -523,57 +503,15 @@ void StructuredInterpol::update(const double t){
   t_update = t;
 }
 
-void StructuredInterpol::probe(const Vector3d &x, const double t){
-  assert(t <= t_next && t >= t_prev);
-  alpha_t = (t-t_prev)/(t_next-t_prev);
 
-  probe_space(x);
-
-  double Ux_prev, Uy_prev, Uz_prev;
-  double Ux_next, Uy_next, Uz_next;
-
-  // Precompute velocities
-  if (is_bulk)
-  {
-    Ux_prev = weighted_sum(ux_prev, ind, w);
-    Ux_next = weighted_sum(ux_next, ind, w);
-
-    Uy_prev = weighted_sum(uy_prev, ind, w);
-    Uy_next = weighted_sum(uy_next, ind, w);
-
-    Uz_prev = weighted_sum(uz_prev, ind, w);
-    Uz_next = weighted_sum(uz_next, ind, w);
-  }
-  else
-  {
-    Ux_prev = inner_product(wux, Vx_prev);
-    Ux_next = inner_product(wux, Vx_next);
-
-    Uy_prev = inner_product(wuy, Vy_prev);
-    Uy_next = inner_product(wuy, Vy_next);
-
-    Uz_prev = inner_product(wuz, Vz_prev);
-    Uz_next = inner_product(wuz, Vz_next);
-  }
-
-  Ux = alpha_t * Ux_next + (1-alpha_t) * Ux_prev;
-  Ax = (Ux_next-Ux_prev)/(t_next-t_prev);
-
-  Uy = alpha_t * Uy_next + (1-alpha_t) * Uy_prev;
-  Ay = (Uy_next-Uy_prev)/(t_next-t_prev);
-
-  Uz = alpha_t * Uz_next + (1-alpha_t) * Uz_prev;
-  Az = (Uz_next-Uz_prev)/(t_next-t_prev);
-}
-
-bool StructuredInterpol::probe_light(const Vector3d &x, const double t, int& cell_id){
+bool StructuredInterpol::locate(const Vector3d &x, const double t, int& cell_id){
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
   return !isSolid[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
 }
 
-void StructuredInterpol::probe_heavy(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
-  // Assuming probe_light has already been called and found that the cell is not in solid
+void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
+  // Assuming locate has already been called and found that the cell is not in solid
   double Ux_prev, Uy_prev, Uz_prev;
   double Ux_next, Uy_next, Uz_next;
   double Rho_prev, Rho_next;
@@ -735,9 +673,6 @@ void StructuredInterpol::probe_heavy(const Vector3d &x, const double t, const in
 
 }
 
-bool StructuredInterpol::inside_domain() const {
-  return is_inside_domain;
-}
 
 bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
   // Assuming this cell is not inside the solid phase
@@ -1031,212 +966,22 @@ void StructuredInterpol::probe_space(const Vector3d &x){
 }
 
 // Interpolate in space and time and enforce BCs
-double StructuredInterpol::get_ux(){
-  return Ux;
-}
 
-double StructuredInterpol::get_uy(){
-  return Uy;
-}
 
-double StructuredInterpol::get_uz(){
-  return Uz;
-}
 
-double StructuredInterpol::get_ax(){
-  return Ax;
-}
 
-double StructuredInterpol::get_ay(){
-  return Ay;
-}
 
-double StructuredInterpol::get_az(){
-  return Az;
-}
 
-double StructuredInterpol::get_rho(){
-  double Rho_prev, Rho_next;
-  if (is_bulk){
-    Rho_prev = weighted_sum(rho_prev, ind, w);
-    Rho_next = weighted_sum(rho_next, ind, w);
-  }
-  else {
-    Rho_prev = rho_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-    Rho_next = rho_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  }
-  return alpha_t * Rho_next + (1-alpha_t) * Rho_prev;
-}
 
-double StructuredInterpol::get_p(){
-  double P_prev, P_next;
-  if (is_bulk){
-    P_prev = weighted_sum(p_prev, ind, w);
-    P_next = weighted_sum(p_next, ind, w);
-  }
-  else {
-    P_prev = p_prev[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-    P_next = p_next[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-  }
-  return alpha_t * P_next + (1-alpha_t) * P_prev;
-}
 
-double StructuredInterpol::get_uxx(){
-  double Uxx_prev, Uxx_next;
-  if (is_bulk){
-    Uxx_prev = weighted_sum(ux_prev, ind, dw_x);
-    Uxx_next = weighted_sum(ux_next, ind, dw_x);
-  }
-  else {
-    Uxx_prev = inner_product(dwux_x, Vx_prev);
-    Uxx_next = inner_product(dwux_x, Vx_prev);
-  }
-  double Uxx = alpha_t * Uxx_next + (1-alpha_t) * Uxx_prev;
-  return Uxx;
-}
 
-double StructuredInterpol::get_uxy(){
-  double Uxy_prev, Uxy_next;
-  if (is_bulk){
-    Uxy_prev = weighted_sum(ux_prev, ind, dw_y);
-    Uxy_next = weighted_sum(ux_next, ind, dw_y);
-  }
-  else {
-    Uxy_prev = inner_product(dwux_y, Vx_prev);
-    Uxy_next = inner_product(dwux_y, Vx_next);
-  }
-  double Uxy = alpha_t * Uxy_next + (1-alpha_t) * Uxy_prev;
-  return Uxy;
-}
 
-double StructuredInterpol::get_uxz(){
-  double Uxz_prev, Uxz_next;
-  if (is_bulk){
-    Uxz_prev = weighted_sum(ux_prev, ind, dw_z);
-    Uxz_next = weighted_sum(ux_next, ind, dw_z);
-  }
-  else {
-    Uxz_prev = inner_product(dwux_z, Vx_prev);
-    Uxz_next = inner_product(dwux_z, Vx_next);    
-  }
-  double Uxz = alpha_t * Uxz_next + (1-alpha_t) * Uxz_prev;
-  return Uxz;
-}
 
-double StructuredInterpol::get_uyx(){
-  double Uyx_prev, Uyx_next;
-  if (is_bulk){
-    Uyx_prev = weighted_sum(uy_prev, ind, dw_x);
-    Uyx_next = weighted_sum(uy_next, ind, dw_x);
-  }
-  else {
-    Uyx_prev = inner_product(dwuy_x, Vy_prev);
-    Uyx_next = inner_product(dwuy_x, Vy_next);  
-  }
-  double Uyx = alpha_t * Uyx_next + (1-alpha_t) * Uyx_prev;
-  return Uyx;
-}
 
-double StructuredInterpol::get_uyy(){
-  double Uyy_prev, Uyy_next;
-  if (is_bulk){
-    Uyy_prev = weighted_sum(uy_prev, ind, dw_y);
-    Uyy_next = weighted_sum(uy_next, ind, dw_y);
-  }
-  else {
-    Uyy_prev = inner_product(dwuy_y, Vy_prev);
-    Uyy_next = inner_product(dwuy_y, Vy_next);
-  }
-  double Uyy = alpha_t * Uyy_next + (1-alpha_t) * Uyy_prev;
-  return Uyy;
-}
 
-double StructuredInterpol::get_uyz(){
-  double Uyz_prev, Uyz_next;
-  if (is_bulk){
-    Uyz_prev = weighted_sum(uy_prev, ind, dw_z);
-    Uyz_next = weighted_sum(uy_next, ind, dw_z);
-  }
-  else {
-    Uyz_prev = inner_product(dwuy_z, Vy_prev);
-    Uyz_next = inner_product(dwuy_z, Vy_next);
-  }
-  double Uyz = alpha_t * Uyz_next + (1-alpha_t) * Uyz_prev;
-  return Uyz;
-}
 
-double StructuredInterpol::get_uzx(){
-  double Uzx_prev, Uzx_next;
-  if (is_bulk){
-    Uzx_prev = weighted_sum(uz_prev, ind, dw_x);
-    Uzx_next = weighted_sum(uz_next, ind, dw_x);
-  }
-  else {
-    Uzx_prev = inner_product(dwuz_x, Vz_prev);
-    Uzx_next = inner_product(dwuz_x, Vz_next);
-  }
-  double Uzx = alpha_t * Uzx_next + (1-alpha_t) * Uzx_prev;
-  return Uzx;
-}
 
-double StructuredInterpol::get_uzy(){
-  double Uzy_prev, Uzy_next;
-  if (is_bulk){
-    Uzy_prev = weighted_sum(uz_prev, ind, dw_y);
-    Uzy_next = weighted_sum(uz_next, ind, dw_y);
-  }
-  else {
-    Uzy_prev = inner_product(dwuz_y, Vz_prev);
-    Uzy_next = inner_product(dwuz_y, Vz_next);
-  }
-  double Uzy = alpha_t * Uzy_next + (1-alpha_t) * Uzy_prev;
-  return Uzy;
-}
 
-double StructuredInterpol::get_uzz(){
-  double Uzz_prev, Uzz_next;
-  if (is_bulk){
-    Uzz_prev = weighted_sum(uz_prev, ind, dw_z);
-    Uzz_next = weighted_sum(uz_next, ind, dw_z);
-  }
-  else {
-    Uzz_prev = inner_product(dwuz_z, Vz_prev);
-    Uzz_next = inner_product(dwuz_z, Vz_next);
-  }
-  double Uzz = alpha_t * Uzz_next + (1-alpha_t) * Uzz_prev;
-  return Uzz;
-}
 
-Matrix3d StructuredInterpol::get_grada(){
-  double dt_inv = 1./(t_next-t_prev);
-  double Axx, Axy, Axz, Ayx, Ayy, Ayz, Azx, Azy, Azz;
-  if (is_bulk){
-    Axx = dt_inv*(weighted_sum(ux_next, ind, dw_x)-weighted_sum(ux_prev, ind, dw_x));
-    Axy = dt_inv*(weighted_sum(ux_next, ind, dw_y)-weighted_sum(ux_prev, ind, dw_y));
-    Axz = dt_inv*(weighted_sum(ux_next, ind, dw_z)-weighted_sum(ux_prev, ind, dw_z));
-    Ayx = dt_inv*(weighted_sum(uy_next, ind, dw_x)-weighted_sum(uy_prev, ind, dw_x));
-    Ayy = dt_inv*(weighted_sum(uy_next, ind, dw_y)-weighted_sum(uy_prev, ind, dw_y));
-    Ayz = dt_inv*(weighted_sum(uy_next, ind, dw_z)-weighted_sum(uy_prev, ind, dw_z));
-    Azx = dt_inv*(weighted_sum(uz_next, ind, dw_x)-weighted_sum(uz_prev, ind, dw_x));
-    Azy = dt_inv*(weighted_sum(uz_next, ind, dw_y)-weighted_sum(uz_prev, ind, dw_y));
-    Azz = dt_inv*(weighted_sum(uz_next, ind, dw_z)-weighted_sum(uz_prev, ind, dw_z));
-  }
-  else {
-    Axx = dt_inv*(inner_product(dwux_x, Vx_next)-inner_product(dwux_x, Vx_prev));
-    Axy = dt_inv*(inner_product(dwux_y, Vx_next)-inner_product(dwux_y, Vx_prev));
-    Axz = dt_inv*(inner_product(dwux_z, Vx_next)-inner_product(dwux_z, Vx_prev));
-    Ayx = dt_inv*(inner_product(dwuy_x, Vy_next)-inner_product(dwuy_x, Vy_prev));
-    Ayy = dt_inv*(inner_product(dwuy_y, Vy_next)-inner_product(dwuy_y, Vy_prev));
-    Ayz = dt_inv*(inner_product(dwuy_z, Vy_next)-inner_product(dwuy_z, Vy_prev));
-    Azx = dt_inv*(inner_product(dwuz_x, Vz_next)-inner_product(dwuz_x, Vz_prev));
-    Azy = dt_inv*(inner_product(dwuz_y, Vz_next)-inner_product(dwuz_y, Vz_prev));
-    Azz = dt_inv*(inner_product(dwuz_z, Vz_next)-inner_product(dwuz_z, Vz_prev));
-  }
-  Matrix3d M;
-  M << Axx, Axy, Axz,
-       Ayx, Ayy, Ayz,
-       Azx, Azy, Azz;
-  return M;
-}
 
 #endif

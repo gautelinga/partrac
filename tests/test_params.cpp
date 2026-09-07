@@ -65,9 +65,7 @@ struct TempDir {
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
 // Defaults and required
-// ---------------------------------------------------------------------------
 
 TEST_CASE("defaults are applied when a parameter is absent", "[params]") {
   Params p = basic().parse(cli({"Nrw=100"}));
@@ -94,9 +92,7 @@ TEST_CASE("reading a parameter that is not declared throws", "[params]") {
   REQUIRE_THROWS_AS(p.get<double>("nonexistent"), ParamError);
 }
 
-// ---------------------------------------------------------------------------
-// Unknown keys -- the bug this whole change exists to fix
-// ---------------------------------------------------------------------------
+// Unknown keys
 
 TEST_CASE("an unknown parameter is rejected, not silently ignored", "[params]") {
   try {
@@ -118,9 +114,6 @@ TEST_CASE("a near-miss key suggests the intended one", "[params]") {
   }
 }
 
-// A one-character edit is always offered; the limit only rules out the noisy
-// matches, so 'nx' gets nothing here but would still suggest 'Lx' if the
-// schema had it.
 TEST_CASE("a transposed key is suggested, a distant one is not", "[params]") {
   try {
     basic().parse(cli({"Nwr=100"}));
@@ -151,8 +144,6 @@ TEST_CASE("every problem is reported at once, not just the first", "[params]") {
 }
 
 TEST_CASE("a bare argument is rejected", "[params]") {
-  // parse_cmd used to skip anything without '=', so --help and typos like
-  // "Nrw 100" were silently ignored.
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "--nonsense"})), ParamError);
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "stray"})), ParamError);
 }
@@ -161,19 +152,66 @@ TEST_CASE("a duplicated key is an error", "[params]") {
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "Nrw=200"})), ParamError);
 }
 
-// ---------------------------------------------------------------------------
+TEST_CASE("only the first '=' separates key from value", "[params]") {
+  Schema s = basic();
+  s.opt<std::string>("tag", "", "appended to the folder name");
+  REQUIRE(s.parse(cli({"Nrw=1", "tag=a=b"})).get<std::string>("tag") == "a=b");
+}
+
+TEST_CASE("space around the '=' inside one argument is ignored", "[params]") {
+  Params p = basic().parse(cli({"Nrw=1", "  Dm  =  2.5  "}));
+  REQUIRE(p.get<double>("Dm") == 2.5);
+}
+
+TEST_CASE("an empty key is an error", "[params]") {
+  REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=1", "=5"})), ParamError);
+}
+
+TEST_CASE("negative and scientific values parse", "[params]") {
+  Schema s = basic();
+  s.opt<double>("x0", 0.0, "initial position");
+  Params p = s.parse(cli({"Nrw=1", "x0=-1.5", "Dm=1e-5"}));
+  REQUIRE(p.get<double>("x0") == -1.5);
+  REQUIRE(p.get<double>("Dm") == Approx(1e-5));
+  // 1e-1 is a number but not a whole one
+  REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=1e-1"})), ParamError);
+}
+
+TEST_CASE("--help wins over --check", "[params]") {
+  Params p = basic().parse(cli({"--check", "--help"}));
+  REQUIRE(p.help_requested());
+}
+
+TEST_CASE("a missing input file is named, not left blank", "[params]") {
+  try {
+    basic().parse(std::vector<std::string>{"app", "Nrw=1"});
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(all_problems(e).find("no input file given") != std::string::npos);
+  }
+  // --help must still work without one
+  REQUIRE(basic().parse(std::vector<std::string>{"app", "--help"}).help_requested());
+}
+
+TEST_CASE("the positional file may follow a flag", "[params]") {
+  // partrac --check mesh.dat Nrw=1  must work as well as
+  // partrac mesh.dat --check Nrw=1
+  const std::vector<std::string> args{"app", "--check", "mesh.dat", "Nrw=1"};
+  Params p = basic().parse(args);
+  REQUIRE(p.check_only());
+  REQUIRE(p.get<Uint>("Nrw") == 1);
+}
+
 // Type conversion
-// ---------------------------------------------------------------------------
 
 TEST_CASE("trailing garbage in a number is rejected", "[params]") {
-  // stodouble used `ss >> d` without checking eof(), so "10meters" parsed as 10.
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "Dm=10meters"})), ParamError);
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "Dm=abc"})), ParamError);
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=100", "Dm="})), ParamError);
 }
 
 TEST_CASE("scientific notation still works for integers", "[params]") {
-  // commands.txt relies on Nrw=1e6 and Nrw_max=1e7.
+  // commands.txt uses Nrw=1e6 and Nrw_max=1e7.
   Params p = basic().parse(cli({"Nrw=1e6"}));
   REQUIRE(p.get<Uint>("Nrw") == 1000000u);
 }
@@ -184,8 +222,7 @@ TEST_CASE("a non-integral value for an integer parameter is rejected", "[params]
 }
 
 TEST_CASE("a negative value for an unsigned parameter is rejected", "[params]") {
-  // Nrw_max = -1 on a size_t wrapped to 2^64-1 and was then handed to
-  // ParticleSet::resize(), which is a guaranteed bad_alloc.
+  // Nrw_max is a size_t, and ParticleSet resizes to it.
   Schema s("testapp");
   s.require<Uint>("Nrw_max", "maximum particles");
   Params p = s.parse(cli({"Nrw_max=-1"}));
@@ -193,7 +230,6 @@ TEST_CASE("a negative value for an unsigned parameter is rejected", "[params]") 
 }
 
 TEST_CASE("large integers survive without truncation", "[params]") {
-  // n_accepted/n_declined are long int but were parsed via stoint -> int.
   Schema s("testapp");
   s.opt<long long>("n_accepted", 0, "accepted steps");
   Params p = s.parse(cli({"n_accepted=3000000000"}));
@@ -206,7 +242,6 @@ TEST_CASE("booleans accept the usual spellings and reject nonsense", "[params]")
     REQUIRE(basic().parse(cli({"Nrw=1", "verbose=" + v})).get<bool>("verbose"));
   for (const std::string v : {"false", "False", "FALSE", "0", "no", "off"})
     REQUIRE(!basic().parse(cli({"Nrw=1", "verbose=" + v})).get<bool>("verbose"));
-  // stobool() used to return false for anything it did not recognise.
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=1", "verbose=ture"})), ParamError);
   REQUIRE_THROWS_AS(basic().parse(cli({"Nrw=1", "verbose=maybe"})), ParamError);
 }
@@ -217,9 +252,7 @@ TEST_CASE("asking for the wrong type throws", "[params]") {
   REQUIRE_THROWS_AS(p.get<std::string>("Dm"), ParamError);
 }
 
-// ---------------------------------------------------------------------------
 // Precedence, restart files, and the clamps
-// ---------------------------------------------------------------------------
 
 namespace {
 Schema restartable() {
@@ -247,8 +280,7 @@ TEST_CASE("the command line beats the checkpoint file", "[params]") {
 }
 
 TEST_CASE("the clamps run once, after the file and the command line", "[params]") {
-  // parse_file never applied these, which is exactly why the old code had to
-  // re-run parse_cmd as a third pass.
+  // the clamps must see the file and the command line together
   TempDir d;
   d.write_checkpoint("dump_intv=0.1\nNrw=10\n");
   Params p = restartable().parse(
@@ -278,9 +310,29 @@ TEST_CASE("a missing restart file is reported", "[params]") {
                     ParamError);
 }
 
-// ---------------------------------------------------------------------------
+TEST_CASE("a restart folder without a checkpoint names the file it wanted",
+          "[params]") {
+  TempDir d;  // creates the folder but writes no params.dat
+  try {
+    restartable().parse(cli({"restart_folder=" + d.path.string()}));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(all_problems(e).find("Checkpoints/params.dat") != std::string::npos);
+  }
+}
+
+TEST_CASE("a duplicated key in a checkpoint file is an error", "[params]") {
+  TempDir d;
+  d.write_checkpoint("Nrw=10\ndt=0.5\nNrw=20\n");
+  try {
+    restartable().parse(cli({"restart_folder=" + d.path.string()}));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(all_problems(e).find("more than once") != std::string::npos);
+  }
+}
+
 // Conditional requirements
-// ---------------------------------------------------------------------------
 
 namespace {
 bool needs_La(const Params& p) {
@@ -298,8 +350,7 @@ Schema conditional() {
 }  // namespace
 
 TEST_CASE("a conditionally required parameter is enforced", "[params]") {
-  // La defaulting to 0.0 divides by zero in EllipsoidInitializer and silently
-  // collapses every particle onto one point for strip_*.
+  // La is degenerate at 0, so these init_modes must be given one
   try {
     conditional().parse(cli({"Nrw=100", "init_mode=ellipsoid_xy"}));
     FAIL("expected ParamError");
@@ -320,9 +371,7 @@ TEST_CASE("a conditional parameter is simply unset when not required", "[params]
 }
 
 TEST_CASE("a conditional parameter with a default must still be given", "[params]") {
-  // partrac reads inject_intv unconditionally to precompute the interval, so it
-  // needs a value even when inject is off -- but a default must not satisfy the
-  // condition, or inject=true with no interval is a modulo by zero.
+  // inject_intv is read even when inject is off, so its default must not satisfy it
   Schema s = basic();
   s.opt<bool>("inject", false, "inject new particles");
   s.require_if<double>("inject_intv", 0.0,
@@ -349,16 +398,13 @@ TEST_CASE("value checks and choices are enforced", "[params]") {
       },
       "exit_plane requires Ln > 0 and filter_intv > 0");
 
-  // Currently an integer modulo-by-zero (SIGFPE) at partrac.cpp:357.
   REQUIRE_THROWS_AS(s.parse(cli({"Nrw=1", "exit_plane=x"})), ParamError);
   REQUIRE_THROWS_AS(s.parse(cli({"Nrw=1", "exit_plane=w"})), ParamError);
   REQUIRE_NOTHROW(
       s.parse(cli({"Nrw=1", "exit_plane=x", "Ln=1.0", "filter_intv=0.1"})));
 }
 
-// ---------------------------------------------------------------------------
 // Runtime (program-computed) parameters
-// ---------------------------------------------------------------------------
 
 TEST_CASE("runtime parameters are rejected on the command line", "[params]") {
   Schema s = basic();
@@ -372,8 +418,6 @@ TEST_CASE("runtime parameters are rejected on the command line", "[params]") {
 }
 
 TEST_CASE("runtime parameters round-trip through a dump", "[params]") {
-  // Lx/Ly/Lz used to be written by write_params_to_file but had no set_param
-  // entry, so the code could not read back its own output.
   TempDir d;
   Schema s = basic();
   s.opt<std::string>("restart_folder", "", "checkpoint to resume from");
@@ -397,13 +441,9 @@ TEST_CASE("setting an undeclared or mistyped parameter throws", "[params]") {
   REQUIRE(p.get<double>("Dm") == 2.0);
 }
 
-// ---------------------------------------------------------------------------
 // Round-trip fidelity
-// ---------------------------------------------------------------------------
 
 TEST_CASE("doubles survive a dump/parse round trip exactly", "[params]") {
-  // write_param used the default 6 significant digits, so a checkpoint written
-  // at t = 1234567.89 came back as 1.23457e+06.
   TempDir d;
   Schema s("testapp");
   s.opt<std::string>("restart_folder", "", "checkpoint to resume from");
@@ -422,9 +462,7 @@ TEST_CASE("doubles survive a dump/parse round trip exactly", "[params]") {
   REQUIRE(q.get<double>("Dm") == Dm);
 }
 
-// ---------------------------------------------------------------------------
 // Help and schema self-validation
-// ---------------------------------------------------------------------------
 
 TEST_CASE("--help short-circuits validation and lists every key", "[params]") {
   Params p = conditional().parse(cli({"--help"}));
@@ -456,8 +494,7 @@ TEST_CASE("registering the same key twice is caught", "[params]") {
 
 TEST_CASE("a predicate reading a conditional key is caught by validate_self",
           "[params]") {
-  // This is the trap with predicates: 'La' may be unset, so a condition that
-  // reads it would throw mid-parse.  Catch it at test time instead.
+  // a condition that reads a key which may be unset would throw during parse
   Schema s = basic();
   s.require_if<double>("La", needs_La, "init_mode needs it", "extent");
   s.require_if<double>("Lb",

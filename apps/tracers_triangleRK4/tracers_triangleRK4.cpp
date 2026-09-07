@@ -14,7 +14,6 @@
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
 #include "Params.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
@@ -67,46 +66,32 @@ void reinject_nodes( const std::set<Uint>& outside_node_ids
                 Dx[2] = uni_dist_z(gen);
             }
             Vector x0 = node.x();
-            intp.probe(x0 + Dx);
-            outside = !intp.inside_domain();
+            outside = !intp.locate(x0 + Dx);
         }
         node.x() += Dx;
     }
 }
 
-// Parameters accepted by this app
-partrac::Schema tracers_triangleRK4_schema(){
-  partrac::Schema s("tracers_triangleRK4");
-  add_common_app_params(s);
-  add_experimental_initializer_params(s);
-  add_restart_params(s);
-  s.require<int>("int_order", "integration order");
-  return s;
-}
+#include "tracers_triangleRK4_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
 
-    if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
-                  << "||  Initialized experimental tracers with " << mpi.size() << " processes. \t\t\t ||\n"
+                  << "||  Initialized experimental tracers.\t\t\t\t\t ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
     
-    std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-    mpi.barrier();
 
     // Input parameters
-    if (argc < 2 && mpi.rank() == 0) {
+    if (argc < 2) {
         std::cout << "Please specify an input file." << std::endl;
-        return 0;
+        return 1;
     }
     partrac::Params prm = partrac::parse_or_exit(tracers_triangleRK4_schema(), argc, argv);
 
-    std::string infilename = std::string(argv[1]);
+    std::string infilename = prm.input_file();
 
     TriangleInterpol intp(infilename);
 
@@ -116,7 +101,6 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/Tracers/";
     
-    if (mpi.rank() == 0)
         create_folder(rwfolder);
     
     std::string newfolder;
@@ -125,12 +109,9 @@ int main(int argc, char* argv[])
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
-        mpi.barrier();
-        if (mpi.rank() == 0)
             create_folder(newfolder);
-        mpi.barrier();
     }
-    newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+    newfolder = newfolder + "" + "0" + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
     {
@@ -140,7 +121,6 @@ int main(int argc, char* argv[])
     }
     prm.set<std::string>("folder", newfolder);
 
-    if (mpi.rank() == 0)
         if (prm.get<bool>("verbose")) prm.print();
 
     std::mt19937 gen;
@@ -149,7 +129,7 @@ int main(int argc, char* argv[])
         gen.seed(rd());
     }
     else {
-        std::seed_seq rd{prm.get<int>("seed") + mpi.rank()};
+        std::seed_seq rd{prm.get<int>("seed") + 0};
         gen.seed(rd);
     }
 
@@ -170,14 +150,10 @@ int main(int argc, char* argv[])
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
-        exit(0);
+        exit(1);
     }
 
-    //std::shared_ptr<Interpol> intp_ptr (&intp);
-    //std::shared_ptr<Initializer> init_state;
-    //init_state = std::make_shared<RandomPointsInitializer>(key, intp_ptr, prm, mpi, gen);    
-    //init_state->initialize(ps);
-    RandomPointsInitializer init_state(key, prm, gen);
+    experimental::RandomPointsInitializer init_state(key, prm, gen);
     init_state.probe(intp);
     init_state.initialize(ps);
 
@@ -193,7 +169,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, ps.dim());
+    write_stats_header(statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -228,7 +204,7 @@ int main(int argc, char* argv[])
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Time = " << t << std::endl;
-            write_stats(mpi, statfile, t, ps, integrator.get_declined());
+            write_stats(statfile, t, ps, integrator.get_declined());
         }
         // Checkpoint
         if (it % int_checkpoint_intv == 0){

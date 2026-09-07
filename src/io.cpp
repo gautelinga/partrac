@@ -3,6 +3,7 @@
 #include <map>
 #include <boost/algorithm/string.hpp>
 #include <fstream>
+#include <limits>
 #include <filesystem>
 #include "H5Cpp.h"
 #include "io.hpp"
@@ -150,7 +151,7 @@ std::string create_folder(const std::string& folder){
 void verify_file_exists(const std::string& infilename){
   if (!std::filesystem::exists(infilename)){
     std::cout << "No such file: " << infilename << std::endl;
-    exit(0);
+    exit(1);
   }
 }
 
@@ -194,12 +195,15 @@ void load_vector_field(const std::string& input_file,
   infile.close();
 }
 
+// enough digits that a double read back from a checkpoint is the one written
+const int checkpoint_precision = std::numeric_limits<double>::max_digits10;
+
 void dump_vector_field(const std::string& output_file,
                        const std::vector<Vector3d>& x_rw,
                        const Uint Nrw){
   std::ofstream outfile(output_file);
   for (Uint irw=0; irw<Nrw; ++irw){
-    outfile << std::setprecision(12)
+    outfile << std::setprecision(checkpoint_precision)
             << x_rw[irw][0] << " "
             << x_rw[irw][1] << " "
             << x_rw[irw][2] << std::endl;
@@ -212,7 +216,7 @@ void dump_vector_field(const std::string& output_file,
   std::ofstream outfile(output_file);
   for (std::vector<Vector3d>::const_iterator posit=pos.begin();
        posit != pos.end(); ++posit){
-    outfile << std::setprecision(12)
+    outfile << std::setprecision(checkpoint_precision)
             << (*posit)[0] << " "
             << (*posit)[1] << " "
             << (*posit)[2] << std::endl;
@@ -268,7 +272,7 @@ void dump_faces(const std::string& output_file,
   for (FacesType::const_iterator faceit = faces.begin();
        faceit != faces.end(); ++faceit){
     outfile << faceit->first[0] << " " << faceit->first[1] << " " << faceit->first[2]
-            << " " << faceit->second << std::endl;
+            << " " << std::setprecision(checkpoint_precision) << faceit->second << std::endl;
   }
   outfile.close();
 }
@@ -278,7 +282,8 @@ void dump_edges(const std::string& output_file,
   std::ofstream outfile(output_file);
   for (auto edgeit = edges.begin();
        edgeit != edges.end(); ++edgeit){
-    outfile << edgeit->first[0] << " " << edgeit->first[1] << " " << edgeit->second << std::endl;
+    outfile << edgeit->first[0] << " " << edgeit->first[1] << " "
+            << std::setprecision(checkpoint_precision) << edgeit->second << std::endl;
   }
   outfile.close();
 }
@@ -298,7 +303,7 @@ void dump_scalar_field(const std::string& output_file,
                    // TODO: to hdf5
   std::ofstream outfile(output_file);
   for (Uint irw=0; irw < Nrw; ++irw){
-    outfile << std::setprecision(12) << c_rw[irw] << std::endl;
+    outfile << std::setprecision(checkpoint_precision) << c_rw[irw] << std::endl;
   }
   outfile.close();
 }

@@ -23,7 +23,7 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
 
   // Default params
@@ -162,7 +162,7 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
           Vector3d pt(dolfin_facet.midpoint().coordinates());
 
           bool periodic_facet = false;
-          for ( Uint k=0; k < dim; ++k)
+          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
           {
             if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
             {
@@ -236,13 +236,13 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   {
     auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
     u_dofs_[id].resize(u_dofs.size());
-    for (std::size_t i = 0; i < u_dofs.size(); ++i){
+    for (std::size_t i = 0; i < static_cast<std::size_t>(u_dofs.size()); ++i){
       u_dofs_[id][i] = u_dofs[i];
     }
 
     auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
     p_dofs_[id].resize(p_dofs.size());
-    for (std::size_t i = 0; i < p_dofs.size(); ++i){
+    for (std::size_t i = 0; i < static_cast<std::size_t>(p_dofs.size()); ++i){
       p_dofs_[id][i] = p_dofs[i];
     }
   }
@@ -310,11 +310,6 @@ void XDMFTetInterpol::update(const double t)
 
 }
 
-void XDMFTetInterpol::probe(const Vector3d &x, const double t)
-{
-  int id_prev = -1;
-  probe(x, t, id_prev);
-}
 
 void XDMFTetInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
   for (std::size_t i=0; i<dim; ++i){
@@ -340,33 +335,8 @@ Vector3d XDMFTetInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-void XDMFTetInterpol::probe(const Vector3d &x, const double t, int& id_prev)
-{
-  // Not good for parallelization
-  inside = probe_light(x, t, id_prev);
 
-  if (inside)
-  {
-    PointValues fields(U0);
-    probe_heavy(x, t, id_prev, fields);
-
-    // Update
-    U = fields.U;
-    A = fields.A;
-
-    if (include_pressure){
-      // Evaluate
-      P = fields.P;
-    }
-
-    if (this->int_order > 1){
-      gradU = fields.gradU;
-      gradA = fields.gradA;
-    }
-  }
-}
-
-bool XDMFTetInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
+bool XDMFTetInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 {
   // TODO: CHECK if thread safe
   assert(t <= t_next && t >= t_prev);
@@ -418,7 +388,7 @@ bool XDMFTetInterpol::probe_light(const Vector3d &x, const double t, int& id_pre
   return inside_loc;
 }
 
-void XDMFTetInterpol::probe_heavy(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
   dolfin::Array<double> x_loc(dim);
   _modx(x_loc, x);
@@ -461,7 +431,8 @@ void XDMFTetInterpol::probe_heavy(const Vector3d &x, const double tin, const int
                      std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[ncoeffs_u], 0.0),
                      std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[2*ncoeffs_u], 0.0)};
 
-  Matrix3d gradU_prev, gradU_next;
+  // only filled when int_order > 1, and only read under the same test
+  Matrix3d gradU_prev = Matrix3d::Zero(), gradU_next = Matrix3d::Zero();
   if (this->int_order > 1){
     tets_[id].linearderiv(r1, r2, r3, r4, _Nux_, _Nuy_, _Nuz_);
 
@@ -487,164 +458,6 @@ void XDMFTetInterpol::probe_heavy(const Vector3d &x, const double tin, const int
       std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_next_block[2*ncoeffs_u], 0.0);
   }
 
-  /*
-  if (cell_type_[id] == 1 && true){
-    const Uint ncoeffs_u_2 = 6;
-    std::vector<double> _Nu2_(ncoeffs_u_2);
-
-    tets_[id].quadbasis(r1, r2, r3, _Nu2_);
-    std::vector<double> u_prev_block_2(ncoeffs_u_2*dim);
-    std::vector<double> u_next_block_2(ncoeffs_u_2*dim);
-    
-    // Shouldn't do this every time...
-
-    Vector3d uu_prev = {0., 0., 0.};
-    Vector3d uu_next = {0., 0., 0.};
-
-    Uint id_uu = 0;
-    Uint count_uu = 0;
-
-    for (Uint i=0; i < ncoeffs_u; ++i)
-    {
-      Vector3d uu_prev_loc = {0., 0., 0.};
-      Vector3d uu_next_loc = {0., 0., 0.};
-      for (Uint j=0; j < dim; ++j)
-      {
-        uu_prev_loc[j] = u_prev_block[j*ncoeffs_u + i];
-        uu_next_loc[j] = u_next_block[j*ncoeffs_u + i];
-      }
-      //std::cout << uu << std::endl;
-      if (uu_prev_loc.norm() > 1e-14 || uu_next_loc.norm() > 1e-14){
-        uu_prev = uu_prev_loc;
-        uu_next = uu_next_loc;
-        id_uu = i;
-        ++count_uu;
-      }
-    }
-
-    //std::cout << "cell_id=" << id << " id_uu=" << id_uu << " count=" << count_uu << " norm=" << uu.norm() << std::endl;
-
-    // On-the-fly brute force calculation of permutations
-    if (perm_[id].size() == 0){
-      std::vector<double> u_block = {1.0, 2.0, 3.0}; // dummy data
-      double U_1 = std::inner_product(_Nu_.begin(), _Nu_.end(), u_block.begin(), 0.0);
-
-      std::vector<double> u_block_2(ncoeffs_u_2);
-
-      // Corners always work
-      for ( Uint i=0; i < ncoeffs_u; ++i)
-      {
-        u_block_2[i] = u_block[i];
-      }
-
-      const std::vector<std::vector<int>> perm_loc = {{3, 4, 5}, {3, 5, 4}, {4, 3, 5}, {4, 5, 3}, {5, 3, 4}, {5, 4, 3}};
-
-      for (int iperm = 0; iperm < perm_loc.size(); ++iperm){
-        u_block_2[perm_loc[iperm][0]] = 0.5*(u_block[0] + u_block[1]);
-        u_block_2[perm_loc[iperm][1]] = 0.5*(u_block[0] + u_block[2]);
-        u_block_2[perm_loc[iperm][2]] = 0.5*(u_block[1] + u_block[2]);
-
-        double U_2 = std::inner_product(_Nu2_.begin(), _Nu2_.end(), u_block_2.begin(), 0.0);
-        if (abs(U_2-U_1) < 1e-12){
-          perm_[id].insert(perm_[id].end(), perm_loc[iperm].begin(), perm_loc[iperm].end());
-          break;
-        }
-      }
-    }
-    if (perm_[id].size() == 0){
-      std::cout << "ERROR: No permutations worked" << std::endl;
-      exit(0);
-    }
-
-    if (count_uu == 1 && true)
-    {
-      const std::vector<std::vector<int>> neigh_dof_loc = {{perm_[id][0], perm_[id][1]}, 
-                                                           {perm_[id][0], perm_[id][2]},
-                                                           {perm_[id][1], perm_[id][2]}};
-
-      double un_prev = uu_prev.dot(cell_normal_[id]);
-      double un_next = uu_next.dot(cell_normal_[id]);
-
-      for ( Uint j=0; j < dim; ++j){
-        u_prev_block_2[j*ncoeffs_u_2 + id_uu] = u_prev_block[j*ncoeffs_u + id_uu];
-        u_next_block_2[j*ncoeffs_u_2 + id_uu] = u_next_block[j*ncoeffs_u + id_uu];
-      }
-      for ( auto & i_loc : neigh_dof_loc[id_uu] ){
-        for ( Uint j=0; j < dim; ++j){
-          u_prev_block_2[j*ncoeffs_u_2 + i_loc] += 0.5*u_prev_block[j*ncoeffs_u + id_uu];
-          u_next_block_2[j*ncoeffs_u_2 + i_loc] += 0.5*u_next_block[j*ncoeffs_u + id_uu];
-
-          // Normal correction
-          u_prev_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_prev * cell_normal_[id][j];
-          u_next_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_next * cell_normal_[id][j];
-        }
-      }
-    }
-    else {
-      // Linear combination
-      for ( Uint j=0; j < dim; ++j){
-        for ( Uint i=0; i < ncoeffs_u; ++i)
-        {
-          u_prev_block_2[j*ncoeffs_u_2 + i] = u_prev_block[j*ncoeffs_u + i];
-          u_next_block_2[j*ncoeffs_u_2 + i] = u_next_block[j*ncoeffs_u + i];
-        }
-
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][0]] = 0.5*(u_prev_block[j*ncoeffs_u + 0] + u_prev_block[j*ncoeffs_u + 1]);
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][1]] = 0.5*(u_prev_block[j*ncoeffs_u + 0] + u_prev_block[j*ncoeffs_u + 2]);
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][2]] = 0.5*(u_prev_block[j*ncoeffs_u + 1] + u_prev_block[j*ncoeffs_u + 2]);
-
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][0]] = 0.5*(u_next_block[j*ncoeffs_u + 0] + u_next_block[j*ncoeffs_u + 1]);
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][1]] = 0.5*(u_next_block[j*ncoeffs_u + 0] + u_next_block[j*ncoeffs_u + 2]);
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][2]] = 0.5*(u_next_block[j*ncoeffs_u + 1] + u_next_block[j*ncoeffs_u + 2]);
-      }
-    }
-
-    Vector3d U_prev2, U_next2;
-    U_prev2 = {std::inner_product(_Nu2_.begin(), _Nu2_.end(), u_prev_block_2.begin(), 0.0),
-               std::inner_product(_Nu2_.begin(), _Nu2_.end(), &u_prev_block_2[ncoeffs_u_2], 0.0),
-               0.0};
-    U_next2 = {std::inner_product(_Nu2_.begin(), _Nu2_.end(), u_next_block_2.begin(), 0.0),
-               std::inner_product(_Nu2_.begin(), _Nu2_.end(), &u_next_block_2[ncoeffs_u_2], 0.0),
-               0.0 };
-
-    U_prev = U_prev2;
-    U_next = U_next2;
-    // = {0., 0., 0.}; //
-  
-    if (this->int_order > 1){
-      Matrix3d gradU_prev2, gradU_next2;
-
-      std::vector<double> _Nu2x_(ncoeffs_u_2);
-      std::vector<double> _Nu2y_(ncoeffs_u_2);
-
-      tets_[id].quadderiv(r1, r2, r3, _Nu2x_, _Nu2y_);
-
-      gradU_prev2 <<
-        std::inner_product(_Nu2x_.begin(), _Nu2x_.end(), u_prev_block_2.begin(), 0.0),
-        std::inner_product(_Nu2y_.begin(), _Nu2y_.end(), u_prev_block_2.begin(), 0.0),
-        0.0,
-        std::inner_product(_Nu2x_.begin(), _Nu2x_.end(), &u_prev_block_2[ncoeffs_u_2], 0.0),
-        std::inner_product(_Nu2y_.begin(), _Nu2y_.end(), &u_prev_block_2[ncoeffs_u_2], 0.0),
-        0.0,
-        0.0,
-        0.0,
-        0.0;
-      gradU_next2 << 
-        std::inner_product(_Nu2x_.begin(), _Nu2x_.end(), u_next_block_2.begin(), 0.0),
-        std::inner_product(_Nu2y_.begin(), _Nu2y_.end(), u_next_block_2.begin(), 0.0),
-        0.0,
-        std::inner_product(_Nu2x_.begin(), _Nu2x_.end(), &u_next_block_2[ncoeffs_u_2], 0.0),
-        std::inner_product(_Nu2y_.begin(), _Nu2y_.end(), &u_next_block_2[ncoeffs_u_2], 0.0),
-        0.0,
-        0.0,
-        0.0,
-        0.0;
-
-      gradU_prev = gradU_prev2;
-      gradU_next = gradU_next2;
-    }
-  }
-  */
 
   // Update
   fields.U = _alpha_t * U_next + (1-_alpha_t) * U_prev;

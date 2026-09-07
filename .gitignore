@@ -1,8 +1,4 @@
-# built executables, but keep the note that explains the folder
-bin/*
-!bin/README.md
-
-# out-of-tree build
+# out-of-tree build; the executables land in build/bin
 build/
 
 # artifacts from an in-source "cmake ."

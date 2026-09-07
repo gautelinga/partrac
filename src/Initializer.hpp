@@ -8,8 +8,9 @@
 #include "typedefs.hpp"
 #include "Interpol.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
 #include "Params.hpp"
+#include "ParticleSet.hpp"
+#include "mesh.hpp"
 
 // true if init_mode starts with one of the given kinds
 inline bool init_mode_is(const partrac::Params& prm, const std::vector<std::string>& kinds){
@@ -17,13 +18,24 @@ inline bool init_mode_is(const partrac::Params& prm, const std::vector<std::stri
   return std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
 }
 
+// The initializers index the init_mode tokens without bounds checks
+inline bool init_mode_shape_ok(const std::string& init_mode){
+  if (init_mode.rfind("from", 0) == 0)
+    return init_mode.rfind("from_file:", 0) == 0 && init_mode.size() > 10;
+  const std::vector<std::string> key = split_string(init_mode, "_");
+  if (key[0] == "point") return true;
+  if (key[0] == "randomgaussianstrip") return key.size() >= 3;
+  return key.size() >= 2;
+}
+
 // Parameters read by set_initial_state and the initializers it dispatches to.
-// La, Lb, ds_init and init_weight are only read by some init_modes, and their
-// old defaults were degenerate: La = 0 divides by zero in EllipsoidInitializer
-// and collapses strip_* onto a single point.
+// La, Lb, ds_init and init_weight are only read by some init_modes.
 inline void add_initializer_params(partrac::Schema& s){
   s.require<std::string>("init_mode", "initial distribution");
   s.require<Uint>("Nrw", "number of particles");
+  // Nrw stays the request; these record what happened
+  s.runtime<Uint>("Nrw_init", 0, "particles the initializer placed");
+  s.runtime<Uint>("Nrw_current", 0, "particles in the set when this was written");
   s.require<Uint>("Nrw_max", "max number of particles");
   s.require<double>("ds_max", "max edge length");
   s.require<double>("ds_min", "min edge length");
@@ -61,6 +73,13 @@ inline void add_initializer_params(partrac::Schema& s){
   s.opt<double>("z0", 0.0, "initial position");
   s.opt<bool>("inject", false, "inject new particles");
   s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
+  s.check([](const partrac::Params& p){
+            return init_mode_shape_ok(p.get<std::string>("init_mode"));
+          },
+          "init_mode is missing a direction: most modes need one, as in"
+          " uniform_x; randomgaussianstrip needs two, as in"
+          " randomgaussianstrip_x_y; from_file needs a path, as in"
+          " from_file:positions.h5");
 }
 
 // TODO: Massive cleanup!
@@ -72,7 +91,7 @@ struct less_than_op {
 
 class Initializer {
 public:
-  Initializer(std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : intp(intp), prm(prm), m_mpi(mpi) {
+  Initializer(std::shared_ptr<Interpol> intp, partrac::Params& prm) : intp(intp), prm(prm) {
     x0 = {prm.get<double>("x0"), prm.get<double>("y0"), prm.get<double>("z0")};
     x_min = intp->get_x_min();
     x_max = intp->get_x_max();
@@ -99,15 +118,14 @@ protected:
   Vector3d x_min;
   Vector3d x_max;
   Vector3d L;
-  MPIwrap& m_mpi;
 };
 
 class PointInitializer : public Initializer {
 public:
-  PointInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
-    intp->probe(x0);
+  PointInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
+    const bool inside = intp->locate(x0);
     for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
-      if (intp->inside_domain()){
+      if (inside){
         nodes.push_back(x0);
       }
     }
@@ -118,7 +136,7 @@ public:
 
 class UniformInitializer : public Initializer {
 public:
-  UniformInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  UniformInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
     Vector3d x_a = x0;
     Vector3d x_b = x0;
     if (key[1] == "x"){
@@ -135,13 +153,12 @@ public:
     }
     else {
       std::cout << "Unrecognized initialization..." << std::endl;
-      exit(0);
+      exit(1);
     }
     Vector3d Dx = (x_b - x_a) / (prm.get<Uint>("Nrw")-1);
     for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
       Vector3d x = x_a + Dx * irw;
-      intp->probe(x);
-      if (intp->inside_domain()){
+      if (intp->locate(x)){
         nodes.push_back(x);
       }
     }
@@ -155,7 +172,7 @@ public:
 
 class StripInitializer : public Initializer {
 public:
-  StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  StripInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
     double La = prm.get<double>("La");
     // double Lb = prm.Lb;
     Vector3d n(0., 0., 0.);
@@ -187,8 +204,7 @@ public:
       double alpha = float(i)/(prm.get<Uint>("Nrw")-1);
       Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
       // check if inside domain
-      intp->probe(x0i);
-      this_inside = intp->inside_domain();
+      this_inside = intp->locate(x0i);
       if (this_inside){
         nodes.push_back(x0i);
         if (prev_inside)
@@ -199,15 +215,14 @@ public:
     }
     if (irw == 0) {
       std::cout << "Strip not inside domain" << std::endl;
-      exit(0);
+      exit(1);
     }
-    prm.set<Uint>("Nrw", irw);
   };
 };
 
 class SheetInitializer : public Initializer {
 public:
-  SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  SheetInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
     double La = prm.get<double>("La");
     double Lb = prm.get<double>("Lb");
     Vector3d n(0., 0., 0.);
@@ -249,23 +264,6 @@ public:
     x11[1] += - La/2*ta[1] + Lb/2*tb[1];
     x11[2] += - La/2*ta[2] + Lb/2*tb[2];
 
-    /*
-    intp->probe(x00);
-    bool inside_00 = intp->inside_domain();
-    intp->probe(x01);
-    bool inside_01 = intp->inside_domain();
-    intp->probe(x10);
-    bool inside_10 = intp->inside_domain();
-    intp->probe(x11);
-    bool inside_11 = intp->inside_domain();
-    if (inside_00 && inside_01 && inside_10 && inside_11){
-      std::cout << "Sheet inside domain." << std::endl;
-    }
-    else {
-      std::cout << "Sheet not inside domain" << std::endl;
-      exit(0);
-    }
-    */
 
     nodes.push_back(x00);
     nodes.push_back(x01);
@@ -281,7 +279,7 @@ public:
     faces.push_back({{0, 2, 1}, La*Lb/2});
     faces.push_back({{1, 3, 4}, La*Lb/2});
 
-    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"), m_mpi);
+    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"));
     pset_loc.add(nodes, 0);
 
     Edge2FacesType edge2faces_loc;
@@ -320,7 +318,7 @@ public:
 
     for (Uint irw=0; irw < pset_loc.N(); ++irw){
       int cell_id = pset_loc.get_cell_id(irw);
-      bool inside = intp->probe_light(pset_loc.x(irw), 0., cell_id);
+      bool inside = intp->locate(pset_loc.x(irw), 0., cell_id);
       if (!inside){
         edges_to_remove.insert(node2edges_loc[irw].begin(), node2edges_loc[irw].end());
       }
@@ -354,7 +352,6 @@ public:
 
     std::vector<Uint> nums = {}; // 7 ? but doesn't work properly
 
-    Uint init_num_edges = edges.size();
 
     for ( auto & num : nums ){
       for (Uint inode=0; inode < pset_loc.N(); ++inode){
@@ -377,8 +374,7 @@ public:
             Uint iedge = edges.size();
             edges.push_back({{unique_nodes[0], unique_nodes[1]}, dist(nodes[unique_nodes[0]], nodes[unique_nodes[1]])});
             
-            Uint iface = faces.size();
-            faces.push_back({{iedge, free_edges[0], free_edges[1]}, pset_loc.triangle_area(free_edges[0], free_edges[1], edges)});
+                    faces.push_back({{iedge, free_edges[0], free_edges[1]}, pset_loc.triangle_area(free_edges[0], free_edges[1], edges)});
           }
         }
       }
@@ -414,7 +410,7 @@ public:
 
 class EllipsoidInitializer : public Initializer {
 public:
-  EllipsoidInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  EllipsoidInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
     double La = prm.get<double>("La");
     double Lb = prm.get<double>("Lb");
     double lx2 = Lb*Lb;
@@ -459,24 +455,14 @@ public:
     std::cout << (x_3-x_1).norm() << std::endl;
     std::cout << (x_3-x_2).norm() << std::endl;
 
-    /*
-    intp->probe(x_0);
-    bool inside_0 = intp->inside_domain();
-    intp->probe(x_1);
-    bool inside_1 = intp->inside_domain();
-    intp->probe(x_2);
-    bool inside_2 = intp->inside_domain();
-    intp->probe(x_3);
-    bool inside_3 = intp->inside_domain();
-    */
 
     double t0 = 0.;  // Not used in practice
     int cell_id = -1;
 
-    bool inside_0 = intp->probe_light(x_0, t0, cell_id);
-    bool inside_1 = intp->probe_light(x_1, t0, cell_id);
-    bool inside_2 = intp->probe_light(x_2, t0, cell_id);
-    bool inside_3 = intp->probe_light(x_3, t0, cell_id);
+    bool inside_0 = intp->locate(x_0, t0, cell_id);
+    bool inside_1 = intp->locate(x_1, t0, cell_id);
+    bool inside_2 = intp->locate(x_2, t0, cell_id);
+    bool inside_3 = intp->locate(x_3, t0, cell_id);
 
     if (inside_0 && inside_1 && inside_2 && inside_3){
       std::cout << "Ellipsoid inside domain." << std::endl;
@@ -486,7 +472,7 @@ public:
       
       
 
-      exit(0);
+      exit(1);
     }
 
     std::vector<Vector3d> nodes_loc;
@@ -495,7 +481,7 @@ public:
     nodes_loc.push_back(x_2);
     nodes_loc.push_back(x_3);
 
-    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"), m_mpi);
+    ParticleSet pset_loc(intp, prm.get<Uint>("Nrw_max"));
     pset_loc.add(nodes_loc, 0);
 
     edges.push_back({{0, 1}, dist(nodes_loc[0], nodes_loc[1])});
@@ -551,7 +537,7 @@ class RandomPairsInitializer : public Initializer {
 protected:
   std::mt19937 &gen;
 public:
-  RandomPairsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi, std::mt19937 &gen) : Initializer(intp, prm, mpi), gen(gen) {
+  RandomPairsInitializer(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, partrac::Params& prm, std::mt19937 &gen) : Initializer(intp, prm), gen(gen) {
     std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
     std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
     std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
@@ -597,11 +583,9 @@ public:
       dx *= 0.5*prm.get<double>("ds_init")/dx.norm();
 
       Vector3d x_a = x0_ + dx;
-      intp->probe(x_a);
-      bool inside_a = intp->inside_domain();
+      bool inside_a = intp->locate(x_a);
       Vector3d x_b = x0_ - dx;
-      intp->probe(x_b);
-      bool inside_b = intp->inside_domain();
+      bool inside_b = intp->locate(x_b);
       if (inside_a && inside_b){
         //std::cout << "INSIDE" << std::endl;
         // std::cout << "INSIDE: " << x_a << " " << x_b << std::endl; 
@@ -613,7 +597,7 @@ public:
       }
       else if (key[0] == "pair"){
         std::cout << "Pair not inside domain" << std::endl;
-        exit(0);
+        exit(1);
       }
       //std::cout << x_a << " " << x_b << std::endl;
     }
@@ -627,9 +611,8 @@ public:
   RandomPointsInitializer( const std::vector<std::string>& key
                          , std::shared_ptr<Interpol> intp
                          , partrac::Params& prm
-                         , MPIwrap& mpi
                          , std::mt19937 &gen
-                         ) : Initializer(intp, prm, mpi), gen(gen) {
+                         ) : Initializer(intp, prm), gen(gen) {
     bool init_rand_x = false;
     bool init_rand_y = false;
     bool init_rand_z = false;
@@ -678,7 +661,7 @@ public:
     }
     else {
       std::cout << "Something is wrong with the domain!" << std::endl;
-      exit(0);
+      exit(1);
     }
     Uint Nx = 1;
     Uint Ny = 1;
@@ -704,20 +687,19 @@ public:
           if (hasLx) x[0] = x_min[0]+(ix+0.5)*dx;
           if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
           if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
-          intp->probe(x);
+          PointValues ptvals(intp->get_U0());
+          intp->evaluate(x, ptvals);
           if (prm.get<std::string>("init_weight") == "ux"){
-            ww = abs(intp->get_ux());
+            ww = abs(ptvals.U[0]);
           }
           else if (prm.get<std::string>("init_weight") == "uy"){
-            ww = abs(intp->get_uy());
+            ww = abs(ptvals.U[1]);
           }
           else if (prm.get<std::string>("init_weight") == "uz"){
-            ww = abs(intp->get_uz());
+            ww = abs(ptvals.U[2]);
           }
           else if (prm.get<std::string>("init_weight") == "u"){
-            ww = sqrt(pow(intp->get_ux(), 2)
-                      + pow(intp->get_uy(), 2)
-                      + pow(intp->get_uz(), 2));
+            ww = ptvals.U.norm();
           }
           else {
             ww = 1.;
@@ -735,15 +717,15 @@ public:
 
     for (Uint irw=0; irw<prm.get<Uint>("Nrw"); ++irw){
       Vector3d x;
+      bool inside = false;
       do {
         Uint ind = discrete_dist(gen);
         x = pos[ind];
         if (hasLx) x[0] += uni_dist_dx(gen);
         if (hasLy) x[1] += uni_dist_dy(gen);
         if (hasLz) x[2] += uni_dist_dz(gen);
-        intp->probe(x);
-        //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
-      } while (!intp->inside_domain());
+        inside = intp->locate(x);
+      } while (!inside);
       nodes.push_back(x);
     }
 
@@ -764,9 +746,9 @@ protected:
 public:
   RandomGaussianStripInitializer( const std::vector<std::string>& key
                                 , std::shared_ptr<Interpol> intp
-                                , partrac::Params& prm, MPIwrap& mpi
+                                , partrac::Params& prm
                                 , std::mt19937 &gen
-                                ) : Initializer(intp, prm, mpi), gen(gen) {
+                                ) : Initializer(intp, prm), gen(gen) {
     edges.clear();
     faces.clear();
 
@@ -812,8 +794,7 @@ public:
       if (init_rand_z)
         xi[2] += sigma0 * rnd_normal(gen);
       // check if inside domain
-      intp->probe(xi);
-      if (intp->inside_domain()){
+      if (intp->locate(xi)){
         nodes.push_back(xi);
         ++irw;
         failed_attempts = 0;
@@ -824,9 +805,8 @@ public:
     }
     if (irw == 0) {
       std::cout << "No points inside domain" << std::endl;
-      exit(0);
+      exit(1);
     }
-    prm.set<Uint>("Nrw", irw);
   };
 };
 
@@ -836,9 +816,9 @@ protected:
 public:
   RandomGaussianCircleInitializer( const std::vector<std::string>& key
                                 , std::shared_ptr<Interpol> intp
-                                , partrac::Params& prm, MPIwrap& mpi
+                                , partrac::Params& prm
                                 , std::mt19937 &gen
-                                ) : Initializer(intp, prm, mpi), gen(gen) {
+                                ) : Initializer(intp, prm), gen(gen) {
     edges.clear();
     faces.clear();
 
@@ -880,8 +860,7 @@ public:
         xi[dim] += sigma0 * rnd_normal(gen);
 
       // check if inside domain
-      intp->probe(xi);
-      if (intp->inside_domain()){
+      if (intp->locate(xi)){
         nodes.push_back(xi);
         ++irw;
         failed_attempts = 0;
@@ -892,15 +871,14 @@ public:
     }
     if (irw == 0) {
       std::cout << "No points inside domain" << std::endl;
-      exit(0);
+      exit(1);
     }
-    prm.set<Uint>("Nrw", irw);
   };
 };
 
 class FileInitializer : public Initializer {
 public:
-  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, partrac::Params& prm, MPIwrap& mpi) : Initializer(intp, prm, mpi) {
+  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
 
     std::string h5filename = key_col[1];
 
@@ -915,14 +893,6 @@ public:
     std::vector<double> nodes_buf(dims_nodes[0]*dims_nodes[1]);
     dset_nodes.read(nodes_buf.data(), H5::PredType::NATIVE_DOUBLE, dspace_nodes, dspace_nodes);
 
-    /*
-    H5::DataSet dset_edges = h5file.openDataSet("nodes");
-    H5::DataSpace dspace_edges = dset_edges.getSpace();
-    hsize_t dims_edges[2];
-    dspace_edges.getSimpleExtentDims(dims_edges, NULL);
-    std::vector<int> edges_buf(dims_edges[0]*dims_edges[1]);
-    dset_edges.read(edges_buf.data(), H5::PredType::NATIVE_INT, dspace_edges, dspace_edges);
-    */
    
     h5file.close();
 
@@ -937,7 +907,7 @@ public:
         xi[j] = nodes_buf[i * dims_nodes[1] + j];
       }
       // check if inside domain
-      this_inside = intp->probe_light(xi, prm.get<double>("t0"), cell_id);
+      this_inside = intp->locate(xi, prm.get<double>("t0"), cell_id);
       if (this_inside){
         nodes.push_back(xi);
         if (prev_inside)
@@ -948,368 +918,10 @@ public:
     }
     if (irw == 0) {
       std::cout << "No points inside domain" << std::endl;
-      exit(0);
+      exit(1);
     }
-    prm.set<Uint>("Nrw", irw);
   };
 };
 
-/*std::vector<Vector3d> initial_positions(const std::string init_mode,
-                                        const std::string init_weight,
-                                        Uint &Nrw,
-                                        const Vector3d &x0,
-                                        const double La,
-                                        const double Lb,
-                                        const double ds,
-                                        const double t0,
-                                        Interpol *intp,
-                                        std::mt19937 &gen,
-                                        EdgesType &edges,
-                                        FacesType &faces
-                                   ){
-  intp->update(t0);
-
-  Vector3d x;
-  double Lx = intp->get_Lx();
-  double Ly = intp->get_Ly();
-  double Lz = intp->get_Lz();
-  Vector3d x_min = intp->get_x_min();
-  Vector3d x_max = intp->get_x_max();
-
-  Uint Nx = 1;
-  Uint Ny = 1;
-  Uint Nz = 1;
-
-  std::vector<std::string> key = split_string(init_mode, "_");
-
-  if (key.size() == 0){
-    std::cout << "init_mode not specified." << std::endl;
-    exit(0);
-  }
-
-  if (key[0] == "point"){
-    std::vector<Vector3d> pos_init;
-    intp->probe(x0);
-    for (Uint irw=0; irw < Nrw; ++irw){
-      if (intp->inside_domain()){
-        pos_init.push_back(x0);
-      }
-    }
-    edges.clear();
-    return pos_init;
-  }
-
-  if (key[0] == "uniform"){
-    std::vector<Vector3d> pos_init;
-
-    Vector3d x_a = x0;
-    Vector3d x_b = x0;
-    if (key[1] == "x"){
-      x_a[0] = x_min[0];
-      x_b[0] = x_max[0];
-    }
-    else if (key[1] == "y"){
-      x_a[1] = x_min[1];
-      x_b[1] = x_max[1];
-    }
-    else if (key[1] == "z"){
-      x_a[2] = x_min[2];
-      x_b[2] = x_max[2];
-    }
-    else {
-      std::cout << "Unrecognized initialization..." << std::endl;
-      exit(0);
-    }
-    Vector3d Dx = (x_b - x_a) / (Nrw-1);
-    for (Uint irw=0; irw < Nrw; ++irw){
-      x = x_a + Dx * irw;
-      intp->probe(x);
-      if (intp->inside_domain()){
-        pos_init.push_back(x);
-      }
-    }
-    for (Uint irw=0; irw < pos_init.size()-1; ++irw){
-      if ((pos_init[irw] - pos_init[irw+1]).norm() < 1.5*Dx.norm()){
-        edges.push_back({{irw, irw+1}, dist(pos_init[irw], pos_init[irw+1])});
-      }
-    }
-    return pos_init;
-  }
-
-  if (key[0] == "sheet"){
-    std::vector<Vector3d> pos_init;
-
-    Vector3d n(0., 0., 0.);
-    Vector3d ta(0., 0., 0.);
-    Vector3d tb(0., 0., 0.);
-    if (key[1] == "xy"){
-      n[2] = 1.0;
-      ta[0] = 1.0;
-      tb[1] = 1.0;
-    }
-    if (key[1] == "xz"){
-      n[1] = 1.0;
-      ta[0] = 1.0;
-      tb[2] = 1.0;
-    }
-    if (key[1] == "yz"){
-      n[0] = 1.0;
-      ta[1] = 1.0;
-      tb[2] = 1.0;
-    }
-
-    Vector3d x00 = x0;
-    x00[0] += - La/2*ta[0] - Lb/2*tb[0];
-    x00[1] += - La/2*ta[1] - Lb/2*tb[1];
-    x00[2] += - La/2*ta[2] - Lb/2*tb[2];
-
-    Vector3d x01 = x0;
-    x01[0] += La/2*ta[0] + Lb/2*tb[0];
-    x01[1] += La/2*ta[1] - Lb/2*tb[1];
-    x01[2] += - La/2*ta[2] - Lb/2*tb[2];
-
-    Vector3d x10 = x0;
-    x10[0] += La/2*ta[0] + Lb/2*tb[0];
-    x10[1] += La/2*ta[1] + Lb/2*tb[1];
-    x10[2] += La/2*ta[2] + Lb/2*tb[2];
-
-    Vector3d x11 = x0;
-    x11[0] += - La/2*ta[0] - Lb/2*tb[0];
-    x11[1] += - La/2*ta[1] + Lb/2*tb[1];
-    x11[2] += - La/2*ta[2] + Lb/2*tb[2];
-
-    intp->probe(x00);
-    bool inside_00 = intp->inside_domain();
-    intp->probe(x01);
-    bool inside_01 = intp->inside_domain();
-    intp->probe(x10);
-    bool inside_10 = intp->inside_domain();
-    intp->probe(x11);
-    bool inside_11 = intp->inside_domain();
-    if (inside_00 && inside_01 && inside_10 && inside_11){
-      std::cout << "Sheet inside domain." << std::endl;
-    }
-    else {
-      std::cout << "Sheet not inside domain" << std::endl;
-      exit(0);
-    }
-
-    pos_init.push_back(x00);
-    pos_init.push_back(x01);
-    pos_init.push_back(x10);
-    pos_init.push_back(x11);
-
-    edges.push_back({{0, 1}, dist(pos_init[0], pos_init[1])});
-    edges.push_back({{0, 2}, dist(pos_init[0], pos_init[2])});
-    edges.push_back({{1, 2}, dist(pos_init[1], pos_init[2])});
-    edges.push_back({{2, 3}, dist(pos_init[2], pos_init[3])});
-    edges.push_back({{3, 0}, dist(pos_init[3], pos_init[4])});
-
-    faces.push_back({{0, 2, 1}, La*Lb/2});
-    faces.push_back({{1, 3, 4}, La*Lb/2});
-
-    Nrw = pos_init.size();
-    return pos_init;
-  }
-  else if (key[0] == "pair" || key[0] == "pairs"){
-    std::vector<Vector3d> pos_init;
-
-    std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
-    std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
-    std::uniform_real_distribution<> uni_dist_z(x_min[2], x_max[2]);
-    std::normal_distribution<double> rnd_normal(0.0, 1.0);
-
-    //std::cout << "x_min = " << x_min << std::endl;
-    //std::cout << "x_max = " << x_max << std::endl;
-
-    // std::uniform_real_distribution<> uni_dist_theta(0., 2*M_PI);
-    Uint Npairs = (key[0] == "pair") ? 1 : Nrw/2;
-
-    std::cout << "Npairs = " << Npairs << std::endl;
-
-    Vector3d x0_ = x0;
-    Uint ipair=0;
-    while (ipair < Npairs){
-      if (key[0] == "pairs" && key.size() == 3){
-        if (contains(key[2], "x")){
-          x0_[0] = uni_dist_x(gen);
-        }
-        if (contains(key[2], "y")){
-          x0_[1] = uni_dist_y(gen);
-        }
-        if (contains(key[2], "z")){
-          x0_[2] = uni_dist_z(gen);
-        }
-      }
-      Vector3d dx(0., 0., 0.);
-      if (!contains(key[1], "x")){
-        dx[0] = 0.;
-      }
-      else {
-        dx[0] = rnd_normal(gen);
-      }
-      if (!contains(key[1], "y")){
-        dx[1] = 0.;
-      }
-      else {
-        dx[1] = rnd_normal(gen);
-      }
-      if (!contains(key[1], "z")){
-        dx[2] = 0.;
-      }
-      else {
-        dx[2] = rnd_normal(gen);
-      }
-      dx *= 0.5*ds/dx.norm();
-
-      Vector3d x_a = x0_ + dx;
-      intp->probe(x_a);
-      bool inside_a = intp->inside_domain();
-      Vector3d x_b = x0_ - dx;
-      intp->probe(x_b);
-      bool inside_b = intp->inside_domain();
-      if (inside_a && inside_b){
-        //std::cout << "INSIDE" << std::endl;
-        // std::cout << "INSIDE: " << x_a << " " << x_b << std::endl; 
-        pos_init.push_back(x_a);
-        pos_init.push_back(x_b);
-        double ds0 = (x_a-x_b).norm();
-        edges.push_back({{2*ipair, 2*ipair+1}, ds0});
-        ++ipair;
-      }
-      else if (key[0] == "pair"){
-        std::cout << "Pair not inside domain" << std::endl;
-        exit(0);
-      }
-      //std::cout << x_a << " " << x_b << std::endl;
-    }
-    Nrw = 2*Npairs;
-    return pos_init;
-  }
-
-  bool init_rand_x = false;
-  bool init_rand_y = false;
-  bool init_rand_z = false;
-  if (init_mode == "line_x" ||
-      init_mode == "plane_xy" ||
-      init_mode == "plane_xz" ||
-      init_mode == "volume"){
-    init_rand_x = true;
-  }
-  if (init_mode == "line_y" ||
-      init_mode == "plane_xy" ||
-      init_mode == "plane_yz" ||
-      init_mode == "volume"){
-    init_rand_y = true;
-
-  }
-  if (init_mode == "line_z" ||
-      init_mode == "plane_xz" ||
-      init_mode == "plane_yz" ||
-      init_mode == "volume"){
-    init_rand_z = true;
-  }
-
-  // TODO: Factor out position generation
-  double tol = 1e-12;
-  Uint N_est = 1000000;
-  double dx_est;
-  if (Lx > tol && Ly > tol && Lz > tol){
-    dx_est = pow(Lx*Ly*Lz/N_est, 1./3);
-  }
-  else if (Lx > tol && Ly > tol){
-    dx_est = pow(Lx*Ly/N_est, 1./2);
-  }
-  else if (Lx > tol && Lz > tol){
-    dx_est = pow(Lx*Lz/N_est, 1./2);
-  }
-  else if (Ly > tol && Lz > tol){
-    dx_est = pow(Ly*Lz/N_est, 1./2);
-  }
-  else if (Lx > tol){
-    dx_est = Lx/N_est;
-  }
-  else if (Ly > tol){
-    dx_est = Ly/N_est;
-  }
-  else if (Lz > tol){
-    dx_est = Lz/N_est;
-  }
-  else {
-    std::cout << "Something is wrong with the domain!" << std::endl;
-    exit(0);
-  }
-  if (init_rand_x) Nx = Lx/dx_est+1;
-  if (init_rand_y) Ny = Ly/dx_est+1;
-  if (init_rand_z) Nz = Lz/dx_est+1;
-  double dx = Lx/Nx;
-  double dy = Ly/Ny;
-  double dz = Lz/Nz;
-
-  double ww;
-
-  std::vector<double> wei;
-  std::vector<Vector3d> pos;
-  for (Uint ix=0; ix<Nx; ++ix){
-    for (Uint iy=0; iy<Ny; ++iy){
-      for (Uint iz=0; iz<Nz; ++iz){
-        x = x0;
-        if (init_rand_x) x[0] = x_min[0]+(ix+0.5)*dx;
-        if (init_rand_y) x[1] = x_min[1]+(iy+0.5)*dy;
-        if (init_rand_z) x[2] = x_min[2]+(iz+0.5)*dz;
-        intp->probe(x);
-        if (init_weight == "ux"){
-          ww = abs(intp->get_ux());
-        }
-        else if (init_weight == "uy"){
-          ww = abs(intp->get_uy());
-        }
-        else if (init_weight == "uz"){
-          ww = abs(intp->get_uz());
-        }
-        else if (init_weight == "u"){
-          ww = sqrt(pow(intp->get_ux(), 2)
-                    + pow(intp->get_uy(), 2)
-                    + pow(intp->get_uz(), 2));
-        }
-        else {
-          ww = 1.;
-        }
-
-        wei.push_back(ww);
-        pos.push_back(x);
-      }
-    }
-  }
-  std::uniform_real_distribution<> uni_dist_dx(-0.5*dx, 0.5*dx);
-  std::uniform_real_distribution<> uni_dist_dy(-0.5*dy, 0.5*dy);
-  std::uniform_real_distribution<> uni_dist_dz(-0.5*dz, 0.5*dz);
-  std::discrete_distribution<Uint> discrete_dist(wei.begin(), wei.end());
-
-  std::vector<Vector3d> pos_init;
-  for (Uint irw=0; irw<Nrw; ++irw){
-    do {
-      Uint ind = discrete_dist(gen);
-      x = pos[ind];
-      if (init_rand_x) x[0] += uni_dist_dx(gen);
-      if (init_rand_y) x[1] += uni_dist_dy(gen);
-      if (init_rand_z) x[2] += uni_dist_dz(gen);
-      intp->probe(x);
-      //std::cout << x[0] << " " << x[1] << " " << x[2] << std::endl;
-    } while (!intp->inside_domain());
-    pos_init.push_back(x);
-  }
-
-  sort(pos_init.begin(), pos_init.end(), less_than_op());
-
-  for (Uint irw=1; irw < Nrw; ++irw){
-    double ds0 = dist(pos_init[irw-1], pos_init[irw]);
-    if (ds0 < 10*ds)  // 2 lattice units (before) --> 10 x ds_max (now)
-      edges.push_back({{irw-1, irw}, ds0});
-    // Needs customization for 2D/3D applications
-  }
-
-  return pos_init;
-}*/
 
 #endif

@@ -16,36 +16,6 @@ void remove_unused_edges(FacesType&, EdgesType&, EdgesListType&);
 void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
 
 // Definitions
-/*void add_particles(std::vector<Vector3d> &pos_init, Interpol *intp,
-                   std::vector<Vector3d> &x_rw, std::vector<Vector3d> &u_rw,
-                   std::vector<double> &c_rw, std::vector<double> &tau_rw,
-                   std::vector<double> &rho_rw, std::vector<double> &p_rw,
-                   std::vector<Vector3d> &a_rw,
-                   const std::string &restart_folder, const int int_order,
-                   const Uint irw0) {
-                     // TO BECOME REDUNTANT
-  Uint Nrw = pos_init.size();
-  for (Uint irw=irw0; irw < irw0+Nrw; ++irw){
-    // Assign initial position
-    x_rw[irw] = pos_init[irw-irw0]; // could be done more efficiently
-
-    if (restart_folder == ""){
-      c_rw[irw] = double(irw)/(Nrw-1);
-    }
-    tau_rw[irw] = 0.;  // anything else?
-
-    intp->probe(x_rw[irw]);
-    u_rw[irw] = intp->get_u();
-
-    rho_rw[irw] = intp->get_rho();
-    p_rw[irw] = intp->get_p();
-
-    // Second-order terms
-    if (int_order >= 2){
-      a_rw[irw] = intp->get_Ju() + intp->get_a();
-    }
-  }
-}*/
 
 void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const ParticleSet& ps
@@ -157,7 +127,7 @@ Uint get_common_entry(Uint kedge, Uint ledge,
     }
   }
   std::cout << "Error: No common entry!" << std::endl;
-  exit(0);
+  exit(1);
   return -1;
 }
 
@@ -180,88 +150,12 @@ std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint 
   }
   else {
     std::cout << "Error: Found no close entities." << std::endl;
-    exit(0);
+    exit(1);
   }
   // std::cout << mnedges[0] << " " << mnedges[1] << std::endl;
   return {knode, mnedges[0], mnedges[1]};
 }
 
-/*
-bool append_new_node(const Uint inode, const Uint jnode,
-                     std::vector<Vector3d>& x_rw,
-                     std::vector<Vector3d>& u_rw,
-                     std::vector<double>& rho_rw, std::vector<double>& p_rw, std::vector<double>& c_rw, std::vector<double>& tau_rw,
-                     std::vector<double>& H_rw, std::vector<Vector3d>& n_rw,
-                     std::vector<Vector3d>& a_rw,
-                     Uint& Nrw, const bool do_output_all,
-                     Interpol *intp,
-                     const int int_order){
-                       // To become obsolete...
-
-  std::cout << "Shouldn't use this" << std::endl;
-
-  Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
-  int refinement_insertion_levels = 10;
-  intp->probe(x_rw_new);
-  if (!intp->inside_domain()){
-    Vector3d dx_rw_new = x_rw[inode]-x_rw[jnode];
-    double dx0 = dx_rw_new.norm();
-    Vector3d n0 = u_rw[inode]+u_rw[jnode];
-    n0 /= -n0.norm();
-    intp->probe(x_rw_new + dx0*n0);
-    //exit(0);
-    if (!intp->inside_domain()){
-      std::cout << "Insertion failed! Information:" << std::endl;
-      std::cout << n0 << std::endl;
-      std::cout << dx0 << std::endl;
-      std::cout << x_rw_new << std::endl;
-      std::cout << x_rw_new + dx0*n0 << std::endl;
-      // exit(0);
-
-      return false;
-    }
-    double ddx = dx0/2;
-    double dx1 = dx0;
-    for (int i=2; i<(2+refinement_insertion_levels); ++i){
-      intp->probe(x_rw_new + ddx*n0);
-      if (intp->inside_domain()){
-        ddx -= dx0/pow(2, i);
-        dx1 = ddx;
-      }
-      else {
-        ddx += dx0/pow(2, i);
-      }
-    }
-    x_rw_new += dx1*n0;
-    intp->probe(x_rw_new);
-  }
-
-  x_rw[Nrw] = x_rw_new;
-
-  c_rw[Nrw] = 0.5*(c_rw[inode]+c_rw[jnode]);
-  tau_rw[Nrw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
-  H_rw[Nrw] = 0.5*(H_rw[inode]+H_rw[jnode]);
-
-  n_rw[Nrw] = 0.5*(n_rw[inode]+n_rw[jnode]);
-  n_rw[Nrw] /= n_rw[Nrw].norm();
-
-  // u_rw[Nrw] = intp->get_u();  // For some reason this goes wrong?
-  u_rw[Nrw] = 0.5*(u_rw[inode]+u_rw[jnode]);
-  if (do_output_all){
-    // rho_rw[Nrw] = intp->get_rho();
-    // p_rw[Nrw] = intp->get_p();
-    rho_rw[Nrw] = 0.5*(rho_rw[inode]+rho_rw[jnode]);
-    p_rw[Nrw] = 0.5*(p_rw[inode]+p_rw[jnode]);
-  }
-  // Second-order terms
-  if (int_order >= 2){
-    // a_rw[Nrw] = intp->get_Ju() + intp->get_a();
-    a_rw[Nrw] = 0.5*(a_rw[inode] + a_rw[jnode]);
-  }
-  ++Nrw;
-  return true;
-}
-*/
 
 Uint sheet_refinement(FacesType &faces,
                       EdgesType &edges,
@@ -364,7 +258,7 @@ Uint sheet_refinement(FacesType &faces,
       }
       else {
         //std::cout << "Here we should remove this edge." << std::endl;
-        //exit(0);
+        //exit(1);
         if (cut_if_stuck)
           edges_to_remove.insert(iedge);
       }
@@ -373,7 +267,7 @@ Uint sheet_refinement(FacesType &faces,
   if (edges_to_remove.size() > 0){
     //if (!cut_if_stuck){
     //  std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
-    //  exit(0);
+    //  exit(1);
     //}
     std::vector<bool> edge_isactive(edges.size(), true);
     std::vector<bool> face_isactive(faces.size(), true);
@@ -440,7 +334,7 @@ Uint strip_refinement(EdgesType &edges,
         ++n_add;
       }
       else {
-        // exit(0);
+        // exit(1);
         edges_to_remove.insert(iedge);
         ++iedge;
       }
@@ -452,7 +346,7 @@ Uint strip_refinement(EdgesType &edges,
   if (edges_to_remove.size() > 0){
     if (!cut_if_stuck){
       std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
-      exit(0);
+      exit(1);
     }
     std::vector<bool> edge_isactive(edges.size(), true);
     for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
@@ -526,31 +420,6 @@ void print(const T vec){
   }
   std::cout << std::endl;
 }
-/*
-void print(const std::vector<Uint> vec){
-  for (std::vector<Uint>::const_iterator vit = vec.begin();
-       vit != vec.end(); ++vit){
-    std::cout << *vit << " ";
-  }
-  std::cout << std::endl;
-}
-
-void print(const std::set<Uint> vec){
-  for (std::set<Uint>::const_iterator vit = vec.begin();
-       vit != vec.end(); ++vit){
-    std::cout << *vit << " ";
-  }
-  std::cout << std::endl;
-}
-
-void print(const std::list<Uint> vec){
-  for (std::list<Uint>::const_iterator vit = vec.begin();
-       vit != vec.end(); ++vit){
-    std::cout << *vit << " ";
-  }
-  std::cout << std::endl;
-}
-*/
 
 void get_conodes(std::set<Uint> &inodes,
                  std::map<Uint, Uint> &icoedges,
@@ -730,7 +599,7 @@ bool collapse_edge(const Uint iedge,
   //print(joint_nodes);
 
   // Check if it has too many/too few common joint nodes.
-  int num_faces = edge2faces[iedge].size();
+  std::size_t num_faces = edge2faces[iedge].size();
 
   // std::cout << "num_faces=" << num_faces << std::endl;
 
@@ -770,37 +639,6 @@ bool collapse_edge(const Uint iedge,
 
   // assert(jfaces.size()==4 || jfaces.size()==2);
 
-  /*
-  if (!normals_are_ok(iedge, x, x_rw,
-                      jfaces, faces, edges)){
-    // Normals are not ok
-    // std::cout << "Normals are not OK!" << std::endl;
-    return false;
-  }
-  */
-  /*
-  intp->probe(x);  //
-
-  Uint irws[2] = {inode, jnode};
-  for (Uint i=0; i<2; ++i){
-    Uint irw = irws[i];
-    x_rw[irw] = x;
-    u_rw[irw] = intp->get_u();
-
-    if (do_output_all){
-      rho_rw[irw] = intp->get_rho();
-      p_rw[irw] = intp->get_p();
-    }
-    // Second-order terms
-    if (int_order >= 2){
-      a_rw[irw] = intp->get_Ju() + intp->get_a();
-    }
-    c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
-    tau_rw[irw] = 0.5*(tau_rw[inode]+tau_rw[jnode]);
-    H_rw[irw] = 0.5*(H_rw[inode]+H_rw[jnode]);
-    n_rw[irw] = 0.5*(n_rw[inode]+n_rw[jnode]);
-  }
-  */
   ps.replace_nodes(x, inode, jnode);
 
   for (auto & jedge : node2edges[jnode] ){
@@ -1030,14 +868,6 @@ void remove_unused_nodes(EdgesType &edges,
   remove_nodes(edges, nodes_inlet, ps, node_isactive);
 }
 
-/*void assert_equal(const Edge2FacesType &a,
-                  const Edge2FacesType &b){
-  assert(a.size() == b.size());
-  for (Uint i=0; i < a.size(); ++i){
-    assert(a[i].size() == b[i].size());
-  }
-  exit(0);
-}*/
 
 void remove_nodes_safely(FacesType &faces, EdgesType &edges,
                          Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
@@ -1055,7 +885,7 @@ void remove_nodes_safely(FacesType &faces, EdgesType &edges,
   }
   if (faces.size() > 0){
     std::cout << "WARNING: remove_nodes_safely is NOT TESTED for sheets!" << std::endl;
-    exit(0);
+    exit(1);
     // Remove node from sheet (cut hole)
     std::vector<bool> face_isactive(faces.size(), true);
     for (Uint iedge=0; iedge < edges.size(); ++iedge){
@@ -1315,7 +1145,7 @@ bool sheet_filtering(FacesType &faces,
                      ParticleSet& ps,
                      const Uint filter_target){
   std::cout << "SHEET FILTERING NOT TESTED" << std::endl;
-  exit(0);
+  exit(1);
   if (faces.size() <= filter_target)
     return false;
   std::vector<Uint> ids(faces.size());

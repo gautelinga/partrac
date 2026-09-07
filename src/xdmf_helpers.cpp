@@ -1,5 +1,6 @@
 #include "xdmf_helpers.hpp"
 #include <filesystem>
+#include <iostream>
 
 namespace pt = boost::property_tree;
 
@@ -9,9 +10,16 @@ void read_dataset_scalar(std::string& h5filename, std::string& field, std::vecto
     H5::DataSpace dataspace = dataset.getSpace();
 
     // Move out, probably
-    int rank = 2; // dataspace.getSimpleExtentNdims();
+    const int rank = 2;
+    // getSimpleExtentDims writes one entry per dimension
+    const int ndims = dataspace.getSimpleExtentNdims();
+    if (ndims != rank){
+      std::cout << "XDMF error: '" << field << "' in " << h5filename
+                << " has rank " << ndims << ", expected " << rank << "." << std::endl;
+      exit(1);
+    }
     std::vector<hsize_t> shape(rank);
-    int ndims = dataspace.getSimpleExtentDims( shape.data(), NULL);
+    dataspace.getSimpleExtentDims( shape.data(), NULL);
     shape[1] = 1;
     std::pair<std::int64_t, std::int64_t> range = dolfin::MPI::local_range(MPI_COMM_WORLD, shape[0]);
 
@@ -40,7 +48,7 @@ void read_dataset_scalar(std::string& h5filename, std::string& field, std::vecto
 void reorder_indices(std::vector<double>& data_, const std::vector<double>& xdata, const std::vector<Uint>& j2i, const int dim){
   for ( Uint j=0; j < j2i.size(); ++j ){
     Uint i = j2i[j];
-    for ( Uint k=0; k < dim; ++k)
+    for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
       data_[dim*j+k] = xdata[dim*i+k];
   }
 }
@@ -51,9 +59,16 @@ void read_dataset_vector(std::string& h5filename_u, std::string& field, std::vec
     H5::DataSpace dataspace = dataset.getSpace();
 
     // Move out, probably
-    int rank = 2; // dataspace.getSimpleExtentNdims();
+    const int rank = 2;
+    // getSimpleExtentDims writes one entry per dimension
+    const int ndims = dataspace.getSimpleExtentNdims();
+    if (ndims != rank){
+      std::cout << "XDMF error: '" << field << "' in " << h5filename_u
+                << " has rank " << ndims << ", expected " << rank << "." << std::endl;
+      exit(1);
+    }
     std::vector<hsize_t> shape(rank);
-    int ndims = dataspace.getSimpleExtentDims( shape.data(), NULL);
+    dataspace.getSimpleExtentDims( shape.data(), NULL);
     shape[1] = dim;
     std::pair<std::int64_t, std::int64_t> range = dolfin::MPI::local_range(MPI_COMM_WORLD, shape[0]);
 
@@ -101,7 +116,7 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
   topology_path.erase(0, topology_pos + 1);
   if (h5filename != geometry_path.substr(0, topology_pos)){
     std::cout << "XDMF error: Not matching filenames." << std::endl;
-    exit(0);
+    exit(1);
   }
   geometry_path.erase(0, topology_pos + 1);
 
@@ -111,13 +126,15 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
   for (auto & p : tree.get_child("Xdmf.Domain.Grid")) {
     //std :: cout << "[" << p.first << "]" << std :: endl;    
     if (p.first == "Grid"){
-      double time;
+      double time = 0.;
+      bool has_time = false;
       std::string filename;
       std::string location;
 
       for (auto & pp : p.second) {
         if ( pp.first == "Time" ){
           time = pp.second.get<double>("<xmlattr>.Value");
+          has_time = true;
         }
         else if ( pp.first == "Attribute")
         {
@@ -130,6 +147,10 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
       }
       //std::cout << " " << time << " " << location << std::endl;
       //titems.push_back({time, {filename, location}});
+      if (!has_time){
+        std::cout << "XDMF error: Grid without a Time." << std::endl;
+        exit(1);
+      }
       std::vector<std::string> path = {dirname + filename, location};
       titems.push_back({time, path});
     }

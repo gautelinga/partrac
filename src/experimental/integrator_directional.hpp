@@ -34,9 +34,12 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const Rea
     for (auto & particle : ps.particles() ){
         Vector x = particle.x();
 
-        intp.probe(x, t);
+        int cell_id = -1;
+        PointValues ptvals(intp.get_U0());
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
 
-        Vector u_1 = intp.get_u();
+        Vector u_1 = ptvals.get_u();
 
         un_est = u_1.dot(m_direction);
 
@@ -49,12 +52,12 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const Rea
 
             // Second-order terms
             if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
+                dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
             }
 
             if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
-                is_inside = intp.inside_domain();
+                // Frozen time, otherwise: locate(x+dx, t+dt, cell_id)
+                is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;

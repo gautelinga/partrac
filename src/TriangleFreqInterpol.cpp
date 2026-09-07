@@ -17,7 +17,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
-    exit(0);
+    exit(1);
   }
   size_t found;
   std::string key, val;
@@ -118,7 +118,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   }
   else {
     std::cout << "Unrecognized velocity element: " << u_el << std::endl;
-    exit(0);
+    exit(1);
   }
 
   // Pressure
@@ -133,7 +133,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     }
     else {
       std::cout << "Unrecognized pressure element: " << p_el << std::endl;
-      exit(0);
+      exit(1);
     }
   }
   else {
@@ -150,7 +150,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     p_coefficients_.resize(fs.size());
   
   
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq)
+  for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq)
   {
     u_coefficients_[iFreq].resize(mesh->num_cells());
     if (include_pressure)
@@ -182,36 +182,6 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   found_other_.resize(omp_get_max_threads());
 
   // todo: remove below
-  /*
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
-    u__.push_back(std::make_shared<dolfin::Function>(u_space_));
-
-    std::vector<double> u_coeff_i(dim*ncoeffs_u);
-    u_coefficients__.push_back(u_coeff_i);
-
-    if (include_pressure){
-      p__.push_back(std::make_shared<dolfin::Function>(p_space_));
-      
-      std::vector<double> p_coeff_i(ncoeffs_p);
-      p_coefficients__.push_back(p_coeff_i);
-    }
-  }
-
-  // read files
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
-    FreqStamp& f = fs.get(iFreq);
-    std::string filename = f.filename; // fs.get_filename(iFreq);
-    double a = f.a; // fs.get_a(iFreq);
-    double t_shift = f.t; // fs.get_t(iFreq);
-
-    std::cout << "FreqStamp: iFreq = " << iFreq << ", t_shift = " << t_shift << ", amplitude = " << a << ", filename = " << filename << std::endl;
-
-    dolfin::HDF5File file_i(MPI_COMM_WORLD, get_folder() + "/" + filename, "r");
-    file_i.read(*(u__[iFreq]), "u");
-    if (include_pressure)
-      file_i.read(*(p__[iFreq]), "p");
-  }
-  */
 }
 
 void TriangleFreqInterpol::update(const double t)
@@ -223,34 +193,7 @@ void TriangleFreqInterpol::update(const double t)
   t_update = t;
 }
 
-void TriangleFreqInterpol::probe(const Vector3d &x, const double t)
-{
-  int id_prev = -1;
-  probe(x, t, id_prev);
-}
 
-void TriangleFreqInterpol::probe(const Vector3d &x, const double t, int& id_prev)
-{
-  // std::cout << "probing..." << std::endl;
-  //int cell_id = id_prev;
-  inside = probe_light(x, t, id_prev);
-  if (inside){
-    PointValues fields(U0);
-    probe_heavy(x, t, id_prev, fields);
-  
-    U = fields.U;
-    A = fields.A;
-
-    if (include_pressure){
-      P = fields.P;
-    }
-
-    if (this->int_order > 1){
-      gradU = fields.gradU;
-      gradA = fields.gradA;
-    }
-  }
-}
 
 void TriangleFreqInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
   for (std::size_t i=0; i<dim; ++i){
@@ -276,7 +219,7 @@ Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-bool TriangleFreqInterpol::probe_light(const Vector3d &x, const double t, int& id_prev)
+bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 // FIXME: Not thread safe
 {
   //assert(t <= t_next && t >= t_prev);
@@ -338,7 +281,7 @@ bool TriangleFreqInterpol::probe_light(const Vector3d &x, const double t, int& i
   return inside_loc;
 }
 
-void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const int id, PointValues& fields)
+void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
 {
   // Assume found in fluid domain
   // std::cout << "probing..." << std::endl;
@@ -346,7 +289,7 @@ void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const 
   // update frequency weights
   std::vector<double> w_f_(fs.size());
   std::vector<double> wt_f_(fs.size());
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
+  for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
     FreqStamp& f = fs.get(iFreq);
     double a = f.a; //fs.get_a(iFreq);
     double t_shift = f.t; // fs.get_t(iFreq);
@@ -374,7 +317,7 @@ void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const 
   }
   else {
     std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
-    exit(0);
+    exit(1);
   }
   if (include_pressure){
     if (ncoeffs_p == 3){
@@ -385,7 +328,7 @@ void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const 
     }
     else {
       std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
-      exit(0);
+      exit(1);
     }
   }
 
@@ -393,7 +336,7 @@ void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const 
   std::vector<double> uy_f_(fs.size());
   std::vector<double> p_f_(fs.size());
 
-  for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
+  for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
     ux_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
     uy_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
     if (include_pressure)
@@ -424,7 +367,7 @@ void TriangleFreqInterpol::probe_heavy(const Vector3d &x, const double t, const 
     std::vector<double> uyx_f_(fs.size());
     std::vector<double> uyy_f_(fs.size());
   
-    for (std::size_t iFreq=0; iFreq < fs.size(); ++iFreq){
+    for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
       uxx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
       uxy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
       uyx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);

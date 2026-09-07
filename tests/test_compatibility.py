@@ -1,8 +1,6 @@
 import os
-import re
 import subprocess
 
-import numpy as np
 import pytest
 
 """
@@ -10,14 +8,17 @@ These tests just tests that partrac runs on the current system.
 """
 
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARTRAC = os.path.join(REPO, "bin", "partrac")
+from paths import REPO, app
+
+PARTRAC = app("partrac")
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_run():
-    out = subprocess.check_output(PARTRAC, shell=True).decode("utf-8")
-    assert "Specify an input file." in out
+    r = subprocess.run(PARTRAC, capture_output=True, text=True, timeout=60)
+    assert "Specify an input file." in r.stdout
+    # a missing input file is a usage error, not a successful run
+    assert r.returncode != 0
 
 
 if __name__ == "__main__":

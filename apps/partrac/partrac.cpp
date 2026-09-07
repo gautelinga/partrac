@@ -14,6 +14,7 @@
 #include <omp.h>
 
 #include "io.hpp"
+#include "rng.hpp"
 #include "utils.hpp"
 #include "Params.hpp"
 
@@ -24,115 +25,18 @@
 #include "ExplicitIntegrator.hpp"
 #include "RKIntegrator.hpp"
 #include "helpers.hpp"
-#include "MPIwrap.hpp"
 
-// Parameters accepted by this app
-partrac::Schema partrac_schema(){
-  partrac::Schema s("partrac");
-  add_initializer_params(s);
-  s.require<std::string>("mode", "interpolator type");
-  s.require<double>("Dm", "molecular diffusivity");
-  s.require<double>("dt", "timestep");
-  s.require<double>("T", "final time");
-  s.require<int>("int_order", "integration order");
-  // exit_plane divides by int_filter_intv, and cuts at Ln
-  s.require_if<double>("Ln", 0.0,
-                       [](const partrac::Params& p){
-                         return p.get<std::string>("exit_plane") != "none";
-                       },
-                       "exit_plane is set", "exit plane position");
-  s.require_if<double>("filter_intv", 0.0,
-                       [](const partrac::Params& p){
-                         return p.get<std::string>("exit_plane") != "none" ||
-                                p.get<bool>("filter");
-                       },
-                       "exit_plane or filter is set", "filter interval");
-  s.require_if<double>("inject_intv", 0.0,
-                       [](const partrac::Params& p){ return p.get<bool>("inject"); },
-                       "inject is set", "injection interval");
-  s.require_if<double>("tau_intv", 0.0,
-                       [](const partrac::Params& p){ return p.get<bool>("integrate_tau"); },
-                       "integrate_tau is set", "tau interval");
-  s.opt<double>("U", 1.0, "velocity scale");
-  s.opt<double>("T_inject", 1e10, "time to stop injecting at");
-  s.opt<double>("tau_max", 0.0, "max tau");
-  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
-  s.opt<double>("dump_intv", 100.0, "dump interval");
-  s.opt<double>("stat_intv", 100.0, "statistics interval");
-  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
-  s.opt<double>("refine_intv", 100.0, "refinement interval");
-  s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
-  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("seed", 0, "random seed");
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
-  s.opt<int>("filter_target", 0, "filter target");
-  s.opt<bool>("verbose", false, "print the parameters");
-  s.opt<bool>("random", true, "draw the seed randomly");
-  s.opt<bool>("refine", false, "refine the mesh");
-  s.opt<bool>("coarsen", false, "coarsen the mesh");
-  s.opt<bool>("filter", false, "filter the mesh");
-  s.opt<bool>("inject_edges", true, "inject edges too");
-  s.opt<bool>("frozen_fields", false, "freeze the velocity field");
-  s.opt<bool>("local_dt", false, "use a local timestep");
-  s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
-  s.opt<bool>("integrate_tau", false, "integrate the eigentime");
-  s.opt<bool>("output_all_props", true, "dump all properties");
-  s.opt<bool>("minimal_output", false, "dump less");
-  s.opt<std::string>("scheme", "explicit", "ODE integration scheme");
-  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
-  s.opt<std::string>("tag", "", "appended to the folder name");
-  s.opt<std::string>("restart_folder", "", "folder to restart from");
-  s.runtime<std::string>("folder", "", "output folder");
-  s.runtime<double>("t", 0.0, "current time");
-  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
-  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
-  s.choices("scheme", {"explicit", "RK4"});
-  s.choices("exit_plane", {"none", "x", "y", "z"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
-  s.check([](const partrac::Params& p){
-            return !(p.get<bool>("inject") && p.get<bool>("filter"));
-          },
-          "cannot inject and filter at the same time");
-  s.check([](const partrac::Params& p){
-            return !p.get<bool>("local_dt") ||
-                   (p.get<bool>("frozen_fields") && p.get<double>("Dm") == 0.0);
-          },
-          "local_dt requires frozen_fields and Dm = 0");
-  // RK4Integrator takes no arguments, so Dm is dropped
-  s.warn([](const partrac::Params& p){
-           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
-         },
-         "scheme=RK4 ignores Dm");
-  // dump_intv and stat_intv become integer step counts, so they must not round
-  // down to zero
-  s.finalize([](partrac::Params& p){
-    const double dt = p.get<double>("dt");
-    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
-    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
-  });
-  return s;
-}
+#include "partrac_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-  MPIwrap mpi(argc, argv);
 
-  if (mpi.rank() == 0)
-    std::cout << "Initialized Partrac with " << mpi.size() << " processes." << std::endl;
-  mpi.barrier();
-  std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-  mpi.barrier();
+    std::cout << "Initialized Partrac." << std::endl;
 
   // Input parameters
-  if (argc < 2 && mpi.rank() == 0) {
+  if (argc < 2) {
     std::cout << "Specify an input file." << std::endl;
-    return 0;
+    return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(partrac_schema(), argc, argv);
 
@@ -141,7 +45,7 @@ int main(int argc, char* argv[])
       omp_set_num_threads(prm.get<int>("num_threads"));
   }
 
-  std::string infilename = std::string(argv[1]);
+  std::string infilename = prm.input_file();
 
   std::cout << "Setting interpolator..." << std::endl;
 
@@ -169,7 +73,7 @@ int main(int argc, char* argv[])
 
   std::string folder = intp->get_folder();
   std::string rwfolder = folder + "/RandomWalkers/";
-  if (mpi.rank() == 0 && !dry_run)
+  if (!dry_run)
     create_folder(rwfolder);
   std::string newfolder;
   if (prm.get<std::string>("restart_folder") != ""){
@@ -177,16 +81,13 @@ int main(int argc, char* argv[])
   }
   else {
     newfolder = get_newfoldername(rwfolder, prm);
-    mpi.barrier();
-    if (mpi.rank() == 0 && !dry_run)
+    if (!dry_run)
       create_folder(newfolder);
-    mpi.barrier();
   }
-  newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+  newfolder = newfolder + "" + "0" + "/";
   std::string posfolder = newfolder + "Positions/";
   std::string checkpointsfolder = newfolder + "Checkpoints/";
   //std::string histfolder = newfolder + "Histograms/";
-  //if (mpi.rank() == 0){ // Might change in the future!
   if (!dry_run){
     create_folder(newfolder);
     create_folder(posfolder);
@@ -195,23 +96,11 @@ int main(int argc, char* argv[])
   }
   prm.set<std::string>("folder", newfolder);
 
-  if (mpi.rank() == 0 && prm.get<bool>("verbose"))
+  if (prm.get<bool>("verbose"))
     prm.print();
 
   // Parallel generators
-  std::vector<std::mt19937> gens;
-  for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
-    std::mt19937 gen;
-    if (prm.get<bool>("random")) {
-        std::random_device rd;
-        gen.seed(rd());
-    }
-    else {
-        std::seed_seq rd{prm.get<int>("seed") + i};
-        gen.seed(rd);
-    }
-    gens.emplace_back(gen);
-  }
+  std::vector<std::mt19937> gens = make_generators(prm);
 
   // TODO: These should not be stored in particle tracker parameters.
   prm.set<double>("Lx", intp->get_Lx());
@@ -225,36 +114,18 @@ int main(int argc, char* argv[])
   prm.set<double>("t0", t0);
   prm.set<double>("T", T);
 
-  /*
-  if (prm.resize && (prm.refine || prm.coarsen || prm.filter)){
-    if (prm.refine){
-      if (mpi.rank() == 0)
-        std::cout << "Cannot resize and refine at the same time." << std::endl;
-    }
-    if (prm.coarsen){
-      if (mpi.rank() == 0)
-        std::cout << "Cannot resize and coarsen at the same time." << std::endl;
-    }
-    if (prm.filter){
-      if (mpi.rank() == 0)
-        std::cout << "Cannot resize and filter at the same time." << std::endl;
-    }
-    exit(0);
-  }*/
 
   if (prm.get<bool>("inject") && prm.get<bool>("filter")){
-    if (mpi.rank() == 0)
       std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
-    exit(0);
+    exit(1);
   }
 
   // Higher-order time integration?
   if (prm.get<int>("int_order") > 2){
-    if (mpi.rank() == 0)
       std::cout << "No support for such high temporal integration order." << std::endl;
-    exit(0);
+    exit(1);
   }
-  //if (prm.interpolation_test > 0 && mpi.rank() == 0){
+  //if (prm.interpolation_test > 0){
   //  std::cout << "Testing interpolation..." << std::endl;
   //  test_interpolation(prm.interpolation_test, intp, newfolder, t0, gens[0]);
   //}
@@ -271,11 +142,11 @@ int main(int argc, char* argv[])
     integrator = std::make_shared<RK4Integrator>();
   else {
     std::cout << "Unrecognized (ODE integration) scheme: " << prm.get<std::string>("scheme") << std::endl;
-    exit(0);
+    exit(1);
   }
 
-  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"), mpi);
-  Topology mesh(ps, prm, mpi);
+  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"));
+  Topology mesh(ps, prm);
 
   if (prm.get<bool>("inject")){
     std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
@@ -284,7 +155,7 @@ int main(int argc, char* argv[])
     }
     else {
       std::cout << "init_mode " << prm.get<std::string>("init_mode") << " incompatible with injection." << std::endl;
-      exit(0);
+      exit(1);
     }
   }
 
@@ -293,15 +164,14 @@ int main(int argc, char* argv[])
   }
   else {
     std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, intp, mpi, prm, gens[0]);
-    mesh.load_initial_state(init_state);
+    set_initial_state(init_state, intp, prm, gens[0]);
+    mesh.load_initial_state(init_state, prm);
   }
 
   mesh.compute_maps();
 
   // Everything that reads parameters has now been constructed, so stop here
   if (dry_run){
-    if (mpi.rank() == 0)
       std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
     return 0;
   }
@@ -310,13 +180,13 @@ int main(int argc, char* argv[])
   if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
-    if (prm.get<bool>("verbose") && mpi.rank() == 0)
+    if (prm.get<bool>("verbose"))
       std::cout << "Added " << n_add << " edges." << std::endl;
   }
   if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
-    if (prm.get<bool>("verbose") && mpi.rank() == 0)
+    if (prm.get<bool>("verbose"))
       std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
 
@@ -333,7 +203,7 @@ int main(int argc, char* argv[])
   //double dt2 = dt*dt;
 
   double sqrt2Dmdt = sqrt(2*Dm*dt);
-  if (prm.get<bool>("verbose") && mpi.rank() == 0){
+  if (prm.get<bool>("verbose")){
     print_param("sqrt(2*Dm*dt)", sqrt2Dmdt);
     print_param("U*dt         ", prm.get<double>("U")*dt);
   }
@@ -343,7 +213,6 @@ int main(int argc, char* argv[])
     t = prm.get<double>("t");
   }
 
-  //if (mpi.rank() == 0)
   prm.dump(newfolder, t);
 
   // Should not be taken from parameters
@@ -351,9 +220,9 @@ int main(int argc, char* argv[])
   //Uint n_declined = prm.n_declined;
 
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-  H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+  H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
   //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-  //H5wrap h5file(mpi);
+  //H5wrap h5file();
   //h5file.open(h5fname, "w");
 
   Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
@@ -380,7 +249,7 @@ int main(int argc, char* argv[])
 
   if (local_dt && !frozen_fields){
     std::cout << "Error: local_dt=true requires the use of frozen_fields=true!" << std::endl;
-    exit(0);
+    exit(1);
   }
   else if (local_dt && Dm > 0.0){
     std::cout << "Error: local_dt=true requires the use of Dm=0.0!" << std::endl;
@@ -395,10 +264,9 @@ int main(int argc, char* argv[])
   //std::string write_mode = prm.write_mode;
 
   std::ofstream statfile;
-  //if (mpi.rank() == 0){
   {
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, mesh.dim());
+    write_stats_header(statfile, mesh.dim());
   }
   std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(t) + ".dat");
 
@@ -483,7 +351,6 @@ int main(int argc, char* argv[])
     // Dump detailed data
     if (it % int_dump_intv == 0){
       std::string groupname = std::to_string(t);
-      //if (mpi.rank() == 0) {
         // Clear file if it exists, otherwise create
       if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
         h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -512,7 +379,6 @@ int main(int argc, char* argv[])
   mesh.write_checkpoint(checkpointsfolder, t, prm);
 
   // Close files
-  //if (mpi.rank() == 0){
   statfile.close();
   declinedfile.close();
 

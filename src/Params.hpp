@@ -120,6 +120,8 @@ public:
 
   template <typename T> void set(const std::string& key, T v);
 
+  // the positional argument: the interpolator input file
+  const std::string& input_file() const { return m_positional; }
   bool check_only() const { return m_check_only; }
   bool help_requested() const { return m_help; }
 
@@ -152,6 +154,7 @@ private:
   std::shared_ptr<const detail::SchemaImpl> m_schema;
   std::map<std::string, Value> m_values;
   std::map<std::string, Source> m_sources;
+  std::string m_positional;
   bool m_check_only = false;
   bool m_help = false;
 };

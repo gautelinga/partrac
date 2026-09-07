@@ -52,6 +52,7 @@ public:
 
     ptvals.U = {alpha * r[0] * r[0], - 2 * alpha * r[0] * r[1], 0};  // * alpha * r[0] * r[2];
     ptvals.P = p_inf + 2.0 * mu * alpha * r[0];
+    ptvals.Rho = Rho;
 
     // Hardcoded -- copied from consistency-checked Sympy code
     ptvals.gradU << 2 * alpha * r[0], 0., 0.,

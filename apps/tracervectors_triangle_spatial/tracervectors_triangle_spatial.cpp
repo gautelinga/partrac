@@ -14,8 +14,8 @@
 
 #include "experimental/particles.hpp"
 #include "utils.hpp"
-#include "MPIwrap.hpp"
 #include "Params.hpp"
+#include "rng.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "experimental/integrator_spatial.hpp"
@@ -38,35 +38,21 @@ std::string get_newfoldername(const std::string& rwfolder, const partrac::Params
   return newfoldername;
 }
 
-// Parameters accepted by this app
-partrac::Schema tracervectors_triangle_spatial_schema(){
-  partrac::Schema s("tracervectors_triangle_spatial");
-  add_common_app_params(s);
-  add_experimental_initializer_params(s);
-  add_restart_params(s);
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  s.require<double>("ds_max", "max edge length");
-  s.opt<double>("Lt", 0.0, "tangential extent of the exit plane");
-  s.opt<double>("u_eps", 1e-7, "velocity cutoff");
-  return s;
-}
+#include "tracervectors_triangle_spatial_schema.hpp"
 
 int main(int argc, char* argv[])
 {
-    MPIwrap mpi(argc, argv);
 
-    if (mpi.rank() == 0)
     {
         std::cout << "======================================================================\n"
                   << "||  Initialized experimental tracer vectors.                        ||\n"
                   << "======================================================================" << std::endl;
     }
-    mpi.barrier();
 
     // Input parameters
-    if (argc < 2 && mpi.rank() == 0) {
+    if (argc < 2) {
         std::cout << "Please specify an input file." << std::endl;
-        return 0;
+        return 1;
     }
     partrac::Params prm = partrac::parse_or_exit(tracervectors_triangle_spatial_schema(), argc, argv);
     if (prm.get<int>("num_threads") > 0){
@@ -74,7 +60,7 @@ int main(int argc, char* argv[])
         omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
-    std::string infilename = std::string(argv[1]);
+    std::string infilename = prm.input_file();
 
     std::cout << "Initializing TriangleInterpol." << std::endl;
     TriangleInterpol intp(infilename);
@@ -85,7 +71,6 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/SpatialTracerVectors/";
     
-    if (mpi.rank() == 0)
         create_folder(rwfolder);
     
     std::string newfolder;
@@ -94,12 +79,9 @@ int main(int argc, char* argv[])
     }
     else {
         newfolder = get_newfoldername(rwfolder, prm);
-        mpi.barrier();
-        if (mpi.rank() == 0)
             create_folder(newfolder);
-        mpi.barrier();
     }
-    newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
+    newfolder = newfolder + "" + "0" + "/";
     std::string posfolder = newfolder + "Positions/";
     std::string checkpointsfolder = newfolder + "Checkpoints/";
     {
@@ -109,23 +91,10 @@ int main(int argc, char* argv[])
     }
     prm.set<std::string>("folder", newfolder);
 
-    if (mpi.rank() == 0)
         if (prm.get<bool>("verbose")) prm.print();
 
     // Parallel generators
-    std::vector<std::mt19937> gens;
-    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
-        std::mt19937 gen;
-        if (prm.get<bool>("random")) {
-            std::random_device rd;
-            gen.seed(rd());
-        }
-        else {
-            std::seed_seq rd{prm.get<int>("seed") + omp_get_thread_num() };
-            gen.seed(rd);
-        }
-        gens.emplace_back(gen);
-    }
+    std::vector<std::mt19937> gens = make_generators(prm);
 
     Real dt = prm.get<double>("dt");
     Real t0 = std::max(intp.get_t_min(), prm.get<double>("t0"));
@@ -144,10 +113,10 @@ int main(int argc, char* argv[])
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
     if (key.size() == 0){
         std::cout << "init_mode not specified." << std::endl;
-        exit(0);
+        exit(1);
     }
 
-    RandomPointsInitializer init_state(key, prm, gens[0]);
+    experimental::RandomPointsInitializer init_state(key, prm, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
     spin_all(key, ps, gens[0]);
@@ -164,7 +133,7 @@ int main(int argc, char* argv[])
     prm.dump(newfolder, t);
 
     std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(mpi, statfile, ps.dim());
+    write_stats_header(statfile, ps.dim());
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
     H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
@@ -208,7 +177,7 @@ int main(int argc, char* argv[])
         // Statistics
         if (it % int_stat_intv == 0){
             std::cout << "Streamline length = " << s << std::endl;
-            write_stats(mpi, statfile, s, ps, integrator.get_declined());
+            write_stats(statfile, s, ps, integrator.get_declined());
 
             intp.print_found();
         }

@@ -30,7 +30,7 @@ void Timestamps::initialize(const std::string& infilename){
 
 void Timestamps::update(const double){
   std::cout << "Timestamps::update not implemented" <<std::endl;
-  exit(0);
+  exit(1);
 }
 
 void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
@@ -106,7 +106,7 @@ void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<
     if (abs(t_[i] - tkey) > 1e-10)
     {
       std::cout << "ERROR: XDMF tkey for field " << field << " is not matching!" << std::endl;
-      exit(0);
+      exit(1);
     }
     stamps[field][i] = items[i].second;
   }

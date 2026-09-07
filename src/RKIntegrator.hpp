@@ -23,36 +23,6 @@ RK4Integrator::RK4Integrator() : Integrator() {
     std::cout << "Selecting Runge-Kutta 4 scheme" << std::endl;
 }
 
-/*
-Vector3d RK4Integrator::integrate(const Vector3d& x, const double t, const double dt) {
-    // k1 = f(t_n, y_n)
-    // k2 = f(t_n + h/2, y_n + (h/2)*k1)
-    // k3 = f(t_n + h/2, y_n + (h/2)*k2)
-    // k4 = f(t_n + h,   y_n + h * k3)
-    // return y_n + (h/6)*(k1 + 2*k2 + 2*k3 + k4)
-    intp->probe(x, t);
-    Vector3d k1 = intp->get_u();
-    intp->probe(x + k1 * dt/2, t + dt/2);
-    Vector3d k2 = intp->get_u();
-    intp->probe(x + k2 * dt/2, t + dt/2);
-    Vector3d k3 = intp->get_u();
-    intp->probe(x + k3 * dt, t + dt);
-    Vector3d k4 = intp->get_u();
-
-    Vector3d dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
-
-    intp->probe(x+dx, t+dt);
-    if (intp->inside_domain()){
-        stuck = false;
-        ++n_accepted;
-        return dx;
-    }
-    else {
-        stuck = true;
-        ++n_declined;
-        return {0., 0., 0.};
-    }
-}*/
 //template<typename InterpolType, typename T>
 //std::set<Uint> RK4Integrator::step(InterpolType& intp, T& ps, const double t, const double dt) {
 std::set<Uint> RK4Integrator::step(ParticleSet& ps, const double t, const double dt) {
@@ -65,19 +35,25 @@ std::set<Uint> RK4Integrator::step(ParticleSet& ps, const double t, const double
         Vector3d x = ps.x(i);
         int cell_id = ps.get_cell_id(i);
 
-        intp.probe(x, t, cell_id);
-        k1 = intp.get_u();
-        intp.probe(x + k1 * dt/2, t + dt/2, cell_id);
-        k2 = intp.get_u();
-        intp.probe(x + k2 * dt/2, t + dt/2, cell_id);
-        k3 = intp.get_u();
-        intp.probe(x + k3 * dt, t + dt, cell_id);
-        k4 = intp.get_u();
+        PointValues ptvals(intp.get_U0());
+
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
+        k1 = ptvals.get_u();
+        intp.locate(x + k1 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k1 * dt/2, t + dt/2, cell_id, ptvals);
+        k2 = ptvals.get_u();
+        intp.locate(x + k2 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k2 * dt/2, t + dt/2, cell_id, ptvals);
+        k3 = ptvals.get_u();
+        intp.locate(x + k3 * dt, t + dt, cell_id);
+        intp.evaluate(x + k3 * dt, t + dt, cell_id, ptvals);
+        k4 = ptvals.get_u();
 
         dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
 
-        intp.probe(x+dx, t+dt, cell_id);
-        if (intp.inside_domain()){
+        // only containment is needed here, so no evaluate
+        if (intp.locate(x+dx, t+dt, cell_id)){
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
             ps.set_cell_id(i, cell_id);

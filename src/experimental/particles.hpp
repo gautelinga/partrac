@@ -151,20 +151,6 @@ public:
     std::set<Uint> particle_ids() const {
         return {m_a_id, m_b_id};
     }
-    /*
-    Uint set_a_id(const Uint a_id){
-        Uint a_id_old = m_a_id;
-        m_a_id = a_id;
-        return a_id_old;
-    }
-    Uint set_b_id(const Uint b_id){
-        Uint b_id_old = m_b_id;
-        m_b_id = b_id;
-        return b_id_old;
-    }
-    void set_l0(const Real l0){
-        m_l0 = l0;
-    }*/
     //Real length() { return (m_a->x()-m_b->x()).norm(); };
     template<typename T>
     Real length(T& ps) const { return vector(ps).norm(); }
@@ -270,7 +256,7 @@ class Face {
 public:
     //Face(Edge<ParticleType>* a, Edge<ParticleType>* b, Edge<ParticleType>* c, const Real A0) : m_a(a), m_b(b), m_c(c), m_A0(A0) {};
     Face(Particles<ParticleType>& ps, const Uint a_id, const Uint b_id, const Uint c_id, const Real A0)
-     : m_ps(ps), m_a_id(a_id), m_b_id(b_id), m_c_id(c_id), m_A0(A0) {};
+     : m_a_id(a_id), m_b_id(b_id), m_c_id(c_id), m_A0(A0), m_ps(ps) {};
     ~Face() {
         //delete m_ps;
     }
@@ -342,19 +328,6 @@ public:
         m_particles.push_back(particle);
         return id;
     };
-    /*void add_edge(ParticleType* a, ParticleType* b, const Real w) {
-        Edge edge(a, b, w);
-        m_edges.push_back(edge); // copy??
-        a->connect_edge(m_edges.size()-1); // (&(m_edges.back()));
-        b->connect_edge(m_edges.size()-1);// (&(m_edges.back()));
-    };
-    void add_face(Edge<ParticleType>* a, Edge<ParticleType>* b, Edge<ParticleType>* c, const Real w) {
-        Face face(a, b, c, w);
-        m_faces.push_back(face); 
-        a->connect_face(&(m_faces.back()));
-        b->connect_face(&(m_faces.back()));
-        c->connect_face(&(m_faces.back()));
-    };*/
     void add_edge(const Uint a_id, const Uint b_id, const Real w) {
         //Edge edge(m_particles, a_id, b_id, w);
         //Edge edge(*this, a_id, b_id, w);
@@ -398,14 +371,6 @@ public:
         for ( auto & edge : m_edges ){
             if ( edge.length(*this) > ds_max ){
                 edge.split(*this);
-                /*
-                //Uint b_id_old = m_b_id;
-                Uint c_id = add_particle(edge.midpoint());
-                Uint b_id = edge.set_b_id(c_id);
-                Real l0 = edge.l0()/2;
-                edge.set_l0(l0);
-                add_edge(c_id, b_id, l0);
-                */
             }
         }
     }
@@ -485,21 +450,6 @@ Particles<ParticleType>::Particles(const Uint Nrw_max) : m_Nrw_max(Nrw_max)
 template<class ParticleType>
 void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
     //_number_particles();
-    /*
-    if (m_faces.size() > 0){
-        hsize_t faces_dims[2];
-        faces_dims[0] = m_faces.size();
-        faces_dims[1] = 3;
-        DataSpace faces_dspace(2, faces_dims);
-        std::vector<Uint> faces_arr(faces_dims[0]*faces_dims[1]);
-        for ( auto & face : m_faces ){
-            for (auto & node : face.particle_ptrs()){
-                std::cout << node->get_id() << " ";
-            }
-            std::cout << std::endl;
-        }
-    }
-    else */ 
     if (m_edges.size() > 0){
         hsize_t edges_dims[2];
         edges_dims[0] = m_edges.size();

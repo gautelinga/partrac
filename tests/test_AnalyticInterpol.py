@@ -8,8 +8,9 @@ import h5py
 import numpy as np
 import pytest
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARTRAC = os.path.join(REPO, "bin", "partrac")
+from paths import REPO, app
+
+PARTRAC = app("partrac")
 
 
 def make_temp_case(expr_params):
@@ -56,19 +57,13 @@ def make_batchelor_case():
     return tmpdir
 
 
-# BatchelorVortex::eval() and ::inside() are stubs that print "Not implemented
-# yet!" and exit, so the run stops before writing any particle data. The
-# reference values below predate that. Unrelated to the parameter handling.
-@pytest.mark.xfail(reason="BatchelorVortex::eval is not implemented",
-                   strict=True)
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("dt", [0.1, 0.2, 0.4])
 def test_batchelor(dt):
     tmpdir = make_batchelor_case()
     #with open("{}/expr_params.dat".format(tmpdir), "r") as ofile:
     #    print(ofile.read())
 
-    # Nrw, Nrw_max, ds_max, ds_min and int_order used to be silent defaults;
-    # the values here are the ones that used to be assumed.
     cmd = (PARTRAC + " {}/expr_params.dat mode=analytic dt={} t0=0 T=10.0"
            " stat_intv=0.1 dump_intv=0.1 dump_chunk_size=1000 minimal_output=true"
            " init_mode=uniform_x Dm=0 Nrw=100 Nrw_max=10000 ds_max=1.0 ds_min=0.1"

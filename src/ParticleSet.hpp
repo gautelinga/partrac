@@ -5,14 +5,13 @@
 #include "Interpol.hpp"
 //#include "Integrator.hpp"  // remove!
 #include "io.hpp"
-#include "MPIwrap.hpp"
 
 
 class ParticleSet {
 public:
-    //ParticleSet(std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi);
-    ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi);
-    //ParticleSet(const Uint Nrw_max, MPIwrap& mpi);
+    //ParticleSet(std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max);
+    ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max);
+    //ParticleSet(const Uint Nrw_max);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
     //template<typename T>
     bool insert_node_between(const Uint, const Uint, const bool check_if_inside);
@@ -74,16 +73,14 @@ public:
     std::vector<double> t_loc_rw;  // eigentime
     // 
     std::vector<int> cell_id_rw; // for speed (if applicable)
-
-    MPIwrap& m_mpi;
 };
 
 /*
-ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max, MPIwrap& mpi) : ParticleSet(intp, Nrw_max, mpi) {
+ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, std::shared_ptr<Integrator> integrator, const Uint Nrw_max) : ParticleSet(intp, Nrw_max) {
     this->integrator = integrator;
 }*/
 
-ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
+ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max) {
     this->intp = intp;
     this->Nrw_max = Nrw_max;
     // Vector fields
@@ -101,22 +98,6 @@ ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max, MPI
     //
     this->cell_id_rw.resize(Nrw_max);
 }
-/*
-ParticleSet::ParticleSet (const Uint Nrw_max, MPIwrap& mpi) : m_mpi(mpi) {
-    this->Nrw_max = Nrw_max;
-    // Vector fields
-    this->x_rw.resize(Nrw_max);
-    this->u_rw.resize(Nrw_max);
-    this->a_rw.resize(Nrw_max);  // for second order integration
-    this->n_rw.resize(Nrw_max);  // useless?
-    // Scalar fields
-    this->c_rw.resize(Nrw_max);
-    this->e_rw.resize(Nrw_max);
-    this->H_rw.resize(Nrw_max);
-    this->rho_rw.resize(Nrw_max);
-    this->p_rw.resize(Nrw_max);
-    this->t_loc_rw.resize(Nrw_max);  // eigentime
-}*/
 
 void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
   for (Uint irw=irw0; irw < irw0+pos_init.size(); ++irw){
@@ -128,18 +109,6 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
 
     t_loc_rw[irw] = 0.;  // anything else?
 
-    /*
-    intp->probe(x_rw[irw]);
-    u_rw[irw] = intp->get_u();
-
-    rho_rw[irw] = intp->get_rho();
-    p_rw[irw] = intp->get_p();
-
-    // Second-order terms
-    if (int_order >= 2){
-      a_rw[irw] = intp->get_Ju() + intp->get_a();
-    }
-    */
     cell_id_rw[irw] = -1;
   }
   Nrw += pos_init.size();
@@ -148,17 +117,16 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
 //template<typename T>
 bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
-  int refinement_insertion_levels = 10; // 10;
   
   if (check_if_inside){
     double t0 = 0.; // not needed?
     int cell_id = cell_id_rw[inode];
     
-    bool inside = intp->probe_light(x_rw_new, t0, cell_id);
+    bool inside = intp->locate(x_rw_new, t0, cell_id);
     if (!inside){
       std::cout << "Insertion failed! Need something more refined here." << std::endl;
       //return false;
-      //exit(0);
+      //exit(1);
 
       Vector3d dx_rw_new = x_rw[inode]-x_rw[jnode];
       double dx0 = dx_rw_new.norm();
@@ -182,7 +150,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
 
       for (Uint iddx=1; iddx < 1000; ++iddx){
         dx1 = iddx * ddx;
-        inside = intp->probe_light(x_rw_new + dx1 * n0, t0, cell_id);
+        inside = intp->locate(x_rw_new + dx1 * n0, t0, cell_id);
         if (inside){
           break;
         }
@@ -192,37 +160,9 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
         return false;
       }
 
-      /*
-
-      inside = intp->probe_light(x_rw_new + dx0*n0, t0, cell_id);
-
-      if (!inside){
-        std::cout << "Insertion failed! Information:" << std::endl;
-        std::cout << n0 << std::endl;
-        std::cout << dx0 << std::endl;
-        std::cout << x_rw_new << std::endl;
-        std::cout << x_rw_new + dx0*n0 << std::endl;
-        exit(0);
-
-        return false;
-      }
-
-      double ddx = dx0/2;
-      double dx1 = dx0;
-      for (int i=2; i<(2+refinement_insertion_levels); ++i){
-        inside = intp->probe_light(x_rw_new + ddx*n0, t0, cell_id);
-        if (inside){
-          ddx -= dx0/pow(2, i);
-          dx1 = ddx;
-        }
-        else {
-          ddx += dx0/pow(2, i);
-        }
-      }
-      */
 
       x_rw_new += dx1*n0;
-      // inside = intp->probe_light(x_rw_new, t0, cell_id);
+      // inside = intp->locate(x_rw_new, t0, cell_id);
 
     }
 
@@ -240,20 +180,6 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
   u_rw[Nrw] = {0., 0., 0.}; // 0.5*(u_rw[inode]+u_rw[jnode]);
 
 
-  /*
-  // u_rw[Nrw] = intp->get_u();  // For some reason this goes wrong?
-  u_rw[Nrw] = 0.5*(u_rw[inode]+u_rw[jnode]);
-  if (do_output_all){
-    // rho_rw[Nrw] = intp->get_rho();
-    // p_rw[Nrw] = intp->get_p();
-    rho_rw[Nrw] = 0.5*(rho_rw[inode]+rho_rw[jnode]);
-    p_rw[Nrw] = 0.5*(p_rw[inode]+p_rw[jnode]);
-  }
-  // Second-order terms
-  if (int_order >= 2){
-    // a_rw[Nrw] = intp->get_Ju() + intp->get_a();
-    a_rw[Nrw] = 0.5*(a_rw[inode] + a_rw[jnode]);
-  }*/
   ++Nrw;
   return true;
 }
@@ -263,21 +189,6 @@ void ParticleSet::copy_node(const Uint i, const Uint j){
   c_rw[i] = c_rw[j];
   t_loc_rw[i] = t_loc_rw[j];  // if it is used?
 
-  /*
-  u_rw[i] = u_rw[j];
-
-  if (do_output_all){
-    rho_rw[i] = rho_rw[j];
-    p_rw[i] = p_rw[j];
-  }
-
-  H_rw[i] = H_rw[j];
-  n_rw[i] = n_rw[j];
-
-  if (int_order >= 2){
-    a_rw[i] = a_rw[j];
-  }
-  */
 }
 
 double ParticleSet::triangle_area(const Uint iface,
@@ -317,19 +228,6 @@ void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode)
     n_rw[irw] = 0.5*(n_rw[inode]+n_rw[jnode]);
     n_rw[irw] /= n_rw[irw].norm();
 
-    /*
-    u_rw[irw] = intp->get_u();
-
-    if (do_output_all){
-      rho_rw[irw] = intp->get_rho();
-      p_rw[irw] = intp->get_p();
-    }
-    // Second-order terms
-    if (int_order >= 2){
-      a_rw[irw] = intp->get_Ju() + intp->get_a();
-    }
-
-    */
   }
 }
 
@@ -362,17 +260,6 @@ void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesT
     n_rw[new_inode] = 0.5*(n_rw[inode]+n_rw[jnode]);
     n_rw[new_inode] /= n_rw[new_inode].norm();
     
-    /*
-    intp->probe(x_rw[new_inode]);
-    u_rw[new_inode] = intp->get_u();
-    if (do_output_all){
-        rho_rw[new_inode] = intp->get_rho();
-        p_rw[new_inode] = intp->get_p();
-    }
-
-    if (int_order >= 2){
-        a_rw[new_inode] = intp->get_Ju() + intp->get_a();
-    }*/
 }
 
 Vector3d ParticleSet::facet_normal(const Uint iface,
@@ -478,22 +365,24 @@ void ParticleSet::dump_positions(const std::string filename) const {
 
 //template<typename T>
 void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
-  #pragma omp for
+  // operator[] inserts, so it cannot be called from the threads
+  const bool do_rho = output_fields["rho"];
+  const bool do_p = output_fields["p"];
+
+  #pragma omp parallel for
   for (Uint irw=0; irw < N(); ++irw){
     int cell_id = get_cell_id(irw);
     PointValues ptvals(intp->get_U0());
     //intp->probe(x_rw[irw], t);
-    bool is_inside = intp->probe_light(x_rw[irw], t, cell_id);
-    intp->probe_heavy(x_rw[irw], t, cell_id, ptvals);
-    if (output_fields["u"]){
-      //u_rw[irw] = intp->get_u();
-      u_rw[irw] = ptvals.get_u();
-    }
-    if (output_fields["rho"]){
+    intp->locate(x_rw[irw], t, cell_id);
+    intp->evaluate(x_rw[irw], t, cell_id, ptvals);
+    // always computed: the statistics read it whatever gets dumped
+    u_rw[irw] = ptvals.get_u();
+    if (do_rho){
       //rho_rw[irw] = intp->get_rho();
       rho_rw[irw] = ptvals.get_rho();
     }
-    if (output_fields["p"]){
+    if (do_p){
       //p_rw[irw] = intp->get_p();
       p_rw[irw] = ptvals.get_p();
     }

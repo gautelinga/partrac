@@ -6,12 +6,11 @@
 #include "Interpol.hpp"
 #include "Initializer.hpp"
 #include "stats.hpp"
-#include "MPIwrap.hpp"
 
 
 class Topology {
 public:
-  Topology(ParticleSet& ps, const partrac::Params& prm, MPIwrap& mpi);
+  Topology(ParticleSet& ps, const partrac::Params& prm);
   int dim();
   void compute_maps();
   void clear();
@@ -39,7 +38,7 @@ public:
   void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
   void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
-  void load_initial_state(std::shared_ptr<Initializer> init_state);
+  void load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm);
   template<typename T>
   void write_statistics(std::ofstream &statfile, const double t, const double ds_max, //const bool do_dump_hist, const std::string histfolder, 
                         T& integrator);
@@ -53,11 +52,9 @@ private:
   bool inject_edges;
   bool verbose;
   Uint filter_target;
-
-  MPIwrap& m_mpi;
 };
 
-Topology::Topology(ParticleSet& ps, const partrac::Params& prm, MPIwrap& mpi) : ps(ps), m_mpi(mpi) {
+Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
   ds_min = prm.get<double>("ds_min");
   ds_max = prm.get<double>("ds_max");
   curv_refine_factor = prm.get<double>("curv_refine_factor");
@@ -207,9 +204,8 @@ bool Topology::resize(const double ds){
 
 void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const {
   prm.set<double>("t", t);
-  //prm.n_accepted = ps.get_accepted();
-  //prm.n_declined = ps.get_declined();
-  //prm.Nrw = Nrw;
+  // refinement and coarsening change the count, so refresh it here
+  prm.set<Uint>("Nrw_current", ps.N());
   prm.dump(checkpointsfolder);
   // dump_positions(checkpointsfolder + "/positions.pos", ps.x_rw, ps.Nrw);
   ps.dump_positions(checkpointsfolder + "/positions.pos");
@@ -258,60 +254,13 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
 }
 
 void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
-  /*
-  std::cout << "Process " << m_mpi.rank() << ": " << ps.N() << " " << faces.size() << " " << edges.size() << std::endl;
-  auto num_nodes_ = m_mpi.gather(ps.N());
-  auto num_edges_ = m_mpi.gather(edges.size());
-  std::vector<int> cum_nodes_; 
-  std::vector<int> cum_edges_;
-  cum_nodes_.resize(m_mpi.size());
-  cum_edges_.resize(m_mpi.size());
-  if (m_mpi.rank() == 0){
-    for (int i=0; i<m_mpi.size(); ++i){
-      cum_nodes_[i] = (i > 0) ? (cum_nodes_[i-1] + num_nodes_[i-1]) : 0;
-      cum_edges_[i] = (i > 0) ? (cum_edges_[i-1] + num_edges_[i-1]) : 0;
-    }
-  }
-  auto inode0 = m_mpi.scatter(cum_nodes_);
-  auto iedge0 = m_mpi.scatter(cum_edges_);
-  // std::cout << "p" << m_mpi.rank() << " " << inode0 << std::endl;
-
-  EdgesType all_edges = m_mpi.wrapEdges(edges, inode0);
-  FacesType all_faces = m_mpi.wrapFaces(faces, iedge0);
-  // std::cout << "WORKED: " << m_mpi.rank() << " " << all_edges.size() << std::endl;
-  
-  for (auto &el : all_edges){
-    std::cout << "(" << el.first[0] << ", " << el.first[1] << "): " << el.second << std::endl;
-  }
-  for (auto &el : all_faces){
-    std::cout << "(" << el.first[0] << ", " << el.first[1] << ", " << el.first[2] << "): " << el.second << std::endl;
-  }
-
-  m_mpi.barrier();
-
-  Uint all_Nrw = cum_nodes_[m_mpi.size()-1] + num_nodes_[m_mpi.size()-1];
-  Interpol* intp_dummy;
-  ParticleSet all_ps(intp_dummy, all_Nrw, m_mpi);
-  all_ps.reduce(ps, output_fields);
-
-  if (dim() > 0)
-    mesh2hdf(h5f, groupname, all_ps, all_faces, all_edges);
-  all_ps.dump_hdf5(h5f, groupname, output_fields);*/
   
   if (dim() > 0)
     mesh2hdf(h5f, groupname, ps, faces, edges, output_fields["tau"]);
   ps.dump_hdf5(h5f, groupname, output_fields);
 }
 
-void Topology::load_initial_state(std::shared_ptr<Initializer> init_state){
-  /*std::vector<Vector3d> pos_init;
-  pos_init = initial_positions(prm.init_mode,
-                               prm.init_weight,
-                               prm.Nrw,
-                               {prm.x0, prm.y0, prm.z0},
-                               prm.La, prm.Lb,
-                               prm.ds_init, t0,
-                                 intp, gen, mesh.edges, mesh.faces);*/
+void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm){
   clear();
 
   edges = init_state->edges;
@@ -332,6 +281,9 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state){
     }
   }
   ps.add(init_state->nodes, 0);
+  // Nrw is the request; these are what was placed
+  prm.set<Uint>("Nrw_init", ps.N());
+  prm.set<Uint>("Nrw_current", ps.N());
 }
 
 template<typename T>
@@ -342,7 +294,7 @@ void Topology::write_statistics( std::ofstream &statfile
                            //const bool do_dump_hist,
                            //const std::string histfolder,
                            //std::shared_ptr<Integrator> integrator){
-  write_stats(m_mpi, statfile, t, ps, faces, edges, ds_max, //do_dump_hist, histfolder,
+  write_stats(statfile, t, ps, faces, edges, ds_max, //do_dump_hist, histfolder,
               integrator.get_accepted(), integrator.get_declined());
               //integrator->get_accepted(), integrator->get_declined());
 }

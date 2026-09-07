@@ -29,19 +29,23 @@ std::set<Uint> Integrator_RK4::step(InterpolType& intp, T& ps, const Real t, con
     for (auto & particle : ps.particles() ){
         Vector x = particle.x();
         int cell_id = particle.cell_id(); // to accelerate search
+        PointValues ptvals(intp.get_U0());
 
-        intp.probe(x, t, cell_id);
-        Vector k1 = intp.get_u();
-        intp.probe(x + k1 * dt/2, t + dt/2, cell_id);
-        Vector k2 = intp.get_u();
-        intp.probe(x + k2 * dt/2, t + dt/2, cell_id);
-        Vector k3 = intp.get_u();
-        intp.probe(x + k3 * dt, t + dt, cell_id);
-        Vector k4 = intp.get_u();
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
+        Vector k1 = ptvals.get_u();
+        intp.locate(x + k1 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k1 * dt/2, t + dt/2, cell_id, ptvals);
+        Vector k2 = ptvals.get_u();
+        intp.locate(x + k2 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k2 * dt/2, t + dt/2, cell_id, ptvals);
+        Vector k3 = ptvals.get_u();
+        intp.locate(x + k3 * dt, t + dt, cell_id);
+        intp.evaluate(x + k3 * dt, t + dt, cell_id, ptvals);
+        Vector k4 = ptvals.get_u();
 
         Vector dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
-        intp.probe(x + dx, t+dt, cell_id);
-        if (intp.inside_domain()){
+        if (intp.locate(x + dx, t+dt, cell_id)){
             ++n_accepted;
             particle.x() = x + dx;
             particle.cell_id() = cell_id;
@@ -87,36 +91,36 @@ std::set<Uint> Integrator_RK4::step_vec(InterpolType& intp, T& ps, const Real t,
             Vector3d F3 = {0., 0., 0.};
             Vector3d F4 = {0., 0., 0.};
 
-            bool is_inside = intp.probe_light(x, t, cell_id);
+            bool is_inside = intp.locate(x, t, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x, t, cell_id, ptvals);
+                intp.evaluate(x, t, cell_id, ptvals);
                 k1 = ptvals.get_u();
                 Matrix J1 = ptvals.get_J();
                 F1 = J1 * n;
             }
-            is_inside = intp.probe_light(x + k1 * dt/2, t + dt/2, cell_id);
+            is_inside = intp.locate(x + k1 * dt/2, t + dt/2, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x + k1 * dt/2, t + dt/2, cell_id, ptvals);
+                intp.evaluate(x + k1 * dt/2, t + dt/2, cell_id, ptvals);
                 k2 = ptvals.get_u();
                 Vector n2 = n + F1 * dt/2;
                 Matrix J2 = ptvals.get_J();
                 F2 = J2 * n2;
             }
-            is_inside = intp.probe_light(x + k2 * dt/2, t + dt/2, cell_id);
+            is_inside = intp.locate(x + k2 * dt/2, t + dt/2, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x + k2 * dt/2, t + dt/2, cell_id, ptvals);
+                intp.evaluate(x + k2 * dt/2, t + dt/2, cell_id, ptvals);
                 k3 = ptvals.get_u();
                 Vector n3 = n + F2 * dt/2;
                 Matrix J3 = ptvals.get_J();
                 F3 = J3 * n3;
             }
-            is_inside = intp.probe_light(x + k3 * dt, t + dt, cell_id);
+            is_inside = intp.locate(x + k3 * dt, t + dt, cell_id);
             if (is_inside)
             {
-                intp.probe_heavy(x + k3 * dt, t + dt, cell_id, ptvals);
+                intp.evaluate(x + k3 * dt, t + dt, cell_id, ptvals);
                 k4 = ptvals.get_u();
                 Vector n4 = n + F3 * dt;
                 Matrix J4 = ptvals.get_J();
@@ -125,14 +129,14 @@ std::set<Uint> Integrator_RK4::step_vec(InterpolType& intp, T& ps, const Real t,
             Vector dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
             Vector el = n + (F1 + 2*F2 + 2*F3 + F4) * dt/6;
 
-            is_inside = intp.probe_light(x + dx, t+dt, cell_id);
+            is_inside = intp.locate(x + dx, t+dt, cell_id);
             if (is_inside){
                 ++n_accepted_loc;
                 particle.x() = x + dx;
                 particle.n() = el/el.norm();
                 particle.w() += log(el.norm());
 
-                intp.probe_heavy(x + dx, t+dt, cell_id, ptvals);
+                intp.evaluate(x + dx, t+dt, cell_id, ptvals);
                 Matrix J = ptvals.get_J();
                 particle.S() = particle.n().transpose() * J * particle.n();
                 particle.cell_id() = cell_id;
@@ -162,36 +166,40 @@ std::set<Uint> Integrator_RK4::step_tensor(InterpolType& intp, T& ps, const Real
         Vector x = particle.x();
         Matrix F = particle.F();
         int cell_id = particle.cell_id(); // to accelerate search
+        PointValues ptvals(intp.get_U0());
 
-        intp.probe(x, t, cell_id);
-        Vector k1 = intp.get_u();
+        intp.locate(x, t, cell_id);
+        intp.evaluate(x, t, cell_id, ptvals);
+        Vector k1 = ptvals.get_u();
         
-        Matrix J1 = intp.get_J();
+        Matrix J1 = ptvals.get_J();
         Matrix dFdt1 = J1 * F;
 
-        intp.probe(x + k1 * dt/2, t + dt/2, cell_id);
-        Vector k2 = intp.get_u();
+        intp.locate(x + k1 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k1 * dt/2, t + dt/2, cell_id, ptvals);
+        Vector k2 = ptvals.get_u();
         Matrix F2 = F + dFdt1 * dt/2;
-        Matrix J2 = intp.get_J();
+        Matrix J2 = ptvals.get_J();
         Matrix dFdt2 = J2 * F2;
 
-        intp.probe(x + k2 * dt/2, t + dt/2, cell_id);
-        Vector k3 = intp.get_u();
+        intp.locate(x + k2 * dt/2, t + dt/2, cell_id);
+        intp.evaluate(x + k2 * dt/2, t + dt/2, cell_id, ptvals);
+        Vector k3 = ptvals.get_u();
         Matrix F3 = F + dFdt2 * dt/2;
-        Matrix J3 = intp.get_J();
+        Matrix J3 = ptvals.get_J();
         Matrix dFdt3 = J3 * F3;
 
-        intp.probe(x + k3 * dt, t + dt, cell_id);
-        Vector k4 = intp.get_u();
+        intp.locate(x + k3 * dt, t + dt, cell_id);
+        intp.evaluate(x + k3 * dt, t + dt, cell_id, ptvals);
+        Vector k4 = ptvals.get_u();
         Matrix F4 = F + dFdt3 * dt;
-        Matrix J4 = intp.get_J();
+        Matrix J4 = ptvals.get_J();
         Matrix dFdt4 = J4 * F4;
 
         Vector dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
         Matrix dF = (dFdt1 + 2*dFdt2 + 2*dFdt3 + dFdt4) * dt/6;
 
-        intp.probe(x + dx, t+dt, cell_id);
-        if (intp.inside_domain()){
+        if (intp.locate(x + dx, t+dt, cell_id)){
             ++n_accepted;
             particle.x() = x + dx;
             particle.F() = F + dF;

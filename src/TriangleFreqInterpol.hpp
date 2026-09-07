@@ -13,17 +13,8 @@ public:
   TriangleFreqInterpol(const std::string& infilename);
   ~TriangleFreqInterpol() { std::cout << "Destructing TriangleFreqInterpol." << std::endl; };
   void update(const double t);
-  void probe(const Vector3d &x, const double t);
-  void probe(const Vector3d &x, const double t, int& id_prev);
-  bool probe_light(const Vector3d &x, const double t, int& id_prev);
-  void probe_heavy(const Vector3d &x, const double t, const int id_prev, PointValues& fields);
-  bool inside_domain() const { return inside; };
-  double get_ux(){ return U[0]; };
-  double get_uy(){ return U[1]; };
-  double get_uz(){ return 0.; };
-  double get_ax() { return A[0]; };
-  double get_ay() { return A[1];};
-  double get_az() { return 0.;};
+  bool locate(const Vector3d &x, const double t, int& id_prev);
+  void evaluate(const Vector3d &x, const double t, const int id_prev, PointValues& fields);
   double get_t_min() { return stod(dolfin_params["t_min"]); };
   double get_t_max() { return stod(dolfin_params["t_max"]); };
   double get_rho() {
@@ -31,21 +22,11 @@ public:
       return stod(dolfin_params["rho"]);
     else {
       std::cout << "dolfin_params does not contain \"rho\"" << std::endl;
-      exit(0);
+      exit(1);
     }
   };
-  double get_p() { return P;};
-  double get_uxx() { return gradU(0, 0); };
-  double get_uxy() { return gradU(0, 1); };
-  double get_uxz() { return 0.; };
-  double get_uyx() { return gradU(1, 0); };
-  double get_uyy() { return gradU(1, 1); };
-  double get_uyz() { return 0.; };
-  double get_uzx() { return 0.; };
-  double get_uzy() { return 0.; };
-  double get_uzz() { return 0.; };
-  Matrix3d get_grada() { return gradA; };
-  void probe(const Vector3d &x){ probe(x, this->t_update); };
+  using Interpol::locate;
+  using Interpol::evaluate;
   void print_found() {
     auto found_same = std::reduce(found_same_.begin(), found_same_.end());
     auto found_nneigh = std::reduce(found_nneigh_.begin(), found_nneigh_.end());

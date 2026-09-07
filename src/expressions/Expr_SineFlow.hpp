@@ -22,31 +22,15 @@ public:
   };
   void eval(const Vector3d &x, const double t) {
     is_inside = true;
-
-    int i = floor(t/tau);
-    double chi = chi_[i % chi_.size()];
-    int j = flowdir_[i % flowdir_.size()];
-    int k = depdir_[i % flowdir_.size()];
-    assert(j < 2 && j >= 0);
-    assert(k < 2 && k >= 0);
-    // cout << ":: " << chi << " " << j << endl;
-
-    U = {0., 0., 0.};
-    Ujk <<
-      0., 0., 0.,
-      0., 0., 0.,
-      0., 0., 0.;
-    U(j) = u_inf * sin(2*M_PI*x[k]/L[k] + chi);
-    Ujk(j, k) = u_inf * 2*M_PI/L[k] * cos(2*M_PI*x[k]/L[k] + chi);
+    compute(x, t, U, Ujk);
   };
-  bool inside(const Vector3d &x, const double t __attribute__((unused))) {
-    std::cout << "Not implemented yet!" << std::endl;
-    exit(0);
-    return false;
+  bool inside(const Vector3d &x __attribute__((unused)), const double t __attribute__((unused))) {
+    return true;
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
-    std::cout << "Not implemented yet!" << std::endl;
-    exit(0);
+  void eval(const Vector3d &x, const double t, PointValues& ptvals) {
+    compute(x, t, ptvals.U, ptvals.gradU);
+    ptvals.P = p_inf;
+    ptvals.Rho = rho_inf;
   };
   double ux() { return U(0); };
   double uy() { return U(1); };
@@ -63,6 +47,23 @@ public:
   double uzy() { return Ujk(2, 1); };
   double uzz() { return Ujk(2, 2); };
 private:
+  // Writes no members: the PointValues overload runs inside an omp for
+  void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_) const {
+    int i = floor(t/tau);
+    double chi = chi_[i % chi_.size()];
+    int j = flowdir_[i % flowdir_.size()];
+    int k = depdir_[i % depdir_.size()];
+    assert(j < 2 && j >= 0);
+    assert(k < 2 && k >= 0);
+
+    U_ = {0., 0., 0.};
+    gradU_ <<
+      0., 0., 0.,
+      0., 0., 0.,
+      0., 0., 0.;
+    U_(j) = u_inf * sin(2*M_PI*x[k]/L[k] + chi);
+    gradU_(j, k) = u_inf * 2*M_PI/L[k] * cos(2*M_PI*x[k]/L[k] + chi);
+  };
   std::vector<double> chi_;
   std::vector<int> flowdir_;
   std::vector<int> depdir_;

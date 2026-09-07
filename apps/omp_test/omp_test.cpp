@@ -23,55 +23,6 @@
 // #include "Integrator.hpp"
 
 
-/*
-class Integrator_Omp : public Integrator {
-public:
-  Integrator_Omp(const int int_order);
-  ~Integrator_Omp() {};
-  template<typename InterpolType, typename T>
-  std::set<Uint> step(InterpolType&, T&, double t, double s);
-protected:
-  int      m_int_order;
-};
-
-template<typename InterpolType, typename T>
-std::set<Uint> Integrator_Omp::step(InterpolType& intp, T& ps, const double t, const double dt) {
-    std::set<Uint> outside_nodes;
-
-    for (Uint i=0; i < ps.N(); ++i){
-        Vector3d x = ps.x(i);
-
-        int cell_id = ps.get_cell_id(i);
-
-        intp.probe(x, t, cell_id);
-
-        Vector3d u_1 = intp.get_u();
-
-        bool is_inside = false;
-        if (uabs_est > m_u_min && ps.t_loc(i) < m_T){
-
-            Vector3d dx = u_1 * dt;
-
-            // Second-order terms
-            if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
-            }
-        }
-        // count things
-        if (is_inside){
-            ++n_accepted;
-            ps.set_x(i, x + dx);
-            ps.set_t_loc(i, ps.t_loc(i) + dt);
-            ps.set_cell_id(i, cell_id);
-        }
-        else {
-            outside_nodes.insert(i);
-            ++n_declined;
-        }
-    }
-    return outside_nodes;
-}
-*/
 
 std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
@@ -89,15 +40,7 @@ std::string get_newfoldername(const std::string& rwfolder, const partrac::Params
   return newfoldername;
 }
 
-// Parameters accepted by this app
-partrac::Schema omp_test_schema(){
-  partrac::Schema s("omp_test");
-  add_common_app_params(s);
-  add_experimental_initializer_params(s);
-  s.require<int>("int_order", "integration order");
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  return s;
-}
+#include "omp_test_schema.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -111,7 +54,7 @@ int main(int argc, char* argv[])
     // Input parameters
     if (argc < 2) {
         std::cout << "Please specify an input file." << std::endl;
-        return 0;
+        return 1;
     }
 
     partrac::Params prm = partrac::parse_or_exit(omp_test_schema(), argc, argv);
@@ -126,7 +69,7 @@ int main(int argc, char* argv[])
         omp_set_num_threads(prm.get<int>("num_threads"));
     }
 
-    std::string infilename = std::string(argv[1]);
+    std::string infilename = prm.input_file();
     TriangleInterpol intp(infilename);
     intp.set_U0(prm.get<double>("U"));
     intp.set_int_order(prm.get<int>("int_order"));
@@ -149,7 +92,7 @@ int main(int argc, char* argv[])
 
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
 
-    RandomPointsInitializer init_state(key, prm, gens[0]);
+    experimental::RandomPointsInitializer init_state(key, prm, gens[0]);
     init_state.probe(intp);
     init_state.initialize(ps);
 
@@ -170,7 +113,6 @@ int main(int argc, char* argv[])
 
     Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
     Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
-    Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
     Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
 
     std::map<std::string, bool> output_fields;
@@ -220,8 +162,8 @@ int main(int argc, char* argv[])
             Vector3d x = particle.x();
             int cell_id = particle.cell_id();
             PointValues ptvals(prm.get<double>("U"));
-            bool is_inside = intp.probe_light(x, t, cell_id);
-            intp.probe_heavy(x, t, cell_id, ptvals);
+            bool is_inside = intp.locate(x, t, cell_id);
+            intp.evaluate(x, t, cell_id, ptvals);
             
             Vector3d dx = ptvals.get_u() * dt;
             if (prm.get<int>("int_order") > 1) dx += 0.5*(ptvals.get_Ju() + ptvals.get_a()) * dt * dt;
@@ -231,7 +173,7 @@ int main(int argc, char* argv[])
                 dx += sqrt2Dmdt * eta;
             }
 
-            is_inside = intp.probe_light(x+dx, t+dt, cell_id);
+            is_inside = intp.locate(x+dx, t+dt, cell_id);
             if (is_inside) {
                 particle.x() = x + dx;
                 particle.cell_id() = cell_id;

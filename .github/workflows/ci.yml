@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Dolfin is a heavy dependency to provision, and the configuration that keeps
+  # breaking is the one without it: eight of the fourteen apps are skipped then,
+  # so a change to the shared headers can break it without touching an app.
+  build:
+    name: dolfin OFF, ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
+            python3-pytest python3-numpy python3-h5py
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: make -C build -j$(nproc)
+
+      - name: Check the expected apps were built
+        # a silently skipped app is what the NEEDS_DOLFIN guard exists to prevent
+        run: |
+          expected="filaments filaments_felbmRK4 interpol partrac
+                    static_space_stepper tracervectors_analyticRK4"
+          for app in $expected; do
+            test -x "build/bin/$app" || { echo "missing build/bin/$app"; exit 1; }
+          done
+          built=$(ls build/bin | wc -l)
+          echo "built $built apps"
+          test "$built" -eq 6 || { echo "expected 6 apps, got $built"; exit 1; }
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # Both build types carry the same warning flags, and the tree builds clean, so
+  # a new warning is a regression rather than something to be counted.
+  warnings:
+    name: no warnings (dolfin OFF)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build, and fail on any warning
+        run: |
+          make -C build -j$(nproc) 2>&1 | tee build.log
+          n=$(grep -c "warning:" build.log || true)
+          grep "warning:" build.log | sort -u || true
+          test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
+
+  # The other jobs build with dolfin off, which skips eight of the fourteen apps
+  # and every mesh test. The image is pinned: this repository publishes no
+  # "latest" tag, so an unpinned reference does not resolve.
+  dolfin:
+    name: dolfin ON (FEniCS container)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools the tests need
+        # the image has pytest, numpy and dolfin; h5py is what reads the dumps
+        run: python3 -m pip install --no-cache-dir h5py
+      - name: Configure
+        # Ninja, not make: the image installs ninja-build and no make.
+        # HDF5_ROOT because the image has only the mpich build, under a prefix
+        # cmake does not search and with no h5c++ wrapper to point the way.
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+      - name: Check every app was built
+        # with dolfin on, none of the NEEDS_DOLFIN guards should fire
+        run: |
+          built=$(ls build/bin | wc -l)
+          test "$built" -eq 14 || { ls build/bin; echo "expected 14 apps, got $built"; exit 1; }
+      - name: Test
+        # tests/test_mesh.py generates a mesh here rather than skipping
+        run: ctest --test-dir build --output-on-failure
+
+  # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
+  # SIGILL on an older machine. Check the option still reaches the compiler.
+  options:
+    name: option wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+      - name: Native arch on
+        run: |
+          cmake -S . -B build-native -DPARTRAC_ENABLE_DOLFIN=OFF -DPARTRAC_NATIVE_ARCH=ON
+          grep -q -- "-march=native" build-native/src/CMakeFiles/partrac_params.dir/flags.make
+      - name: Native arch off by default
+        run: |
+          cmake -S . -B build-plain -DPARTRAC_ENABLE_DOLFIN=OFF
+          ! grep -q -- "-march=native" build-plain/src/CMakeFiles/partrac_params.dir/flags.make

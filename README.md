@@ -18,15 +18,28 @@ Build out of tree, so the source folder stays clean:
 cmake -S . -B build
 make -C build -j
 ```
-The executables end up in `bin/`. To run the tests:
+The executables end up in `build/bin/`, inside the build tree, so a second
+build (Debug, or with dolfin off) does not overwrite the first. To run the
+tests:
 ```
 ctest --test-dir build --output-on-failure
 ```
 
 ## Running
 Passive tracers example:
-`./bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
+`./build/bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
 This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` and puts the simulation data into it.
+
+## Mesh examples
+The `data_example` folders for the mesh modes (`ppf_triangle_p2`,
+`test_triangle_p2`, `test_tet_p1`, `test_tet_p2`, `sine_trianglefreq_p2`) ship a
+`generate_up.py` rather than the mesh itself. Run it inside the folder to write
+`mesh.h5` and `up_0.h5`:
+```
+cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
+```
+It needs FEniCS/dolfin. `tests/test_mesh.py` does the same into a temporary
+folder, and skips itself when dolfin is not importable.
 
 ## Visualization
 Plotting the position:
@@ -38,7 +51,7 @@ an unrecognised parameter is an error rather than being silently ignored. Run an
 app with `--help` for its own list, with types, defaults and which parameters are
 required:
 ```
-./bin/partrac --help
+./build/bin/partrac --help
 ```
 Parameters are given as `key=value` after the input file. A parameter is either
 required, optional with a default, or computed by the program (`folder`, `t`,

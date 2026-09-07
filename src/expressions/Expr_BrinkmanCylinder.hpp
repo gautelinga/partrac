@@ -62,7 +62,7 @@ public:
     int i0 = floor(iest);
     int i1 = ceil(iest);
     double alpha = iest-i0;
-    return alpha*y[i0] + (1-alpha)*y[i1];
+    return (1-alpha)*y[i0] + alpha*y[i1];
   };
 private:
   std::vector<double> y;
@@ -76,6 +76,7 @@ public:
     R = getd(expr_params, "R");
     H = getd(expr_params, "H");
     mu = getd(expr_params, "mu");
+    Rho = getd(expr_params, "rho");
     x0 = {getd(expr_params, "x0"),
           getd(expr_params, "y0"),
           getd(expr_params, "z0")};
@@ -106,16 +107,6 @@ public:
 
     double rabs = sqrt(r2);
 
-    /*
-    Ux = pow(sin(theta), 2)*fr(r) + f(r)*pow(cos(theta), 2)/r;
-    Uy = -sin(theta)*cos(theta)*fr(r) + f(r)*sin(theta)*cos(theta)/r;
-    // Hardcoded -- copied from consistency-checked Sympy code
-    Uxx = (pow(r, 2)*pow(sin(theta), 2)*frr(r) - 3*r*pow(sin(theta), 2)*fr(r) + r*fr(r) + 3*f(r)*pow(sin(theta), 2) - f(r))*cos(theta)/pow(r, 2);
-    Uxy = (pow(r, 2)*pow(sin(theta), 2)*frr(r) + 3*r*pow(cos(theta), 2)*fr(r) - 3*f(r)*pow(cos(theta), 2))*sin(theta)/pow(r, 2);
-    Uyx = (-pow(r, 2)*pow(cos(theta), 2)*frr(r) + 3*r*pow(cos(theta), 2)*fr(r) - r*fr(r) - 3*f(r)*pow(cos(theta), 2) + f(r))*sin(theta)/pow(r, 2);
-    Uyy = (-pow(r, 2)*pow(sin(theta), 2)*frr(r) + 3*r*pow(sin(theta), 2)*fr(r) - r*fr(r) - 3*f(r)*pow(sin(theta), 2) + f(r))*cos(theta)/pow(r, 2);
-    P = p_inf - pow(zeta, 2)*cos(theta)*(r + (1+beta(zeta, 1.0))/r);
-    */
 
     double st = r[1]/rabs; // sin(theta);
     double ct = r[0]/rabs; // cos(theta);
@@ -182,11 +173,12 @@ public:
       0.0,
       0.0;
     ptvals.P = p_inf - mu * u_inf / R * prf_r * ct;
+    ptvals.Rho = Rho;
   };
   double ux() { return Ux; };
   double uy() { return Uy; };
   double uz() { return Uz; };
-  double rho() { return getd(expr_params, "rho"); };
+  double rho() { return Rho; };
   double p() { return P; };
   double uxx() { return Uxx; };
   double uxy() { return Uxy; };
@@ -201,6 +193,7 @@ private:
   double R;  // Radius of cylinder
   double H;  // Height of cylinder
   double mu;  // Viscosity
+  double Rho;
   Vector3d x0;  // Center of cylinder
   double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
@@ -208,7 +201,7 @@ private:
   // Useful quantitites
   double Ux;
   double Uy;
-  double Uz;
+  double Uz = 0.;  // the flow is in the plane
   double P;
   double Uxx, Uxy, Uyx, Uyy;
   double Uxz = 0.;
