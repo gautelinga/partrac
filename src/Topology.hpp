@@ -12,6 +12,7 @@ class Topology {
 public:
   Topology(ParticleSet& ps, const partrac::Params& prm);
   int dim();
+  void check_topology();
   void compute_maps();
   void clear();
   Uint refine();
@@ -28,6 +29,8 @@ public:
   Edge2FacesType edge2faces;
   Node2EdgesType node2edges;
   std::vector<Vector3d> pos_inj;
+  int dim0 = -1;   // the dimension the mesh settled into, -1 until it has one
+  double Dm = 0.;  // not every app with a mesh has an integrator to declare it
   EdgesType edges_inj;
   EdgesListType edges_inlet;
   NodesListType nodes_inlet;
@@ -62,6 +65,35 @@ Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
   inject_edges = prm.get<bool>("inject_edges");
   verbose = prm.get<bool>("verbose");
   filter_target = prm.get<int>("filter_target");
+  Dm = prm.has("Dm") ? prm.get<double>("Dm") : 0.;
+}
+
+// Nothing left to advect, or a manifold that changed dimension: a strip that
+// has lost its last edge, or a sheet its last face, has nothing left to
+// stretch, and every row written afterwards would sit under a header that no
+// longer describes it. Injection can legitimately start from nothing, so the
+// dimension latches on first use.
+void Topology::check_topology(){
+  if (ps.N() == 0){
+    std::cerr << "Error: no particles left. Stopping." << std::endl;
+    exit(1);
+  }
+  const int d = dim();
+  if (dim0 < 0){
+    if (d > 0){
+      dim0 = d;
+      if (Dm > 0.)
+        std::cerr << "Warning: Dm = " << Dm << " > 0 on a " << d
+                  << "-dimensional mesh. Brownian motion and material "
+                  << "deformation are normally not compatible." << std::endl;
+    }
+    return;
+  }
+  if (d == dim0) return;
+  std::cerr << "Error: the mesh changed dimension, from " << dim0 << " to " << d
+            << ", with " << ps.N() << " nodes and " << edges.size()
+            << " edges left. Stopping." << std::endl;
+  exit(1);
 }
 
 int Topology::dim(){
@@ -126,24 +158,28 @@ void Topology::integrate_tau(const double dt, const double tau_max){
 }
 
 Uint Topology::refine(){
-  return refinement(faces, edges,
-                    edge2faces, node2edges,
-                    edges_inlet,
-                    ps, ds_max,
-                    curv_refine_factor,
-                    cut_if_stuck);
+  Uint n = refinement(faces, edges,
+                      edge2faces, node2edges,
+                      edges_inlet,
+                      ps, ds_max,
+                      curv_refine_factor,
+                      cut_if_stuck);
+  check_topology();
+  return n;
 }
 
 Uint Topology::coarsen(){
-  return coarsening(faces, edges,
-                    edge2faces, node2edges,
-                    edges_inlet, nodes_inlet,
-                    ps, ds_min,
-                    curv_refine_factor);
+  Uint n = coarsening(faces, edges,
+                      edge2faces, node2edges,
+                      edges_inlet, nodes_inlet,
+                      ps, ds_min,
+                      curv_refine_factor);
+  check_topology();
+  return n;
 }
 
 Uint Topology::inject(){
-  return injection(pos_inj,
+  Uint n = injection(pos_inj,
                    edges_inj,
                    edges_inlet,
                    nodes_inlet,
@@ -154,6 +190,8 @@ Uint Topology::inject(){
                    ps,
                    inject_edges,
                    verbose);
+  check_topology();
+  return n;
 }
 
 void Topology::compute_interior(){
@@ -181,7 +219,9 @@ void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
 }
 
 bool Topology::filter(){
-  return filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
+  bool changed = filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
+  check_topology();
+  return changed;
 }
 
 Uint Topology::remove_beyond(const int exit_dim, const double Ln){
@@ -195,6 +235,7 @@ Uint Topology::remove_beyond(const int exit_dim, const double Ln){
     }
   }
   remove_nodes_safe(node_isactive);
+  check_topology();
   return count;
 }
 
@@ -284,6 +325,7 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partr
   // Nrw is the request; these are what was placed
   prm.set<Uint>("Nrw_init", ps.N());
   prm.set<Uint>("Nrw_current", ps.N());
+  check_topology();
 }
 
 template<typename T>

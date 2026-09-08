@@ -143,6 +143,47 @@ def test_nrw_is_an_input_and_the_counts_are_recorded_separately(case):
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+def test_an_interval_of_zero_turns_that_output_off(case):
+    # 0 means off, at t = 0 too, and writes no file at all. Before, the clamp
+    # raised dump_intv=0 to dt (every step) and checkpoint_intv=0 divided by zero.
+    args = [a for a in BASE if not a.startswith("T=")]
+    r = run_full(case, args + ["T=0.05", "init_mode=uniform_x", "random=false",
+                               "seed=1", "dump_intv=0", "stat_intv=0",
+                               "checkpoint_intv=0"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    written = {p.name for p in case.rglob("*") if p.is_file()}
+    assert not [f for f in written if f.startswith(("data_from_t", "tdata_from_t"))]
+
+    # and with them on, those files are there
+    other = case / "on"
+    other.mkdir()
+    shutil.copy(EXAMPLE, other / "expr_params.dat")
+    r = run_full(other, args + ["T=0.05", "init_mode=uniform_x", "random=false",
+                                "seed=1", "dump_intv=0.05", "stat_intv=0.05"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    on = {p.name for p in other.rglob("*") if p.is_file()}
+    assert [f for f in on if f.startswith("data_from_t")]
+    assert [f for f in on if f.startswith("tdata_from_t")]
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+def test_a_negative_interval_is_rejected(case):
+    r = run_check(case, BASE + ["init_mode=uniform_x", "dump_intv=-1"])
+    assert r.returncode != 0
+    assert "negative" in r.stderr
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+def test_a_huge_interval_does_not_overflow_the_step_count(case):
+    # int(1e9/0.005) does not fit an int; it used to wrap to a negative value
+    args = [a for a in BASE if not a.startswith(("dt=", "T="))]
+    r = run_full(case, args + ["dt=0.005", "T=0.05", "init_mode=uniform_x",
+                               "random=false", "seed=1", "dump_intv=1e9",
+                               "stat_intv=1e9", "checkpoint_intv=1e9"])
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_help_lists_required_parameters(case):
     r = subprocess.run([PARTRAC, "--help"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0

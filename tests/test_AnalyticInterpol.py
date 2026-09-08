@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -136,3 +137,52 @@ if __name__ == "__main__":
     #if len(sys.argv) > 1 and sys.argv[1] == "generate":
     #    print("asdf")
     test_batchelor(0.1)
+
+
+def analytic_examples():
+    """The shipped expr_params.dat files that name an analytic expression."""
+    root = os.path.join(REPO, "data_example")
+    return sorted(d for d in os.listdir(root)
+                  if os.path.exists(os.path.join(root, d, "expr_params.dat"))
+                  and any(l.startswith("expression=") for l
+                          in open(os.path.join(root, d, "expr_params.dat"))))
+
+
+@pytest.mark.parametrize("case", analytic_examples())
+def test_every_shipped_analytic_example_has_domain_bounds(case):
+    # sine_flow, abc_flow and batchelor_vortex all shipped without the bounds
+    # AnalyticInterpol reads, so none of them could be run at all
+    src = os.path.join(REPO, "data_example", case, "expr_params.dat")
+    keys = dict(l.strip().split("=", 1) for l in open(src) if "=" in l)
+    missing = [k + b for k in "xyz" for b in ("_min", "_max") if k + b not in keys]
+    assert not missing, "%s is missing %s" % (case, ", ".join(missing))
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@pytest.mark.parametrize("case", analytic_examples())
+def test_every_shipped_analytic_example_runs(case, tmp_path):
+    src = os.path.join(REPO, "data_example", case, "expr_params.dat")
+    keys = dict(l.strip().split("=", 1) for l in open(src) if "=" in l)
+    shutil.copy(src, tmp_path / "expr_params.dat")
+    centre = ["%s0=%g" % (k, (float(keys[k + "_min"]) + float(keys[k + "_max"])) / 2)
+              for k in "xyz"]
+    r = subprocess.run(
+        [PARTRAC, str(tmp_path / "expr_params.dat"), "mode=analytic",
+         "init_mode=uniform_x", "La=0.2", "Nrw=20", "Nrw_max=20", "ds_max=1e9",
+         "ds_min=1e-12", "refine=false", "coarsen=false", "Dm=0", "int_order=1",
+         "dt=0.01", "T=0.02", "stat_intv=0.01", "dump_intv=1e9",
+         "checkpoint_intv=1e9", "random=false", "seed=1"] + centre,
+        capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+    # exiting 0 is not enough: with every particle outside the domain partrac
+    # writes a stats file of NaN and still succeeds
+    stats = list(tmp_path.rglob("tdata_from_t*.dat"))
+    assert len(stats) == 1
+    rows = [l for l in stats[0].read_text().splitlines() if l.strip()]
+    head = [h.strip() for h in rows[0].lstrip("# ").split("\t") if h.strip()]
+    for row in rows[1:]:
+        values = [v for v in row.split("\t") if v.strip()]
+        assert len(values) == len(head), "tdata columns do not match its header"
+        assert all(np.isfinite(float(v)) for v in values), row
+    assert float(dict(zip(head, values))["Nrw"]) > 0

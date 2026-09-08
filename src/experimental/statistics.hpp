@@ -33,15 +33,20 @@ void write_stats( std::ofstream &statfile
     x_mean += particle.x(); // /Nrw;
     u_mean += particle.u(); // /Nrw;
   }
-  x_mean /= Nrw;
-  u_mean /= Nrw;
+  // the mean of nothing, and the spread of a single point, are both
+  // undefined; report zero rather than a NaN that spreads downstream
+  if (Nrw > 0){
+    x_mean /= Nrw;
+    u_mean /= Nrw;
+  }
 
-  for ( auto & particle : ps.particles() )
-  {
-    // Sample variance
-    Vector dx = particle.x()-x_mean;
-    dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
-
+  if (Nrw > 1){
+    for ( auto & particle : ps.particles() )
+    {
+      // Sample variance
+      Vector dx = particle.x()-x_mean;
+      dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
+    }
   }
   
   if (ps.dim() > 0){
@@ -143,14 +148,6 @@ void write_stats( std::ofstream &statfile
 }
 
 void write_stats_header(std::ofstream &statfile, Uint mesh_dim){
-  std::string wsumstr = "";
-  if (mesh_dim == 1){
-    wsumstr = "s";
-  }
-  else if (mesh_dim == 2){
-    wsumstr = "A";
-  }
-
   statfile << "# t" << "\t"                   //  1
            << "x_mean" << "\t"                //  2
            << "y_mean" << "\t"                //  3
@@ -164,14 +161,11 @@ void write_stats_header(std::ofstream &statfile, Uint mesh_dim){
            << "Nrw" << "\t"                   // 11
            << "n_declined" << "\t";           // 12
   if (mesh_dim > 0){
-    statfile << "n_edges \t"                                          // 13
-             << "elong_mean" << "\t"                                  // 14
-             << "elong2_mean" << "\t"                                 // 15
-             //<< wsumstr << "\t"                                    // 14
-             //<< wsumstr << "0" << "\t"                             // 15
-             << "logelong_mean" << "\t";                            // 16
-            // << "logelong_" << wsumstr << "mean" << "\t"           // 17
-            // << "logelong_" << wsumstr << "0mean" << "\t";         // 18
+    statfile << "n_edges" << "\t"               // 13
+             << "elong_mean" << "\t"            // 14
+             << "elong2_mean" << "\t"           // 15
+             << "logelong_mean" << "\t"         // 16
+             << "logelong_var" << "\t";         // 17
   }
   statfile << std::endl;
 }

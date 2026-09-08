@@ -1,5 +1,11 @@
 t_min=0.0
 t_max=10000000.0
+x_min=0.0
+y_min=0.0
+z_min=0.0
+x_max=1.0
+y_max=1.0
+z_max=1.0
 Lx=1.0
 Ly=1.0
 Lz=1.0

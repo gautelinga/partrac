@@ -8,6 +8,7 @@
 #include "expressions/Expr_HagenPoiseuille.hpp"
 #include "expressions/Expr_PlanePoiseuille.hpp"
 #include "expressions/Expr_BrinkmanCylinder.hpp"
+#include "expressions/Expr_TaylorCouette.hpp"
 #include <fstream>
 
 #ifndef __ANALYTICINTERPOL_HPP
@@ -98,6 +99,11 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
            expr_params["expression"] == "BrinkmanCylinder"){
     std::cout << "BrinkmanCylinder selected" << std::endl;
     expr = std::make_shared<Expr_BrinkmanCylinder>(expr_params);
+  }
+  else if (expr_params["expression"] == "taylor_couette" ||
+           expr_params["expression"] == "TaylorCouette"){
+    std::cout << "TaylorCouette selected" << std::endl;
+    expr = std::make_shared<Expr_TaylorCouette>(expr_params);
   }
   else {
     std::cout << "Could not find expression: " << expr_params["expression"] << std::endl;

@@ -1050,31 +1050,46 @@ Uint strip_coarsening(EdgesType &edges,
         // double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
         // double ds_min_loc = ds_min/(1.0 + curv_refine_factor*kappa);
         double ds_min_loc = ds_min;
-        if (ds < ds_min_loc && edge_isactive[iedge]){
+        Uint new_inode = std::min(inode, jnode);
+        Uint old_inode = std::max(inode, jnode);
+        // An open strip ends in a node carrying a single edge, so a collapse
+        // has one neighbour to reattach, not two. With neither it is the last
+        // edge holding the strip together; collapsing it would leave a lone
+        // node, so leave it alone.
+        const bool has_j = node2edges[old_inode].size() > 1;
+        const bool has_k = node2edges[new_inode].size() > 1;
+
+        if (ds < ds_min_loc && edge_isactive[iedge] && (has_j || has_k)){
           edge_isactive[iedge] = false;
-
-          Uint new_inode = std::min(inode, jnode);
-          Uint old_inode = std::max(inode, jnode);
-
           node_isactive[old_inode] = false;
 
           std::vector<Uint> jedges(node2edges[old_inode].begin(),
                               node2edges[old_inode].end());
-          Uint jedge = get_other(jedges[0], jedges[1], iedge);
-          std::replace(edges[jedge].first.begin(), edges[jedge].first.end(),
-                  old_inode, new_inode);
           std::vector<Uint> kedges(node2edges[new_inode].begin(),
                               node2edges[new_inode].end());
-          Uint kedge = get_other(kedges[0], kedges[1], iedge);
+          Uint jedge = has_j ? get_other(jedges[0], jedges[1], iedge) : iedge;
+          Uint kedge = has_k ? get_other(kedges[0], kedges[1], iedge) : iedge;
 
-          edges[jedge].second += ds0/2;
-          edges[kedge].second += ds0/2;
+          if (has_j)
+            std::replace(edges[jedge].first.begin(), edges[jedge].first.end(),
+                    old_inode, new_inode);
+
+          // the reference length goes to the neighbours the edge had
+          if (has_j && has_k){
+            edges[jedge].second += ds0/2;
+            edges[kedge].second += ds0/2;
+          }
+          else if (has_j) edges[jedge].second += ds0;
+          else            edges[kedge].second += ds0;
 
           // Do something about tau, rho_prev?
 
           node2edges[old_inode].clear();
-          std::replace(node2edges[new_inode].begin(),
-                  node2edges[new_inode].end(), iedge, jedge);
+          if (has_j)
+            std::replace(node2edges[new_inode].begin(),
+                    node2edges[new_inode].end(), iedge, jedge);
+          else
+            node2edges[new_inode].remove(iedge);
 
           ps.collapse_nodes(inode, jnode, node2edges);
 

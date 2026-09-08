@@ -14,6 +14,7 @@
 #include "expressions/Expr_PlanePoiseuille.hpp"
 #include "expressions/Expr_SineFlow.hpp"
 #include "expressions/Expr_StokesSphere.hpp"
+#include "expressions/Expr_TaylorCouette.hpp"
 
 namespace {
 
@@ -230,4 +231,87 @@ TEST_CASE("BrinkmanCylinder", "[expr]") {
   // outside the cylinder, and away from the interpolation end points
   const Vector3d x{2.1, 1.3, 0.0}, x2{-1.8, 0.4, 0.0};
   check_all(e, x, x2, 0.);
+}
+
+
+namespace {
+
+Prm taylor_couette_params(){
+  return {{"R", "2.5"}, {"H", "3.0"}, {"K", "0.95"}, {"a", "0.4"},
+          {"c1", "1.8"}, {"c2", "1.2"}, {"c3", "0.17"}, {"rho", "1.2"},
+          {"p_inf", "0.5"}, {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
+}
+
+// the flow is given in cylindrical components; recover them from the Cartesian
+Vector3d cylindrical(Expr& e, const double s, const double theta, const double z){
+  const double c = std::cos(theta), sn = std::sin(theta);
+  PointValues pv(1.0);
+  e.eval({s*c, s*sn, z}, 0., pv);
+  return {pv.U[0]*c + pv.U[1]*sn, -pv.U[0]*sn + pv.U[1]*c, pv.U[2]};
+}
+
+}  // namespace
+
+TEST_CASE("TaylorCouette", "[expr]") {
+  Prm p = taylor_couette_params();
+  Expr_TaylorCouette e(p);
+  check_all(e, {1.4, 0.9, 0.3}, {-1.9, 0.7, -0.8}, 0.);
+  // across the cell, including near both plates where the corner terms bite
+  for (double z : {-1.4, -0.7, 0.0, 0.7, 1.4})
+    for (double s : {1.05, 1.5, 2.4}){
+      check_gradient(e, {s*0.6, s*0.8, z}, 0.);
+      check_incompressible(e, {s*0.6, s*0.8, z}, 0.);
+    }
+}
+
+TEST_CASE("TaylorCouette holds its boundary conditions", "[expr]") {
+  Prm p = taylor_couette_params();
+  Expr_TaylorCouette e(p);
+  const double R = 2.5, H = 3.0, tol = 1e-12;
+
+  for (double z : {-1.2, -0.5, 0.0, 0.5, 1.2}){
+    // the cylinders are impermeable, and the inner one turns at unit speed
+    REQUIRE(cylindrical(e, 1.0, 0.9, z)[0] == Approx(0.).margin(tol));
+    REQUIRE(cylindrical(e, R, 0.9, z)[0] == Approx(0.).margin(tol));
+    REQUIRE(cylindrical(e, 1.0, 0.9, z)[1] == Approx(1.).margin(tol));
+    // the fit leaves a small slip on the outer cylinder, from the corner terms
+    REQUIRE(std::abs(cylindrical(e, R, 0.9, z)[1]) < 5e-3);
+  }
+  for (double s : {1.2, 1.8, 2.3}){
+    for (double z : {-H/2, H/2}){
+      REQUIRE(cylindrical(e, s, 0.4, z)[2] == Approx(0.).margin(tol));  // no flux
+      REQUIRE(cylindrical(e, s, 0.4, z)[1] == Approx(0.).margin(tol));  // at rest
+    }
+  }
+}
+
+TEST_CASE("TaylorCouette is finite in the singular corners", "[expr]") {
+  // where the turning inner cylinder meets a stationary plate the fit is
+  // genuinely discontinuous; it must still not produce a NaN
+  Prm p = taylor_couette_params();
+  Expr_TaylorCouette e(p);
+  for (double z : {-1.5, 1.5}){
+    for (double s : {1.0, 1.0 + 1e-14, 2.5}){
+      PointValues pv(1.0);
+      e.eval({s, 0., z}, 0., pv);
+      INFO("s = " << s << ", z = " << z);
+      for (int i = 0; i < 3; ++i){
+        REQUIRE(std::isfinite(pv.U[i]));
+        for (int j = 0; j < 3; ++j) REQUIRE(std::isfinite(pv.gradU(i, j)));
+      }
+    }
+  }
+  // and inside the solid inner cylinder, which RK stages can dip into
+  for (double s : {0.3, 0.999}){
+    PointValues pv(1.0);
+    e.eval({s, 0., 0.4}, 0., pv);
+    INFO("s = " << s);
+    for (int i = 0; i < 3; ++i){
+      REQUIRE(std::isfinite(pv.U[i]));
+      for (int j = 0; j < 3; ++j) REQUIRE(std::isfinite(pv.gradU(i, j)));
+    }
+  }
+  REQUIRE(e.inside({1.5, 0., 0.}, 0.));
+  REQUIRE_FALSE(e.inside({0.5, 0., 0.}, 0.));
+  REQUIRE_FALSE(e.inside({1.5, 0., 1.6}, 0.));
 }

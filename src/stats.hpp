@@ -23,13 +23,19 @@ void write_stats(std::ofstream &statfile,
     x_mean += ps.x(irw); // /Nrw;
     u_mean += ps.u(irw); // /Nrw;
   }
-  x_mean /= Nrw;
-  u_mean /= Nrw;
+  // the mean of nothing, and the spread of a single point, are both
+  // undefined; report zero rather than a NaN that spreads downstream
+  if (Nrw > 0){
+    x_mean /= Nrw;
+    u_mean /= Nrw;
+  }
 
-  for (Uint irw=0; irw < Nrw; ++irw){
-    // Sample variance
-    Vector3d dx = ps.x(irw)-x_mean;
-    dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
+  if (Nrw > 1){
+    for (Uint irw=0; irw < Nrw; ++irw){
+      // Sample variance
+      Vector3d dx = ps.x(irw)-x_mean;
+      dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
+    }
   }
 
   statfile << t << "\t"                   //  1
@@ -54,9 +60,17 @@ void write_stats(std::ofstream &statfile,
   bool do_strip = edges.size() > 0 && faces.size() == 0;
   bool do_sheet = faces.size() > 0;
 
+  if (do_strip || do_sheet){
+    Uint n_too_long = 0;
+    for (EdgesType::const_iterator edgeit = edges.begin();
+         edgeit != edges.end(); ++edgeit)
+      if (ps.dist(edgeit->first[0], edgeit->first[1]) > ds_max)
+        ++n_too_long;
+    statfile << n_too_long << "\t";         // 14
+  }
+
   if (do_strip){
     // Strip method
-    Uint n_too_long = 0;
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
 
@@ -67,9 +81,6 @@ void write_stats(std::ofstream &statfile,
       int jnode = edgeit->first[1];
       double ds0 = edgeit->second;
       double ds = ps.dist(inode, jnode);
-      if (ds > ds_max){
-        ++n_too_long;
-      }
       double logelong = log(ds/ds0);
       logelong_wmean += logelong*ds;
       logelong_w0mean += logelong*ds0;
@@ -79,25 +90,22 @@ void write_stats(std::ofstream &statfile,
     }
     logelong_wmean /= s;
     logelong_w0mean /= s0;
-    statfile << n_too_long << "\t";          // 14
 
-    if (faces.size() == 0){
-      double logelong_wvar = 0.;
-      double logelong_w0var = 0.;
-      for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
-           lit != logelong_vec.end(); ++lit){
-        logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
-        logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
-      }
-      logelong_wvar /= s;
-      logelong_w0var /= s0;
-      statfile << s << "\t"                   // 15
-               << s0 << "\t"                  // 16
-               << logelong_wmean << "\t"       // 17
-               << logelong_wvar << "\t"        // 18
-               << logelong_w0mean << "\t"      // 19
-               << logelong_w0var << "\t";      // 20
+    double logelong_wvar = 0.;
+    double logelong_w0var = 0.;
+    for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
+         lit != logelong_vec.end(); ++lit){
+      logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
+      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
     }
+    logelong_wvar /= s;
+    logelong_w0var /= s0;
+    statfile << s << "\t"                   // 15
+             << s0 << "\t"                  // 16
+             << logelong_wmean << "\t"      // 17
+             << logelong_wvar << "\t"       // 18
+             << logelong_w0mean << "\t"     // 19
+             << logelong_w0var << "\t";     // 20
   }
   else if (do_sheet){
     // Sheet method
@@ -125,7 +133,7 @@ void write_stats(std::ofstream &statfile,
     for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
          lit != logelong_vec.end(); ++lit){
       logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
-      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[1];
+      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
     }
     logelong_wvar /= A;
     logelong_w0var /= A0;
@@ -157,17 +165,20 @@ void write_stats_header(std::ofstream &statfile, Uint mesh_dim){
   if (mesh_dim > 0){
     statfile << "n_too_long" << "\t";         // 14
   }
-  if (mesh_dim > 1){
-    statfile << "s" << "\t"                   // 15
-             << "s0" << "\t"                  // 16
+  if (mesh_dim == 0){
+    // a point cloud has neither, and write_stats emits nothing past column 13
+  }
+  else if (mesh_dim > 1){
+    statfile << "A" << "\t"                   // 15
+             << "A0" << "\t"                  // 16
              << "logelong_wmean" << "\t"      // 17
              << "logelong_wvar" << "\t"       // 18
              << "logelong_w0mean" << "\t"     // 19
              << "logelong_w0var" << "\t";     // 20
   }
   else {
-    statfile << "A" << "\t"                   // 15
-             << "A0" << "\t"                  // 16
+    statfile << "s" << "\t"                   // 15
+             << "s0" << "\t"                  // 16
              << "logelong_wmean" << "\t"      // 17
              << "logelong_wvar" << "\t"       // 18
              << "logelong_w0mean" << "\t"     // 19

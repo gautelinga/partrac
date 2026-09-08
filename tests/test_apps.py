@@ -97,6 +97,18 @@ def test_app_runs(name, kind, args, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
     assert [p for p in d.rglob("*") if p.is_file() and p.name not in KEEP], \
         "the app finished but wrote nothing"
 
+    # the header and the row are written by two functions kept in step by hand,
+    # in three separate copies of this code; they have drifted five times
+    for stats in d.rglob("tdata_from_t*.dat"):
+        rows = [l for l in stats.read_text().splitlines() if l.strip()]
+        names = [h for h in rows[0].lstrip("# ").rstrip().split("\t") if h.strip()]
+        for row in rows[1:]:
+            fields = [v for v in row.rstrip().split("\t") if v.strip()]
+            assert len(fields) == len(names), (
+                "%s writes %d fields under %d names: %s"
+                % (name, len(fields), len(names),
+                   names[len(fields):] or fields[len(names):]))
+
 
 @pytest.mark.skipif(not os.path.exists(app("partrac")), reason="apps are not built")
 def test_every_built_app_is_listed():

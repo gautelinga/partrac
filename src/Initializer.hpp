@@ -210,7 +210,7 @@ public:
       if (this_inside){
         nodes.push_back(x0i);
         if (prev_inside)
-          edges.push_back({{irw-1, irw}, dist(nodes[irw], x0i)});
+          edges.push_back({{irw-1, irw}, dist(nodes[irw-1], x0i)});
         ++irw;
       }
       prev_inside = this_inside;
