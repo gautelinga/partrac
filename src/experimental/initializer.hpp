@@ -14,11 +14,16 @@
 
 // Parameters read by the experimental initializers.
 // As in src/Initializer.hpp, but the gaussian circle here also reads key[2].
+// Exactly the tokens each shape reads; a longer init_mode would be truncated.
 inline bool experimental_init_mode_shape_ok(const std::string& init_mode){
   const std::vector<std::string> key = split_string(init_mode, "_");
-  if (key[0] == "randomgaussianstrip" || key[0] == "randomgaussiancircle")
-    return key.size() >= 3;
-  return key.size() >= 2;
+  if (!init_mode_dirs_ok(key)) return false;
+  if (key[0] == "point") return key.size() == 1;
+  if (key[0] == "pairs") return key.size() == 2 || key.size() == 3;
+  // the apps dispatch on a substring, so plain strip is the gaussian one too
+  if (contains(key[0], "strip") || contains(key[0], "circle"))
+    return key.size() == 3;
+  return key.size() == 2;
 }
 
 inline void add_experimental_initializer_params(partrac::Schema& s){
@@ -35,9 +40,10 @@ inline void add_experimental_initializer_params(partrac::Schema& s){
   s.check([](const partrac::Params& p){
             return experimental_init_mode_shape_ok(p.get<std::string>("init_mode"));
           },
-          "init_mode is missing a direction: most modes need one, as in"
-          " points_xy; randomgaussianstrip and randomgaussiancircle need two,"
-          " as in randomgaussianstrip_x_y");
+          "init_mode has the wrong number of directions: most modes take one,"
+            " as in points_xy; point takes none; pairs takes one or two;"
+            " randomgaussianstrip and randomgaussiancircle take two, as in"
+            " randomgaussianstrip_x_y");
 }
 
 // Parameters every app in this family reads

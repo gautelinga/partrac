@@ -82,6 +82,7 @@ struct Entry {
   Pred required_when;         // require_if<T>
   std::string required_why;
   std::vector<std::string> choices;
+  std::string choices_sep;      // if set, choices apply to the first token
 };
 
 struct Constraint {
@@ -185,6 +186,8 @@ public:
   template <typename T> Schema& runtime(std::string key, T init, std::string doc);
 
   Schema& choices(const std::string& key, std::vector<std::string> allowed);
+  Schema& token_choices(const std::string& key, const std::string& sep,
+                        std::vector<std::string> allowed);
   Schema& check(Pred ok, std::string message);
   Schema& warn(Pred trigger, std::string message);
   Schema& finalize(std::function<void(Params&)> f);

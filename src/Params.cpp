@@ -343,6 +343,12 @@ detail::Entry& Schema::entry(const std::string& key) {
   return m_impl->entries[it->second];
 }
 
+Schema& Schema::token_choices(const std::string& key, const std::string& sep,
+                              std::vector<std::string> allowed) {
+  entry(key).choices_sep = sep;
+  return choices(key, std::move(allowed));
+}
+
 Schema& Schema::choices(const std::string& key, std::vector<std::string> allowed) {
   entry(key).choices = std::move(allowed);
   return *this;
@@ -507,10 +513,13 @@ Params Schema::parse(const std::vector<std::string>& args) const {
   for (const auto& e : m_impl->entries) {
     if (e.choices.empty() || !p.has(e.key)) continue;
     const std::string v = p.get<std::string>(e.key);
-    if (std::find(e.choices.begin(), e.choices.end(), v) == e.choices.end()) {
+    const std::string tok = e.choices_sep.empty()
+                          ? v : v.substr(0, v.find(e.choices_sep));
+    if (std::find(e.choices.begin(), e.choices.end(), tok) == e.choices.end()) {
       std::ostringstream ss;
       ss << "parameter '" << e.key << "' = '" << v << "' is not one of:";
-      for (const auto& c : e.choices) ss << " " << c;
+      for (const auto& c : e.choices)
+        ss << " " << c << e.choices_sep << (e.choices_sep.empty() ? "" : "*");
       problems.push_back(ss.str());
     }
   }
@@ -540,6 +549,13 @@ std::string Schema::help() const {
       if (!any) { ss << title << "\n"; any = true; }
       ss << "  " << std::left << std::setw(static_cast<int>(w)) << e.key
          << "  " << to_string(e.kind);
+      if (!e.choices.empty()){
+        ss << " {";
+        for (std::size_t i = 0; i < e.choices.size(); ++i)
+          ss << (i ? ", " : "") << e.choices[i] << e.choices_sep
+             << (e.choices_sep.empty() ? "" : "*");
+        ss << "}";
+      }
       if (e.def) ss << " (default " << value_to_string(*e.def) << ")";
       if (!e.doc.empty()) ss << " -- " << e.doc;
       if (!e.required_why.empty()) ss << " [required when " << e.required_why << "]";

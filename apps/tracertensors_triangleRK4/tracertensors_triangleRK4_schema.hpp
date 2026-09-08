@@ -10,6 +10,7 @@ inline partrac::Schema tracertensors_triangleRK4_schema(){
   partrac::Schema s("tracertensors_triangleRK4");
   add_common_app_params(s);
   add_experimental_initializer_params(s);
+  s.token_choices("init_mode", "_", {"points"});
   add_restart_params(s);
   return s;
 }

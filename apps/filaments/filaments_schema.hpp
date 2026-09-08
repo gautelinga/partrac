@@ -45,7 +45,6 @@ inline partrac::Schema filaments_schema(){
   s.opt<int>("filter_target", 0, "filter target");
   s.opt<bool>("verbose", false, "print the parameters");
   s.opt<bool>("random", true, "draw the seed randomly");
-  s.opt<bool>("resize", false, "resize the filament");
   s.opt<bool>("filter", false, "filter the filament");
   s.opt<bool>("inject", false, "inject new particles");
   s.opt<bool>("inject_edges", true, "inject edges too");

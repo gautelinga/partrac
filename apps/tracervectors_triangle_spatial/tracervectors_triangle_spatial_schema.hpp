@@ -10,6 +10,7 @@ inline partrac::Schema tracervectors_triangle_spatial_schema(){
   partrac::Schema s("tracervectors_triangle_spatial");
   add_common_app_params(s);
   add_experimental_initializer_params(s);
+  s.token_choices("init_mode", "_", {"points"});
   add_restart_params(s);
   s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
   s.require<double>("ds_max", "max edge length");

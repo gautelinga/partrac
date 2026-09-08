@@ -10,6 +10,7 @@ inline partrac::Schema filaments_felbmRK4_schema(){
   partrac::Schema s("filaments_felbmRK4");
   add_common_app_params(s);
   add_experimental_initializer_params(s);
+  s.token_choices("init_mode", "_", {"pair", "pairs"});
   add_restart_params(s);
   s.require<int>("int_order", "integration order");
   s.require<double>("ds_init", "initial edge length");

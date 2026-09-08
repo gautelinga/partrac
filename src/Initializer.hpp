@@ -23,9 +23,11 @@ inline bool init_mode_shape_ok(const std::string& init_mode){
   if (init_mode.rfind("from", 0) == 0)
     return init_mode.rfind("from_file:", 0) == 0 && init_mode.size() > 10;
   const std::vector<std::string> key = split_string(init_mode, "_");
-  if (key[0] == "point") return true;
-  if (key[0] == "randomgaussianstrip") return key.size() >= 3;
-  return key.size() >= 2;
+  if (!init_mode_dirs_ok(key)) return false;
+  if (key[0] == "point") return key.size() == 1;
+  if (key[0] == "pairs") return key.size() == 2 || key.size() == 3;
+  if (key[0] == "randomgaussianstrip") return key.size() == 3;
+  return key.size() == 2;
 }
 
 // Parameters read by set_initial_state and the initializers it dispatches to.
@@ -76,10 +78,10 @@ inline void add_initializer_params(partrac::Schema& s){
   s.check([](const partrac::Params& p){
             return init_mode_shape_ok(p.get<std::string>("init_mode"));
           },
-          "init_mode is missing a direction: most modes need one, as in"
-          " uniform_x; randomgaussianstrip needs two, as in"
-          " randomgaussianstrip_x_y; from_file needs a path, as in"
-          " from_file:positions.h5");
+          "init_mode has the wrong number of directions: most modes take one,"
+            " as in uniform_x; point takes none; pairs takes one or two;"
+            " randomgaussianstrip takes two, as in randomgaussianstrip_x_y;"
+            " from_file takes a path, as in from_file:positions.h5");
 }
 
 // TODO: Massive cleanup!

@@ -328,4 +328,13 @@ inline bool at_interval(const Uint it, const double intv, const double dt){
   return it % steps_per(intv, dt) == 0;
 }
 
+
+// Directions after the shape are non-empty combinations of x, y and z.
+inline bool init_mode_dirs_ok(const std::vector<std::string>& key){
+  for (std::size_t i = 1; i < key.size(); ++i)
+    if (key[i].empty() || key[i].find_first_not_of("xyz") != std::string::npos)
+      return false;
+  return true;
+}
+
 #endif

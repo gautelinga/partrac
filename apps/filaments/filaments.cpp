@@ -49,7 +49,6 @@ int main(int argc, char* argv[])
   double Dm = prm.get<double>("Dm");
   double dt = prm.get<double>("dt");
 
-  bool resize = prm.get<bool>("resize");
 
   bool frozen_fields = prm.get<bool>("frozen_fields");
 
@@ -210,7 +209,7 @@ int main(int argc, char* argv[])
     }
 
     // Resizing
-    if (resize && at_interval(it, prm.get<double>("resize_intv"), dt)){
+    if (at_interval(it, prm.get<double>("resize_intv"), dt)){
       bool resized = mesh.resize(prm.get<double>("ds_max"));
       if (prm.get<bool>("verbose") && resized)
         std::cout << "Resized edges." << std::endl;

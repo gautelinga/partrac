@@ -10,6 +10,7 @@ inline partrac::Schema tracervectors_triangleRK4_schema(){
   partrac::Schema s("tracervectors_triangleRK4");
   add_common_app_params(s);
   add_experimental_initializer_params(s);
+  s.token_choices("init_mode", "_", {"points"});
   add_restart_params(s);
   s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
   return s;
