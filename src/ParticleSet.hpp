@@ -236,7 +236,6 @@ void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesT
     bool jnode_is_border = node2edges[jnode].size() > 1;
 
     Uint new_inode = std::min(inode, jnode);
-    Uint old_inode = std::max(inode, jnode);
 
     // can be made simpler!!
 

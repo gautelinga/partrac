@@ -66,7 +66,7 @@ endif()
 # every app, so they say nothing about the code that includes them.
 # -fno-permissive comes last on purpose: DOLFIN_CXX_FLAGS carries -fpermissive,
 # which would otherwise downgrade errors across the whole tree.
-set(PARTRAC_WARNING_FLAGS "-Wall -Wextra -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -fno-permissive")
+set(PARTRAC_WARNING_FLAGS "-Wall -Wextra -Wno-unused-function -Wno-unused-parameter -fno-permissive")
 
 if( CMAKE_BUILD_TYPE MATCHES "Release")
   # Optimized build

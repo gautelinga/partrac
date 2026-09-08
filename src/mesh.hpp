@@ -1196,7 +1196,6 @@ bool resizing(EdgesType &edges,
   for ( auto & edge : edges ){
     Uint inode = edge.first[0];
     Uint jnode = edge.first[1];
-    double ds0 = edge.second;
 
     Vector3d xi = ps.x(inode);
     Vector3d xj = ps.x(jnode);
@@ -1205,6 +1204,7 @@ bool resizing(EdgesType &edges,
     double rescale_factor = ds / dx.norm();
     if (rescale_factor < 1.0){
       resized = true;
+      // reference and geometry scale together, so ds/ds0 is unchanged
       edge.second *= rescale_factor;
       ps.set_x(jnode, xi + dx * rescale_factor); // such that xj = xi + dx
     }
