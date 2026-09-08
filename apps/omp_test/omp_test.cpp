@@ -20,6 +20,7 @@
 #include "experimental/particles.hpp"
 #include "experimental/initializer.hpp"
 #include "Params.hpp"
+#include "rng.hpp"
 // #include "Integrator.hpp"
 
 
@@ -84,11 +85,7 @@ int main(int argc, char* argv[])
     std::cout << "Initializing ParticleSet..." << std::endl;
     Particles<Particle> ps(prm.get<Uint>("Nrw_max"));
 
-    std::random_device rd;
-    std::vector<std::mt19937> gens;
-    for (int i=0, N=omp_get_max_threads(); i<N; ++i) {
-        gens.emplace_back(std::mt19937(rd()));
-    }
+    std::vector<std::mt19937> gens = make_generators(prm);
 
     auto key = split_string(prm.get<std::string>("init_mode"), "_");
 
@@ -160,7 +157,8 @@ int main(int argc, char* argv[])
         }
 
         auto clock_0 = std::chrono::high_resolution_clock::now();
-        #pragma omp parallel for
+        // the distribution caches a value between calls, so give each thread its own
+        #pragma omp parallel for firstprivate(rnd_normal)
         for ( auto & particle : ps.particles() ){
             Vector3d x = particle.x();
             int cell_id = particle.cell_id();

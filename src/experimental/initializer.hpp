@@ -58,6 +58,7 @@ inline void add_common_app_params(partrac::Schema& s){
   s.opt<double>("stat_intv", 100.0, "statistics interval");
   s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
   s.opt<int>("seed", 0, "random seed");
+  s.opt<bool>("random", true, "draw the seed randomly");
   s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
   s.opt<bool>("minimal_output", false, "dump less");
   s.opt<bool>("verbose", false, "print the parameters");
@@ -82,7 +83,6 @@ inline void add_common_app_params(partrac::Schema& s){
 
 // Parameters used by the restart path
 inline void add_restart_params(partrac::Schema& s){
-  s.opt<bool>("random", true, "draw the seed randomly");
   s.opt<bool>("output_all_props", true, "dump all properties");
   s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
