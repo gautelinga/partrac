@@ -293,17 +293,17 @@ int main(int argc, char* argv[])
   //Uint n_declined = prm.n_declined;
 
   std::string h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
-  H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+  // no dump file at all when dumping is off
+  H5::H5File h5f;
+  if (prm.get<double>("dump_intv") > 0.){
+    { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+    h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+  }
   //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
   //H5wrap h5file();
   //h5file.open(h5fname, "w");
 
-  Uint int_stat_intv = int(prm.get<double>("stat_intv")/dxn);
-  Uint int_dump_intv = int(prm.get<double>("dump_intv")/dxn);
-  Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dxn);
-  Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
-  Uint int_refine_intv = int(prm.get<double>("refine_intv")/dxn);
-  Uint int_coarsen_intv = int(prm.get<double>("coarsen_intv")/dxn);
+  const double chunk_intv = prm.get<double>("dump_intv")*prm.get<int>("dump_chunk_size");
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.get<bool>("minimal_output");
@@ -318,52 +318,51 @@ int main(int argc, char* argv[])
   //std::string write_mode = prm.write_mode;
 
   std::ofstream statfile;
-  {
+  if (prm.get<double>("stat_intv") > 0.){
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(xn) + ".dat");
     write_stats_header(statfile, mesh.dim());
   }
-  std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(xn) + ".dat");
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
   while (xn <= prm.get<double>("Ln")){
     // Statistics
-    if (it % int_stat_intv == 0){
+    if (at_interval(it, prm.get<double>("stat_intv"), dxn)){
       std::cout << "Position = " << xn << std::endl;
       mesh.write_statistics(statfile, xn, prm.get<double>("ds_max"), integrator);
     }
     // Checkpoint
-    if (it % int_checkpoint_intv == 0){
+    if (at_interval(it, prm.get<double>("checkpoint_intv"), dxn)){
       //std::cout << "Writing checkpoint..." << std::endl;
       mesh.write_checkpoint(checkpointsfolder, xn, prm);
       //std::cout << "Done." << std::endl;
     }
     // Curvature computation
-    if ((refine && it % int_refine_intv == 0) || (coarsen && it % int_coarsen_intv == 0) || it % int_dump_intv == 0){
+    if ((refine && at_interval(it, prm.get<double>("refine_intv"), dxn)) || (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dxn)) || at_interval(it, prm.get<double>("dump_intv"), dxn)){
       mesh.compute_interior();
     }
 
     // Refinement
-    if (refine && it % int_refine_intv == 0 && it > 0){
+    if (refine && at_interval(it, prm.get<double>("refine_intv"), dxn) && it > 0){
       Uint n_add = mesh.refine();
       if (prm.get<bool>("verbose"))
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
-    if (coarsen && it % int_coarsen_intv == 0){
+    if (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dxn)){
       Uint n_rem = mesh.coarsen();
       if (prm.get<bool>("verbose"))
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
 
     // Dump detailed data
-    if (it % int_dump_intv == 0){
+    if (at_interval(it, prm.get<double>("dump_intv"), dxn)){
       std::cout << "Dumping..." << std::endl;
       ps.update_fields(t0, output_fields);
 
       std::string groupname = std::to_string(xn);
       // Clear file if it exists, otherwise create
-      if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
+      if (at_interval(it, chunk_intv, dxn) && it > 0){
         h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
         h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
       }
@@ -396,7 +395,6 @@ int main(int argc, char* argv[])
 
   mesh.write_checkpoint(checkpointsfolder, xn, prm);
   statfile.close();
-  declinedfile.close();
 
   return 0;
 }

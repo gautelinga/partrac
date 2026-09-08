@@ -168,16 +168,21 @@ int main(int argc, char* argv[])
     }
     prm.dump(newfolder, t);
 
-    std::ofstream statfile(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(statfile, ps.dim());
+    std::ofstream statfile;
+    if (prm.get<double>("stat_intv") > 0.){
+      statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
+      write_stats_header(statfile, ps.dim());
+    }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-    H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
+    // no dump file at all when dumping is off
+    H5::H5File h5f;
+    if (prm.get<double>("dump_intv") > 0.){
+      { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+      h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+    }
 
-    Uint int_stat_intv = int(prm.get<double>("stat_intv")/dt);
-    Uint int_dump_intv = int(prm.get<double>("dump_intv")/dt);
-    Uint int_checkpoint_intv = int(prm.get<double>("checkpoint_intv")/dt);
-    Uint int_chunk_intv = int_dump_intv*prm.get<int>("dump_chunk_size");
+  const double chunk_intv = prm.get<double>("dump_intv")*prm.get<int>("dump_chunk_size");
 
     std::map<std::string, bool> output_fields;
     output_fields["u"] = !prm.get<bool>("minimal_output");
@@ -197,26 +202,26 @@ int main(int argc, char* argv[])
         intp.update(t);
 
         // Update fields for output
-        if (it % int_dump_intv == 0 || it % int_stat_intv == 0){
+        if (at_interval(it, prm.get<double>("dump_intv"), dt) || at_interval(it, prm.get<double>("stat_intv"), dt)){
             intp.assign_fields(ps, output_fields);
         }
 
         // Statistics
-        if (it % int_stat_intv == 0){
+        if (at_interval(it, prm.get<double>("stat_intv"), dt)){
             std::cout << "Time = " << t << std::endl;
             write_stats(statfile, t, ps, integrator.get_declined());
         }
         // Checkpoint
-        if (it % int_checkpoint_intv == 0){
+        if (at_interval(it, prm.get<double>("checkpoint_intv"), dt)){
             //mesh.write_checkpoint(checkpointsfolder, t, prm);
         }
 
         // Dump detailed data
-        if (it % int_dump_intv == 0){
+        if (at_interval(it, prm.get<double>("dump_intv"), dt)){
             std::string groupname = std::to_string(t);
 
             // Clear file if it exists, otherwise create
-            if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
+            if (at_interval(it, chunk_intv, dt) && it > 0){
                 h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
                 h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
             }

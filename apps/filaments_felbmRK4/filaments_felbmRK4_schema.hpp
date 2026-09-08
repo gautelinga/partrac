@@ -14,6 +14,13 @@ inline partrac::Schema filaments_felbmRK4_schema(){
   s.require<int>("int_order", "integration order");
   s.require<double>("ds_init", "initial edge length");
   s.opt<double>("resize_intv", 0.0, "resize interval");
+  // an interval of 0 turns that output off; a negative one is a typo
+  s.check([](const partrac::Params& p){
+            for (const auto& key : {"resize_intv"})
+              if (p.get<double>(key) < 0.) return false;
+            return true;
+          },
+          "intervals cannot be negative");
   return s;
 }
 

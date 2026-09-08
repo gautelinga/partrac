@@ -21,6 +21,13 @@ inline partrac::Schema weighted_walkers_schema(){
   s.opt<double>("refine_intv", 100.0, "refinement interval");
   s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
   s.choices("exit_plane", {"none", "x", "y", "z"});
+  // an interval of 0 turns that output off; a negative one is a typo
+  s.check([](const partrac::Params& p){
+            for (const auto& key : {"refine_intv"})
+              if (p.get<double>(key) < 0.) return false;
+            return true;
+          },
+          "intervals cannot be negative");
   return s;
 }
 

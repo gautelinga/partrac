@@ -12,6 +12,7 @@
 #include <random>
 #include <fstream>
 #include "typedefs.hpp"
+#include <limits>
 //#include "Interpol.hpp"
 //#include "Parameters.hpp"
 
@@ -308,5 +309,23 @@ public:
 private:
   double U0;
 };
+
+
+// Timesteps in an interval, for use as a step count. Never zero, and saturating
+// rather than wrapping: int(1e9/0.005) does not fit an int.
+inline Uint steps_per(const double intv, const double dt){
+  const double n = intv/dt;
+  if (!(n > 1.)) return 1;  // shorter than a timestep, or not a number
+  if (n >= double(std::numeric_limits<Uint>::max()))
+    return std::numeric_limits<Uint>::max();
+  return Uint(n);
+}
+
+// Whether step it falls on the interval. A non-positive interval is off, at
+// it = 0 as well, which is the only way to turn an output off entirely.
+inline bool at_interval(const Uint it, const double intv, const double dt){
+  if (!(intv > 0.)) return false;
+  return it % steps_per(intv, dt) == 0;
+}
 
 #endif

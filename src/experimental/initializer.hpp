@@ -57,10 +57,19 @@ inline void add_common_app_params(partrac::Schema& s){
   s.opt<bool>("verbose", false, "print the parameters");
   s.opt<std::string>("tag", "", "appended to the folder name");
   // dump_intv and stat_intv become step counts, so they must not round to zero
+  // an interval of 0 turns that output off; a negative one is a typo
+  s.check([](const partrac::Params& p){
+            for (const auto& key : {"checkpoint_intv", "dump_intv", "stat_intv"})
+              if (p.get<double>(key) < 0.) return false;
+            return true;
+          },
+          "intervals cannot be negative");
   s.finalize([](partrac::Params& p){
     const double dt = p.get<double>("dt");
-    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+    if (p.get<double>("dump_intv") > 0.)
+      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+    if (p.get<double>("stat_intv") > 0.)
+      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
     p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
   });
 }
@@ -242,9 +251,18 @@ void RandomPairsInitializer::probe(IntpType& intp){
   std::cout << "Npairs = " << Npairs << std::endl;
 
   Vector x0_ = this->x0;
+  // only this shape redraws the centre; any other keeps x0, so a centre
+  // outside the domain can never yield a pair
+  const bool centre_moves = (key[0] == "pairs" && key.size() == 3);
+  if (!centre_moves && !intp.locate(x0_)){
+    std::cout << "Pair centre is not inside the domain" << std::endl;
+    exit(1);
+  }
   Uint ipair=0;
-  while (ipair < Npairs){
-    if (key[0] == "pairs" && key.size() == 3){
+  Uint failed_attempts = 0;
+  Uint max_failed_attempts = 1000000; // as in the gaussian initializers
+  while (ipair < Npairs && failed_attempts < max_failed_attempts){
+    if (centre_moves){
       if (contains(key[2], "x")){
         x0_[0] = uni_dist_x(gen);
       }
@@ -288,12 +306,20 @@ void RandomPairsInitializer::probe(IntpType& intp){
       Real ds0 = (x_a-x_b).norm();
       this->edges.push_back({{2*ipair, 2*ipair+1}, ds0});
       ++ipair;
+      failed_attempts = 0;
     }
     else if (key[0] == "pair"){
       std::cout << "Pair not inside domain" << std::endl;
       exit(1);
     }
+    else {
+      ++failed_attempts;
+    }
     //std::cout << x_a << " " << x_b << std::endl;
+  }
+  if (ipair < Npairs){
+    std::cout << "Could not place all pairs inside the domain" << std::endl;
+    exit(1);
   }
 };
 

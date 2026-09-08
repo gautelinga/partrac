@@ -49,10 +49,19 @@ inline partrac::Schema spatial_schema(){
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");
   // dump_intv and stat_intv become step counts, so they must not round to zero
+  // an interval of 0 turns that output off; a negative one is a typo
+  s.check([](const partrac::Params& p){
+            for (const auto& key : {"checkpoint_intv", "coarsen_intv", "dump_intv", "refine_intv", "stat_intv"})
+              if (p.get<double>(key) < 0.) return false;
+            return true;
+          },
+          "intervals cannot be negative");
   s.finalize([](partrac::Params& p){
     const double dt = p.get<double>("dt");
-    p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+    if (p.get<double>("dump_intv") > 0.)
+      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+    if (p.get<double>("stat_intv") > 0.)
+      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
     p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
   });
   return s;
