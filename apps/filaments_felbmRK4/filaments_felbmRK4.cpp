@@ -230,7 +230,7 @@ int main(int argc, char* argv[])
             //mesh.write_checkpoint(checkpointsfolder, t, prm);
         }
         // Resize
-        if (it % int_resize_intv == 0){
+        if (int_resize_intv > 0 && it % int_resize_intv == 0){
             ps.resize_edges(prm.get<double>("ds_init"));
         }
 

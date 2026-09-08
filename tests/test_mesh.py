@@ -12,18 +12,16 @@ import subprocess
 import numpy as np
 import pytest
 
-from paths import REPO, app
+from paths import REPO, app, built_with_dolfin
 
 PARTRAC = app("partrac")
 DATA = os.path.join(REPO, "data_example")
 
-pytest.importorskip("dolfin", reason="mesh generation needs dolfin")
+pytestmark = pytest.mark.skipif(not built_with_dolfin(),
+                                reason="partrac was built without dolfin")
 
-# mode, example folder, arguments to its generator
-CASES = [
-    ("triangle", "ppf_triangle_p2", ["-dim", "1"]),
-    ("tet", "test_tet_p2", []),
-]
+# mode -> the mesh kind that conftest generates
+CASES = [("triangle", "triangle"), ("tet", "tet")]
 
 BASE = ("init_mode=uniform_x Nrw=200 Nrw_max=5000 ds_max=0.4 ds_min=0.1 "
         "Dm=0 int_order=1 dt=0.005 T=0.05 dump_intv=0.05 stat_intv=0.05 "
@@ -32,22 +30,10 @@ BASE = ("init_mode=uniform_x Nrw=200 Nrw_max=5000 ds_max=0.4 ds_min=0.1 "
 FILES = ("dolfin_params.dat", "mesh.h5", "up_0.h5", "timestamps.dat")
 
 
-@pytest.fixture(scope="module", params=CASES, ids=[c[0] for c in CASES])
-def mesh_case(request, tmp_path_factory):
-    mode, folder, gen_args = request.param
-    src = os.path.join(DATA, folder)
-    d = tmp_path_factory.mktemp(folder)
-    for f in ("generate_up.py", "timestamps.dat"):
-        shutil.copy(os.path.join(src, f), d / f)
-    r = subprocess.run(["python3", "generate_up.py"] + gen_args,
-                       cwd=d, capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stdout + r.stderr
-    # only some generators write the parameter file; the rest ship it
-    if not (d / "dolfin_params.dat").exists():
-        shutil.copy(os.path.join(src, "dolfin_params.dat"), d / "dolfin_params.dat")
-    for f in FILES:
-        assert (d / f).exists(), f
-    return mode, d
+@pytest.fixture(params=CASES, ids=[c[0] for c in CASES])
+def mesh_case(request, mesh_dir):
+    mode, kind = request.param
+    return mode, mesh_dir(kind)
 
 
 def run(case_dir, args):

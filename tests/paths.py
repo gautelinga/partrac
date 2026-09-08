@@ -24,3 +24,11 @@ BIN = _bin_dir()
 
 def app(name):
     return os.path.join(BIN, name)
+
+def built_with_dolfin():
+    """Whether the binaries support the mesh modes.
+
+    Having dolfin importable in python says nothing about how partrac was
+    configured; the mesh-only apps are built only when dolfin is enabled.
+    """
+    return os.path.exists(app("tracers_triangleRK4"))

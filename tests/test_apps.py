@@ -1,0 +1,107 @@
+"""Every app starts, runs and writes something.
+
+The apps share headers but each declares its own parameters, so a change to a
+shared fragment can leave one unable to start while the rest are fine. These are
+smoke tests on the cheapest input each app accepts; they say nothing about
+whether the physics is right, only that the app is reachable.
+
+The parameter lists are spelled out per app rather than shared, because the
+schemas genuinely differ: some take int_order, some do not.
+"""
+
+import os
+import shutil
+import subprocess
+
+import pytest
+
+from paths import REPO, app
+
+EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
+
+# dump_intv/dt must stay inside an int; 1e9/0.005 overflows the cast
+CORE = "Dm=0 dt=0.005 T=0.02 Nrw=100 Nrw_max=2000 dump_intv=1.0 stat_intv=1.0"
+
+# name, input kind, arguments
+APPS = [
+    ("partrac", "analytic",
+     CORE + " mode=analytic init_mode=uniform_x int_order=1 ds_max=0.4 ds_min=0.1 random=false seed=1"),
+    ("filaments", "analytic",
+     CORE + " mode=analytic init_mode=pairs_xyz int_order=1 ds_max=0.4 ds_min=0.1 ds_init=0.1 random=false seed=1"),
+    ("interpol", "analytic",
+     "mode=analytic Nrw=100 int_order=1"),
+    ("static_space_stepper", "analytic",
+     CORE + " mode=analytic init_mode=uniform_x int_order=1 ds_max=0.4 ds_min=0.1 dx_max=0.1 dxn=0.05 random=false seed=1"),
+    ("tracervectors_analyticRK4", "analytic",
+     CORE + " init_mode=points_xy random=false seed=1"),
+    ("weighted_walkers", "analytic",
+     CORE + " init_mode=strip_y_x int_order=1 ds_max=2.0 La=0.5 Lb=0.0 Ln=1e9 Lt=0 refine_intv=0.05 random=false seed=1"),
+    ("omp_test", "triangle",
+     CORE + " init_mode=points_xy int_order=1 seed=1"),
+    ("tracers_triangleRK4", "triangle",
+     CORE + " init_mode=points_xy int_order=1 random=false seed=1"),
+    ("tracervectors_triangle_spatial", "triangle",
+     CORE + " init_mode=points_xy ds_max=0.4 random=false seed=1"),
+    # always uses RandomPairsInitializer, which retries a rejected pair
+    # unchanged, so the starting point has to be inside the mesh
+    ("filaments_triangleRK4", "triangle",
+     CORE + " init_mode=pairs_xy int_order=1 ds_init=0.05 x0=0.5 y0=0.5 random=false seed=1"),
+    ("tracertensors_triangleRK4", "tet",
+     CORE + " init_mode=points_xy random=false seed=1"),
+    ("tracervectors_trianglefreqRK4", "trianglefreq",
+     CORE + " init_mode=points_xy random=false seed=1"),
+    # always uses RandomPairsInitializer, as filaments_triangleRK4 does
+    ("filaments_felbmRK4", "felbm",
+     CORE + " init_mode=pairs_xy int_order=1 ds_init=0.5 x0=8 y0=8 z0=8 random=false seed=1"),
+    ("tracervectors_triangleRK4", "xdmf",
+     CORE + " init_mode=points_xy random=false seed=1"),
+]
+
+KEEP = ("expr_params.dat", "dolfin_params.dat", "felbm_params.dat", "mesh.h5",
+        "up_0.h5", "up_1.h5", "output_0.h5", "output_1.h5",
+        "output_is_solid.h5", "timestamps.dat", "freqstamps.dat",
+        "u.xdmf", "p.xdmf", "u.h5", "p.h5")
+
+
+def case_dir(kind, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
+    """A private copy of the input, since output lands beside it."""
+    d = tmp_path / "case"
+    d.mkdir()
+    if kind == "analytic":
+        shutil.copy(EXAMPLE, d / "expr_params.dat")
+        return d, d / "expr_params.dat"
+    if kind in ("felbm", "xdmf"):
+        src = felbm_dir if kind == "felbm" else xdmf_dir
+        for f in os.listdir(src):
+            shutil.copy(src / f, d / f)
+        return d, d / ("felbm_params.dat" if kind == "felbm" else "dolfin_params.dat")
+    src = mesh_dir(kind)
+    for f in os.listdir(src):
+        if f != "generate_up.py":
+            shutil.copy(src / f, d / f)
+    return d, d / "dolfin_params.dat"
+
+
+@pytest.mark.parametrize("name,kind,args", APPS, ids=[a[0] for a in APPS])
+def test_app_runs(name, kind, args, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
+    if kind.startswith("no_data:"):
+        pytest.skip("needs " + kind.split(":", 1)[1] + ", which is not in the repository")
+    binary = app(name)
+    if not os.path.exists(binary):
+        pytest.skip(name + " is not built")
+
+    d, cfg = case_dir(kind, tmp_path, mesh_dir, felbm_dir, xdmf_dir)
+    r = subprocess.run([binary, str(cfg)] + args.split(),
+                       capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert [p for p in d.rglob("*") if p.is_file() and p.name not in KEEP], \
+        "the app finished but wrote nothing"
+
+
+@pytest.mark.skipif(not os.path.exists(app("partrac")), reason="apps are not built")
+def test_every_built_app_is_listed():
+    # a new app should not arrive without an entry here; a dolfin-off build
+    # has only a subset, so this is containment rather than equality
+    built = set(os.listdir(os.path.dirname(app("partrac"))))
+    listed = {a[0] for a in APPS}
+    assert built <= listed, built - listed
