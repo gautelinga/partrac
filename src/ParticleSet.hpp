@@ -340,6 +340,12 @@ void ParticleSet::load_scalar(const std::string filename, const std::string fiel
   else if (fieldname == "t_loc"){
     load_scalar_field(filename, t_loc_rw, N());
   }
+  else {
+    // Unknown field: fail rather than silently do nothing
+    std::cerr << "ParticleSet::load_scalar: no field '" << fieldname << "'"
+              << std::endl;
+    exit(1);
+  }
 }
 
 void ParticleSet::dump_scalar(const std::string filename, const std::string fieldname) const {
@@ -348,6 +354,12 @@ void ParticleSet::dump_scalar(const std::string filename, const std::string fiel
   }
   else if (fieldname == "t_loc"){
     dump_scalar_field(filename, t_loc_rw, N());
+  }
+  else {
+    // Unknown field: fail rather than silently do nothing
+    std::cerr << "ParticleSet::dump_scalar: no field '" << fieldname << "'"
+              << std::endl;
+    exit(1);
   }
 }
 

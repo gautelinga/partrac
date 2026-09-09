@@ -3,6 +3,7 @@
 #include <map>
 #include <boost/algorithm/string.hpp>
 #include <fstream>
+#include <sstream>
 #include <limits>
 #include <filesystem>
 #include "H5Cpp.h"
@@ -224,13 +225,18 @@ void dump_vector_field(const std::string& output_file,
   outfile.close();
 }
 
+// tau and rho_prev may be absent: an older checkpoint restarts unmixed
 void load_faces(const std::string& input_file,
                 FacesType& faces){
   std::ifstream infile(input_file);
-  Uint first, second, third;
-  double fourth;
-  while (infile >> first >> second >> third >> fourth){
-    faces.push_back({{first, second, third}, fourth});
+  std::string line;
+  while (std::getline(infile, line)){
+    std::istringstream ss(line);
+    Uint first, second, third;
+    double dA0, tau = 0., rho_prev = 1.;
+    if (!(ss >> first >> second >> third >> dA0)) continue;
+    ss >> tau >> rho_prev;
+    faces.push_back({{first, second, third}, dA0, tau, rho_prev});
   }
   infile.close();
 }
@@ -238,10 +244,14 @@ void load_faces(const std::string& input_file,
 void load_edges(const std::string& input_file,
                 EdgesType &edges){
   std::ifstream infile(input_file);
-  Uint first, second;
-  double third;
-  while (infile >> first >> second >> third){
-    edges.push_back({{first, second}, third});
+  std::string line;
+  while (std::getline(infile, line)){
+    std::istringstream ss(line);
+    Uint first, second;
+    double ds0, tau = 0., rho_prev = 1.;
+    if (!(ss >> first >> second >> ds0)) continue;
+    ss >> tau >> rho_prev;
+    edges.push_back({{first, second}, ds0, tau, rho_prev});
   }
   infile.close();
 }
@@ -272,7 +282,8 @@ void dump_faces(const std::string& output_file,
   for (FacesType::const_iterator faceit = faces.begin();
        faceit != faces.end(); ++faceit){
     outfile << faceit->first[0] << " " << faceit->first[1] << " " << faceit->first[2]
-            << " " << std::setprecision(checkpoint_precision) << faceit->second << std::endl;
+            << " " << std::setprecision(checkpoint_precision) << faceit->second
+            << " " << faceit->tau << " " << faceit->rho_prev << std::endl;
   }
   outfile.close();
 }
@@ -283,7 +294,8 @@ void dump_edges(const std::string& output_file,
   for (auto edgeit = edges.begin();
        edgeit != edges.end(); ++edgeit){
     outfile << edgeit->first[0] << " " << edgeit->first[1] << " "
-            << std::setprecision(checkpoint_precision) << edgeit->second << std::endl;
+            << std::setprecision(checkpoint_precision) << edgeit->second
+            << " " << edgeit->tau << " " << edgeit->rho_prev << std::endl;
   }
   outfile.close();
 }

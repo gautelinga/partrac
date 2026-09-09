@@ -46,17 +46,18 @@ def last_row(tmp_path):
 
 
 @needs_partrac
-def test_a_strip_coarsened_to_nothing_keeps_its_last_edge(tmp_path):
-    # a ds_min larger than the whole strip collapses every edge in turn. The
-    # end nodes carry one edge rather than two, which used to be read past.
+def test_a_strip_coarsened_to_nothing_keeps_its_end_edges(tmp_path):
+    # a ds_min larger than the whole strip collapses every interior edge. The
+    # two end edges are never collapsed: a tip node carries a single edge, and
+    # collapsing it would shorten the strip while its ds0 had nowhere to go.
     r = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0", "Nrw=10",
              "Nrw_max=2000", "ds_min=100", "coarsen=true", "coarsen_intv=0.01",
              "T=0.1"])
     assert r.returncode == 0, r.stdout + r.stderr
     st = last_row(tmp_path)
-    assert int(st["Nrw"]) == 2                        # the last edge survives
-    assert float(st["s0"]) == pytest.approx(0.5)      # and keeps the whole s0
+    assert int(st["Nrw"]) == 3                        # the two end edges survive
+    assert float(st["s0"]) == pytest.approx(0.5)      # and keep the whole s0
 
 
 @needs_partrac
@@ -72,7 +73,7 @@ def test_coarsening_conserves_the_reference_length(tmp_path, ds_min):
     assert r.returncode == 0, r.stdout + r.stderr
     st = last_row(d)
     assert float(st["s0"]) == pytest.approx(0.5, rel=1e-9)
-    assert 2 <= int(st["Nrw"]) < 50            # it really coarsened
+    assert 3 <= int(st["Nrw"]) < 50            # it really coarsened
 
 
 @needs_partrac

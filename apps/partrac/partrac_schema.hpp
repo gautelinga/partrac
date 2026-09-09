@@ -53,7 +53,6 @@ inline partrac::Schema partrac_schema(){
   s.opt<bool>("filter", false, "filter the mesh");
   s.opt<bool>("inject_edges", true, "inject edges too");
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
-  s.opt<bool>("local_dt", false, "use a local timestep");
   s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
   s.opt<bool>("integrate_tau", false, "integrate the eigentime");
   s.opt<bool>("output_all_props", true, "dump all properties");
@@ -77,11 +76,6 @@ inline partrac::Schema partrac_schema(){
             return !(p.get<bool>("inject") && p.get<bool>("filter"));
           },
           "cannot inject and filter at the same time");
-  s.check([](const partrac::Params& p){
-            return !p.get<bool>("local_dt") ||
-                   (p.get<bool>("frozen_fields") && p.get<double>("Dm") == 0.0);
-          },
-          "local_dt requires frozen_fields and Dm = 0");
   // RK4Integrator takes no arguments, so Dm is dropped
   s.warn([](const partrac::Params& p){
            return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;

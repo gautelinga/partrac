@@ -18,6 +18,7 @@ inline partrac::Schema spatial_schema(){
   s.opt<double>("dt", 1.0, "timestep, enters the folder name only");
   s.opt<double>("U", 1.0, "velocity scale");
   s.opt<double>("Ln", 0.0, "exit plane position");
+  s.opt<double>("xn0", 0.0, "path length the march starts from");
   s.opt<double>("u_eps", 1e-7, "velocity cutoff");
   s.opt<double>("dump_intv", 100.0, "dump interval");
   s.opt<double>("stat_intv", 100.0, "statistics interval");

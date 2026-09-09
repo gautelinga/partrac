@@ -13,6 +13,7 @@ public:
   Topology(ParticleSet& ps, const partrac::Params& prm);
   int dim();
   void check_topology();
+  void check_dim();
   void compute_maps();
   void clear();
   Uint refine();
@@ -73,11 +74,17 @@ Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
 // stretch, and every row written afterwards would sit under a header that no
 // longer describes it. Injection can legitimately start from nothing, so the
 // dimension latches on first use.
+// An empty set is the caller's policy; a changed dimension is always wrong
 void Topology::check_topology(){
   if (ps.N() == 0){
     std::cerr << "Error: no particles left. Stopping." << std::endl;
     exit(1);
   }
+  check_dim();
+}
+
+void Topology::check_dim(){
+  if (ps.N() == 0) return;   // no nodes, so no manifold to have changed
   const int d = dim();
   if (dim0 < 0){
     if (d > 0){
@@ -141,6 +148,7 @@ void Topology::integrate_tau(const double dt, const double tau_max){
       remove_edges(faces_dummy, edges, edge_isactive, edges_inlet_dummy);
       remove_unused_nodes(edges, nodes_inlet, ps);
       compute_node2edges(node2edges, edges, ps.N());
+      check_topology();   // culling every edge would drop the dimension
     }
   }
   else {
@@ -153,6 +161,19 @@ void Topology::integrate_tau(const double dt, const double tau_max){
       double rho = dA/dA0;
       face.tau += 0.5*dt*(pow(face.rho_prev, 2) + pow(rho, 2));
       face.rho_prev = rho;
+    }
+    if (tau_max > 0.0){
+      std::vector<bool> face_isactive(faces.size(), true);
+      for (Uint iface=0; iface < faces.size(); ++iface){
+        if (faces[iface].tau > tau_max)
+          face_isactive[iface] = false;
+      }
+      remove_faces(faces, face_isactive);
+      remove_unused_edges(faces, edges, edges_inlet);
+      remove_unused_nodes(edges, nodes_inlet, ps);
+      compute_edge2faces(edge2faces, faces, edges);
+      compute_node2edges(node2edges, edges, ps.N());
+      check_topology();
     }
   }
 }
@@ -216,6 +237,7 @@ void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
                       edges_inlet, nodes_inlet,
                       node_isactive,
                       ps);
+  check_dim();
 }
 
 bool Topology::filter(){
@@ -260,9 +282,8 @@ void Topology::write_checkpoint(const std::string& checkpointsfolder, const doub
     dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
     dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
   }
-  if (prm.get<bool>("local_dt")){
-    //dump_colors(checkpointsfolder + "/tau.dat", ps.tau_rw, ps.Nrw);
-    ps.dump_scalar(checkpointsfolder + "/tau.dat", "tau");
+  if (prm.has("local_dt") && prm.get<bool>("local_dt")){
+    ps.dump_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
   }
 }
 
@@ -287,10 +308,8 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
     load_list(edgesinletfile, edges_inlet);
     load_list(nodesinletfile, nodes_inlet);
   }
-  if (prm.get<bool>("local_dt")){
-    std::string taufile = checkpointsfolder + "/tau.dat";
-    //load_colors(taufile, ps.tau_rw, prm.Nrw);
-    ps.load_scalar(taufile, "tau");
+  if (prm.has("local_dt") && prm.get<bool>("local_dt")){
+    ps.load_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
   }
 }
 

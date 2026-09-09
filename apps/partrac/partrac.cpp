@@ -63,7 +63,6 @@ int main(int argc, char* argv[])
   bool filter = prm.get<bool>("filter");
 
   bool frozen_fields = prm.get<bool>("frozen_fields");
-  bool local_dt = prm.get<bool>("local_dt");
   //double dl_max = prm.dl_max;
 
   std::cout << "Creating folders..." << std::endl;
@@ -236,24 +235,12 @@ int main(int argc, char* argv[])
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output") || local_dt;
+  output_fields["c"] = !prm.get<bool>("minimal_output");
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["rho"] = !prm.get<bool>("minimal_output"); // && prm.output_all_props;   
   output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
   output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
-  output_fields["t_loc"] = local_dt;
   output_fields["tau"] = prm.get<bool>("integrate_tau");
-
-  if (local_dt && !frozen_fields){
-    std::cout << "Error: local_dt=true requires the use of frozen_fields=true!" << std::endl;
-    exit(1);
-  }
-  else if (local_dt && Dm > 0.0){
-    std::cout << "Error: local_dt=true requires the use of Dm=0.0!" << std::endl;
-  }
-  else if (local_dt){
-    std::cout << "Note: Using local time steps. Time t should now be considered only as a parametrizing variable." << std::endl;
-  }
 
   bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && prm.get<double>("Ln") > 0;
   int exit_dim = prm.get<std::string>("exit_plane") == "x" ? 0 : (prm.get<std::string>("exit_plane") == "y" ? 1 : 2);
@@ -323,11 +310,6 @@ int main(int argc, char* argv[])
         std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
     }
 
-    // Tau integration
-    if (prm.get<bool>("integrate_tau") && at_interval(it, prm.get<double>("tau_intv"), dt)){
-      mesh.integrate_tau(dt * steps_per(prm.get<double>("tau_intv"), dt), prm.get<double>("tau_max"));
-    }
-
     // Update fields if needed
     if (at_interval(it, prm.get<double>("dump_intv"), dt) || at_interval(it, prm.get<double>("stat_intv"), dt)){
       ps.update_fields(t, output_fields);
@@ -362,8 +344,21 @@ int main(int argc, char* argv[])
     
     auto outside_nodes = integrator->step(ps, t, dt);
 
-    //if (outside_nodes.size() > 0 && prm.verbose)
-    //  std::cout << "Some nodes are outside." << std::endl;
+    // Tau integration, after the step whose interval it covers
+    if (prm.get<bool>("integrate_tau") && at_interval(it + 1, prm.get<double>("tau_intv"), dt)){
+      mesh.integrate_tau(dt * steps_per(prm.get<double>("tau_intv"), dt), prm.get<double>("tau_max"));
+    }
+
+    // Nodes that could not move: they stay, but where they pile up is useful
+    if (outside_nodes.size() > 0 && prm.get<bool>("verbose")){
+      Vector3d x_stuck = {0., 0., 0.};
+      for (const Uint i : outside_nodes)
+        x_stuck += ps.x(i);
+      x_stuck /= outside_nodes.size();
+      std::cout << outside_nodes.size() << " nodes could not move at t = " << t
+                << ", centred on (" << x_stuck[0] << ", " << x_stuck[1] << ", "
+                << x_stuck[2] << ")" << std::endl;
+    }
 
     t += dt;
     it += 1;

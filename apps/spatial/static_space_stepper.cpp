@@ -283,7 +283,8 @@ int main(int argc, char* argv[])
 
   int it = 0;
 
-  double xn = prm.get<double>("x0");
+  // Path length marched, not the initializer's seed coordinate
+  double xn = prm.get<double>("xn0");
   double dxn = prm.get<double>("dxn");
 
   prm.dump(newfolder, xn);
@@ -325,7 +326,7 @@ int main(int argc, char* argv[])
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
-  while (xn <= prm.get<double>("Ln")){
+  while (xn <= prm.get<double>("Ln") && ps.N() > 0){
     // Statistics
     if (at_interval(it, prm.get<double>("stat_intv"), dxn)){
       std::cout << "Position = " << xn << std::endl;
@@ -334,6 +335,7 @@ int main(int argc, char* argv[])
     // Checkpoint
     if (at_interval(it, prm.get<double>("checkpoint_intv"), dxn)){
       //std::cout << "Writing checkpoint..." << std::endl;
+      prm.set<double>("xn0", xn);
       mesh.write_checkpoint(checkpointsfolder, xn, prm);
       //std::cout << "Done." << std::endl;
     }
@@ -379,6 +381,29 @@ int main(int argc, char* argv[])
     auto nodes_to_remove = integrator.step_vec(*intp, ps, t0, dxn);
 
     if (nodes_to_remove.size() > 0){
+      // Nodes are dropped both when done and when trapped; locate the latter
+      if (prm.get<bool>("verbose")){
+        Vector3d x_trapped = {0., 0., 0.};
+        Uint n_done = 0, n_trapped = 0;
+        for (const Uint i : nodes_to_remove){
+          if (ps.t_loc(i) >= prm.get<double>("T")){
+            ++n_done;
+          }
+          else {
+            x_trapped += ps.x(i);
+            ++n_trapped;
+          }
+        }
+        std::cout << "At xn = " << xn << ": " << n_done
+                  << " nodes finished their integration time";
+        if (n_trapped > 0){
+          x_trapped /= n_trapped;
+          std::cout << ", " << n_trapped << " trapped below u_eps, centred on ("
+                    << x_trapped[0] << ", " << x_trapped[1] << ", "
+                    << x_trapped[2] << ")";
+        }
+        std::cout << std::endl;
+      }
       std::vector<bool> node_isactive(ps.N(), true);
       for (auto sit = nodes_to_remove.begin();
             sit != nodes_to_remove.end(); ++sit){
@@ -393,6 +418,7 @@ int main(int argc, char* argv[])
   double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
   std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 
+  prm.set<double>("xn0", xn);
   mesh.write_checkpoint(checkpointsfolder, xn, prm);
   statfile.close();
 

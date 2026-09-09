@@ -1018,6 +1018,13 @@ Uint sheet_coarsening(FacesType &faces,
   return n_coll;
 }
 
+// Adjacent edges normally agree on tau; refuse to merge the rare exception
+static bool tau_compatible(const double a, const double b){
+  if (a == b) return true;                 // including a run not tracking tau
+  const double lo = std::min(a, b), hi = std::max(a, b);
+  return lo > 0. && hi <= 3.*lo;
+}
+
 Uint strip_coarsening(EdgesType &edges,
                       Node2EdgesType &node2edges,
                       NodesListType &nodes_inlet,
@@ -1052,50 +1059,58 @@ Uint strip_coarsening(EdgesType &edges,
         double ds_min_loc = ds_min;
         Uint new_inode = std::min(inode, jnode);
         Uint old_inode = std::max(inode, jnode);
-        // An open strip ends in a node carrying a single edge, so a collapse
-        // has one neighbour to reattach, not two. With neither it is the last
-        // edge holding the strip together; collapsing it would leave a lone
-        // node, so leave it alone.
+        // Collapse interior edges only
         const bool has_j = node2edges[old_inode].size() > 1;
         const bool has_k = node2edges[new_inode].size() > 1;
 
-        if (ds < ds_min_loc && edge_isactive[iedge] && (has_j || has_k)){
-          edge_isactive[iedge] = false;
-          node_isactive[old_inode] = false;
-
+        if (ds < ds_min_loc && edge_isactive[iedge] && has_j && has_k){
           std::vector<Uint> jedges(node2edges[old_inode].begin(),
                               node2edges[old_inode].end());
           std::vector<Uint> kedges(node2edges[new_inode].begin(),
                               node2edges[new_inode].end());
-          Uint jedge = has_j ? get_other(jedges[0], jedges[1], iedge) : iedge;
-          Uint kedge = has_k ? get_other(kedges[0], kedges[1], iedge) : iedge;
+          Uint jedge = get_other(jedges[0], jedges[1], iedge);
+          Uint kedge = get_other(kedges[0], kedges[1], iedge);
 
-          if (has_j)
-            std::replace(edges[jedge].first.begin(), edges[jedge].first.end(),
-                    old_inode, new_inode);
-
-          // the reference length goes to the neighbours the edge had
-          if (has_j && has_k){
-            edges[jedge].second += ds0/2;
-            edges[kedge].second += ds0/2;
+          // before anything is rewired, so there is nothing to undo
+          if (!tau_compatible(edges[jedge].tau, edges[iedge].tau) ||
+              !tau_compatible(edges[kedge].tau, edges[iedge].tau)){
+            ++iedge;
+            continue;
           }
-          else if (has_j) edges[jedge].second += ds0;
-          else            edges[kedge].second += ds0;
 
-          // Do something about tau, rho_prev?
+          edge_isactive[iedge] = false;
+          node_isactive[old_inode] = false;
+
+          std::replace(edges[jedge].first.begin(), edges[jedge].first.end(),
+                  old_inode, new_inode);
+
+          for (const Uint nedge : {jedge, kedge}){
+            if (edges[nedge].tau == edges[iedge].tau) continue;
+            const double wn = edges[nedge].second, wi = ds0/2;
+            // update tau to preserve concentration variance
+            const double inv = (wn/sqrt(edges[nedge].tau)
+                                + wi/sqrt(edges[iedge].tau)) / (wn + wi);
+            edges[nedge].tau = 1./(inv*inv);
+          }
+          // each neighbour takes half the reference length
+          edges[jedge].second += ds0/2;
+          edges[kedge].second += ds0/2;
+
+          // collapse_nodes decides where to place the surviving node
+          ps.collapse_nodes(inode, jnode, node2edges);
+
+          // ds0 and the geometry have changed, so the elongation must be recomputed
+          for (const Uint nedge : {jedge, kedge})
+            edges[nedge].rho_prev = ps.dist(edges[nedge].first[0],
+                                            edges[nedge].first[1])
+                                    / edges[nedge].second;
 
           node2edges[old_inode].clear();
-          if (has_j)
-            std::replace(node2edges[new_inode].begin(),
-                    node2edges[new_inode].end(), iedge, jedge);
-          else
-            node2edges[new_inode].remove(iedge);
-
-          ps.collapse_nodes(inode, jnode, node2edges);
+          std::replace(node2edges[new_inode].begin(),
+                  node2edges[new_inode].end(), iedge, jedge);
 
           changed = true;
           ++n_coll;
-          //--iedge;
         }
       }
       ++iedge;
