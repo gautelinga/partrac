@@ -476,6 +476,28 @@ bool is_border_node(const Uint inode,
   return false;
 }
 
+// How sharply the rim turns at a node: zero along a straight stretch, largest
+// at a corner.
+double rim_turn(const Uint inode,
+                const ParticleSet& ps,
+                const EdgesType &edges,
+                const Edge2FacesType &edge2faces,
+                const Node2EdgesType &node2edges){
+  std::vector<Uint> nbrs;
+  for ( auto & iedge : node2edges[inode] ){
+    if (edge2faces[iedge].size() < 2)
+      nbrs.push_back(edges[iedge].first[0] == inode ? edges[iedge].first[1]
+                                                    : edges[iedge].first[0]);
+  }
+  if (nbrs.size() != 2)
+    return 0.;
+  Vector3d a = ps.x(inode) - ps.x(nbrs[0]);
+  Vector3d b = ps.x(nbrs[1]) - ps.x(inode);
+  if (a.norm() <= 0. || b.norm() <= 0.)
+    return 0.;
+  return acos(std::max(-1., std::min(1., a.dot(b)/(a.norm()*b.norm()))));
+}
+
 bool get_new_pos(Vector3d &x,
                  const ParticleSet& ps,
                  const Uint iedge,
@@ -494,8 +516,20 @@ bool get_new_pos(Vector3d &x,
   if (both_are_border && edge2faces[iedge].size() != 1){
     return false;
   }
-  else if (both_are_border || none_are_border){
+  else if (none_are_border){
     x = 0.5*(ps.x(inode) + ps.x(jnode));
+  }
+  else if (both_are_border){
+    // Rim nodes merge at their midpoint as elsewhere, which keeps them evenly
+    // spread, unless one of them is a sharp corner: averaging that away would
+    // cut the corner off the sheet and take its material with it.
+    const double sharp = 0.25;   // radians; smooth rim curvature is far below
+    const double turn_i = rim_turn(inode, ps, edges, edge2faces, node2edges);
+    const double turn_j = rim_turn(jnode, ps, edges, edge2faces, node2edges);
+    if (std::max(turn_i, turn_j) < sharp)
+      x = 0.5*(ps.x(inode) + ps.x(jnode));
+    else
+      x = turn_i >= turn_j ? ps.x(inode) : ps.x(jnode);
   }
   else if (inode_is_border) {
     x = ps.x(inode);
@@ -507,23 +541,30 @@ bool get_new_pos(Vector3d &x,
   return true;
 }
 
+// A collapse must not fold the sheet: no surviving face may flip its normal
+// when both nodes of the edge move to x.
 bool normals_are_ok(const Uint iedge,
                     const Vector3d &x,
-                    std::vector<Vector3d>& x_rw,
-                    const std::set<Uint> &jfaces,
+                    const ParticleSet& ps,
+                    const std::vector<Uint> &jfaces,
                     const FacesType &faces,
                     const EdgesType &edges){
-  Uint inode = edges[iedge].first[0];
-  Uint jnode = edges[iedge].first[1];
-
-  for ( auto & jface : jfaces ){
-    Uint jedge = faces[jface].first[0];
-    Uint kedge = faces[jface].first[1];
-
-    Vector3d n_before = get_normal(jedge, kedge, edges, x_rw, {}, x);
-    Vector3d n_after = get_normal(jedge, kedge, edges, x_rw,
-                                  {inode, jnode}, x);
-    if (n_before.dot(n_after) <= 0.0)
+  const Uint inode = edges[iedge].first[0];
+  const Uint jnode = edges[iedge].first[1];
+  auto pos = [&](const Uint n, const bool moved){
+    return (moved && (n == inode || n == jnode)) ? x : ps.x(n);
+  };
+  auto normal = [&](const Uint jface, const bool moved){
+    const Uint jedge = faces[jface].first[0];
+    const Uint kedge = faces[jface].first[1];
+    const Vector3d drj = pos(edges[jedge].first[1], moved)
+                       - pos(edges[jedge].first[0], moved);
+    const Vector3d drk = pos(edges[kedge].first[1], moved)
+                       - pos(edges[kedge].first[0], moved);
+    return drj.cross(drk);
+  };
+  for (const Uint jface : jfaces){
+    if (normal(jface, false).dot(normal(jface, true)) <= 0.)
       return false;
   }
   return true;
@@ -637,6 +678,41 @@ bool collapse_edge(const Uint iedge,
   std::vector<Uint> kfaces = get_incident_faces(iedge, edges, edge2faces, node2edges);
   std::vector<double> dAs_old = ps.triangle_areas(kfaces, faces, edges);
 
+  // With no incident faces there is nowhere for the removed mass to go.
+  if (kfaces.empty())
+    return false;
+
+  // Whether tau is carried across as well. A patch that has mixed holds a
+  // positive tau on every face and its variance content dA0/sqrt(tau) is
+  // shared out below. Every tau equal -- t = 0, or a run not tracking tau --
+  // needs nothing done. Fresh material at tau = 0 beside material that has
+  // been mixing is declined: the two histories cannot be combined.
+  bool share_tau = false;
+  {
+    const double tau_first = faces[kfaces.front()].tau;
+    bool all_equal = true, any_zero = false;
+    auto look = [&](const Uint f){
+      if (faces[f].tau != tau_first) all_equal = false;
+      if (faces[f].tau <= 0.) any_zero = true;
+    };
+    for ( auto & iface : edge2faces[iedge] ) look(iface);
+    for ( auto & kface : kfaces ) look(kface);
+    if (!all_equal){
+      if (any_zero)
+        return false;
+      share_tau = true;
+    }
+  }
+  double v_res = 0.;   // variance content of the removed faces
+  if (share_tau){
+    for ( auto & iface : edge2faces[iedge] )
+      v_res += faces[iface].second/sqrt(faces[iface].tau);
+  }
+
+  // A collapse may not flip a normal
+  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges))
+    return false;
+
   // assert(jfaces.size()==4 || jfaces.size()==2);
 
   ps.replace_nodes(x, inode, jnode);
@@ -689,33 +765,65 @@ bool collapse_edge(const Uint iedge,
     //     << faces[*jfaceit].first[2] << std::endl;
   }
   std::vector<double> dAs_new = ps.triangle_areas(kfaces, faces, edges);
-  double wsum = 0.;
-  std::vector<double> w_;
+  // Distribute the removed mass over the incident faces that survive.
+  // The removed face's reference area is dA0_res, and its actual area is dA_res.
+  // The ratio r_res = dA0_res/dA_res is used to scale the contribution to the
+  // surviving faces based on how much their area changed.
+  // The mass is renormalized to conserve the total reference area of the patch.
+  const double r_res = dA_res > 0. ? dA0_res/dA_res : 0.; // density of removed face
+  double dA0_patch = dA0_res;
+  double dA0_est = 0.;
+  std::vector<double> dA0_new(kfaces.size());
   for (Uint k=0; k < kfaces.size(); ++k){
-    //Uint kface = kfaces[k];
-    // std::cout << faces[kface].second << "+=" << dA0_res << "/" << dA_res << "*(" << dAs_new[k] << "-" << dAs_old[k] << ")" << std::endl;
-    // std::cout << dA0_res << " " << dA_res << std::endl;
-    // if (dA_res > 0.0){
-    //     faces[kface].second += dA0_res/dA_res*(dAs_new[k]-dAs_old[k]);
-    // faces[kface].second += dA0_res/kfaces.size();
-    double w = dAs_new[k]-dAs_old[k]; // May give negative mass
-    w = std::max(w, 0.0);
-    //faces[kface].second += dA0_res*w;
-    w_.push_back(w);
-    wsum += w;
+    const double dA0_k = faces[kfaces[k]].second;
+    const double w = dAs_new[k] - dAs_old[k];
+    dA0_patch += dA0_k;
+    if (w > 0.)
+      dA0_new[k] = dA0_k + r_res*w; // gets mass proportional to its area gain, with the density of the removed face
+    else if (w < 0. && dAs_old[k] > 0.)
+      dA0_new[k] = dA0_k*dAs_new[k]/dAs_old[k]; // loses mass proportional to its area loss, with its own density
+    else
+      dA0_new[k] = dA0_k;
+    dA0_est += dA0_new[k];
   }
-  if (wsum <= 0.0){
-    wsum = 0.0;
+  // Variance content dA0/sqrt(tau) is shared out the same way: what a face
+  // took arrives at the removed faces' variance per unit area, what it gave up
+  // leaves at its own, and the patch is renormalized to conserve the total.
+  // tau is then whatever the two shares imply. Estimated here from the old
+  // dA0 and tau, before they are overwritten.
+  const double q_res = dA_res > 0. ? v_res/dA_res : 0.;
+  double v_patch = v_res;
+  double v_est = 0.;
+  std::vector<double> v_new(kfaces.size());
+  if (share_tau){
     for (Uint k=0; k < kfaces.size(); ++k){
-      double w = dAs_new[k];
-      w_[k] = w;
-      wsum += w;
+      const double v_k = faces[kfaces[k]].second/sqrt(faces[kfaces[k]].tau);
+      const double w = dAs_new[k] - dAs_old[k];
+      v_patch += v_k;
+      if (w > 0.)
+        v_new[k] = v_k + q_res*w;
+      else if (w < 0. && dAs_old[k] > 0.)
+        v_new[k] = v_k*dAs_new[k]/dAs_old[k];
+      else
+        v_new[k] = v_k;
+      v_est += v_new[k];
+    }
+    assert (v_est > 0.);
+  }
+
+  assert (dA0_est > 0.); // Ensure that the estimated reference area of the patch is positive before renormalizing
+  for (Uint k=0; k < kfaces.size(); ++k)
+    faces[kfaces[k]].second = dA0_patch*dA0_new[k]/dA0_est;
+  if (share_tau){
+    for (Uint k=0; k < kfaces.size(); ++k){
+      const double v = v_patch*v_new[k]/v_est;
+      faces[kfaces[k]].tau = pow(faces[kfaces[k]].second/v, 2);
     }
   }
-  for (Uint k=0; k < kfaces.size(); ++k){
-    Uint kface = kfaces[k];
-    faces[kface].second += dA0_res*w_[k]/wsum;
-  }
+  // dA0 and the geometry both moved, so the elongation the trapezoid rule
+  // starts its next step from has to be recomputed
+  for (Uint k=0; k < kfaces.size(); ++k)
+    faces[kfaces[k]].rho_prev = dAs_new[k]/faces[kfaces[k]].second;
 
   // Deactivate faces adjacent to iedge
   for (auto & jface : edge2faces[iedge] ){

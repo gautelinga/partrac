@@ -15,6 +15,7 @@
 #include "experimental/particles.hpp"
 #include "utils.hpp"
 #include "Params.hpp"
+#include "run_folders.hpp"
 #include "rng.hpp"
 #include "StructuredInterpol.hpp"
 #include "TriangleInterpol.hpp"
@@ -22,21 +23,6 @@
 #include "experimental/initializer.hpp"
 #include "experimental/statistics.hpp"
 
-std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
-  std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
-  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
-  ss_Nrw << prm.get<Uint>("Nrw");
-  ss_seed << prm.get<int>("seed");
-  std::string newfoldername = rwfolder +
-                            "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
-                            "_dt" + ss_dt.str() +
-                            "_Nrw" + ss_Nrw.str() +
-                            "_seed" + ss_seed.str() +
-                            prm.get<std::string>("tag") +
-                            "/";
-  return newfoldername;
-}
 
 #include "tracervectors_triangle_spatial_schema.hpp"
 
@@ -69,27 +55,8 @@ int main(int argc, char* argv[])
     intp.set_int_order(2);  // To evaluate gradients
 
     std::string folder = intp.get_folder();
-    std::string rwfolder = folder + "/SpatialTracerVectors/";
-    
-        create_folder(rwfolder);
-    
-    std::string newfolder;
-    if (prm.get<std::string>("restart_folder") != ""){
-        newfolder = prm.get<std::string>("folder");
-    }
-    else {
-        newfolder = get_newfoldername(rwfolder, prm);
-            create_folder(newfolder);
-    }
-    newfolder = newfolder + "" + "0" + "/";
-    std::string posfolder = newfolder + "Positions/";
-    std::string checkpointsfolder = newfolder + "Checkpoints/";
-    {
-        create_folder(newfolder);
-        create_folder(posfolder);
-        create_folder(checkpointsfolder);
-    }
-    prm.set<std::string>("folder", newfolder);
+    RunFolders out = make_run_folders(folder, "SpatialTracerVectors", prm);
+    const std::string& newfolder = out.run;
 
         if (prm.get<bool>("verbose")) prm.print();
 
@@ -188,7 +155,7 @@ int main(int argc, char* argv[])
         }
         // Checkpoint
         if (at_interval(it, prm.get<double>("checkpoint_intv"), dt)){
-            //mesh.write_checkpoint(checkpointsfolder, t, prm);
+            //mesh.write_checkpoint(out.checkpoints, t, prm);
         }
 
         // Dump detailed data

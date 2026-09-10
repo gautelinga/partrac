@@ -20,26 +20,12 @@
 #include "experimental/particles.hpp"
 #include "experimental/initializer.hpp"
 #include "Params.hpp"
+#include "run_folders.hpp"
 #include "rng.hpp"
 // #include "Integrator.hpp"
 
 
 
-std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
-  std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
-  ss_Dm << std::scientific << std::setprecision(7) << prm.get<double>("Dm");
-  ss_dt << std::scientific << std::setprecision(7) << prm.get<double>("dt");
-  ss_Nrw << prm.get<Uint>("Nrw");
-  ss_seed << prm.get<int>("seed");
-  std::string newfoldername = rwfolder +
-                            "/Dm" + ss_Dm.str() + // "_U" + std::to_string(prm.U0) +
-                            "_dt" + ss_dt.str() +
-                            "_Nrw" + ss_Nrw.str() +
-                            "_seed" + ss_seed.str() +
-                            prm.get<std::string>("tag") +
-                            "/";
-  return newfoldername;
-}
 
 #include "omp_test_schema.hpp"
 
@@ -78,6 +64,7 @@ int main(int argc, char* argv[])
     std::string folder = intp.get_folder();
     std::string rwfolder = folder + "/OMPTest/";
     create_folder(rwfolder);
+    // No restart path here, so no make_run_folders: this app only names a folder.
     std::string newfolder = get_newfoldername(rwfolder, prm);
     create_folder(newfolder);
     prm.dump(newfolder, t);

@@ -196,27 +196,9 @@ int main(int argc, char* argv[])
   std::cout << "Creating folders..." << std::endl;
 
   std::string folder = intp->get_folder();
-  std::string rwfolder = folder + "/StaticSpaceStepper/"; 
-    create_folder(rwfolder);
-  std::string newfolder;
-  if (prm.get<std::string>("restart_folder") != ""){
-    newfolder = prm.get<std::string>("folder");
-  }
-  else {
-    newfolder = get_newfoldername(rwfolder, prm);
-      create_folder(newfolder);
-  }
-  newfolder = newfolder + "" + "0" + "/";
-  std::string posfolder = newfolder + "Positions/";
-  std::string checkpointsfolder = newfolder + "Checkpoints/";
-  //std::string histfolder = newfolder + "Histograms/";
-  {
-    create_folder(newfolder);
-    create_folder(posfolder);
-    create_folder(checkpointsfolder);
-    //create_folder(histfolder);
-  }
-  prm.set<std::string>("folder", newfolder);
+  RunFolders out = make_run_folders(folder, "StaticSpaceStepper", prm);
+  const std::string& newfolder = out.run;
+  const std::string& checkpointsfolder = out.checkpoints;
 
   if (prm.get<bool>("verbose"))
     prm.print();

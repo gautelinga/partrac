@@ -71,29 +71,9 @@ int main(int argc, char* argv[])
   const bool dry_run = prm.check_only();
 
   std::string folder = intp->get_folder();
-  std::string rwfolder = folder + "/RandomWalkers/";
-  if (!dry_run)
-    create_folder(rwfolder);
-  std::string newfolder;
-  if (prm.get<std::string>("restart_folder") != ""){
-    newfolder = prm.get<std::string>("folder");
-  }
-  else {
-    newfolder = get_newfoldername(rwfolder, prm);
-    if (!dry_run)
-      create_folder(newfolder);
-  }
-  newfolder = newfolder + "" + "0" + "/";
-  std::string posfolder = newfolder + "Positions/";
-  std::string checkpointsfolder = newfolder + "Checkpoints/";
-  //std::string histfolder = newfolder + "Histograms/";
-  if (!dry_run){
-    create_folder(newfolder);
-    create_folder(posfolder);
-    create_folder(checkpointsfolder);
-    //create_folder(histfolder);
-  }
-  prm.set<std::string>("folder", newfolder);
+  RunFolders out = make_run_folders(folder, "RandomWalkers", prm, dry_run ? DryRun : DefaultLayout);
+  const std::string& newfolder = out.run;
+  const std::string& checkpointsfolder = out.checkpoints;
 
   if (prm.get<bool>("verbose"))
     prm.print();

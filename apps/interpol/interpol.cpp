@@ -24,6 +24,7 @@
 #include "RKIntegrator.hpp"
 #include "Initializer.hpp"
 #include "helpers.hpp"
+#include "run_folders.hpp"
 
 #include "interpol_schema.hpp"
 
@@ -52,16 +53,8 @@ int main(int argc, char* argv[])
   intp->set_int_order(prm.get<int>("int_order"));
 
   std::string folder = intp->get_folder();
-  std::string rwfolder = folder + "/Interpolation/"; 
-    create_folder(rwfolder);
-  std::string newfolder;
-  if (prm.get<std::string>("restart_folder") != ""){
-    newfolder = prm.get<std::string>("folder");
-  }
-  else {
-    newfolder = get_newfoldername(rwfolder, prm);
-      create_folder(newfolder);
-  }
+  const std::string newfolder = make_run_folders(folder, "Interpolation", prm,
+                                                NoSubfolders | NoRunIndex).run;
 
   // Parallel generators
   std::vector<std::mt19937> gens = make_generators(prm);

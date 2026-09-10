@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 
+import h5py
 import numpy as np
 import pytest
 
@@ -74,6 +75,90 @@ def test_coarsening_conserves_the_reference_length(tmp_path, ds_min):
     st = last_row(d)
     assert float(st["s0"]) == pytest.approx(0.5, rel=1e-9)
     assert 3 <= int(st["Nrw"]) < 50            # it really coarsened
+
+
+@needs_partrac
+@pytest.mark.parametrize("ds_init", ["0.1", "0.05", "0.025"])
+def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
+    # nothing moves, so every face must still read dA/dA0 = 1 however much the
+    # mesh is coarsened. Sharing the removed dA0 out by clamped relative weights
+    # left an rms error of 18% here that refining the mesh did not reduce.
+    d = tmp_path / ds_init
+    d.mkdir(parents=True)
+    (d / "expr_params.dat").write_text(
+        open(POISEUILLE).read().replace("u_inf=1.0", "u_inf=0.0"))
+    ds = float(ds_init)
+
+    def areas(ds_min):
+        case = d / ds_min
+        case.mkdir(parents=True)
+        (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
+        r = subprocess.run(
+            [PARTRAC, str(case / "expr_params.dat")]
+            + [a for a in BASE
+               if a.split("=")[0] not in {"ds_min", "dump_intv", "coarsen"}]
+            + ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=" + ds_init,
+               "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
+               "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=1e9",
+               "T=0.01", "dump_intv=0.01"],
+            capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+        dump = list(case.rglob("data_from_t*.h5"))
+        assert len(dump) == 1
+        h = h5py.File(dump[0], "r")
+        key = sorted(h.keys(), key=float)[0]
+        return (np.array(h[key + "/dA"]).ravel(),
+                np.array(h[key + "/dA0"]).ravel())
+
+    dA_ref, _ = areas("1e-12")                      # nothing collapses
+    dA, dA0 = areas("%g" % (1.2 * ds))
+
+    assert len(dA) < 0.6 * len(dA_ref)              # it really coarsened
+    assert dA0.min() > 0                            # and never through zero
+    assert np.max(np.abs(dA / dA0 - 1)) < 1e-12     # every elongation kept
+    assert dA0.sum() == pytest.approx(dA_ref.sum(), rel=1e-9)   # mass conserved
+
+
+@needs_partrac
+def test_coarsening_a_sheet_of_uniform_tau_keeps_it_uniform(tmp_path):
+    # Nothing moves, so tau grows identically on every face, and coarsening
+    # must not separate them. On a flat sheet the dA0 share-out is exact to
+    # the bit, so the taus stay identical and a collapse leaves them alone --
+    # including the first one, at t = 0, where every tau is zero and sharing
+    # dA0/sqrt(tau) would divide by it. This pins that path, and the property.
+    d = tmp_path
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "expr_params.dat").write_text(
+        open(POISEUILLE).read().replace("u_inf=1.0", "u_inf=0.0"))
+
+    def taus(ds_min):
+        case = d / ds_min
+        case.mkdir(parents=True)
+        (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
+        r = subprocess.run(
+            [PARTRAC, str(case / "expr_params.dat")]
+            + [a for a in BASE if a.split("=")[0]
+               not in {"ds_min", "dump_intv", "coarsen", "dt"}]
+            + ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=0.05",
+               "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
+               "integrate_tau=true", "tau_intv=0.001", "tau_max=0",
+               "dt=0.001", "T=0.01", "dump_intv=0.01",
+               "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=0.005"],
+            capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+        dump = list(case.rglob("data_from_t*.h5"))
+        assert len(dump) == 1
+        h = h5py.File(dump[0], "r")
+        key = sorted(h.keys(), key=float)[-1]
+        return np.array(h[key + "/tau"]).ravel()
+
+    tau_ref = taus("1e-12")                         # nothing collapses
+    tau = taus("0.06")
+
+    assert len(tau) < 0.6 * len(tau_ref)            # it really coarsened
+    assert tau_ref.min() > 0                        # and tau really ran
+    assert tau_ref == pytest.approx(tau_ref[0], rel=1e-12)
+    assert tau == pytest.approx(tau_ref[0], rel=1e-12)
 
 
 @needs_partrac
