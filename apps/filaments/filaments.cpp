@@ -167,8 +167,9 @@ int main(int argc, char* argv[])
   output_fields["c"] = !prm.get<bool>("minimal_output");
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");        
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
+  // H and n are only computed with the curvature
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
 
   std::ofstream statfile;
   if (prm.get<double>("stat_intv") > 0.){

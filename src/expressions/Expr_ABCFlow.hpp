@@ -17,16 +17,19 @@ public:
           getd(expr_params, "y0"),
           getd(expr_params, "z0")};
     p_inf = getd(expr_params, "p_inf");
+    // Optional forcing of A; zero leaves the steady flow
+    A_amp = getd(expr_params, "A_amp", 0.);
+    A_omega = getd(expr_params, "A_omega", 0.);
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused))) {
+  void eval(const Vector3d &x, const double t) {
     is_inside = true;
-    compute(x, U, gradU, P);
+    compute(x, t, U, gradU, P);
   };
   bool inside(const Vector3d &x __attribute__((unused)), const double t __attribute__((unused))) {
     return true;
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
-    compute(x, ptvals.U, ptvals.gradU, ptvals.P);
+  void eval(const Vector3d &x, const double t, PointValues& ptvals) {
+    compute(x, t, ptvals.U, ptvals.gradU, ptvals.P);
     ptvals.Rho = rho_inf;
   };
   double ux() { return U[0]; };
@@ -45,18 +48,20 @@ public:
   double uzz() { return gradU(2, 2); };
 private:
   // Writes no members: the PointValues overload runs inside an omp for
-  void compute(const Vector3d &x, Vector3d& U_, Matrix3d& gradU_, double& P_) const {
+  void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_, double& P_) const {
     Vector3d r = x-x0;
     double k = 2*M_PI/L;
+    double At = A + A_amp*sin(A_omega*t);
 
     double sx = B*sin(k*r[0]);
     double sy = C*sin(k*r[1]);
-    double sz = A*sin(k*r[2]);
+    double sz = At*sin(k*r[2]);
     double cx = B*cos(k*r[0]);
     double cy = C*cos(k*r[1]);
-    double cz = A*cos(k*r[2]);
+    double cz = At*cos(k*r[2]);
 
     U_ = {sz + cy, sx + cz, sy + cx};
+    // The Bernoulli sum: the pressure only while A_amp is zero
     P_ = p_inf - rho_inf*(sz*cy + sx*cz + sy*cx);
 
     // gradU_(i, j) is dU_i/dx_j
@@ -69,6 +74,7 @@ private:
   double p_inf;  // Far-field pressure
   double rho_inf;
   double A, B, C;
+  double A_amp, A_omega;  // forcing of A
   double L;
   // Useful quantities
   Vector3d U;

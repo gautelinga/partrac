@@ -127,18 +127,12 @@ int main(int argc, char* argv[])
   ParticleSet ps(intp, prm.get<Uint>("Nrw_max"));
   Topology mesh(ps, prm);
 
-  if (prm.get<bool>("inject")){
-    std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
-    if (key[0] == "uniform" || key[0] == "point"){
-      std::cout << "Injection activated!" << std::endl;
-    }
-    else {
-      std::cout << "init_mode " << prm.get<std::string>("init_mode") << " incompatible with injection." << std::endl;
-      exit(1);
-    }
-  }
+  if (prm.get<bool>("inject"))
+    std::cout << "Injection activated!" << std::endl;
 
-  if (prm.get<std::string>("restart_folder") != ""){
+  const bool restarting = prm.get<std::string>("restart_folder") != "";
+
+  if (restarting){
     mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
   }
   else {
@@ -155,14 +149,14 @@ int main(int argc, char* argv[])
     return 0;
   }
 
-  // Initial refinement
-  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
+  // Initial refinement, not on a restart
+  if (refine && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
     if (prm.get<bool>("verbose"))
       std::cout << "Added " << n_add << " edges." << std::endl;
   }
-  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
+  if (coarsen && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen();
     if (prm.get<bool>("verbose"))
@@ -188,8 +182,10 @@ int main(int argc, char* argv[])
   }
 
   double t = t0;
-  if (prm.get<std::string>("restart_folder") != ""){
+  if (restarting){
     t = prm.get<double>("t");
+    // Resume the step count, so the intervals keep their phase
+    it = static_cast<int>(prm.get<Uint>("it"));
   }
 
   prm.dump(newfolder, t);
@@ -218,8 +214,9 @@ int main(int argc, char* argv[])
   output_fields["c"] = !prm.get<bool>("minimal_output");
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["rho"] = !prm.get<bool>("minimal_output"); // && prm.output_all_props;   
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
+  // H and n are only computed with the curvature
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
   output_fields["tau"] = prm.get<bool>("integrate_tau");
 
   bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && prm.get<double>("Ln") > 0;
@@ -303,6 +300,7 @@ int main(int argc, char* argv[])
 
     // Checkpoint
     if (at_interval(it, prm.get<double>("checkpoint_intv"), dt)){
+      prm.set<Uint>("it", it);
       mesh.write_checkpoint(checkpointsfolder, t, prm);
     }
 
@@ -347,6 +345,7 @@ int main(int argc, char* argv[])
   double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
   std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 
+  prm.set<Uint>("it", it);
   mesh.write_checkpoint(checkpointsfolder, t, prm);
 
   // Close files

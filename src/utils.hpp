@@ -197,6 +197,15 @@ static double getd(std::map<std::string, std::string> &expr_params, const std::s
   }
 }
 
+// Optional parameter: an expression that gained one must still read an old file
+static double getd(std::map<std::string, std::string> &expr_params,
+                   const std::string key, const double fallback){
+  if (expr_params.find(key) != expr_params.end()){
+    return stod(expr_params[key]);
+  }
+  return fallback;
+}
+
 static double geti(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stoi(expr_params[key]);

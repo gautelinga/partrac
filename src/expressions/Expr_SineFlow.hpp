@@ -53,8 +53,8 @@ private:
     double chi = chi_[i % chi_.size()];
     int j = flowdir_[i % flowdir_.size()];
     int k = depdir_[i % depdir_.size()];
-    assert(j < 2 && j >= 0);
-    assert(k < 2 && k >= 0);
+    assert(j < 3 && j >= 0);
+    assert(k < 3 && k >= 0);
 
     U_ = {0., 0., 0.};
     gradU_ <<

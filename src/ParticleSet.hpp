@@ -13,13 +13,13 @@ public:
     ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max);
     //ParticleSet(const Uint Nrw_max);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
+    void add(const std::vector<Vector3d> &pos_init, const std::vector<Uint> &which, const Uint irw0);
     //template<typename T>
     bool insert_node_between(const Uint, const Uint, const bool check_if_inside);
     double dist(const Uint inode, const Uint jnode) const { Vector3d dx = x_rw[inode]-x_rw[jnode]; return dx.norm(); };
     void copy_node(const Uint, const Uint);
     double triangle_area(const Uint iface, const FacesType& faces, const EdgesType& edges) const;
     double triangle_area(const Uint iedge, const Uint jedge, const EdgesType& edges) const { return cross_product(iedge, jedge, edges).norm()/2; };
-    std::vector<double> triangle_areas(const std::vector<Uint> &kfaces, const FacesType &faces, const EdgesType &edges);
     Vector3d cross_product(const Uint iedge, const Uint jedge, const EdgesType& edges) const;
     void replace_nodes(Vector3d& x, const Uint inode, const Uint jnode);
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
@@ -114,6 +114,19 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
   Nrw += pos_init.size();
 }
 
+// Add only the listed entries of pos_init
+void ParticleSet::add(const std::vector<Vector3d> &pos_init,
+                      const std::vector<Uint> &which, const Uint irw0) {
+  for (Uint k=0; k < which.size(); ++k){
+    const Uint irw = irw0 + k;
+    x_rw[irw] = pos_init[which[k]];
+    c_rw[irw] = double(irw)/(Nrw + which.size() - 1);
+    t_loc_rw[irw] = 0.;
+    cell_id_rw[irw] = -1;
+  }
+  Nrw += which.size();
+}
+
 //template<typename T>
 bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
@@ -204,16 +217,6 @@ Vector3d ParticleSet::cross_product(const Uint iedge, const Uint jedge, const Ed
   return a.cross(b);
 }
 
-std::vector<double> ParticleSet::triangle_areas(const std::vector<Uint> &kfaces,
-                                                const FacesType &faces, const EdgesType &edges){
-  std::vector<double> a;
-  for (std::vector<Uint>::const_iterator faceit=kfaces.begin();
-       faceit != kfaces.end(); ++faceit){
-    a.push_back(this->triangle_area(*faceit, faces, edges));
-  }
-  return a;
-}
-
 void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode){
   //intp->probe(x);  //
 
@@ -297,7 +300,7 @@ void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType
                                     std::vector<double> edge_w, std::vector<double> mixed_areas){
   for (Uint inode=0; inode<Nrw; ++inode){
     Vector3d lapl_v(0., 0., 0.);
-    for (EdgesListType::const_iterator edgeit=node2edges[inode].begin();
+    for (auto edgeit=node2edges[inode].begin();
          edgeit != node2edges[inode].end(); ++edgeit){
       Uint jnode = get_other(edges[*edgeit].first[0],
                              edges[*edgeit].first[1], inode);
@@ -315,7 +318,7 @@ void ParticleSet::compute_strip_curvature(const EdgesType &edges,
     H_rw[inode] = 0.;
     n_rw[inode] = {1., 0., 0.};
     if (node2edges[inode].size() == 2){
-      EdgesListType::const_iterator edgeit = node2edges[inode].begin();
+      auto edgeit = node2edges[inode].begin();
       Uint jnode = get_other(edges[*edgeit].first[0],
                              edges[*edgeit].first[1], inode);
       ++edgeit;

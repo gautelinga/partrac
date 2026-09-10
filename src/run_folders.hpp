@@ -8,10 +8,9 @@
 #include "Params.hpp"
 #include "io.hpp"
 
-// Where a run writes: <base>/<name>/<parameters>/0/, with Positions/ and
-// Checkpoints/ inside it. A restart reuses the folder its checkpoint recorded,
-// which already ends in the run's subfolder -- appending another would nest a
-// level deeper on every restart.
+// Output layout: <base>/<name>/<parameters>/0/{Positions,Checkpoints}/.
+// A restart reuses the folder recorded in its checkpoint, which already ends
+// in 0/.
 
 inline std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;

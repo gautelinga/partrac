@@ -293,8 +293,9 @@ int main(int argc, char* argv[])
   output_fields["c"] = true;
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");        
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0;
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1;
+  // H and n are only computed with the curvature
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
   output_fields["t_loc"] = true;
   output_fields["tau"] = true;
 

@@ -22,6 +22,8 @@ public:
   Uint remove_beyond(const int, const double);
   Uint inject();
   void compute_interior();
+  // Whether compute_interior fills H and n
+  bool computes_curvature() const { return curv_refine_factor > 0.; };
   void remove_nodes_safe(std::vector<bool>&);
   bool resize(const double);
   void integrate_tau(const double, const double);
@@ -53,6 +55,7 @@ private:
   double ds_max;
   double curv_refine_factor;
   bool cut_if_stuck;
+  bool injecting;
   bool inject_edges;
   bool verbose;
   Uint filter_target;
@@ -63,6 +66,7 @@ Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
   ds_max = prm.get<double>("ds_max");
   curv_refine_factor = prm.get<double>("curv_refine_factor");
   cut_if_stuck = prm.get<bool>("cut_if_stuck");
+  injecting = prm.has("inject") ? prm.get<bool>("inject") : false;
   inject_edges = prm.get<bool>("inject_edges");
   verbose = prm.get<bool>("verbose");
   filter_target = prm.get<int>("filter_target");
@@ -97,6 +101,11 @@ void Topology::check_dim(){
     return;
   }
   if (d == dim0) return;
+  // An injecting run traces a dimension more than its inlet, so it may rise
+  if (d > dim0 && injecting){
+    dim0 = d;
+    return;
+  }
   std::cerr << "Error: the mesh changed dimension, from " << dim0 << " to " << d
             << ", with " << ps.N() << " nodes and " << edges.size()
             << " edges left. Stopping." << std::endl;
@@ -141,13 +150,11 @@ void Topology::integrate_tau(const double dt, const double tau_max){
           edge_isactive[iedge] = false;
       }
 
-      // untested!
-      FacesType faces_dummy;
-      //NodesListType nodes_inlet_dummy;
-      EdgesListType edges_inlet_dummy;
-      remove_edges(faces_dummy, edges, edge_isactive, edges_inlet_dummy);
-      remove_unused_nodes(edges, nodes_inlet, ps);
-      compute_node2edges(node2edges, edges, ps.N());
+      std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
+      std::vector<bool> node_isactive(ps.N(), true);
+      remove_inactive(faces, edges, edge2faces, node2edges,
+                      edges_inlet, nodes_inlet,
+                      face_isactive, edge_isactive, node_isactive, ps);
       check_topology();   // culling every edge would drop the dimension
     }
   }
@@ -156,8 +163,10 @@ void Topology::integrate_tau(const double dt, const double tau_max){
     {
       Uint iedge = face.first[0];
       Uint jedge = face.first[1];
-      double dA = ps.triangle_area(iedge, jedge, edges);
       double dA0 = face.second;
+      if (!(dA0 > 0.))
+        continue;                 // a flat sweep, waiting to be culled
+      double dA = ps.triangle_area(iedge, jedge, edges);
       double rho = dA/dA0;
       face.tau += 0.5*dt*(pow(face.rho_prev, 2) + pow(rho, 2));
       face.rho_prev = rho;
@@ -168,11 +177,11 @@ void Topology::integrate_tau(const double dt, const double tau_max){
         if (faces[iface].tau > tau_max)
           face_isactive[iface] = false;
       }
-      remove_faces(faces, face_isactive);
-      remove_unused_edges(faces, edges, edges_inlet);
-      remove_unused_nodes(edges, nodes_inlet, ps);
-      compute_edge2faces(edge2faces, faces, edges);
-      compute_node2edges(node2edges, edges, ps.N());
+      std::vector<bool> edge_isactive(edges.size(), true);
+      std::vector<bool> node_isactive(ps.N(), true);
+      remove_inactive(faces, edges, edge2faces, node2edges,
+                      edges_inlet, nodes_inlet,
+                      face_isactive, edge_isactive, node_isactive, ps);
       check_topology();
     }
   }
@@ -181,7 +190,7 @@ void Topology::integrate_tau(const double dt, const double tau_max){
 Uint Topology::refine(){
   Uint n = refinement(faces, edges,
                       edge2faces, node2edges,
-                      edges_inlet,
+                      edges_inlet, nodes_inlet,
                       ps, ds_max,
                       curv_refine_factor,
                       cut_if_stuck);
@@ -211,37 +220,41 @@ Uint Topology::inject(){
                    ps,
                    inject_edges,
                    verbose);
+  // the generation before this one is no longer at the inlet
+  std::vector<bool> face_isactive(faces.size(), true);
+  std::vector<bool> edge_isactive(edges.size(), true);
+  std::vector<bool> node_isactive(ps.N(), true);
+  remove_inactive(faces, edges, edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive, ps);
   check_topology();
   return n;
 }
 
 void Topology::compute_interior(){
-  /*
-  remove_unused_edges(faces, edges, edges_inlet);
-  remove_unused_nodes(edges, nodes_inlet, ps);
-
-  compute_edge2faces(edge2faces, faces, edges);
-  compute_node2edges(node2edges, edges, ps.N());
-  */
-
+  // Only the curvature-weighted refinement reads this
+  if (!computes_curvature())
+    return;
   compute_interior_prop(interior_ang, mixed_areas, face_normals,
                         faces, edges, edge2faces, ps);
   compute_mean_curv(faces, edges, edge2faces, node2edges,
                     ps, interior_ang, mixed_areas, face_normals);
-  /**/
 }
 
 void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
-  remove_nodes_safely(faces, edges,
-                      edge2faces, node2edges,
-                      edges_inlet, nodes_inlet,
-                      node_isactive,
-                      ps);
+  std::vector<bool> face_isactive(faces.size(), true);
+  std::vector<bool> edge_isactive(edges.size(), true);
+  remove_inactive(faces, edges,
+                  edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive,
+                  ps);
   check_dim();
 }
 
 bool Topology::filter(){
-  bool changed = filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
+  bool changed = filtering(faces, edges, edge2faces, node2edges,
+                           edges_inlet, nodes_inlet, ps, filter_target);
   check_topology();
   return changed;
 }
@@ -331,12 +344,19 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partr
     clear();
   }
   if (init_state->inject){
+    // Injection raises what the inlet traces by a dimension, so a sheet inlet
+    // would sweep a volume. What clear_initial_edges leaves is the inlet.
+    if (faces.size() > 0){
+      std::cerr << "Error: an inlet with faces would sweep a volume. Stopping."
+                << std::endl;
+      exit(1);
+    }
     pos_inj = init_state->nodes;
-    edges_inj = init_state->edges;
-    for (Uint i=0; i<init_state->nodes.size(); ++i){
+    edges_inj = edges;
+    for (Uint i=0; i<pos_inj.size(); ++i){
       nodes_inlet.push_back(i);
     }
-    for (Uint i=0; i<init_state->edges.size(); ++i){
+    for (Uint i=0; i<edges_inj.size(); ++i){
       edges_inlet.push_back(i);
     }
   }

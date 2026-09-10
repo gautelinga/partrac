@@ -42,6 +42,7 @@ BAD_CASES = [
     (["init_mode=strip_x"], "La"),                              # conditionally required
     (["init_mode=uniform_x", "exit_plane=x"], "filter_intv"),   # conditionally required
     (["init_mode=uniform_x", "inject=true"], "inject_intv"),    # conditionally required
+    (["init_mode=uniform_x", "Nrw=1"], "Nrw"),                  # no interval to step
     (["init_mode=uniform_x", "ds_ini=0.1"], "ds_init"),         # typo
     (["init_mode=uniform_x", "nx=0"], "nx"),                    # unknown key
     (["init_mode=uniform_x", "Nrw_max=-1"], "Nrw_max"),         # negative size

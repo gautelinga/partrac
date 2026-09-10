@@ -36,10 +36,12 @@ typedef std::vector<EdgeType> EdgesType;
 //typedef std::vector<std::pair<std::array<Uint, 3>, double>> FacesType;
 typedef std::vector<FaceType> FacesType;
 typedef std::list<Uint> FacesListType;
-typedef std::list<Uint> EdgesListType;
-typedef std::list<Uint> NodesListType;
-typedef std::vector<FacesListType> Edge2FacesType;
-typedef std::vector<EdgesListType> Node2EdgesType;
+typedef std::vector<Uint> EdgesListType;   // template edge -> live edge
+typedef std::vector<Uint> NodesListType;   // template node -> live node
+// Adjacency tables: the faces of an edge, the edges of a node
+typedef std::vector<Uint> AdjRowType;
+typedef std::vector<AdjRowType> Edge2FacesType;
+typedef std::vector<AdjRowType> Node2EdgesType;
 typedef std::vector<std::map<Uint, double>> InteriorAnglesType;
 typedef Eigen::Vector3d Vector3d;
 typedef Eigen::Matrix3d Matrix3d;

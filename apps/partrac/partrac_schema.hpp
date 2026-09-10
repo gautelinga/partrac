@@ -63,6 +63,7 @@ inline partrac::Schema partrac_schema(){
   s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
   s.runtime<double>("t", 0.0, "current time");
+  s.runtime<Uint>("it", 0, "current step");
   s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");

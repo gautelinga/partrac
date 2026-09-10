@@ -59,9 +59,9 @@ void load_faces(const std::string& input_file,
 void load_edges(const std::string& input_file,
                 EdgesType &edges);
 void load_list(const std::string& input_file,
-               std::list<Uint> &li);
+               std::vector<Uint> &li);
 void dump_list(const std::string& output_file,
-               const std::list<Uint> &li);
+               const std::vector<Uint> &li);
 void dump_faces(const std::string& output_file,
                 const FacesType &faces);
 void dump_edges(const std::string& output_file,

@@ -63,6 +63,11 @@ inline void add_initializer_params(partrac::Schema& s){
                        },
                        "init_mode is a sheet, pair or points distribution",
                        "initial edge length");
+  // uniform_* steps from one end of the domain to the other
+  s.check([](const partrac::Params& p){
+            return !init_mode_is(p, {"uniform"}) || p.get<Uint>("Nrw") >= 2;
+          },
+          "init_mode uniform needs Nrw of 2 or more");
   s.require_if<std::string>("init_weight",
                             [](const partrac::Params& p){
                               return init_mode_is(p, {"points"});
@@ -164,7 +169,7 @@ public:
         nodes.push_back(x);
       }
     }
-    for (Uint irw=0; irw < nodes.size()-1; ++irw){
+    for (Uint irw=0; irw+1 < nodes.size(); ++irw){   // nodes may be empty
       if ((nodes[irw] - nodes[irw+1]).norm() < 1.5*Dx.norm()){
         edges.push_back({{irw, irw+1}, dist(nodes[irw], nodes[irw+1])});
       }
@@ -290,13 +295,14 @@ public:
     compute_edge2faces(edge2faces_loc, faces, edges);
     compute_node2edges(node2edges_loc, edges, pset_loc.N());
 
-    NodesListType nodes_inlet_dummy;
-    EdgesListType edges_inlet_dummy;
+    NodesListType nodes_inlet_loc;
+    EdgesListType edges_inlet_loc;
 
     Uint n_add = 0;
     Uint n_rem = 0;
     do {
-      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
+      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
+                                    edges_inlet_loc, nodes_inlet_loc,
                                     pset_loc, prm.get<double>("ds_init"), 0.0, false, false);
 
       std::cout << "Added " << n_add << " edges." << std::endl;
@@ -342,13 +348,10 @@ public:
 
     std::cout << "Removing faces." << std::endl;
 
-    remove_faces(faces, face_isactive);
-    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
-  
-    // remove_unused_edges(faces, edges, edges_inlet_dummy);
-    remove_unused_nodes(edges, nodes_inlet_dummy, pset_loc);
-    compute_edge2faces(edge2faces_loc, faces, edges);
-    compute_node2edges(node2edges_loc, edges, pset_loc.N());
+    std::vector<bool> node_isactive(pset_loc.N(), true);
+    remove_inactive(faces, edges, edge2faces_loc, node2edges_loc,
+                    edges_inlet_loc, nodes_inlet_loc,
+                    face_isactive, edge_isactive, node_isactive, pset_loc);
 
     std::cout << "Removed faces in solid." << std::endl;
 
@@ -385,16 +388,17 @@ public:
       compute_node2edges(node2edges_loc, edges, pset_loc.N());
     }
 
-    //n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+    //n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_loc, nodes_inlet_loc,
     //                         pset_loc, prm.ds_max, 0.0);
 
     int attempt = 0;
     int max_attempts = 100;
     do {
-      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_loc, nodes_inlet_loc,
                                pset_loc, attempt == 0 ? prm.get<double>("ds_min") : prm.get<double>("ds_min"), 0.0);
 
-      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
+      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
+                                    edges_inlet_loc, nodes_inlet_loc,
                                     pset_loc, prm.get<double>("ds_max"), 0.0, false, true);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
@@ -498,14 +502,15 @@ public:
     faces.push_back({{1, 4, 3}, 1.});
     faces.push_back({{2, 5, 4}, 1.});
 
-    NodesListType nodes_inlet_dummy;
-    EdgesListType edges_inlet_dummy;
+    NodesListType nodes_inlet_loc;
+    EdgesListType edges_inlet_loc;
     compute_edge2faces(edge2faces_loc, faces, edges);
     compute_node2edges(node2edges_loc, edges, pset_loc.N());
 
     Uint n_add, n_rem;
     do {
-      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy,
+      n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
+                                    edges_inlet_loc, nodes_inlet_loc,
                                     pset_loc, prm.get<double>("ds_max"), 0.0, false);
       for (Uint irw=0; irw<pset_loc.N(); ++irw){
         Vector3d x = pset_loc.x(irw);
@@ -513,7 +518,7 @@ public:
         double rad = 1./sqrt(nn[0]*nn[0]/lx2 + nn[1]*nn[1]/ly2 + nn[2]*nn[2]/lz2);
         pset_loc.set_x(irw, x_c + rad * nn);
       }
-      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_dummy, nodes_inlet_dummy,
+      n_rem = sheet_coarsening(faces, edges, edge2faces_loc, node2edges_loc, edges_inlet_loc, nodes_inlet_loc,
                                pset_loc, prm.get<double>("ds_min"), 0.0);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;

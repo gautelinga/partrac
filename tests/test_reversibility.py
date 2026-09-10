@@ -31,11 +31,11 @@ from paths import REPO, app
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 
-T, U_INF, R = 2.0, 1.0, 1.0
+T, U_INF, R, DT = 2.0, 1.0, 1.0, 0.001
 BASE = ("mode=analytic init_mode=strip_x La=1.0 x0=0 y0=0 z0=0 Nrw=100 "
         "Nrw_max=200000 ds_max=0.02 refine=true refine_intv=0.01 Dm=0 "
-        "int_order=1 dt=0.001 stat_intv=1e9 random=false seed=1 "
-        "integrate_tau=true tau_intv=0.001 tau_max=0").split()
+        "int_order=1 dt=%g stat_intv=1e9 random=false seed=1 "
+        "integrate_tau=true tau_intv=%g tau_max=0" % (DT, DT)).split()
 
 needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
                                    reason="partrac is not built")
@@ -54,7 +54,9 @@ def there_and_back(tmp_path, extra):
                            capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout + r.stderr
 
-    call(["T=%g" % T, "dump_intv=1e9", "checkpoint_intv=%g" % T])
+    # the checkpoint lands one step past T, so stop a step short of it: the
+    # closed forms below are only right if the flow reverses exactly at T
+    call(["T=%g" % (T - DT), "dump_intv=1e9", "checkpoint_intv=%g" % T])
     checkpoint = list(tmp_path.rglob("edges.edge"))
     assert len(checkpoint) == 1
     cfg.write_text(re.sub(r"(?m)^u_inf=.*$", "u_inf=%g" % -U_INF, cfg.read_text()))
@@ -255,9 +257,7 @@ def test_merging_across_cusps_preserves_the_aggregates(tmp_path):
 def folded_sheet(tmp_path_factory):
     """Four half periods of the sine flow on an x-z sheet, coarsened and not.
 
-    Four is enough folding that the stars of the collapsed edges are properly
-    non-planar, which is the case the dA0 share-out has to get right, and
-    that faces disagree about tau by the time the way back merges them.
+    Enough folding that the stars of the collapsed edges are not planar.
     """
     if not os.path.exists(PARTRAC):
         pytest.skip("partrac is not built")
@@ -276,12 +276,8 @@ def folded_sheet(tmp_path_factory):
 
 @needs_partrac
 def test_coarsening_a_folded_sheet_conserves_its_reference_area(folded_sheet):
-    # A collapse on a folded sheet really does destroy area: the star of the
-    # edge is not planar, so the survivors do not grow by what the removed
-    # faces held, and the difference runs about 0.4% per collapse. It must not
-    # destroy material with it. Handing the removed dA0 out at the observed
-    # area gain lost 0.2% of the sheet here and 3.6% over a longer fold, which
-    # is a silent bias on every statistic, since all of them weight by dA0.
+    # A collapse on a folded sheet destroys area, since the star of the edge is
+    # not planar, but it must not destroy reference area.
     for s in folded_sheet:
         assert s["w0"].sum() == pytest.approx(0.25, rel=1e-12)
         assert s["w0"].min() > 0                          # never through zero
@@ -289,12 +285,8 @@ def test_coarsening_a_folded_sheet_conserves_its_reference_area(folded_sheet):
 
 @needs_partrac
 def test_coarsening_a_folded_sheet_keeps_the_scalar_it_reports(folded_sheet):
-    # A collapse shares the removed faces' variance content dA0/sqrt(tau) out
-    # with their reference area, so the scalar the method reports survives it.
-    # The tolerance is the cost of coarsening itself, which no merge rule
-    # removes. What pins the rule is that the error is the same at every
-    # Peclet number: dropping the removed tau instead drifts from 0.04% to
-    # 0.34% across these k, a spread of 0.30%, and fails here.
+    # The scalar the method reports must survive coarsening, and its error must
+    # not depend on the Peclet number.
     half, whole, ref_half, ref = folded_sheet
     assert np.isfinite(whole["tau"]).all() and whole["tau"].min() > 0
     c = lambda s, k: (s["w0"] / np.sqrt(1 + 4 * k * s["tau"])).sum()

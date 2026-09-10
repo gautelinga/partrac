@@ -88,8 +88,8 @@ void write_stats(std::ofstream &statfile,
       s += ds;
       s0 += ds0;
     }
-    logelong_wmean /= s;
-    logelong_w0mean /= s0;
+    logelong_wmean = s > 0. ? logelong_wmean/s : 0.;
+    logelong_w0mean = s0 > 0. ? logelong_w0mean/s0 : 0.;
 
     double logelong_wvar = 0.;
     double logelong_w0var = 0.;
@@ -98,8 +98,8 @@ void write_stats(std::ofstream &statfile,
       logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
       logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
     }
-    logelong_wvar /= s;
-    logelong_w0var /= s0;
+    logelong_wvar = s > 0. ? logelong_wvar/s : 0.;
+    logelong_w0var = s0 > 0. ? logelong_w0var/s0 : 0.;
     statfile << s << "\t"                   // 15
              << s0 << "\t"                  // 16
              << logelong_wmean << "\t"      // 17
@@ -118,6 +118,8 @@ void write_stats(std::ofstream &statfile,
       Uint jedge = faceit->first[1];
       // Uint kedge = faceit->first[2];
       double dA0 = faceit->second;
+      if (!(dA0 > 0.))
+        continue;                 // a flat sweep, waiting to be culled
       double dA = ps.triangle_area(iedge, jedge, edges);
       double logelong = log(dA/dA0);
       logelong_wmean += logelong*dA;
@@ -126,8 +128,8 @@ void write_stats(std::ofstream &statfile,
       A += dA;
       A0 += dA0;
     }
-    logelong_wmean /= A;
-    logelong_w0mean /= A0;
+    logelong_wmean = A > 0. ? logelong_wmean/A : 0.;
+    logelong_w0mean = A0 > 0. ? logelong_w0mean/A0 : 0.;
     double logelong_wvar = 0.;
     double logelong_w0var = 0.;
     for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
@@ -135,8 +137,8 @@ void write_stats(std::ofstream &statfile,
       logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
       logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
     }
-    logelong_wvar /= A;
-    logelong_w0var /= A0;
+    logelong_wvar = A > 0. ? logelong_wvar/A : 0.;
+    logelong_w0var = A0 > 0. ? logelong_w0var/A0 : 0.;
     statfile << A << "\t"                   // 15
              << A0 << "\t"                  // 16
              << logelong_wmean << "\t"  // 17

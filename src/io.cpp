@@ -257,7 +257,7 @@ void load_edges(const std::string& input_file,
 }
 
 void load_list(const std::string& input_file,
-               std::list<Uint> &li){
+               std::vector<Uint> &li){
   std::ifstream infile(input_file);
   Uint a;
   while (infile >> a){
@@ -267,11 +267,10 @@ void load_list(const std::string& input_file,
 }
 
 void dump_list(const std::string& output_file,
-               const std::list<Uint> &li){
+               const std::vector<Uint> &li){
   std::ofstream outfile(output_file);
-  for (std::list<Uint>::const_iterator lit=li.begin();
-       lit != li.end(); ++lit){
-    outfile << *lit << std::endl;
+  for (const Uint i : li){
+    outfile << i << std::endl;
   }
   outfile.close();
 }
@@ -433,7 +432,7 @@ void print_mesh(const FacesType& faces, const EdgesType& edges,
   std::cout << "edge2faces" << std::endl;
   for (size_t ie2f = 0; ie2f < edge2faces.size(); ++ie2f){
     std::cout << ie2f << ": ";
-    for (FacesListType::const_iterator vit=edge2faces[ie2f].begin();
+    for (auto vit=edge2faces[ie2f].begin();
          vit != edge2faces[ie2f].end(); ++vit){
       std::cout << *vit << " ";
     }
@@ -468,7 +467,7 @@ void dump_mesh(const FacesType& faces, const EdgesType& edges,
 
   std::ofstream e2ff("mesh.e2f");
   for (size_t ie2f = 0; ie2f < edge2faces.size(); ++ie2f){
-    for (FacesListType::const_iterator vit=edge2faces[ie2f].begin();
+    for (auto vit=edge2faces[ie2f].begin();
          vit != edge2faces[ie2f].end(); ++vit){
       e2ff << *vit << " ";
     }

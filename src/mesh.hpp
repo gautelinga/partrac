@@ -12,8 +12,9 @@ void compute_node2edges(Node2EdgesType&, const EdgesType&, const Uint);
 void compute_edge2faces(Edge2FacesType&, const FacesType&, const EdgesType&);
 void remove_faces(FacesType&, const std::vector<bool>&);
 void remove_edges(FacesType&, EdgesType&, const std::vector<bool>&, EdgesListType&);
-void remove_unused_edges(FacesType&, EdgesType&, EdgesListType&);
-void remove_unused_nodes(EdgesType&, NodesListType&, ParticleSet&);
+void remove_inactive(FacesType&, EdgesType&, Edge2FacesType&, Node2EdgesType&,
+                     EdgesListType&, NodesListType&, std::vector<bool>&,
+                     std::vector<bool>&, std::vector<bool>&, ParticleSet&);
 
 // Definitions
 
@@ -108,8 +109,9 @@ std::array<Uint, 2> sort_edges(Uint inode, Uint kedge, Uint ledge,
   return {ledge, kedge};
 }
 
-Uint get_common_entry(EdgesListType& iedges, EdgesListType& jedges){
-  EdgesListType out;
+template<typename Row>
+Uint get_common_entry(const Row& iedges, const Row& jedges){
+  std::vector<Uint> out;
   std::set_intersection(iedges.begin(), iedges.end(), jedges.begin(), jedges.end(),
                         std::back_inserter(out));
   assert(out.size() == 1);
@@ -162,6 +164,7 @@ Uint sheet_refinement(FacesType &faces,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,                    
                       EdgesListType &edges_inlet,                
+                      NodesListType &nodes_inlet,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
@@ -185,12 +188,23 @@ Uint sheet_refinement(FacesType &faces,
       double ds_max_loc = ds_max;
       ds_ratio_.push_back(ds/ds_max_loc);
     }
-    std::vector<size_t> ids_ = argsort_descending(ds_ratio_);
 
     // Don't refine inlet edges
     for ( auto & inode : edges_inlet ){
       ds_ratio_[inode] = 0.0;
     }
+
+    // Only the edges over threshold are split, so only they need ordering:
+    // sorting every edge to find the few percent that qualify was half of
+    // refinement. A stable sort of the subset keeps exactly the order the
+    // full one gave, so the splits happen in the same order as before.
+    std::vector<size_t> ids_;
+    for (size_t iedge = 0; iedge < ds_ratio_.size(); ++iedge){
+      if (ds_ratio_[iedge] >= 1.0)
+        ids_.push_back(iedge);
+    }
+    std::stable_sort(ids_.begin(), ids_.end(),
+                     [&ds_ratio_](size_t i1, size_t i2){ return ds_ratio_[i1] > ds_ratio_[i2]; });
 
     for ( auto & iedge : ids_ ){
 
@@ -222,7 +236,7 @@ Uint sheet_refinement(FacesType &faces,
         // Modify existing entry
         std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
 
-        for (FacesListType::iterator itface = edge2faces[iedge].begin();
+        for (auto itface = edge2faces[iedge].begin();
              itface != edge2faces[iedge].end(); ++itface){
           Uint jedge = faces[*itface].first[0];
           Uint kedge = faces[*itface].first[1];
@@ -246,7 +260,10 @@ Uint sheet_refinement(FacesType &faces,
           //faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2});
           faces.push_back({{new_iedge, nedge, new_jedge}, dA0/2, tau, rho_prev});
 
-          edge2faces[nedge].remove(*itface);
+          {
+            auto & row = edge2faces[nedge];
+            row.erase(std::remove(row.begin(), row.end(), *itface), row.end());
+          }
           edge2faces[nedge].push_back(new_iface);
           edge2faces[new_iedge].push_back(new_iface);
           edge2faces[new_jedge].push_back(*itface);
@@ -269,28 +286,24 @@ Uint sheet_refinement(FacesType &faces,
     //  std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
     //  exit(1);
     //}
-    std::vector<bool> edge_isactive(edges.size(), true);
     std::vector<bool> face_isactive(faces.size(), true);
-    for (auto & jedge : edges_to_remove ){
+    std::vector<bool> edge_isactive(edges.size(), true);
+    std::vector<bool> node_isactive(ps.N(), true);
+    for (auto & jedge : edges_to_remove )
       edge_isactive[jedge] = false;
-      for ( auto & jface : edge2faces[jedge] ){
-          face_isactive[jface] = false;
-      }
-    }
-    NodesListType nodes_inlet_dummy;
-    EdgesListType edges_inlet_dummy;
-
-    remove_faces(faces, face_isactive);
-    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
-    remove_unused_nodes(edges, nodes_inlet_dummy, ps);
-    compute_edge2faces(edge2faces, faces, edges);
-    compute_node2edges(node2edges, edges, ps.N());
+    remove_inactive(faces, edges, edge2faces, node2edges,
+                    edges_inlet, nodes_inlet,
+                    face_isactive, edge_isactive, node_isactive, ps);
   }
   return n_add;
 }
 
-Uint strip_refinement(EdgesType &edges,
+Uint strip_refinement(FacesType &faces,
+                      EdgesType &edges,
+                      Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
+                      EdgesListType &edges_inlet,
+                      NodesListType &nodes_inlet,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
@@ -298,7 +311,15 @@ Uint strip_refinement(EdgesType &edges,
   Uint n_add = 0;
   Uint iedge = 0;
   std::set<Uint> edges_to_remove;
+  // Don't refine inlet edges
+  std::vector<bool> is_inlet(edges.size(), false);
+  for ( auto & jedge : edges_inlet )
+    is_inlet[jedge] = true;
   while (iedge < edges.size()){
+    if (iedge < is_inlet.size() && is_inlet[iedge]){
+      ++iedge;
+      continue;
+    }
     Uint inode = edges[iedge].first[0];
     Uint jnode = edges[iedge].first[1];
     double ds0 = edges[iedge].second;
@@ -324,6 +345,7 @@ Uint strip_refinement(EdgesType &edges,
         edges.push_back({{new_inode, jnode}, ds0/2, tau, rho_prev});
         //std::cout << "after:  " << edges[iedge].first[0] << " " << edges[iedge].first[1] << std::endl;
         //std::cout << "...and: " << edges[new_iedge].first[0] << " " << edges[new_iedge].first[1] << std::endl;
+        edge2faces.push_back({});
 
         node2edges.push_back({iedge, new_iedge});
 
@@ -348,17 +370,16 @@ Uint strip_refinement(EdgesType &edges,
       std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
       exit(1);
     }
+    std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
     std::vector<bool> edge_isactive(edges.size(), true);
+    std::vector<bool> node_isactive(ps.N(), true);
     for (std::set<Uint>::const_iterator sit = edges_to_remove.begin();
          sit != edges_to_remove.end(); ++sit){
       edge_isactive[*sit] = false;
     }
-    FacesType faces_dummy;
-    NodesListType nodes_inlet_dummy;
-    EdgesListType edges_inlet_dummy;
-    remove_edges(faces_dummy, edges, edge_isactive, edges_inlet_dummy);
-    remove_unused_nodes(edges, nodes_inlet_dummy, ps);
-    compute_node2edges(node2edges, edges, ps.N());
+    remove_inactive(faces, edges, edge2faces, node2edges,
+                    edges_inlet, nodes_inlet,
+                    face_isactive, edge_isactive, node_isactive, ps);
   }
   return n_add;
 }
@@ -368,20 +389,20 @@ Uint refinement(FacesType &faces,
                 Edge2FacesType &edge2faces,
                 Node2EdgesType &node2edges,
                 EdgesListType &edges_inlet,
+                NodesListType &nodes_inlet,
                 ParticleSet& ps, const double ds_max,
                 const double curv_refine_factor,
                 const bool cut_if_stuck){
   Uint n_add = 0;
   if (faces.size() > 0){
-    n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet,
+    n_add = sheet_refinement(faces, edges, edge2faces, node2edges,
+                             edges_inlet, nodes_inlet,
                              ps, ds_max, curv_refine_factor, cut_if_stuck);
   }
   else {
-    n_add = strip_refinement(edges,
-                             node2edges,
-                             ps, ds_max,
-                             curv_refine_factor,
-                             cut_if_stuck);
+    n_add = strip_refinement(faces, edges, edge2faces, node2edges,
+                             edges_inlet, nodes_inlet,
+                             ps, ds_max, curv_refine_factor, cut_if_stuck);
   }
   return n_add;
 }
@@ -389,8 +410,10 @@ Uint refinement(FacesType &faces,
 void compute_edge2faces(Edge2FacesType &edge2faces,
                         const FacesType &faces,
                         const EdgesType &edges){
-  edge2faces.clear();
+  // Rows keep their capacity across rebuilds
   edge2faces.resize(edges.size());
+  for (auto & row : edge2faces)
+    row.clear();
 
   for (Uint iface=0; iface < faces.size(); ++iface){
     for (Uint i=0; i < 3; ++i){
@@ -402,9 +425,10 @@ void compute_edge2faces(Edge2FacesType &edge2faces,
 void compute_node2edges(Node2EdgesType &node2edges,
                         const EdgesType &edges,
                         const Uint Nrw){
-  node2edges.clear();
   node2edges.resize(Nrw);
-  
+  for (auto & row : node2edges)
+    row.clear();
+
   for (Uint iedge=0; iedge < edges.size(); ++iedge){
     for (Uint i=0; i < 2; ++i){
       node2edges[edges[iedge].first[i]].push_back(iedge);
@@ -421,48 +445,80 @@ void print(const T vec){
   std::cout << std::endl;
 }
 
-void get_conodes(std::set<Uint> &inodes,
-                 std::map<Uint, Uint> &icoedges,
+// Nodes joined to inode by active edges, sorted, and the edge joining each
+void get_conodes(std::vector<Uint> &conodes,
+                 std::vector<Uint> &coedges,
                  const Uint inode,
                  const Node2EdgesType &node2edges,
                  const EdgesType &edges,
                  const std::vector<bool>& edge_isactive){
-  //std::cout << "Getting conodes of " << inode << std::endl;
-  inodes.clear();
-  icoedges.clear();
-
-  //print(inodes);
-
+  conodes.clear();
+  coedges.clear();
   for ( auto & iedge : node2edges[inode] ){
     if (edge_isactive[iedge]){
       for ( auto & jnode : edges[iedge].first ){
         if (jnode != inode){
-          inodes.insert(jnode);
-          icoedges[jnode] = iedge;
+          conodes.push_back(jnode);
+          coedges.push_back(iedge);
         }
       }
     }
   }
-  //print(inodes);
+  // Sort by node; a doubled edge keeps the later one
+  for (Uint a = 1; a < conodes.size(); ++a){
+    const Uint n = conodes[a], e = coedges[a];
+    Uint b = a;
+    for (; b > 0 && conodes[b-1] > n; --b){
+      conodes[b] = conodes[b-1];
+      coedges[b] = coedges[b-1];
+    }
+    conodes[b] = n;
+    coedges[b] = e;
+  }
+  Uint m = 0;
+  for (Uint a = 0; a < conodes.size(); ++a){
+    if (m > 0 && conodes[m-1] == conodes[a])
+      coedges[m-1] = coedges[a];
+    else {
+      conodes[m] = conodes[a];
+      coedges[m] = coedges[a];
+      ++m;
+    }
+  }
+  conodes.resize(m);
+  coedges.resize(m);
 }
 
-std::set<Uint> get_cofaces(const Uint iedge,
-                      const Edge2FacesType &edge2faces,
-                      const FacesType &faces){
-  FacesListType ifaces = edge2faces[iedge];
-  std::set<Uint> jfaces;
+// The edge joining node to the node get_conodes was called for
+Uint coedge_to(const std::vector<Uint> &conodes,
+               const std::vector<Uint> &coedges,
+               const Uint node){
+  for (Uint i = 0; i < conodes.size(); ++i){
+    if (conodes[i] == node)
+      return coedges[i];
+  }
+  assert(false);
+  return 0;
+}
+
+void get_cofaces(std::vector<Uint> &jfaces,
+                 const Uint iedge,
+                 const Edge2FacesType &edge2faces,
+                 const FacesType &faces){
+  jfaces.clear();
   for ( auto & iface : edge2faces[iedge] ){
     for ( auto & kedge : faces[iface].first ){
       if (kedge != iedge){
         for (auto & kface : edge2faces[kedge] ){
           if (kface != iface){
-            jfaces.insert(kface);
+            jfaces.push_back(kface);
           }
         }
       }
     }
   }
-  return jfaces;
+  std::sort(jfaces.begin(), jfaces.end());
+  jfaces.erase(std::unique(jfaces.begin(), jfaces.end()), jfaces.end());
 }
 
 bool is_border_node(const Uint inode,
@@ -476,8 +532,7 @@ bool is_border_node(const Uint inode,
   return false;
 }
 
-// How sharply the rim turns at a node: zero along a straight stretch, largest
-// at a corner.
+// Turning angle of the rim at a node
 double rim_turn(const Uint inode,
                 const ParticleSet& ps,
                 const EdgesType &edges,
@@ -520,9 +575,7 @@ bool get_new_pos(Vector3d &x,
     x = 0.5*(ps.x(inode) + ps.x(jnode));
   }
   else if (both_are_border){
-    // Rim nodes merge at their midpoint as elsewhere, which keeps them evenly
-    // spread, unless one of them is a sharp corner: averaging that away would
-    // cut the corner off the sheet and take its material with it.
+    // Rim nodes merge at their midpoint, unless one is a corner: keep the corner
     const double sharp = 0.25;   // radians; smooth rim curvature is far below
     const double turn_i = rim_turn(inode, ps, edges, edge2faces, node2edges);
     const double turn_j = rim_turn(jnode, ps, edges, edge2faces, node2edges);
@@ -541,58 +594,78 @@ bool get_new_pos(Vector3d &x,
   return true;
 }
 
-// A collapse must not fold the sheet: no surviving face may flip its normal
-// when both nodes of the edge move to x.
+// Cross product of a face's first two edges: twice the area by its norm, the
+// normal by its direction. With moved, both ends of iedge are read at x.
+Vector3d face_cross(const Uint jface,
+                    const Uint iedge,
+                    const Vector3d &x,
+                    const bool moved,
+                    const ParticleSet& ps,
+                    const FacesType &faces,
+                    const EdgesType &edges){
+  const Uint inode = edges[iedge].first[0];
+  const Uint jnode = edges[iedge].first[1];
+  auto pos = [&](const Uint n){
+    return (moved && (n == inode || n == jnode)) ? x : ps.x(n);
+  };
+  const Uint jedge = faces[jface].first[0];
+  const Uint kedge = faces[jface].first[1];
+  const Vector3d drj = pos(edges[jedge].first[1]) - pos(edges[jedge].first[0]);
+  const Vector3d drk = pos(edges[kedge].first[1]) - pos(edges[kedge].first[0]);
+  return drj.cross(drk);
+}
+
+// Check that no surviving face is turned over or flattened onto its own
+// opposite edge when both nodes move to x, and take the areas the move gives
 bool normals_are_ok(const Uint iedge,
                     const Vector3d &x,
                     const ParticleSet& ps,
                     const std::vector<Uint> &jfaces,
                     const FacesType &faces,
-                    const EdgesType &edges){
-  const Uint inode = edges[iedge].first[0];
-  const Uint jnode = edges[iedge].first[1];
-  auto pos = [&](const Uint n, const bool moved){
-    return (moved && (n == inode || n == jnode)) ? x : ps.x(n);
-  };
-  auto normal = [&](const Uint jface, const bool moved){
-    const Uint jedge = faces[jface].first[0];
-    const Uint kedge = faces[jface].first[1];
-    const Vector3d drj = pos(edges[jedge].first[1], moved)
-                       - pos(edges[jedge].first[0], moved);
-    const Vector3d drk = pos(edges[kedge].first[1], moved)
-                       - pos(edges[kedge].first[0], moved);
-    return drj.cross(drk);
-  };
-  for (const Uint jface : jfaces){
-    if (normal(jface, false).dot(normal(jface, true)) <= 0.)
-      return false;
+                    const EdgesType &edges,
+                    const std::vector<Vector3d> &cross_old,
+                    std::vector<double> &dAs_new){
+  dAs_new.resize(jfaces.size());
+  for (Uint k = 0; k < jfaces.size(); ++k){
+    const Vector3d c = face_cross(jfaces[k], iedge, x, true, ps, faces, edges);
+    const double s2 = cross_old[k].squaredNorm();
+    if (s2 > 0. && cross_old[k].dot(c) <= 1e-10*s2)
+      return false;   // a face with no area has none to lose
+    dAs_new[k] = c.norm()/2;
   }
   return true;
 }
 
-std::vector<Uint> get_incident_faces(const Uint iedge,
-                                const EdgesType &edges,
-                                const Edge2FacesType &edge2faces,
-                                const Node2EdgesType &node2edges){
+void get_incident_faces(std::vector<Uint> &kfaces,
+                        const Uint iedge,
+                        const EdgesType &edges,
+                        const Edge2FacesType &edge2faces,
+                        const Node2EdgesType &node2edges){
   Uint inode = edges[iedge].first[0];
   Uint jnode = edges[iedge].first[1];
-  std::set<Uint> kfaces_set;
+  kfaces.clear();
   for ( auto & kedge : node2edges[inode] ){
-    for ( auto & kface : edge2faces[kedge] ){
-      kfaces_set.insert(kface);
-    }
+    for ( auto & kface : edge2faces[kedge] )
+      kfaces.push_back(kface);
   }
   for ( auto & kedge : node2edges[jnode] ){
-    for ( auto & kface : edge2faces[kedge] ){
-      kfaces_set.insert(kface);
-    }
+    for ( auto & kface : edge2faces[kedge] )
+      kfaces.push_back(kface);
   }
-  for ( auto & kface : edge2faces[iedge] ){
-    kfaces_set.erase(kface);
-  }
-  std::vector<Uint> kfaces(kfaces_set.begin(), kfaces_set.end());
-  return kfaces;
+  std::sort(kfaces.begin(), kfaces.end());
+  kfaces.erase(std::unique(kfaces.begin(), kfaces.end()), kfaces.end());
+  for ( auto & kface : edge2faces[iedge] )
+    kfaces.erase(std::remove(kfaces.begin(), kfaces.end(), kface), kfaces.end());
 }
+
+// Scratch for collapse_edge, owned by the sweep
+struct CollapseBuffers {
+  std::vector<Uint> inodes, jnodes, icoedges, jcoedges, joint_nodes;
+  std::vector<Uint> jfaces, kfaces, iedges_vec, ifaces;
+  std::vector<std::pair<Uint, Uint>> replace_edges;
+  std::vector<Vector3d> cross_old;
+  std::vector<double> dAs_old, dAs_new, dA0_new, v_new;
+};
 
 bool collapse_edge(const Uint iedge,
                    FacesType &faces,
@@ -602,7 +675,8 @@ bool collapse_edge(const Uint iedge,
                    std::vector<bool> &face_isactive,
                    std::vector<bool> &edge_isactive,
                    std::vector<bool> &node_isactive,
-                   ParticleSet& ps){
+                   ParticleSet& ps,
+                   CollapseBuffers &buf){
 
   // This function will collapse the edge 'iedge' and thus remove it.
   // The 1-2 facets next to it will be removed.
@@ -617,17 +691,15 @@ bool collapse_edge(const Uint iedge,
   Uint jnode = std::max(edges[iedge].first[0], edges[iedge].first[1]);
   // double ds0 = edges[iedge].second;
   
-  // Nodes that are connected to the respective nodes
-  std::set<Uint> inodes;
-  std::set<Uint> jnodes;
-
-  // Edges that are connected to the respective nodes 
-  std::map<Uint, Uint> icoedges;
-  std::map<Uint, Uint> jcoedges;
+  // Nodes that are connected to the respective nodes, and the edges that
+  // connect them, sorted by node
+  auto &inodes = buf.inodes, &jnodes = buf.jnodes;
+  auto &icoedges = buf.icoedges, &jcoedges = buf.jcoedges;
 
   get_conodes(inodes, icoedges, inode, node2edges, edges, edge_isactive);
   get_conodes(jnodes, jcoedges, jnode, node2edges, edges, edge_isactive);
-  std::vector<Uint> joint_nodes;
+  auto &joint_nodes = buf.joint_nodes;
+  joint_nodes.clear();
   
   // Nodes that are connected to both nodes (should be <= 2)
   set_intersection(inodes.begin(), inodes.end(),
@@ -662,7 +734,8 @@ bool collapse_edge(const Uint iedge,
   }
   //std::cout << "New pos: " << x << " " << y << " " << z << std::endl;
 
-  std::set<Uint> jfaces = get_cofaces(iedge, edge2faces, faces);
+  auto &jfaces = buf.jfaces;
+  get_cofaces(jfaces, iedge, edge2faces, faces);
 
   //print(jfaces);
 
@@ -675,18 +748,24 @@ bool collapse_edge(const Uint iedge,
     //faces[*faceit].second = 0.;
   }
 
-  std::vector<Uint> kfaces = get_incident_faces(iedge, edges, edge2faces, node2edges);
-  std::vector<double> dAs_old = ps.triangle_areas(kfaces, faces, edges);
+  auto &kfaces = buf.kfaces;
+  get_incident_faces(kfaces, iedge, edges, edge2faces, node2edges);
+  // Areas of the incident faces now, and their normals for the check below
+  auto &cross_old = buf.cross_old;
+  auto &dAs_old = buf.dAs_old;
+  cross_old.resize(kfaces.size());
+  dAs_old.resize(kfaces.size());
+  for (Uint k = 0; k < kfaces.size(); ++k){
+    cross_old[k] = face_cross(kfaces[k], iedge, x, false, ps, faces, edges);
+    dAs_old[k] = cross_old[k].norm()/2;
+  }
 
-  // With no incident faces there is nowhere for the removed mass to go.
+  // No incident faces to receive the removed mass
   if (kfaces.empty())
     return false;
 
-  // Whether tau is carried across as well. A patch that has mixed holds a
-  // positive tau on every face and its variance content dA0/sqrt(tau) is
-  // shared out below. Every tau equal -- t = 0, or a run not tracking tau --
-  // needs nothing done. Fresh material at tau = 0 beside material that has
-  // been mixing is declined: the two histories cannot be combined.
+  // Carry tau across only if every face in the patch has one. All equal:
+  // nothing to do. Fresh material (tau = 0) next to mixed material: decline.
   bool share_tau = false;
   {
     const double tau_first = faces[kfaces.front()].tau;
@@ -709,8 +788,9 @@ bool collapse_edge(const Uint iedge,
       v_res += faces[iface].second/sqrt(faces[iface].tau);
   }
 
-  // A collapse may not flip a normal
-  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges))
+  // A collapse may not flip a normal; this also takes the areas after the move
+  auto &dAs_new = buf.dAs_new;
+  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new))
     return false;
 
   // assert(jfaces.size()==4 || jfaces.size()==2);
@@ -725,46 +805,47 @@ bool collapse_edge(const Uint iedge,
     }
   }
 
-  std::vector<Uint> iedges_vec;
+  auto &iedges_vec = buf.iedges_vec;
+  iedges_vec.clear();
   set_symmetric_difference(node2edges[inode].begin(),
                            node2edges[inode].end(),
                            node2edges[jnode].begin(),
                            node2edges[jnode].end(),
                            back_inserter(iedges_vec));
-  std::set<Uint> iedges_set(iedges_vec.begin(), iedges_vec.end());
-  //print(node2edges[inode]);
-  //print(node2edges[jnode]);
-  //print(iedges_set);
+  // iedges_vec is sorted and unique, being a symmetric difference
 
-  std::map<Uint, Uint> replace_edges;
+  // Doubled edges at the joint nodes (at most two)
+  auto &replace_edges = buf.replace_edges;
+  replace_edges.clear();
   for (auto & knode : joint_nodes ){
-    Uint kedge_min = std::min(icoedges[knode], jcoedges[knode]);
-    Uint kedge_max = std::max(icoedges[knode], jcoedges[knode]);
-    replace_edges[kedge_max] = kedge_min;
+    const Uint ie = coedge_to(inodes, icoedges, knode);
+    const Uint je = coedge_to(jnodes, jcoedges, knode);
+    Uint kedge_min = std::min(ie, je);
+    Uint kedge_max = std::max(ie, je);
+    replace_edges.push_back({kedge_max, kedge_min});
 
     assert(edge_isactive[kedge_max]);
     edge_isactive[kedge_max] = false;
-    if (contains(iedges_set, kedge_max))
-      iedges_set.erase(kedge_max);
-    //std::cout << "kedge_max=" << kedge_max << ", kedge_min=" << kedge_min << std::endl;
+    iedges_vec.erase(std::remove(iedges_vec.begin(), iedges_vec.end(), kedge_max),
+                     iedges_vec.end());
   }
-  //print(iedges_set);
+  auto replaced = [&](const Uint e){
+    for (auto & mit : replace_edges)
+      if (mit.first == e) return mit.second;
+    return e;
+  };
 
   //assert(edge_isactive[iedge]);
   edge_isactive[iedge] = false;
 
   for (auto & jface : jfaces ){
-    for (Uint j=0; j<3; ++j){
-      if (contains(replace_edges, faces[jface].first[j])){
-        faces[jface].first[j] = replace_edges[faces[jface].first[j]];
-      }
-    }
+    for (Uint j=0; j<3; ++j)
+      faces[jface].first[j] = replaced(faces[jface].first[j]);
     //std::cout << "faces[" << *jfaceit << "].first="
     //     << faces[*jfaceit].first[0] << " "
     //     << faces[*jfaceit].first[1] << " "
     //     << faces[*jfaceit].first[2] << std::endl;
   }
-  std::vector<double> dAs_new = ps.triangle_areas(kfaces, faces, edges);
   // Distribute the removed mass over the incident faces that survive.
   // The removed face's reference area is dA0_res, and its actual area is dA_res.
   // The ratio r_res = dA0_res/dA_res is used to scale the contribution to the
@@ -773,7 +854,8 @@ bool collapse_edge(const Uint iedge,
   const double r_res = dA_res > 0. ? dA0_res/dA_res : 0.; // density of removed face
   double dA0_patch = dA0_res;
   double dA0_est = 0.;
-  std::vector<double> dA0_new(kfaces.size());
+  auto &dA0_new = buf.dA0_new;
+  dA0_new.resize(kfaces.size());
   for (Uint k=0; k < kfaces.size(); ++k){
     const double dA0_k = faces[kfaces[k]].second;
     const double w = dAs_new[k] - dAs_old[k];
@@ -786,15 +868,13 @@ bool collapse_edge(const Uint iedge,
       dA0_new[k] = dA0_k;
     dA0_est += dA0_new[k];
   }
-  // Variance content dA0/sqrt(tau) is shared out the same way: what a face
-  // took arrives at the removed faces' variance per unit area, what it gave up
-  // leaves at its own, and the patch is renormalized to conserve the total.
-  // tau is then whatever the two shares imply. Estimated here from the old
-  // dA0 and tau, before they are overwritten.
+  // Share out the variance content dA0/sqrt(tau) the same way, from the old
+  // dA0 and tau. tau follows from the two shares.
   const double q_res = dA_res > 0. ? v_res/dA_res : 0.;
   double v_patch = v_res;
   double v_est = 0.;
-  std::vector<double> v_new(kfaces.size());
+  auto &v_new = buf.v_new;
+  v_new.resize(kfaces.size());
   if (share_tau){
     for (Uint k=0; k < kfaces.size(); ++k){
       const double v_k = faces[kfaces[k]].second/sqrt(faces[kfaces[k]].tau);
@@ -820,8 +900,7 @@ bool collapse_edge(const Uint iedge,
       faces[kfaces[k]].tau = pow(faces[kfaces[k]].second/v, 2);
     }
   }
-  // dA0 and the geometry both moved, so the elongation the trapezoid rule
-  // starts its next step from has to be recomputed
+  // Recompute rho_prev: dA0 and the geometry have changed
   for (Uint k=0; k < kfaces.size(); ++k)
     faces[kfaces[k]].rho_prev = dAs_new[k]/faces[kfaces[k]].second;
 
@@ -832,27 +911,26 @@ bool collapse_edge(const Uint iedge,
   }
 
   //print(node2edges[std::min(inode, jnode)]);
-  node2edges[inode].assign(iedges_set.begin(), iedges_set.end());
+  node2edges[inode].assign(iedges_vec.begin(), iedges_vec.end());
   //print(node2edges[std::min(inode, jnode)]);
   node2edges[jnode].clear();
   assert(node_isactive[jnode]);
   node_isactive[jnode] = false;
   
   for (auto & knode : joint_nodes){
-    std::set<Uint> tmp_set(node2edges[knode].begin(), node2edges[knode].end());
-    //print(node2edges[*joint_node_it]);
-    for (auto & mit : replace_edges ){
-      tmp_set.erase(mit.first);
-    }
-
-    node2edges[knode].assign(tmp_set.begin(), tmp_set.end());
-    //print(node2edges[*joint_node_it]);
+    // Drop the doubled edges from the joint nodes' lists
+    auto & row = node2edges[knode];
+    for (auto & mit : replace_edges )
+      row.erase(std::remove(row.begin(), row.end(), mit.first), row.end());
+    std::sort(row.begin(), row.end());
+    row.erase(std::unique(row.begin(), row.end()), row.end());
   }
 
   for (auto & mit : replace_edges ){
     Uint kedge_max = mit.first;
     Uint kedge_min = mit.second;
-    std::vector<Uint> ifaces;
+    auto &ifaces = buf.ifaces;
+    ifaces.clear();
     set_symmetric_difference(edge2faces[kedge_min].begin(),
                              edge2faces[kedge_min].end(),
                              edge2faces[kedge_max].begin(),
@@ -872,47 +950,40 @@ bool collapse_edge(const Uint iedge,
 
 void remove_faces(FacesType &faces, const std::vector<bool>& face_isactive){
   assert(faces.size() == face_isactive.size());
-  for (int i=int(face_isactive.size())-1; i >= 0; --i){
-    if (!face_isactive[i])
-      faces.erase(faces.begin()+i);
+  // Compact in one pass
+  Uint n = 0;
+  for (Uint i=0; i < faces.size(); ++i){
+    if (face_isactive[i]){
+      if (n != i)
+        faces[n] = faces[i];
+      ++n;
+    }
   }
+  faces.erase(faces.begin() + n, faces.end());
 }
 
 void remove_edges(FacesType &faces, EdgesType &edges,
                   const std::vector<bool> &edge_isactive,
                   EdgesListType &edges_inlet){
   assert(edges.size() == edge_isactive.size());
-  std::vector<Uint> used_edges;
-  for (Uint i=0; i<edges.size(); ++i){
-    used_edges.push_back(i);
-  }
-
-  for (int i=edge_isactive.size()-1; i >= 0; --i){
-    if (!edge_isactive[i]){
-      edges.erase(edges.begin()+i);
-      used_edges.erase(used_edges.begin()+i);
+  // Map old edge indices to new; a removed edge keeps its old index
+  std::vector<Uint> new_index(edges.size());
+  Uint n = 0;
+  for (Uint i=0; i < edges.size(); ++i){
+    new_index[i] = i;
+    if (edge_isactive[i]){
+      if (n != i)
+        edges[n] = edges[i];
+      new_index[i] = n++;
     }
   }
-  std::map<Uint, Uint> replace_edges;
-  for (Uint i=0; i<used_edges.size(); ++i){
-    replace_edges[used_edges[i]] = i;
+  edges.erase(edges.begin() + n, edges.end());
+  for (auto & face : faces){
+    for (Uint j=0; j<3; ++j)
+      face.first[j] = new_index[face.first[j]];
   }
-  for (Uint iface=0; iface < faces.size(); ++iface){
-    for (Uint j=0; j<3; ++j){
-      Uint iedge = faces[iface].first[j];
-      if (contains(replace_edges, iedge)){
-        faces[iface].first[j] = replace_edges[iedge];
-      }
-    }
-  }
-  //for (Uint i=0; i < edges_inlet.size(); ++i){
-  for (EdgesListType::iterator edgeit=edges_inlet.begin();
-       edgeit != edges_inlet.end(); ++edgeit){
-    Uint iedge = *edgeit;
-    if (contains(replace_edges, iedge)){
-      *edgeit = replace_edges[iedge];
-    }
-  }
+  for (auto & iedge : edges_inlet)
+    iedge = new_index[iedge];
 }
 
 void remove_nodes(EdgesType& edges,
@@ -926,97 +997,115 @@ void remove_nodes(EdgesType& edges,
     if (node_isactive[i])
       used_nodes.push_back(i);
   }
-  std::map<Uint, Uint> replace_nodes;
+  std::vector<Uint> new_index(ps.N());
+  for (Uint i=0; i < ps.N(); ++i)
+    new_index[i] = i;
   for (Uint i=0; i<used_nodes.size(); ++i){
-    replace_nodes[used_nodes[i]] = i;
-    Uint j = used_nodes[i];
-    ps.copy_node(i, j);
+    new_index[used_nodes[i]] = i;
+    ps.copy_node(i, used_nodes[i]);
   }
   ps.set_N(used_nodes.size());
 
-  for (Uint iedge=0; iedge < edges.size(); ++iedge){
-    for (Uint j=0; j<2; ++j){
-      Uint inode = edges[iedge].first[j];
-      if (contains(replace_nodes, inode)){
-        edges[iedge].first[j] = replace_nodes[inode];
-      }
-    }
+  for (auto & edge : edges){
+    for (Uint j=0; j<2; ++j)
+      edge.first[j] = new_index[edge.first[j]];
   }
-  //for (Uint i=0; i<nodes_inlet.size(); ++i){
-  for (NodesListType::iterator nodeit=nodes_inlet.begin();
-       nodeit != nodes_inlet.end(); ++nodeit){
-    //Uint inode = nodes_inlet[i];
-    Uint inode = *nodeit;
-    if (contains(replace_nodes, inode)){
-      //nodes_inlet[inode] = replace_nodes[inode];
-      *nodeit = replace_nodes[inode];
-    }
-  }
+  for (auto & inode : nodes_inlet)
+    inode = new_index[inode];
 }
 
-void remove_unused_edges(FacesType &faces, EdgesType &edges, EdgesListType &edges_inlet){
-  std::vector<bool> edge_isactive(edges.size(), false);
-  for (Uint i=0; i < faces.size(); ++i){
-    for (Uint k=0; k < 3; ++k){
-      edge_isactive[faces[i].first[k]] = true;
-    }
-  }
-  remove_edges(faces, edges, edge_isactive, edges_inlet);
-}
-
-void remove_unused_nodes(EdgesType &edges,
-                         NodesListType &nodes_inlet,
-                         ParticleSet& ps){
-  std::vector<bool> node_isactive(ps.N(), false);
-  for (Uint i=0; i < edges.size(); ++i){
-    for (Uint k=0; k < 2; ++k){
-      node_isactive[edges[i].first[k]] = true;
-    }
-  }
-  remove_nodes(edges, nodes_inlet, ps, node_isactive);
-}
-
-
-void remove_nodes_safely(FacesType &faces, EdgesType &edges,
-                         Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
-                         EdgesListType &edges_inlet, NodesListType &nodes_inlet,
-                         const std::vector<bool> &node_isactive,
-                         ParticleSet& ps) {
+// Remove everything the flags mark dead, and everything that leaves dangling.
+// A caller sets the flags it knows and passes all-true for the rest. What
+// propagates depends on the dimension: a cloud has no edges, a strip no faces.
+void remove_inactive(FacesType &faces, EdgesType &edges,
+                     Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
+                     EdgesListType &edges_inlet, NodesListType &nodes_inlet,
+                     std::vector<bool> &face_isactive,
+                     std::vector<bool> &edge_isactive,
+                     std::vector<bool> &node_isactive,
+                     ParticleSet& ps){
+  assert(faces.size() == face_isactive.size());
+  assert(edges.size() == edge_isactive.size());
   assert(ps.N() == node_isactive.size());
-  std::vector<bool> edge_isactive(edges.size(), true);
-  for (Uint i=0; i<ps.N(); ++i){
-    if (!node_isactive[i]){
-      for ( auto & iedge : node2edges[i] ){
+  const bool has_faces = faces.size() > 0;
+  const bool has_edges = edges.size() > 0;
+
+  // The inlet is what the next generation stitches to, so it stays until it is
+  // no longer the inlet
+  for ( auto & iedge : edges_inlet )
+    edge_isactive[iedge] = true;
+  for ( auto & inode : nodes_inlet )
+    node_isactive[inode] = true;
+
+  // A dead node takes its edges, a dead edge its faces
+  for (Uint inode=0; inode < ps.N(); ++inode){
+    if (!node_isactive[inode]){
+      for ( auto & iedge : node2edges[inode] )
         edge_isactive[iedge] = false;
-      }
     }
   }
-  if (faces.size() > 0){
-    std::cout << "WARNING: remove_nodes_safely is NOT TESTED for sheets!" << std::endl;
-    exit(1);
-    // Remove node from sheet (cut hole)
-    std::vector<bool> face_isactive(faces.size(), true);
+  if (has_faces){
     for (Uint iedge=0; iedge < edges.size(); ++iedge){
       if (!edge_isactive[iedge]){
-        for ( auto & iface : edge2faces[iedge] ){
+        for ( auto & iface : edge2faces[iedge] )
           face_isactive[iface] = false;
-        }
       }
     }
-    remove_faces(faces, face_isactive);
-    remove_unused_edges(faces, edges, edges_inlet);
-    remove_unused_nodes(edges, nodes_inlet, ps);
+  }
 
+  // A face the sweep gave no area is kept while it is at the inlet, and goes
+  // as soon as it is not
+  if (has_faces){
+    std::vector<bool> at_inlet(faces.size(), false);
+    for ( auto & iedge : edges_inlet ){
+      for ( auto & iface : edge2faces[iedge] )
+        at_inlet[iface] = true;
+    }
+    for (Uint iface=0; iface < faces.size(); ++iface){
+      if (faces[iface].second <= 0. && !at_inlet[iface])
+        face_isactive[iface] = false;
+    }
+  }
+
+  // and whatever is left with nothing above it goes too, inlets excepted
+  if (has_faces){
+    std::vector<bool> is_used(edges.size(), false);
+    for (Uint iface=0; iface < faces.size(); ++iface){
+      if (face_isactive[iface]){
+        for (Uint k=0; k < 3; ++k)
+          is_used[faces[iface].first[k]] = true;
+      }
+    }
+    for ( auto & iedge : edges_inlet )
+      is_used[iedge] = true;
+    for (Uint iedge=0; iedge < edges.size(); ++iedge){
+      if (!is_used[iedge])
+        edge_isactive[iedge] = false;
+    }
+  }
+  if (has_edges){
+    std::vector<bool> is_used(ps.N(), false);
+    for (Uint iedge=0; iedge < edges.size(); ++iedge){
+      if (edge_isactive[iedge]){
+        for (Uint k=0; k < 2; ++k)
+          is_used[edges[iedge].first[k]] = true;
+      }
+    }
+    for ( auto & inode : nodes_inlet )
+      is_used[inode] = true;
+    for (Uint inode=0; inode < ps.N(); ++inode){
+      if (!is_used[inode])
+        node_isactive[inode] = false;
+    }
+  }
+
+  remove_faces(faces, face_isactive);
+  remove_edges(faces, edges, edge_isactive, edges_inlet);
+  remove_nodes(edges, nodes_inlet, ps, node_isactive);
+
+  if (has_faces)
     compute_edge2faces(edge2faces, faces, edges);
-    compute_node2edges(node2edges, edges, ps.N());
-  }
-  else {
-    // Remove node from strip (cut hole)
-    EdgesListType edges_inlet_dummy;
-    remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
-    remove_unused_nodes(edges, nodes_inlet, ps);
-    compute_node2edges(node2edges, edges, ps.N());
-  }
+  compute_node2edges(node2edges, edges, ps.N());
 }
 
 void check_geometry(FacesType& faces, EdgesType& edges, std::vector<bool>& face_isactive, std::vector<bool>& edge_isactive){
@@ -1072,11 +1161,19 @@ Uint sheet_coarsening(FacesType &faces,
   bool changed;
   Uint n_coll = 0;
   Uint iedge;
+  CollapseBuffers buf;
 
+  // One linear sweep per pass, as strip_coarsening does. A collapse marks
+  // entities inactive rather than erasing them, so every index stays valid
+  // and the sweep carries on past it; an edge it shortened earlier in the
+  // sweep is picked up by the next pass. Restarting the sweep from zero after
+  // each collapse instead cost a full pass per collapse -- 3e10 distance
+  // evaluations for 1e5 collapses, 70% of the run.
   do {
     changed = false;
-    iedge = 0;
-    while (iedge < edges.size()){
+    for (iedge = 0; iedge < edges.size(); ++iedge){
+      if (!edge_isactive[iedge] || !edge_allow_collapse[iedge])
+        continue;
       Uint inode = edges[iedge].first[0];
       Uint jnode = edges[iedge].first[1];
       // double ds0 = edges[iedge].second;
@@ -1084,45 +1181,28 @@ Uint sheet_coarsening(FacesType &faces,
       //double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
       //double ds_min_loc = ds_min/(1.0 + curv_refine_factor*kappa);
       double ds_min_loc = ds_min;
-      if (ds < ds_min_loc && edge_isactive[iedge] && edge_allow_collapse[iedge]){
-        // std::cout << "TRYING to collapse edge " << iedge
-        //      << ". ds = " << ds << " and ds_min = " << ds_min << std::endl;
-
+      if (ds < ds_min_loc){
         bool coll = collapse_edge(iedge, faces, edges,
                                   edge2faces,
                                   node2edges,
                                   face_isactive,
                                   edge_isactive,
                                   node_isactive,
-                                  ps);
+                                  ps, buf);
 
         // Debugging topology:
         // check_geometry(faces, edges, face_isactive, edge_isactive);
-
-        // what's wrong?
-        //compute_edge2faces(edge2faces, faces, edges);
-        //Edge2FacesType edge2faces_alt;
-        //compute_edge2faces(edge2faces_alt, faces, edges);
-        //assert_equal(edge2faces_alt, edge2faces);
-        //compute_node2edges(node2edges, edges, ps.N());
         if (coll){
           changed = true;
           ++n_coll;
-          break;
         }
       }
-      ++iedge;
     }
   } while(changed);
 
-  remove_faces(faces, face_isactive);
-  //remove_edges(faces, edges, edge_isactive);
-  //remove_nodes(edges, x_rw, y_rw, z_rw, Nrw, node_isactive);
-  remove_unused_edges(faces, edges, edges_inlet);
-  remove_unused_nodes(edges, nodes_inlet, ps);
-
-  compute_edge2faces(edge2faces, faces, edges);
-  compute_node2edges(node2edges, edges, ps.N());
+  remove_inactive(faces, edges, edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive, ps);
   return n_coll;
 }
 
@@ -1133,9 +1213,12 @@ static bool tau_compatible(const double a, const double b){
   return lo > 0. && hi <= 3.*lo;
 }
 
-Uint strip_coarsening(EdgesType &edges,
+Uint strip_coarsening(FacesType &faces,
+                      EdgesType &edges,
+                      Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
-                      NodesListType &nodes_inlet,
+                      EdgesListType& edges_inlet,
+                      NodesListType& nodes_inlet,
                       ParticleSet& ps,
                       const double ds_min,
                       const double curv_refine_factor){
@@ -1143,6 +1226,7 @@ Uint strip_coarsening(EdgesType &edges,
   Uint n_coll = 0;
   Uint iedge;
 
+  std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
   std::vector<bool> edge_isactive(edges.size(), true);
   std::vector<bool> node_isactive(ps.N(), true);
 
@@ -1225,11 +1309,9 @@ Uint strip_coarsening(EdgesType &edges,
     }
   } while(changed);
 
-  FacesType faces;
-  EdgesListType edges_inlet_dummy;
-  remove_edges(faces, edges, edge_isactive, edges_inlet_dummy);
-  remove_unused_nodes(edges, nodes_inlet, ps);
-  compute_node2edges(node2edges, edges, ps.N());
+  remove_inactive(faces, edges, edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive, ps);
   return n_coll;
 }
 
@@ -1249,15 +1331,20 @@ Uint coarsening(FacesType &faces,
                             ps, ds_min, curv_refine_factor);
   }
   else if (edges_inlet.size() == 0){ // Omits first steps of injection which might have no faces
-    return strip_coarsening(edges, node2edges,
-                            nodes_inlet,
+    return strip_coarsening(faces, edges,
+                            edge2faces, node2edges,
+                            edges_inlet, nodes_inlet,
                             ps, ds_min, curv_refine_factor);
   }
   return 0;
 }
 
-bool strip_filtering(EdgesType &edges,
+bool strip_filtering(FacesType &faces,
+                     EdgesType &edges,
+                     Edge2FacesType &edge2faces,
                      Node2EdgesType &node2edges,
+                     EdgesListType &edges_inlet,
+                     NodesListType &nodes_inlet,
                      ParticleSet& ps,
                      const Uint filter_target){
   // std::cout << "Edges size: " << edges.size() << std::endl;
@@ -1269,10 +1356,14 @@ bool strip_filtering(EdgesType &edges,
     int index = rand() % edges.size();
     edges.erase(edges.begin() + index);
   }
-  NodesListType nodes_inlet_dummy; // Not compatible with injection (yet)
-  remove_unused_nodes(edges, nodes_inlet_dummy, ps);
-  compute_node2edges(node2edges, edges, ps.N());
-
+  // the edges are already gone; this collects the nodes they leave behind.
+  // Not compatible with injection: the schema refuses inject beside filter
+  std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
+  std::vector<bool> edge_isactive(edges.size(), true);
+  std::vector<bool> node_isactive(ps.N(), true);
+  remove_inactive(faces, edges, edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive, ps);
   return true;
 }
 
@@ -1280,6 +1371,8 @@ bool sheet_filtering(FacesType &faces,
                      EdgesType &edges,
                      Edge2FacesType &edge2faces,
                      Node2EdgesType &node2edges,
+                     EdgesListType &edges_inlet,
+                     NodesListType &nodes_inlet,
                      ParticleSet& ps,
                      const Uint filter_target){
   std::cout << "SHEET FILTERING NOT TESTED" << std::endl;
@@ -1299,16 +1392,11 @@ bool sheet_filtering(FacesType &faces,
     face_isactive[iface] = true;
   }
 
-  EdgesListType edges_inlet_dummy; // Not compatible with injection (yet)
-  NodesListType nodes_inlet_dummy; // Not compatible with injection (yet)
-
-  remove_faces(faces, face_isactive);
-  remove_unused_edges(faces, edges, edges_inlet_dummy);
-  remove_unused_nodes(edges, nodes_inlet_dummy, ps);
-
-  compute_edge2faces(edge2faces, faces, edges);
-  compute_node2edges(node2edges, edges, ps.N());
-
+  std::vector<bool> edge_isactive(edges.size(), true);
+  std::vector<bool> node_isactive(ps.N(), true);
+  remove_inactive(faces, edges, edge2faces, node2edges,
+                  edges_inlet, nodes_inlet,
+                  face_isactive, edge_isactive, node_isactive, ps);
   return true;
 }
 
@@ -1316,13 +1404,17 @@ bool filtering(FacesType &faces,
                EdgesType &edges,
                Edge2FacesType &edge2faces,
                Node2EdgesType &node2edges,
+               EdgesListType &edges_inlet,
+               NodesListType &nodes_inlet,
                ParticleSet& ps,
                const Uint filter_target){
   if (faces.size() > 0){
-    return sheet_filtering(faces, edges, edge2faces, node2edges, ps, filter_target);
+    return sheet_filtering(faces, edges, edge2faces, node2edges,
+                           edges_inlet, nodes_inlet, ps, filter_target);
   }
   else{
-    return strip_filtering(edges, node2edges, ps, filter_target);
+    return strip_filtering(faces, edges, edge2faces, node2edges,
+                           edges_inlet, nodes_inlet, ps, filter_target);
   }
 }
 
@@ -1443,7 +1535,7 @@ void compute_interior_prop(InteriorAnglesType &interior_ang,
       not_visited.erase(iface);
       for (Uint i=0; i<3; ++i){
         Uint iedge = faces[iface].first[i];
-        for (FacesListType::const_iterator faceit = edge2faces[iedge].begin();
+        for (auto faceit = edge2faces[iedge].begin();
              faceit != edge2faces[iedge].end(); ++faceit){
           Uint jface = *faceit;
           if (iface != jface && contains(not_visited, jface)){
@@ -1469,7 +1561,7 @@ void compute_sheet_curv(const FacesType &faces,
                         ){
   std::vector<double> edge_w(edges.size(), 0.);
   for (Uint iedge=0; iedge < edges.size(); ++iedge){
-    for (FacesListType::const_iterator faceit = edge2faces[iedge].begin();
+    for (auto faceit = edge2faces[iedge].begin();
          faceit != edge2faces[iedge].end(); ++faceit){
       std::vector<Uint> other_edges;
       for (Uint i=0; i<3; ++i){
@@ -1520,11 +1612,17 @@ void compute_mean_curv(const FacesType &faces,
   }
 }
 
+// Lay down a generation of the inlet. With inject_edges the generations are
+// stitched to each other as well, which raises what they trace by a dimension:
+// a cloud draws lines, a curve sweeps a surface.
+// The stitching is one quad per inlet edge, split by the diagonal N_j -- O_j+1.
+// A node the flow has left on the inlet is reused rather than injected again;
+// its quad is then a triangle, closed by the old edge or by the new one.
 bool injection(const std::vector<Vector3d> &pos_inj,
                const EdgesType &edges_inj,
                EdgesListType &edges_inlet,
                NodesListType &nodes_inlet,
-               EdgesType &edges, 
+               EdgesType &edges,
                FacesType &faces,
                Edge2FacesType& edge2faces,
                Node2EdgesType& node2edges,
@@ -1532,99 +1630,109 @@ bool injection(const std::vector<Vector3d> &pos_inj,
                const bool inject_edges,
                const bool verbose
                ){
-  if (ps.has_space(pos_inj.size())){
-    Uint irw0 = ps.N();
-    Uint iedge0 = edges.size();
-    Uint iface0 = faces.size();
-    /*
-    add_particles(pos_inj, intp,
-                  x_rw, u_rw, c_rw, tau_rw, rho_rw, p_rw, a_rw,
-                  U0, prm.restart_folder, prm.int_order, irw0);
-    Nrw += pos_inj.size();
-    */
-    ps.add(pos_inj, irw0);
-    for (Uint irw=0; irw < pos_inj.size(); ++irw){
-      node2edges.push_back({});
+  const Uint n_inj = pos_inj.size();
+  if (n_inj == 0 || !ps.has_space(n_inj))
+    return true;
+  assert(nodes_inlet.size() == n_inj);
+
+  // Only the stitching can go degenerate
+  std::vector<bool> reused(n_inj, false);
+  if (inject_edges){
+    double tol = 0.;
+    for ( auto & edge : edges_inj )
+      tol += edge.second;
+    if (!edges_inj.empty())
+      tol *= 1e-10/edges_inj.size();
+    for (Uint i=0; i < n_inj; ++i)
+      reused[i] = (ps.x(nodes_inlet[i]) - pos_inj[i]).norm() <= tol;
+  }
+  std::vector<Uint> fresh;
+  for (Uint i=0; i < n_inj; ++i){
+    if (!reused[i])
+      fresh.push_back(i);
+  }
+
+  const Uint irw0 = ps.N();
+  ps.add(pos_inj, fresh, irw0);
+  for (Uint k=0; k < fresh.size(); ++k)
+    node2edges.push_back({});
+  if (verbose)
+    std::cout << "Added " << fresh.size() << " nodes." << std::endl;
+
+  // What carries each template node this generation
+  NodesListType node_new(n_inj);
+  for (Uint i=0, k=0; i < n_inj; ++i)
+    node_new[i] = reused[i] ? nodes_inlet[i] : irw0 + k++;
+
+  {
+    const Uint iedge0 = edges.size();
+    const Uint iface0 = faces.size();
+    auto add_edge = [&](const Uint inode, const Uint jnode, const double ds0){
+      const Uint iedge = edges.size();
+      edges.push_back({{inode, jnode}, ds0});
+      edge2faces.push_back({});
+      node2edges[inode].push_back(iedge);
+      node2edges[jnode].push_back(iedge);
+      return iedge;
+    };
+    auto add_face = [&](const Uint iedge, const Uint jedge, const Uint kedge,
+                        const double dA0){
+      const Uint iface = faces.size();
+      faces.push_back({{iedge, jedge, kedge}, dA0});
+      edge2faces[iedge].push_back(iface);
+      edge2faces[jedge].push_back(iface);
+      edge2faces[kedge].push_back(iface);
+    };
+    // Twice the area of a corner
+    auto wedge = [&](const Uint i, const Uint j, const Uint k){
+      return (ps.x(j) - ps.x(i)).cross(ps.x(k) - ps.x(i)).norm();
+    };
+
+    // The new curve. An edge both of whose ends stayed put is the old one.
+    EdgesListType edge_new(edges_inj.size());
+    for (Uint j=0; j < edges_inj.size(); ++j){
+      const Uint a = edges_inj[j].first[0];
+      const Uint b = edges_inj[j].first[1];
+      edge_new[j] = (reused[a] && reused[b])
+                  ? edges_inlet[j]
+                  : add_edge(node_new[a], node_new[b], edges_inj[j].second);
+    }
+    // The rungs, one per node that was actually injected
+    std::vector<Uint> rung(n_inj, 0);
+    for (Uint i=0; inject_edges && i < n_inj; ++i){
+      if (!reused[i])
+        rung[i] = add_edge(node_new[i], nodes_inlet[i],
+                           ps.dist(node_new[i], nodes_inlet[i]));
+    }
+    // The quads. A corner the flow has flattened is laid down like any other
+    // and culled once it is no longer at the inlet
+    for (Uint j=0; inject_edges && j < edges_inj.size(); ++j){
+      const Uint a = edges_inj[j].first[0];
+      const Uint b = edges_inj[j].first[1];
+      if (reused[a] && reused[b])
+        continue;                     // no material arrived here at all
+      const Uint Oa = nodes_inlet[a], Ob = nodes_inlet[b];
+      const Uint Na = node_new[a], Nb = node_new[b];
+      const Uint old_edge = edges_inlet[j];
+      Uint diag;
+      if (reused[a])
+        diag = old_edge;              // the diagonal is already there
+      else if (reused[b])
+        diag = edge_new[j];
+      else
+        diag = add_edge(Na, Ob, ps.dist(Na, Ob));
+      if (!reused[a])
+        add_face(diag, old_edge, rung[a], wedge(Na, Oa, Ob)/2);
+      if (!reused[b])
+        add_face(diag, edge_new[j], rung[b], wedge(Na, Nb, Ob)/2);
     }
     if (verbose){
-      std::cout << "Added " << pos_inj.size() << " nodes." << std::endl;
-      /*
-      std::cout << "at ..." << std::endl;
-      for (Uint irw=irw0; irw<Nrw; ++irw){
-        std::cout << x_rw[irw][0] << " " << x_rw[irw][1] << " " << x_rw[irw][2] << std::endl;
-      }
-      */
+      std::cout << "Added " << edges.size()-iedge0 << " edges." << std::endl;
+      std::cout << "Added " << faces.size()-iface0 << " faces." << std::endl;
     }
-    if (inject_edges){
-      Uint iedge = iedge0;
-      for (EdgesType::const_iterator edgeit = edges_inj.begin();
-            edgeit != edges_inj.end(); ++edgeit){
-        Uint inode = irw0 + edgeit->first[0];
-        Uint jnode = irw0 + edgeit->first[1];
-        edges.push_back({{inode, jnode}, edgeit->second});
-        edge2faces.push_back({});
-        node2edges[inode].push_back(iedge);
-        node2edges[jnode].push_back(iedge);
-        ++iedge;
-      }
-      // Straight edges
-      for (Uint irw=0; irw < pos_inj.size(); ++irw){
-        Uint inode = irw0+irw; // New node
-        Uint jnode = *std::next(nodes_inlet.begin(), irw); // Old node. do better
-        double ds0 = ps.dist(inode, jnode);
-        edges.push_back({{inode, jnode}, ds0});
-        edge2faces.push_back({});
-        node2edges[inode].push_back(iedge);
-        node2edges[jnode].push_back(iedge);
-        ++iedge;
-      }
-      // Diagonal edges
-      Uint iface = iface0;
-      for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
-        Uint kedge = *std::next(edges_inlet.begin(), jedge); // do better!
-        Uint ledge = iedge0+jedge;
-        Uint inode = edges[ledge].first[0]; // New edge
-        Uint lnode = edges[ledge].first[1]; //
-        Uint jnode = edges[kedge].first[1]; // Old edge
-        Uint knode = edges[kedge].first[0]; //
-        double ds0 = ps.dist(inode, jnode);
-        edges.push_back({{inode, jnode}, ds0});
-        edge2faces.push_back({});
-        node2edges[inode].push_back(iedge);
-        node2edges[jnode].push_back(iedge);
-        //long 
-        double dA01 = ps.triangle_area(iedge, kedge, edges);
-        Uint medge = get_common_entry(node2edges[knode], node2edges[inode]);
-        faces.push_back({{iedge, kedge, medge}, dA01});
-        edge2faces[iedge].push_back(iface);
-        edge2faces[kedge].push_back(iface);
-        edge2faces[medge].push_back(iface);
-        ++iface;
-        //long 
-        double dA02 = ps.triangle_area(iedge, ledge, edges);
-        Uint nedge = get_common_entry(node2edges[lnode], node2edges[jnode]);
-        faces.push_back({{iedge, ledge, nedge}, dA02});
-        edge2faces[iedge].push_back(iface);
-        edge2faces[ledge].push_back(iface);
-        edge2faces[nedge].push_back(iface);
-        ++iface;
-        ++iedge;
-      }
-      assert(iedge == edges.size());
-      if (verbose){
-        std::cout << "Added " << iedge-iedge0 << " edges." << std::endl;
-        std::cout << "Added " << faces.size()-iface0 << " faces." << std::endl;
-      }
-      edges_inlet.clear();
-      for (Uint jedge=0; jedge < edges_inj.size(); ++jedge){
-        edges_inlet.push_back({iedge0+jedge});
-      }
-    }
-    nodes_inlet.clear();
-    for (Uint irw=0; irw < pos_inj.size(); ++irw){
-      nodes_inlet.push_back(irw0+irw);
-    }
+    edges_inlet = edge_new;
   }
+  nodes_inlet = node_new;
   return true;
 }
 

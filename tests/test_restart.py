@@ -53,14 +53,14 @@ def state_at(case, t):
     raise AssertionError("no dump at t = %g under %s" % (t, case))
 
 
-def continuous_and_resumed(tmp_path, extra):
+def continuous_and_resumed(tmp_path, extra, stop=STOP - DT):
     cont, split = tmp_path / "cont", tmp_path / "split"
     for d in (cont, split):
         d.mkdir(parents=True)
         shutil.copy(SINE, d / "expr_params.dat")
 
     call(cont, extra + ["T=%g" % (END + DT / 2), "checkpoint_intv=1e9"])
-    call(split, extra + ["T=%g" % (STOP - DT), "checkpoint_intv=%g" % (STOP - DT)])
+    call(split, extra + ["T=%g" % stop, "checkpoint_intv=%g" % stop])
     checkpoint = list(split.rglob("edges.edge"))
     assert len(checkpoint) == 1
     call(split, extra + ["T=%g" % (END + DT / 2), "checkpoint_intv=1e9",
@@ -87,5 +87,36 @@ def test_a_resumed_point_cloud_is_identical_too(tmp_path):
         tmp_path, ["init_mode=uniform_x", "La=0.5", "ds_max=1e9",
                    "ds_min=1e-12", "refine=false", "coarsen=false",
                    "integrate_tau=false"])
+    for name in sorted(set(a) & set(b)):
+        assert np.array_equal(a[name], b[name]), name
+
+
+@needs_partrac
+def test_a_resume_that_is_not_on_a_remeshing_step_is_identical_too(tmp_path):
+    # The other tests remesh every step, so the checkpoint always lands on a
+    # remeshing step and the resumed run cannot get out of phase. Here the
+    # interval is 4*dt and the checkpoint is at 0.875, which no remeshing step
+    # falls on: the step count is what the resumed run needs to keep its phase,
+    # and without it the resumed run also remeshed at 0.875 itself.
+    a, b = continuous_and_resumed(
+        tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
+                   "refine=true", "refine_intv=%g" % (4 * DT),
+                   "coarsen=true", "coarsen_intv=%g" % (4 * DT),
+                   "dump_intv=%g" % DT],
+        stop=0.875 - DT)
+    assert len(a["edges"]) > 200        # it really refined past the initial 199
+    for name in sorted(set(a) & set(b)):
+        assert np.array_equal(a[name], b[name]), name
+
+
+@needs_partrac
+def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
+    # An interval of 0 turns remeshing off. The initial pass ran once before
+    # the checkpoint was written, and resuming must not run it again on top.
+    a, b = continuous_and_resumed(
+        tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
+                   "refine=true", "refine_intv=0",
+                   "coarsen=true", "coarsen_intv=0"])
+    assert len(a["edges"]) == len(b["edges"])
     for name in sorted(set(a) & set(b)):
         assert np.array_equal(a[name], b[name]), name
