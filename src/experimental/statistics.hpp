@@ -3,14 +3,17 @@
 
 //#include "utils.hpp"
 #include "typedefs.hpp"
+#include "stats_columns.hpp"
 
+// One list, read once for the header and once per row. ps.dim() decides the
+// columns in both, so the header cannot promise what the rows do not fill.
 template<typename T>
-void write_stats( std::ofstream &statfile
-                , const Real t
-                , T& ps
-                , const unsigned long int n_declined
-                )
+std::vector<StatsColumn> stats_columns( const Real t
+                                      , T& ps
+                                      , const unsigned long int n_declined
+                                      )
 {
+  std::vector<StatsColumn> cols;
   Vector x_mean = {0., 0., 0.};
   Vector dx2_mean = {0., 0., 0.};
   Vector u_mean = {0., 0., 0.};
@@ -120,54 +123,27 @@ void write_stats( std::ofstream &statfile
     elong2_mean /= nsum;
 
   }
-  statfile << t                       << "\t"           //  1
-           << x_mean[0]               << "\t"           //  2
-           << x_mean[1]               << "\t"           //  3
-           << x_mean[2]               << "\t"           //  4
-           << dx2_mean[0]             << "\t"           //  5
-           << dx2_mean[1]             << "\t"           //  6
-           << dx2_mean[2]             << "\t"           //  7
-           << u_mean[0]               << "\t"           //  8
-           << u_mean[1]               << "\t"           //  9
-           << u_mean[2]               << "\t"           // 10
-           << Nrw                     << "\t"           // 11
-           << n_declined              << "\t";          // 12
+  cols.push_back({"t", t});
+  cols.push_back({"x_mean", x_mean[0]});
+  cols.push_back({"y_mean", x_mean[1]});
+  cols.push_back({"z_mean", x_mean[2]});
+  cols.push_back({"dx2_mean", dx2_mean[0]});
+  cols.push_back({"dy2_mean", dx2_mean[1]});
+  cols.push_back({"dz2_mean", dx2_mean[2]});
+  cols.push_back({"ux_mean", u_mean[0]});
+  cols.push_back({"uy_mean", u_mean[1]});
+  cols.push_back({"uz_mean", u_mean[2]});
+  cols.push_back({"Nrw", double(Nrw), true});
+  cols.push_back({"n_declined", double(n_declined), true});
 
-  if (ps.dim() > 0){ 
-    statfile << nsum                    << "\t"           // 13
-             //<< wsum                    << "\t"           // 14
-             //<< w0sum                   << "\t"           // 15
-             << elong_mean              << "\t"            // 14
-             << elong2_mean             << "\t"            // 15
-             << logelong_mean           << "\t"            // 16
-             << logelong_var            << "\t";           // 17
-             //<< logelong_wmean          << "\t"           // 17
-             //<< logelong_w0mean         << "\t";          // 18
+  if (ps.dim() > 0){
+    cols.push_back({"n_edges", double(nsum), true});
+    cols.push_back({"elong_mean", elong_mean});
+    cols.push_back({"elong2_mean", elong2_mean});
+    cols.push_back({"logelong_mean", logelong_mean});
+    cols.push_back({"logelong_var", logelong_var});
   }
-  statfile << std::endl;
-}
-
-void write_stats_header(std::ofstream &statfile, Uint mesh_dim){
-  statfile << "# t" << "\t"                   //  1
-           << "x_mean" << "\t"                //  2
-           << "y_mean" << "\t"                //  3
-           << "z_mean" << "\t"                //  4
-           << "dx2_mean" << "\t"              //  5
-           << "dy2_mean" << "\t"              //  6
-           << "dz2_mean" << "\t"              //  7
-           << "ux_mean" << "\t"               //  8
-           << "uy_mean" << "\t"               //  9
-           << "uz_mean" << "\t"               // 10
-           << "Nrw" << "\t"                   // 11
-           << "n_declined" << "\t";           // 12
-  if (mesh_dim > 0){
-    statfile << "n_edges" << "\t"               // 13
-             << "elong_mean" << "\t"            // 14
-             << "elong2_mean" << "\t"           // 15
-             << "logelong_mean" << "\t"         // 16
-             << "logelong_var" << "\t";         // 17
-  }
-  statfile << std::endl;
+  return cols;
 }
 
 #endif

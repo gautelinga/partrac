@@ -249,16 +249,20 @@ int main(int argc, char* argv[])
 
   mesh.compute_maps();
 
-  // Initial refinement
+  // Initial refinement and coarsening, each following its own flag: sharing
+  // one block gave coarsen=true refine=false no initial pass at all, and
+  // refine=true coarsen=false one it had not asked for
   if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
-
-    std::cout << "Initial coarsening" << std::endl;
-    Uint n_rem = mesh.coarsen();
-
     if (prm.get<bool>("verbose"))
-      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
+      std::cout << "Added " << n_add << " edges." << std::endl;
+  }
+  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
+    std::cout << "Initial coarsening" << std::endl;
+    Uint n_rem = mesh.coarsen(true);
+    if (prm.get<bool>("verbose"))
+      std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
 
   mesh.compute_interior();
@@ -304,7 +308,7 @@ int main(int argc, char* argv[])
   std::ofstream statfile;
   if (prm.get<double>("stat_intv") > 0.){
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(xn) + ".dat");
-    write_stats_header(statfile, mesh.dim());
+    write_stats_header(statfile, mesh.stats_header_columns(prm.get<double>("ds_max")));
   }
 
   // Simulation start
@@ -335,7 +339,7 @@ int main(int argc, char* argv[])
     }
     // Coarsening
     if (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dxn)){
-      Uint n_rem = mesh.coarsen();
+      Uint n_rem = mesh.coarsen(true);
       if (prm.get<bool>("verbose"))
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }

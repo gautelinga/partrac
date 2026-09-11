@@ -23,15 +23,16 @@
 
 #include "experimental/integrator_RK.hpp"
 #include "experimental/initializer.hpp"
+#include "stats_columns.hpp"
 //#include "experimental/statistics.hpp"
 
 template<typename T>
-void write_stats( std::ofstream &statfile
-                , const Real t
-                , T& ps
-                , const unsigned long int n_declined
-                )
+std::vector<StatsColumn> stats_columns( const Real t
+                                      , T& ps
+                                      , const unsigned long int n_declined
+                                      )
 {
+  std::vector<StatsColumn> cols;
   Vector x_mean = {0., 0., 0.};
   Vector x_var = {0., 0., 0.};
 
@@ -204,97 +205,49 @@ void write_stats( std::ofstream &statfile
   u2_var /= (Nrw2-1);
   w2_var /= (Nrw2-1);
   
-  statfile << t                       << "\t"           //  1
-           << x_mean[0]               << "\t"           //  2
-           << x_mean[1]               << "\t"           //  3
-           << x_mean[2]               << "\t"           //  4
-           << x_var[0]                << "\t"           //  5
-           << x_var[1]                << "\t"           //  6
-           << x_var[2]                << "\t"           //  7
-           << u_mean[0]               << "\t"           //  8
-           << u_mean[1]               << "\t"           //  9
-           << u_mean[2]               << "\t"           // 10
-           << u_var[0]                << "\t"           // 11
-           << u_var[1]                << "\t"           // 12
-           << u_var[2]                << "\t"           // 13
-           << w_mean                  << "\t"           // 14
-           << w_var                   << "\t"           // 15
-           << S_mean                  << "\t"           // 16
-           << rho_mean                << "\t"           // 17
-           << Nrw                     << "\t"           // 18
-           << n_declined              << "\t";          // 19
-
-  statfile << Nrw1                    << "\t"           // 20
-           << u1_mean[0]              << "\t"           // 21
-           << u1_mean[1]              << "\t"           // 22
-           << u1_mean[2]              << "\t"           // 23
-           << u1_var[0]               << "\t"           // 24
-           << u1_var[1]               << "\t"           // 25
-           << u1_var[2]               << "\t"           // 26
-           << w1_mean                 << "\t"           // 27
-           << w1_var                  << "\t"           // 28
-           << S1_mean                 << "\t";          // 29
-
-  statfile << Nrw2                    << "\t"           // 30
-           << u2_mean[0]              << "\t"           // 31
-           << u2_mean[1]              << "\t"           // 32
-           << u2_mean[2]              << "\t"           // 33
-           << u2_var[0]               << "\t"           // 34
-           << u2_var[1]               << "\t"           // 35
-           << u2_var[2]               << "\t"           // 36
-           << w2_mean                 << "\t"           // 37
-           << w2_var                  << "\t"           // 38
-           << S2_mean                 << "\t";          // 39
-
-  statfile << std::endl;
+  cols.push_back({"t", t});
+  cols.push_back({"x_mean", x_mean[0]});
+  cols.push_back({"y_mean", x_mean[1]});
+  cols.push_back({"z_mean", x_mean[2]});
+  cols.push_back({"x_var", x_var[0]});
+  cols.push_back({"y_var", x_var[1]});
+  cols.push_back({"z_var", x_var[2]});
+  cols.push_back({"ux_mean", u_mean[0]});
+  cols.push_back({"uy_mean", u_mean[1]});
+  cols.push_back({"uz_mean", u_mean[2]});
+  cols.push_back({"ux_var", u_var[0]});
+  cols.push_back({"uy_var", u_var[1]});
+  cols.push_back({"uz_var", u_var[2]});
+  cols.push_back({"w_mean", w_mean});
+  cols.push_back({"w_var", w_var});
+  cols.push_back({"S_mean", S_mean});
+  cols.push_back({"rho_mean", rho_mean});
+  cols.push_back({"Nrw", double(Nrw), true});
+  cols.push_back({"n_declined", double(n_declined), true});
+  cols.push_back({"Nrw1", double(Nrw1), true});
+  cols.push_back({"u1x_mean", u1_mean[0]});
+  cols.push_back({"u1y_mean", u1_mean[1]});
+  cols.push_back({"u1z_mean", u1_mean[2]});
+  cols.push_back({"u1x_var", u1_var[0]});
+  cols.push_back({"u1y_var", u1_var[1]});
+  cols.push_back({"u1z_var", u1_var[2]});
+  cols.push_back({"w1_mean", w1_mean});
+  cols.push_back({"w1_var", w1_var});
+  cols.push_back({"S1_mean", S1_mean});
+  cols.push_back({"Nrw2", double(Nrw2), true});
+  cols.push_back({"u2x_mean", u2_mean[0]});
+  cols.push_back({"u2y_mean", u2_mean[1]});
+  cols.push_back({"u2z_mean", u2_mean[2]});
+  cols.push_back({"u2x_var", u2_var[0]});
+  cols.push_back({"u2y_var", u2_var[1]});
+  cols.push_back({"u2z_var", u2_var[2]});
+  cols.push_back({"w2_mean", w2_mean});
+  cols.push_back({"w2_var", w2_var});
+  cols.push_back({"S2_mean", S2_mean});
+  return cols;
 }
 
-void write_stats_header(std::ofstream &statfile)
-{
-  statfile << "# t"                   << "\t"           //  1
-           << "x_mean"                << "\t"           //  2
-           << "y_mean"                << "\t"           //  3
-           << "z_mean"                << "\t"           //  4
-           << "x_var"                 << "\t"           //  5
-           << "y_var"                 << "\t"           //  6
-           << "z_var"                 << "\t"           //  7
-           << "ux_mean"               << "\t"           //  8
-           << "uy_mean"               << "\t"           //  9
-           << "uz_mean"               << "\t"           // 10
-           << "ux_var"                << "\t"           // 11
-           << "uy_var"                << "\t"           // 12
-           << "uz_var"                << "\t"           // 13
-           << "w_mean"                << "\t"           // 14
-           << "w_var"                 << "\t"           // 15
-           << "S_mean"                << "\t"           // 16x
-           << "rho_mean"              << "\t"           // 17
-           << "Nrw"                   << "\t"           // 18
-           << "n_declined"            << "\t";          // 19
 
-  statfile << "Nrw1"                  << "\t"           // 20
-           << "u1x_mean"              << "\t"           // 21
-           << "u1y_mean"              << "\t"           // 22
-           << "u1z_mean"              << "\t"           // 23
-           << "u1x_var"               << "\t"           // 24
-           << "u1y_var"               << "\t"           // 25
-           << "u1z_var"               << "\t"           // 26
-           << "w1_mean"               << "\t"           // 27
-           << "w1_var"                << "\t"           // 28
-           << "S1_mean"               << "\t";          // 29
-
-  statfile << "Nrw2"                  << "\t"           // 30
-           << "u2x_mean"              << "\t"           // 31
-           << "u2y_mean"              << "\t"           // 32
-           << "u2z_mean"              << "\t"           // 33
-           << "u2x_var"               << "\t"           // 34
-           << "u2y_var"               << "\t"           // 35
-           << "u2z_var"               << "\t"           // 36
-           << "w2_mean"               << "\t"           // 37
-           << "w2_var"                << "\t"           // 38
-           << "S2_mean"               << "\t";          // 39
-
-  statfile << std::endl;
-}
 
 
 template<typename ParticleType, typename InterpolatorType>
@@ -440,7 +393,7 @@ int main(int argc, char* argv[])
     std::ofstream statfile;
     if (prm.get<double>("stat_intv") > 0.){
       statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-      write_stats_header(statfile);
+      write_stats_header(statfile, stats_columns(0., ps, 0));
     }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -496,7 +449,7 @@ int main(int argc, char* argv[])
             duration_step = 0;
             duration_other = 0;
 
-            write_stats(statfile, t, ps, integrator.get_declined());
+            write_stats_row(statfile, stats_columns(t, ps, integrator.get_declined()));
 
             intp.print_found();
         }

@@ -80,7 +80,7 @@ ParticleSet::ParticleSet (std::shared_ptr<Interpol> intp, std::shared_ptr<Integr
     this->integrator = integrator;
 }*/
 
-ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max) {
+inline ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max) {
     this->intp = intp;
     this->Nrw_max = Nrw_max;
     // Vector fields
@@ -99,7 +99,7 @@ ParticleSet::ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max) {
     this->cell_id_rw.resize(Nrw_max);
 }
 
-void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
+inline void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
   for (Uint irw=irw0; irw < irw0+pos_init.size(); ++irw){
     // Assign initial position
     x_rw[irw] = pos_init[irw-irw0]; // could be done more efficiently
@@ -115,7 +115,7 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint irw0) {
 }
 
 // Add only the listed entries of pos_init
-void ParticleSet::add(const std::vector<Vector3d> &pos_init,
+inline void ParticleSet::add(const std::vector<Vector3d> &pos_init,
                       const std::vector<Uint> &which, const Uint irw0) {
   for (Uint k=0; k < which.size(); ++k){
     const Uint irw = irw0 + k;
@@ -128,7 +128,7 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init,
 }
 
 //template<typename T>
-bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
+inline bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
   
   if (check_if_inside){
@@ -197,27 +197,27 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
   return true;
 }
 
-void ParticleSet::copy_node(const Uint i, const Uint j){
+inline void ParticleSet::copy_node(const Uint i, const Uint j){
   x_rw[i] = x_rw[j];
   c_rw[i] = c_rw[j];
   t_loc_rw[i] = t_loc_rw[j];  // if it is used?
 
 }
 
-double ParticleSet::triangle_area(const Uint iface,
+inline double ParticleSet::triangle_area(const Uint iface,
                                   const FacesType& faces, const EdgesType& edges) const {
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return triangle_area(iedge, jedge, edges);
 }
 
-Vector3d ParticleSet::cross_product(const Uint iedge, const Uint jedge, const EdgesType& edges) const {
+inline Vector3d ParticleSet::cross_product(const Uint iedge, const Uint jedge, const EdgesType& edges) const {
   Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
   Vector3d b = x_rw[edges[jedge].first[0]]-x_rw[edges[jedge].first[1]];
   return a.cross(b);
 }
 
-void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode){
+inline void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode){
   //intp->probe(x);  //
 
   Uint irws[2] = {inode, jnode};
@@ -234,7 +234,7 @@ void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode)
   }
 }
 
-void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges){
+inline void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges){
     bool inode_is_border = node2edges[inode].size() > 1;
     bool jnode_is_border = node2edges[jnode].size() > 1;
 
@@ -264,7 +264,7 @@ void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesT
     
 }
 
-Vector3d ParticleSet::facet_normal(const Uint iface,
+inline Vector3d ParticleSet::facet_normal(const Uint iface,
                                    const FacesType &faces,
                                    const EdgesType &edges){
   Uint iedge = faces[iface].first[0];
@@ -280,7 +280,7 @@ Vector3d ParticleSet::facet_normal(const Uint iface,
   return crossprod/crossprod.norm();
 }
 
-void ParticleSet::set_normals(const InteriorAnglesType& interior_angles, const std::vector<Vector3d> &face_normals){
+inline void ParticleSet::set_normals(const InteriorAnglesType& interior_angles, const std::vector<Vector3d> &face_normals){
   for (Uint irw=0; irw<Nrw; ++irw){
     n_rw[irw] = {0., 0., 0.};
   }
@@ -296,7 +296,7 @@ void ParticleSet::set_normals(const InteriorAnglesType& interior_angles, const s
   }
 }
 
-void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType &node2edges,
+inline void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType &node2edges,
                                     std::vector<double> edge_w, std::vector<double> mixed_areas){
   for (Uint inode=0; inode<Nrw; ++inode){
     Vector3d lapl_v(0., 0., 0.);
@@ -312,7 +312,7 @@ void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType
   }
 }
 
-void ParticleSet::compute_strip_curvature(const EdgesType &edges,
+inline void ParticleSet::compute_strip_curvature(const EdgesType &edges,
                                           const Node2EdgesType &node2edges){
   for (Uint inode=0; inode<Nrw; ++inode){
     H_rw[inode] = 0.;
@@ -336,7 +336,7 @@ void ParticleSet::compute_strip_curvature(const EdgesType &edges,
   }
 }
 
-void ParticleSet::load_scalar(const std::string filename, const std::string fieldname){
+inline void ParticleSet::load_scalar(const std::string filename, const std::string fieldname){
   if (fieldname == "c"){
     load_scalar_field(filename, c_rw, N());
   }
@@ -351,7 +351,7 @@ void ParticleSet::load_scalar(const std::string filename, const std::string fiel
   }
 }
 
-void ParticleSet::dump_scalar(const std::string filename, const std::string fieldname) const {
+inline void ParticleSet::dump_scalar(const std::string filename, const std::string fieldname) const {
   if (fieldname == "c"){
     dump_scalar_field(filename, c_rw, N());
   }
@@ -366,19 +366,19 @@ void ParticleSet::dump_scalar(const std::string filename, const std::string fiel
   }
 }
 
-void ParticleSet::load_positions(const std::string filename){
+inline void ParticleSet::load_positions(const std::string filename){
     assert(N() == 0);
     std::vector<Vector3d> pos;
     load_vector_field(filename, pos);
     add(pos, 0);
 }
 
-void ParticleSet::dump_positions(const std::string filename) const {
+inline void ParticleSet::dump_positions(const std::string filename) const {
     dump_vector_field(filename, x_rw, N());
 }
 
 //template<typename T>
-void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
+inline void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
   // operator[] inserts, so it cannot be called from the threads
   const bool do_rho = output_fields["rho"];
   const bool do_p = output_fields["p"];
@@ -403,7 +403,7 @@ void ParticleSet::update_fields(const double t, std::map<std::string, bool> &out
   }
 }
 
-void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const {
+inline void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const {
     vector2hdf5(h5f, groupname + "/points", x_rw, N());
     if (output_fields["u"])
         vector2hdf5(h5f, groupname + "/u", u_rw, N());

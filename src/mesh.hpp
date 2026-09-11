@@ -18,7 +18,7 @@ void remove_inactive(FacesType&, EdgesType&, Edge2FacesType&, Node2EdgesType&,
 
 // Definitions
 
-void mesh2hdf( H5::H5File& h5f, const std::string& groupname
+inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const ParticleSet& ps
              , const FacesType& faces
              , const EdgesType& edges
@@ -101,7 +101,7 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
   }
 }
 
-std::array<Uint, 2> sort_edges(Uint inode, Uint kedge, Uint ledge,
+inline std::array<Uint, 2> sort_edges(Uint inode, Uint kedge, Uint ledge,
                           EdgesType &edges){
   if (inode == edges[kedge].first[0] || inode == edges[kedge].first[1]){
     return {kedge, ledge};
@@ -118,7 +118,7 @@ Uint get_common_entry(const Row& iedges, const Row& jedges){
   return *out.begin();
 }
 
-Uint get_common_entry(Uint kedge, Uint ledge,
+inline Uint get_common_entry(Uint kedge, Uint ledge,
                      EdgesType &edges){
   for (Uint i=0; i<2; ++i){
     Uint knode = edges[kedge].first[i];
@@ -133,7 +133,7 @@ Uint get_common_entry(Uint kedge, Uint ledge,
   return -1;
 }
 
-std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint ledge,
+inline std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint ledge,
                                        EdgesType &edges){
   Uint inode = edges[iedge].first[0];
   Uint knode;
@@ -159,12 +159,21 @@ std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge, Uint 
 }
 
 
-Uint sheet_refinement(FacesType &faces,
+// Splitting an inlet edge splits the template that injects it, so the next
+// generation is laid down at the finer spacing. Exempting the inlet instead
+// does not terminate: the exempt edge is then the longest in its face, the
+// sweep splits the second longest, and the median it creates comes back the
+// same length -- a triangle that reproduces itself, with dA0 halving each
+// pass until it denormalises. The fixed point is at two thirds of the inlet
+// edge, so any ds_max below that used to refine until Nrw_max stopped it.
+inline Uint sheet_refinement(FacesType &faces,
                       EdgesType &edges,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,                    
                       EdgesListType &edges_inlet,                
                       NodesListType &nodes_inlet,
+                      std::vector<Vector3d> &pos_inj,
+                      EdgesType &edges_inj,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
@@ -174,25 +183,31 @@ Uint sheet_refinement(FacesType &faces,
   Uint n_add = 0;
   std::set<Uint> edges_to_remove;
 
+  // Template edge an edge carries, or -1, kept in step with edges through the
+  // splits below.
+  std::vector<int> inlet_of(edges.size(), -1);
+  for (Uint j=0; j < edges_inlet.size(); ++j)
+    inlet_of[edges_inlet[j]] = int(j);
+
+  // Nothing moves between passes: only the edges a split touches change
+  // length, so they are the only ones worth measuring again. Both are updated
+  // where the split happens, which is exactly what re-measuring would find --
+  // the ratio is stored rather than the length so the threshold test and the
+  // ordering stay the arithmetic they were.
+  std::vector<double> ds_ratio_;
+  ds_ratio_.reserve(edges.size());
+  for ( auto & edge : edges ){
+    Uint inode = edge.first[0];
+    Uint jnode = edge.first[1];
+    double ds = ps.dist(inode, jnode);
+    //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
+    //double ds_max_loc = ds_max/(1.0 + curv_refine_factor*kappa);
+    double ds_max_loc = ds_max;
+    ds_ratio_.push_back(ds/ds_max_loc);
+  }
+
   do {
     changed = false;
-
-    std::vector<double> ds_ratio_;
-    for ( auto & edge : edges ){
-      Uint inode = edge.first[0];
-      Uint jnode = edge.first[1];
-      double ds = ps.dist(inode, jnode);
-      // std::cout << inode << " " << jnode << " " << ds << std::endl;
-      //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
-      //double ds_max_loc = ds_max/(1.0 + curv_refine_factor*kappa);
-      double ds_max_loc = ds_max;
-      ds_ratio_.push_back(ds/ds_max_loc);
-    }
-
-    // Don't refine inlet edges
-    for ( auto & inode : edges_inlet ){
-      ds_ratio_[inode] = 0.0;
-    }
 
     // Only the edges over threshold are split, so only they need ordering:
     // sorting every edge to find the few percent that qualify was half of
@@ -228,9 +243,12 @@ Uint sheet_refinement(FacesType &faces,
         ++n_add;
         //
         edges[iedge].first[1] = new_inode;
+        ds_ratio_[iedge] = ps.dist(inode, new_inode)/ds_max;
         Uint new_iedge = edges.size();
         edges.push_back({{new_inode, jnode}, ds0/2});
+        ds_ratio_.push_back(ps.dist(new_inode, jnode)/ds_max);
         edge2faces.push_back({});
+        inlet_of.push_back(-1);
         // Append new node to node2edges list
         node2edges.push_back({iedge, new_iedge});
         // Modify existing entry
@@ -250,8 +268,10 @@ Uint sheet_refinement(FacesType &faces,
           Uint medge = close_entities[1];
           Uint nedge = close_entities[2];
           edges.push_back({{new_inode, knode}, ds0/2});  // ds0/2 - or what else?
+          ds_ratio_.push_back(ps.dist(new_inode, knode)/ds_max);
 
           edge2faces.push_back({});
+          inlet_of.push_back(-1);
 
           Uint new_iface = faces.size();
           //faces[*itface] = {{iedge, new_jedge, medge}, dA0/2};
@@ -271,6 +291,26 @@ Uint sheet_refinement(FacesType &faces,
           //
           node2edges[new_inode].push_back(new_jedge);
           node2edges[knode].push_back(new_jedge);
+        }
+
+        // The inlet carries a template entry per edge and per node, and
+        // injection rebuilds the inlet from it, so a split that is not
+        // followed here is forgotten at the next injection
+        if (inlet_of[iedge] >= 0){
+          const Uint j = Uint(inlet_of[iedge]);
+          const Uint a = edges_inj[j].first[0];
+          const Uint b = edges_inj[j].first[1];
+          const Uint m = pos_inj.size();
+          // the inlet is a straight line or a point cloud, so its midpoint is
+          // on it -- a curved inlet would land on the chord, as a split does
+          pos_inj.push_back(0.5*(pos_inj[a] + pos_inj[b]));
+          nodes_inlet.push_back(new_inode);
+          const double ds0_inj = edges_inj[j].second;
+          edges_inj[j].first = {a, m};
+          edges_inj[j].second = ds0_inj/2;
+          edges_inj.push_back({{m, b}, ds0_inj/2});
+          inlet_of[new_iedge] = int(edges_inlet.size());
+          edges_inlet.push_back(new_iedge);
         }
       }
       else {
@@ -298,7 +338,7 @@ Uint sheet_refinement(FacesType &faces,
   return n_add;
 }
 
-Uint strip_refinement(FacesType &faces,
+inline Uint strip_refinement(FacesType &faces,
                       EdgesType &edges,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
@@ -311,7 +351,11 @@ Uint strip_refinement(FacesType &faces,
   Uint n_add = 0;
   Uint iedge = 0;
   std::set<Uint> edges_to_remove;
-  // Don't refine inlet edges
+  // Don't refine inlet edges. A strip has no faces, so none of them can raise
+  // a median against an edge it may not split, and the sweep terminates as it
+  // stands -- unlike the sheet, which splits the template with the inlet. An
+  // injecting run is a strip only until its first injection, and the sheet
+  // refinement resolves the inlet from there.
   std::vector<bool> is_inlet(edges.size(), false);
   for ( auto & jedge : edges_inlet )
     is_inlet[jedge] = true;
@@ -384,19 +428,21 @@ Uint strip_refinement(FacesType &faces,
   return n_add;
 }
 
-Uint refinement(FacesType &faces,
+inline Uint refinement(FacesType &faces,
                 EdgesType &edges,
                 Edge2FacesType &edge2faces,
                 Node2EdgesType &node2edges,
                 EdgesListType &edges_inlet,
                 NodesListType &nodes_inlet,
+                std::vector<Vector3d> &pos_inj,
+                EdgesType &edges_inj,
                 ParticleSet& ps, const double ds_max,
                 const double curv_refine_factor,
                 const bool cut_if_stuck){
   Uint n_add = 0;
   if (faces.size() > 0){
     n_add = sheet_refinement(faces, edges, edge2faces, node2edges,
-                             edges_inlet, nodes_inlet,
+                             edges_inlet, nodes_inlet, pos_inj, edges_inj,
                              ps, ds_max, curv_refine_factor, cut_if_stuck);
   }
   else {
@@ -407,7 +453,7 @@ Uint refinement(FacesType &faces,
   return n_add;
 }
 
-void compute_edge2faces(Edge2FacesType &edge2faces,
+inline void compute_edge2faces(Edge2FacesType &edge2faces,
                         const FacesType &faces,
                         const EdgesType &edges){
   // Rows keep their capacity across rebuilds
@@ -422,7 +468,7 @@ void compute_edge2faces(Edge2FacesType &edge2faces,
   }
 }
 
-void compute_node2edges(Node2EdgesType &node2edges,
+inline void compute_node2edges(Node2EdgesType &node2edges,
                         const EdgesType &edges,
                         const Uint Nrw){
   node2edges.resize(Nrw);
@@ -446,7 +492,7 @@ void print(const T vec){
 }
 
 // Nodes joined to inode by active edges, sorted, and the edge joining each
-void get_conodes(std::vector<Uint> &conodes,
+inline void get_conodes(std::vector<Uint> &conodes,
                  std::vector<Uint> &coedges,
                  const Uint inode,
                  const Node2EdgesType &node2edges,
@@ -490,7 +536,7 @@ void get_conodes(std::vector<Uint> &conodes,
 }
 
 // The edge joining node to the node get_conodes was called for
-Uint coedge_to(const std::vector<Uint> &conodes,
+inline Uint coedge_to(const std::vector<Uint> &conodes,
                const std::vector<Uint> &coedges,
                const Uint node){
   for (Uint i = 0; i < conodes.size(); ++i){
@@ -501,27 +547,7 @@ Uint coedge_to(const std::vector<Uint> &conodes,
   return 0;
 }
 
-void get_cofaces(std::vector<Uint> &jfaces,
-                 const Uint iedge,
-                 const Edge2FacesType &edge2faces,
-                 const FacesType &faces){
-  jfaces.clear();
-  for ( auto & iface : edge2faces[iedge] ){
-    for ( auto & kedge : faces[iface].first ){
-      if (kedge != iedge){
-        for (auto & kface : edge2faces[kedge] ){
-          if (kface != iface){
-            jfaces.push_back(kface);
-          }
-        }
-      }
-    }
-  }
-  std::sort(jfaces.begin(), jfaces.end());
-  jfaces.erase(std::unique(jfaces.begin(), jfaces.end()), jfaces.end());
-}
-
-bool is_border_node(const Uint inode,
+inline bool is_border_node(const Uint inode,
                     const Node2EdgesType &node2edges,
                     const Edge2FacesType &edge2faces){
   for ( auto & iedge : node2edges[inode] ){
@@ -533,7 +559,7 @@ bool is_border_node(const Uint inode,
 }
 
 // Turning angle of the rim at a node
-double rim_turn(const Uint inode,
+inline double rim_turn(const Uint inode,
                 const ParticleSet& ps,
                 const EdgesType &edges,
                 const Edge2FacesType &edge2faces,
@@ -553,7 +579,7 @@ double rim_turn(const Uint inode,
   return acos(std::max(-1., std::min(1., a.dot(b)/(a.norm()*b.norm()))));
 }
 
-bool get_new_pos(Vector3d &x,
+inline bool get_new_pos(Vector3d &x,
                  const ParticleSet& ps,
                  const Uint iedge,
                  const EdgesType &edges,
@@ -596,7 +622,7 @@ bool get_new_pos(Vector3d &x,
 
 // Cross product of a face's first two edges: twice the area by its norm, the
 // normal by its direction. With moved, both ends of iedge are read at x.
-Vector3d face_cross(const Uint jface,
+inline Vector3d face_cross(const Uint jface,
                     const Uint iedge,
                     const Vector3d &x,
                     const bool moved,
@@ -617,7 +643,7 @@ Vector3d face_cross(const Uint jface,
 
 // Check that no surviving face is turned over or flattened onto its own
 // opposite edge when both nodes move to x, and take the areas the move gives
-bool normals_are_ok(const Uint iedge,
+inline bool normals_are_ok(const Uint iedge,
                     const Vector3d &x,
                     const ParticleSet& ps,
                     const std::vector<Uint> &jfaces,
@@ -636,7 +662,7 @@ bool normals_are_ok(const Uint iedge,
   return true;
 }
 
-void get_incident_faces(std::vector<Uint> &kfaces,
+inline void get_incident_faces(std::vector<Uint> &kfaces,
                         const Uint iedge,
                         const EdgesType &edges,
                         const Edge2FacesType &edge2faces,
@@ -661,13 +687,13 @@ void get_incident_faces(std::vector<Uint> &kfaces,
 // Scratch for collapse_edge, owned by the sweep
 struct CollapseBuffers {
   std::vector<Uint> inodes, jnodes, icoedges, jcoedges, joint_nodes;
-  std::vector<Uint> jfaces, kfaces, iedges_vec, ifaces;
+  std::vector<Uint> kfaces, iedges_vec, ifaces;
   std::vector<std::pair<Uint, Uint>> replace_edges;
   std::vector<Vector3d> cross_old;
   std::vector<double> dAs_old, dAs_new, dA0_new, v_new;
 };
 
-bool collapse_edge(const Uint iedge,
+inline bool collapse_edge(const Uint iedge,
                    FacesType &faces,
                    EdgesType &edges,
                    Edge2FacesType &edge2faces,
@@ -734,11 +760,6 @@ bool collapse_edge(const Uint iedge,
   }
   //std::cout << "New pos: " << x << " " << y << " " << z << std::endl;
 
-  auto &jfaces = buf.jfaces;
-  get_cofaces(jfaces, iedge, edge2faces, faces);
-
-  //print(jfaces);
-
   double dA_res = 0.;
   double dA0_res = 0.;
   for ( auto & iface : edge2faces[iedge] ){
@@ -793,7 +814,6 @@ bool collapse_edge(const Uint iedge,
   if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new))
     return false;
 
-  // assert(jfaces.size()==4 || jfaces.size()==2);
 
   ps.replace_nodes(x, inode, jnode);
 
@@ -838,7 +858,9 @@ bool collapse_edge(const Uint iedge,
   //assert(edge_isactive[iedge]);
   edge_isactive[iedge] = false;
 
-  for (auto & jface : jfaces ){
+  // The doubled edges are at the joint nodes, so every face that names one is
+  // incident on iedge; the rest of kfaces takes replaced() as the identity
+  for (auto & jface : kfaces ){
     for (Uint j=0; j<3; ++j)
       faces[jface].first[j] = replaced(faces[jface].first[j]);
     //std::cout << "faces[" << *jfaceit << "].first="
@@ -948,7 +970,7 @@ bool collapse_edge(const Uint iedge,
   return true;
 }
 
-void remove_faces(FacesType &faces, const std::vector<bool>& face_isactive){
+inline void remove_faces(FacesType &faces, const std::vector<bool>& face_isactive){
   assert(faces.size() == face_isactive.size());
   // Compact in one pass
   Uint n = 0;
@@ -962,7 +984,7 @@ void remove_faces(FacesType &faces, const std::vector<bool>& face_isactive){
   faces.erase(faces.begin() + n, faces.end());
 }
 
-void remove_edges(FacesType &faces, EdgesType &edges,
+inline void remove_edges(FacesType &faces, EdgesType &edges,
                   const std::vector<bool> &edge_isactive,
                   EdgesListType &edges_inlet){
   assert(edges.size() == edge_isactive.size());
@@ -986,7 +1008,7 @@ void remove_edges(FacesType &faces, EdgesType &edges,
     iedge = new_index[iedge];
 }
 
-void remove_nodes(EdgesType& edges,
+inline void remove_nodes(EdgesType& edges,
                   NodesListType& nodes_inlet,
                   ParticleSet& ps,
                   const std::vector<bool> &node_isactive
@@ -1017,7 +1039,7 @@ void remove_nodes(EdgesType& edges,
 // Remove everything the flags mark dead, and everything that leaves dangling.
 // A caller sets the flags it knows and passes all-true for the rest. What
 // propagates depends on the dimension: a cloud has no edges, a strip no faces.
-void remove_inactive(FacesType &faces, EdgesType &edges,
+inline void remove_inactive(FacesType &faces, EdgesType &edges,
                      Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
                      EdgesListType &edges_inlet, NodesListType &nodes_inlet,
                      std::vector<bool> &face_isactive,
@@ -1108,7 +1130,7 @@ void remove_inactive(FacesType &faces, EdgesType &edges,
   compute_node2edges(node2edges, edges, ps.N());
 }
 
-void check_geometry(FacesType& faces, EdgesType& edges, std::vector<bool>& face_isactive, std::vector<bool>& edge_isactive){
+inline void check_geometry(FacesType& faces, EdgesType& edges, std::vector<bool>& face_isactive, std::vector<bool>& edge_isactive){
   std::vector<std::vector<Uint>> e2f(edges.size());
 
   for ( Uint iface=0; iface < faces.size(); ++iface ){
@@ -1134,7 +1156,7 @@ void check_geometry(FacesType& faces, EdgesType& edges, std::vector<bool>& face_
   }
 }
 
-Uint sheet_coarsening(FacesType &faces,
+inline Uint sheet_coarsening(FacesType &faces,
                       EdgesType &edges,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
@@ -1213,7 +1235,7 @@ static bool tau_compatible(const double a, const double b){
   return lo > 0. && hi <= 3.*lo;
 }
 
-Uint strip_coarsening(FacesType &faces,
+inline Uint strip_coarsening(FacesType &faces,
                       EdgesType &edges,
                       Edge2FacesType &edge2faces,
                       Node2EdgesType &node2edges,
@@ -1315,7 +1337,7 @@ Uint strip_coarsening(FacesType &faces,
   return n_coll;
 }
 
-Uint coarsening(FacesType &faces,
+inline Uint coarsening(FacesType &faces,
                 EdgesType &edges,
                 Edge2FacesType &edge2faces,
                 Node2EdgesType &node2edges,
@@ -1339,7 +1361,7 @@ Uint coarsening(FacesType &faces,
   return 0;
 }
 
-bool strip_filtering(FacesType &faces,
+inline bool strip_filtering(FacesType &faces,
                      EdgesType &edges,
                      Edge2FacesType &edge2faces,
                      Node2EdgesType &node2edges,
@@ -1367,7 +1389,7 @@ bool strip_filtering(FacesType &faces,
   return true;
 }
 
-bool sheet_filtering(FacesType &faces,
+inline bool sheet_filtering(FacesType &faces,
                      EdgesType &edges,
                      Edge2FacesType &edge2faces,
                      Node2EdgesType &node2edges,
@@ -1389,7 +1411,7 @@ bool sheet_filtering(FacesType &faces,
 
   std::vector<bool> face_isactive(faces.size(), false);
   for (Uint iface=0; iface < filter_target; ++iface){
-    face_isactive[iface] = true;
+    face_isactive[ids[iface]] = true;   // the shuffle, not storage order
   }
 
   std::vector<bool> edge_isactive(edges.size(), true);
@@ -1400,7 +1422,7 @@ bool sheet_filtering(FacesType &faces,
   return true;
 }
 
-bool filtering(FacesType &faces,
+inline bool filtering(FacesType &faces,
                EdgesType &edges,
                Edge2FacesType &edge2faces,
                Node2EdgesType &node2edges,
@@ -1418,7 +1440,7 @@ bool filtering(FacesType &faces,
   }
 }
 
-bool resizing(EdgesType &edges,
+inline bool resizing(EdgesType &edges,
               Node2EdgesType &node2edges,
               ParticleSet& ps,
               const double ds){
@@ -1442,7 +1464,7 @@ bool resizing(EdgesType &edges,
   return resized;
 }
 
-std::array<double, 3> mixed_area_contrib(const double ang0,
+inline std::array<double, 3> mixed_area_contrib(const double ang0,
                                     const double ang1,
                                     const double ang2,
                                     const double s01,
@@ -1475,11 +1497,11 @@ std::array<double, 3> mixed_area_contrib(const double ang0,
   return {a0, a1, a2};
 }
 
-double get_angle(const Vector3d &a, const Vector3d &b){
+inline double get_angle(const Vector3d &a, const Vector3d &b){
   return acos(a.dot(b)/(a.norm()*b.norm()));
 }
 
-void compute_interior_prop(InteriorAnglesType &interior_ang,
+inline void compute_interior_prop(InteriorAnglesType &interior_ang,
                            std::vector<double> &mixed_areas,
                            std::vector<Vector3d> &face_normals,
                            const FacesType &faces,
@@ -1550,7 +1572,7 @@ void compute_interior_prop(InteriorAnglesType &interior_ang,
   }
 }
 
-void compute_sheet_curv(const FacesType &faces,
+inline void compute_sheet_curv(const FacesType &faces,
                         const EdgesType &edges,
                         const Edge2FacesType &edge2faces,
                         const Node2EdgesType &node2edges,
@@ -1586,13 +1608,13 @@ void compute_sheet_curv(const FacesType &faces,
   ps.compute_curvature(edges, node2edges, edge_w, mixed_areas);
 }
 
-void compute_strip_curv(const EdgesType &edges,
+inline void compute_strip_curv(const EdgesType &edges,
                         const Node2EdgesType &node2edges,
                         ParticleSet& ps){
   ps.compute_strip_curvature(edges, node2edges);
 }
 
-void compute_mean_curv(const FacesType &faces,
+inline void compute_mean_curv(const FacesType &faces,
                        const EdgesType &edges,
                        const Edge2FacesType &edge2faces,
                        const Node2EdgesType &node2edges,
@@ -1618,7 +1640,7 @@ void compute_mean_curv(const FacesType &faces,
 // The stitching is one quad per inlet edge, split by the diagonal N_j -- O_j+1.
 // A node the flow has left on the inlet is reused rather than injected again;
 // its quad is then a triangle, closed by the old edge or by the new one.
-bool injection(const std::vector<Vector3d> &pos_inj,
+inline bool injection(const std::vector<Vector3d> &pos_inj,
                const EdgesType &edges_inj,
                EdgesListType &edges_inlet,
                NodesListType &nodes_inlet,

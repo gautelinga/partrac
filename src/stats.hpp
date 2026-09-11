@@ -2,8 +2,9 @@
 #define __STATS_HPP
 
 #include "utils.hpp"
+#include "stats_columns.hpp"
 
-void write_stats(std::ofstream &statfile,
+inline std::vector<StatsColumn> stats_columns(
                  const double t,
                  const ParticleSet& ps,
                  const FacesType &faces,
@@ -12,8 +13,10 @@ void write_stats(std::ofstream &statfile,
                  //const bool do_dump_hist,
                  //const std::string histfolder,
                  const unsigned long int n_accepted,
-                 const unsigned long int n_declined)
+                 const unsigned long int n_declined,
+                 const Uint mesh_dim)
 {
+  std::vector<StatsColumn> cols;
   Vector3d x_mean = {0., 0., 0.};
   Vector3d dx2_mean = {0., 0., 0.};
   Vector3d u_mean = {0., 0., 0.};
@@ -38,27 +41,32 @@ void write_stats(std::ofstream &statfile,
     }
   }
 
-  statfile << t << "\t"                   //  1
-           << x_mean[0] << "\t"           //  2
-           << dx2_mean[0] << "\t"         //  3
-           << x_mean[1] << "\t"           //  4
-           << dx2_mean[1] << "\t"         //  5
-           << x_mean[2] << "\t"           //  6
-           << dx2_mean[2] << "\t"         //  7
-           << u_mean[0] << "\t"           //  8
-           << u_mean[1] << "\t"           //  9
-           << u_mean[2] << "\t"           // 10
-           << Nrw << "\t"                 // 11
-           << n_accepted << "\t"          // 12
-           << n_declined << "\t";         // 13
+  cols.push_back({"t", t});
+  cols.push_back({"x_mean", x_mean[0]});
+  cols.push_back({"dx2_mean", dx2_mean[0]});
+  cols.push_back({"y_mean", x_mean[1]});
+  cols.push_back({"dy2_mean", dx2_mean[1]});
+  cols.push_back({"z_mean", x_mean[2]});
+  cols.push_back({"dz2_mean", dx2_mean[2]});
+  cols.push_back({"ux_mean", u_mean[0]});
+  cols.push_back({"uy_mean", u_mean[1]});
+  cols.push_back({"uz_mean", u_mean[2]});
+  cols.push_back({"Nrw", double(Nrw), true});
+  cols.push_back({"n_accepted", double(n_accepted), true});
+  cols.push_back({"n_declined", double(n_declined), true});
 
   double s = 0.;
   double s0 = 0.;
   double A = 0.;
   double A0 = 0.;
 
-  bool do_strip = edges.size() > 0 && faces.size() == 0;
-  bool do_sheet = faces.size() > 0;
+  // Which columns this run writes is fixed by the dimension it settles into,
+  // not by what the mesh happens to be right now: the header is written once,
+  // before the loop, and an injecting run is still its inlet at that point.
+  // A sheet that has not been swept yet reports zero area rather than the
+  // length of the curve about to sweep it.
+  const bool do_strip = mesh_dim == 1;
+  const bool do_sheet = mesh_dim > 1;
 
   if (do_strip || do_sheet){
     Uint n_too_long = 0;
@@ -66,7 +74,7 @@ void write_stats(std::ofstream &statfile,
          edgeit != edges.end(); ++edgeit)
       if (ps.dist(edgeit->first[0], edgeit->first[1]) > ds_max)
         ++n_too_long;
-    statfile << n_too_long << "\t";         // 14
+    cols.push_back({"n_too_long", double(n_too_long), true});
   }
 
   if (do_strip){
@@ -100,12 +108,12 @@ void write_stats(std::ofstream &statfile,
     }
     logelong_wvar = s > 0. ? logelong_wvar/s : 0.;
     logelong_w0var = s0 > 0. ? logelong_w0var/s0 : 0.;
-    statfile << s << "\t"                   // 15
-             << s0 << "\t"                  // 16
-             << logelong_wmean << "\t"      // 17
-             << logelong_wvar << "\t"       // 18
-             << logelong_w0mean << "\t"     // 19
-             << logelong_w0var << "\t";     // 20
+    cols.push_back({"s", s});
+    cols.push_back({"s0", s0});
+    cols.push_back({"logelong_wmean", logelong_wmean});
+    cols.push_back({"logelong_wvar", logelong_wvar});
+    cols.push_back({"logelong_w0mean", logelong_w0mean});
+    cols.push_back({"logelong_w0var", logelong_w0var});
   }
   else if (do_sheet){
     // Sheet method
@@ -139,54 +147,15 @@ void write_stats(std::ofstream &statfile,
     }
     logelong_wvar = A > 0. ? logelong_wvar/A : 0.;
     logelong_w0var = A0 > 0. ? logelong_w0var/A0 : 0.;
-    statfile << A << "\t"                   // 15
-             << A0 << "\t"                  // 16
-             << logelong_wmean << "\t"  // 17
-             << logelong_wvar << "\t"   // 18
-             << logelong_w0mean << "\t" // 19
-             << logelong_w0var << "\t"; // 20
+    cols.push_back({"A", A});
+    cols.push_back({"A0", A0});
+    cols.push_back({"logelong_wmean", logelong_wmean});
+    cols.push_back({"logelong_wvar", logelong_wvar});
+    cols.push_back({"logelong_w0mean", logelong_w0mean});
+    cols.push_back({"logelong_w0var", logelong_w0var});
   }
- 
-  statfile << std::endl;
-}
 
-void write_stats_header(std::ofstream &statfile, Uint mesh_dim){
-  statfile << "# t" << "\t"                   //  1
-           << "x_mean" << "\t"                //  2
-           << "dx2_mean" << "\t"              //  3
-           << "y_mean" << "\t"                //  4
-           << "dy2_mean" << "\t"              //  5
-           << "z_mean" << "\t"                //  6
-           << "dz2_mean" << "\t"              //  7
-           << "ux_mean" << "\t"               //  8
-           << "uy_mean" << "\t"               //  9
-           << "uz_mean" << "\t"               // 10
-           << "Nrw" << "\t"                   // 11
-           << "n_accepted" << "\t"            // 12
-           << "n_declined" << "\t";           // 13
-  if (mesh_dim > 0){
-    statfile << "n_too_long" << "\t";         // 14
-  }
-  if (mesh_dim == 0){
-    // a point cloud has neither, and write_stats emits nothing past column 13
-  }
-  else if (mesh_dim > 1){
-    statfile << "A" << "\t"                   // 15
-             << "A0" << "\t"                  // 16
-             << "logelong_wmean" << "\t"      // 17
-             << "logelong_wvar" << "\t"       // 18
-             << "logelong_w0mean" << "\t"     // 19
-             << "logelong_w0var" << "\t";     // 20
-  }
-  else {
-    statfile << "s" << "\t"                   // 15
-             << "s0" << "\t"                  // 16
-             << "logelong_wmean" << "\t"      // 17
-             << "logelong_wvar" << "\t"       // 18
-             << "logelong_w0mean" << "\t"     // 19
-             << "logelong_w0var" << "\t";     // 20
-  }
-  statfile << std::endl;
+  return cols;
 }
 
 #endif

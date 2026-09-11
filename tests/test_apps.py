@@ -117,3 +117,29 @@ def test_every_built_app_is_listed():
     built = set(os.listdir(os.path.dirname(app("partrac"))))
     listed = {a[0] for a in APPS}
     assert built <= listed, built - listed
+
+
+# --- and one thing that is not a smoke test ------------------------------------
+
+SSS = ("Dm=0 dt=0.005 T=0.02 Nrw=100 Nrw_max=2000 dump_intv=1.0 stat_intv=1.0 "
+       "mode=analytic init_mode=uniform_x int_order=1 dx_max=0.1 dxn=0.05 "
+       "random=false seed=1 ds_max=0.4 ds_min=0.1")
+
+
+@pytest.mark.skipif(not os.path.exists(app("static_space_stepper")),
+                    reason="static_space_stepper is not built")
+@pytest.mark.parametrize("refine,coarsen", [("true", "false"), ("false", "true")])
+def test_the_initial_pass_follows_its_own_flag(tmp_path, refine, coarsen):
+    # the two used to share one block gated on refine, so coarsen=true
+    # refine=false got no initial coarsening and refine=true coarsen=false got
+    # one anyway. partrac has always had them as two blocks, which is why only
+    # the interval gating was ever wrong there.
+    d = tmp_path / "case"
+    d.mkdir()
+    shutil.copy(EXAMPLE, d / "expr_params.dat")
+    r = subprocess.run([app("static_space_stepper"), str(d / "expr_params.dat")]
+                       + SSS.split() + ["refine=" + refine, "coarsen=" + coarsen],
+                       capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert ("Initial refinement" in r.stdout) == (refine == "true")
+    assert ("Initial coarsening" in r.stdout) == (coarsen == "true")

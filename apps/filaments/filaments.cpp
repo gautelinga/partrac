@@ -174,7 +174,7 @@ int main(int argc, char* argv[])
   std::ofstream statfile;
   if (prm.get<double>("stat_intv") > 0.){
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(statfile, mesh.dim());
+    write_stats_header(statfile, mesh.stats_header_columns(prm.get<double>("ds_max")));
   }
   
 

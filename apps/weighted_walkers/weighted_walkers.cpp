@@ -263,7 +263,7 @@ int main(int argc, char* argv[])
     std::ofstream statfile;
     if (prm.get<double>("stat_intv") > 0.){
       statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-      write_stats_header(statfile, ps.dim());
+      write_stats_header(statfile, stats_columns(0., ps, 0));
     }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -311,7 +311,7 @@ int main(int argc, char* argv[])
             std::cout << "Time = " << t << " [" << duration_par << " + " << duration_split << "]" << std::endl;
             duration_par = 0;
             duration_split = 0;
-            write_stats(statfile, t, ps, integrator.get_declined());
+            write_stats_row(statfile, stats_columns(t, ps, integrator.get_declined()));
 
             std::string sepdatafname = sepdatafolder + "/sepdata_from_t" + std::to_string(t) + ".h5";
             H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);

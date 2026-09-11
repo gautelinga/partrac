@@ -159,19 +159,17 @@ def test_a_strip_inlet_sweeps_the_chord_it_covers(tmp_path, La, x0):
 @needs_partrac
 def test_a_strip_across_the_whole_pipe_is_the_uniform_inlet(tmp_path):
     # the two initializers lay the same 41 nodes down when La spans the domain,
-    # so this is the same sheet twice. Not to the bit: strip runs from +La/2
-    # back to -La/2, so the faces come out reversed, and it interpolates through
-    # a single-precision alpha, which moves the nodes by about 1e-8.
+    # so this is the same sheet twice -- to round-off, since strip runs from
+    # +La/2 back to -La/2 and the faces come out in the other order
     args = ["Nrw=41", "T=0.2", "dump_intv=0.2"]
     _, dA_u, dA0_u = series(tmp_path / "uniform",
                             ["init_mode=uniform_x"] + args)[-1]
     _, dA_s, dA0_s = series(tmp_path / "strip",
                             ["init_mode=strip_x", "La=2.0"] + args)[-1]
     assert len(dA0_s) == len(dA0_u)
-    # the node displacement telescopes out of the total but not out of a face
-    assert dA0_s.sum() == pytest.approx(dA0_u.sum(), rel=1e-12)
-    assert np.allclose(np.sort(dA0_s), np.sort(dA0_u), rtol=1e-5, atol=0)
-    assert np.allclose(np.sort(dA_s), np.sort(dA_u), rtol=1e-5, atol=0)
+    assert dA0_s.sum() == pytest.approx(dA0_u.sum(), rel=1e-14)
+    assert np.allclose(np.sort(dA0_s), np.sort(dA0_u), rtol=1e-13, atol=0)
+    assert np.allclose(np.sort(dA_s), np.sort(dA_u), rtol=1e-13, atol=0)
 
 
 @needs_partrac
@@ -258,6 +256,15 @@ def test_refining_faster_than_injecting(tmp_path):
     # everything before the first injection is a strip, and every one of its
     # edges is the inlet. Refining one leaves edges_inlet naming half a template
     # edge, and edge2faces one row short of edges for every split.
+    #
+    # The injection interval here is long enough that a generation stretches
+    # past ds_max before the next one arrives -- the inlet spans the pipe, so
+    # the shear pulls its ends 0.1 downstream in 0.5. Splitting such an edge
+    # splits the template with it, so later generations are laid down on more
+    # nodes than the first and the closed form for a fixed inlet no longer
+    # holds. What is still true is that the rate only ever improves: the
+    # trapezoidal rule under-reads a concave profile, and refining the template
+    # walks it toward the exact integral without ever passing it.
     n = 41
     s = series(tmp_path, ["Nrw=%d" % n, "T=1.5", "dump_intv=0.5",
                           "inject_intv=0.5", "ds_max=0.1", "ds_min=0.02",
@@ -265,9 +272,15 @@ def test_refining_faster_than_injecting(tmp_path):
                           "coarsen=true", "coarsen_intv=0.05"])
     assert len(s) == 3
     assert len(s[-1][2]) > 3000                    # it really refined
+    exact = 8. / 3. * U_INF * R
     for t, _, dA0 in s:
-        assert dA0.sum() == pytest.approx(sweep_rate(n) * t, rel=1e-12)
+        # the first generation is still on the inlet as laid down, so the
+        # lower bound is met exactly there and only exceeded later
+        assert dA0.sum() >= sweep_rate(n) * t * (1 - 1e-12)
+        assert dA0.sum() <= exact * t              # never past the integral
         assert dA0.min() > 0
+    # the last generation is swept on a finer inlet than the first
+    assert s[-1][2].sum() / s[-1][0] > s[0][2].sum() / s[0][0]
 
 
 @needs_partrac
@@ -430,3 +443,42 @@ def test_remeshing_moves_no_area_across_a_parallel_step(tmp_path):
         assert b.sum() == pytest.approx(a.sum(), rel=1e-9)
     # it really remeshed -- here coarsening wins, so the count falls
     assert abs(len(remeshed[-1][2]) - len(plain[-1][2])) > 0.2 * len(plain[-1][2])
+
+
+@needs_partrac
+def test_a_run_names_its_columns_for_the_dimension_it_settles_into(tmp_path):
+    # The header is written once, before the loop, when an injecting run is
+    # still the inlet curve it started from. Naming the columns for that put
+    # the swept area under `s` and `s0` for the whole run: the column labelled
+    # `s` read 0.13325 at t = 0.05, which is an area. Both guards missed it --
+    # test_apps and test_degenerate check that the counts agree, and they did.
+    def stats(case, extra):
+        case.mkdir(parents=True, exist_ok=True)
+        shutil.copy(HAGEN, case / "expr_params.dat")
+        keys = {a.split("=")[0] for a in extra}
+        argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
+        r = subprocess.run([PARTRAC, str(case / "expr_params.dat")] + argv,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+        f = list(case.rglob("tdata_from_t*.dat"))
+        assert len(f) == 1
+        rows = [l for l in f[0].read_text().splitlines() if l.strip()]
+        names = [h for h in rows[0].lstrip("# ").rstrip().split("\t") if h.strip()]
+        return names, [dict(zip(names, [v for v in r_.rstrip().split("\t")
+                                        if v.strip()])) for r_ in rows[1:]]
+
+    names, rows = stats(tmp_path / "injecting",
+                        ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9"])
+    assert "A" in names and "A0" in names
+    assert "s" not in names and "s0" not in names
+    # nothing has been swept before the first injection, and saying so is not
+    # the same as reporting the length of the curve about to sweep it
+    assert float(rows[0]["A0"]) == 0.0
+    assert float(rows[2]["A0"]) == pytest.approx(sweep_rate(41) * INTV, rel=1e-12)
+
+    # the same run without injection stays a strip, and still says so
+    names, _ = stats(tmp_path / "strip",
+                     ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9",
+                      "inject=false"])
+    assert "s" in names and "s0" in names
+    assert "A" not in names and "A0" not in names

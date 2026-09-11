@@ -158,7 +158,7 @@ int main(int argc, char* argv[])
   }
   if (coarsen && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
-    Uint n_rem = mesh.coarsen();
+    Uint n_rem = mesh.coarsen(true);
     if (prm.get<bool>("verbose"))
       std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
@@ -219,6 +219,14 @@ int main(int argc, char* argv[])
   output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
   output_fields["tau"] = prm.get<bool>("integrate_tau");
 
+  // Coarsening runs on every step its interval names, whether or not coarsening
+  // was asked for -- with it off the threshold drops to what is numerically
+  // zero. Refinement is what raises a zero-length median, so with coarsening
+  // off the cleanup follows the refinement interval: coarsen_intv is one such
+  // a run had no reason to set, and its default would leave the mesh degenerate
+  const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
+                                      : prm.get<double>("refine_intv");
+
   bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && prm.get<double>("Ln") > 0;
   int exit_dim = prm.get<std::string>("exit_plane") == "x" ? 0 : (prm.get<std::string>("exit_plane") == "y" ? 1 : 2);
 
@@ -227,7 +235,7 @@ int main(int argc, char* argv[])
   std::ofstream statfile;
   if (prm.get<double>("stat_intv") > 0.){
     statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(statfile, mesh.dim());
+    write_stats_header(statfile, mesh.stats_header_columns(prm.get<double>("ds_max")));
   }
 
   // Simulation start
@@ -255,8 +263,8 @@ int main(int argc, char* argv[])
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
-    if (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dt)){
-      Uint n_rem = mesh.coarsen();
+    if (at_interval(it, coarsen_intv, dt)){
+      Uint n_rem = mesh.coarsen(coarsen);
       /*Uint n_rem = coarsening(faces, edges,
                               edge2faces, node2edges,
                               edges_inlet, nodes_inlet,

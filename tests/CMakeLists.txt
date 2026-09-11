@@ -16,6 +16,7 @@ add_executable(unittest
   test_rng.cpp
   test_expressions.cpp
   test_schemas.cpp
+  test_mesh_core.cpp
 )
 
 target_link_libraries(unittest

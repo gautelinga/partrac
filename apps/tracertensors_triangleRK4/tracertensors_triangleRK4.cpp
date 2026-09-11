@@ -138,7 +138,7 @@ int main(int argc, char* argv[])
     std::ofstream statfile;
     if (prm.get<double>("stat_intv") > 0.){
       statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-      write_stats_header(statfile, ps.dim());
+      write_stats_header(statfile, stats_columns(0., ps, 0));
     }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -179,7 +179,7 @@ int main(int argc, char* argv[])
         // Statistics
         if (at_interval(it, prm.get<double>("stat_intv"), dt)){
             std::cout << "Time = " << t << std::endl;
-            write_stats(statfile, t, ps, integrator.get_declined());
+            write_stats_row(statfile, stats_columns(t, ps, integrator.get_declined()));
 
             intp.print_found();
         }

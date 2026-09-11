@@ -208,7 +208,7 @@ public:
     bool prev_inside = false;
 
     for (Uint i=0; i < prm.get<Uint>("Nrw"); ++i){
-      double alpha = float(i)/(prm.get<Uint>("Nrw")-1);
+      double alpha = double(i)/(prm.get<Uint>("Nrw")-1);
       Vector3d x0i = alpha * x00 + (1.-alpha) * x01;
       // check if inside domain
       this_inside = intp->locate(x0i);
@@ -297,12 +297,15 @@ public:
 
     NodesListType nodes_inlet_loc;
     EdgesListType edges_inlet_loc;
+    std::vector<Vector3d> pos_inj_loc;   // no inlet here, so no template
+    EdgesType edges_inj_loc;
 
     Uint n_add = 0;
     Uint n_rem = 0;
     do {
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
                                     edges_inlet_loc, nodes_inlet_loc,
+                                    pos_inj_loc, edges_inj_loc,
                                     pset_loc, prm.get<double>("ds_init"), 0.0, false, false);
 
       std::cout << "Added " << n_add << " edges." << std::endl;
@@ -399,6 +402,7 @@ public:
 
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
                                     edges_inlet_loc, nodes_inlet_loc,
+                                    pos_inj_loc, edges_inj_loc,
                                     pset_loc, prm.get<double>("ds_max"), 0.0, false, true);
 
       std::cout << "Added " << n_add << " and removed " << n_rem << " edges." << std::endl;
@@ -504,6 +508,8 @@ public:
 
     NodesListType nodes_inlet_loc;
     EdgesListType edges_inlet_loc;
+    std::vector<Vector3d> pos_inj_loc;   // no inlet here, so no template
+    EdgesType edges_inj_loc;
     compute_edge2faces(edge2faces_loc, faces, edges);
     compute_node2edges(node2edges_loc, edges, pset_loc.N());
 
@@ -511,6 +517,7 @@ public:
     do {
       n_add = sheet_refinement(faces, edges, edge2faces_loc, node2edges_loc,
                                     edges_inlet_loc, nodes_inlet_loc,
+                                    pos_inj_loc, edges_inj_loc,
                                     pset_loc, prm.get<double>("ds_max"), 0.0, false);
       for (Uint irw=0; irw<pset_loc.N(); ++irw){
         Vector3d x = pset_loc.x(irw);
