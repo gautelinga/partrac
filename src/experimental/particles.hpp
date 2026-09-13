@@ -3,6 +3,7 @@
 
 //#include "H5Cpp.h"
 #include <algorithm>
+#include <numeric>
 
 #include "typedefs.hpp"
 #include "io.hpp"
@@ -44,8 +45,8 @@ public:
     Real         get_w() const { return m_w; };
     Real         get_S() const { return m_S; };
 
-    //Uint           get_id() const { return m_id; };
-    //void           set_id(Uint id) { m_id=id; };
+    Uint           get_id() const { return m_id; };
+    void           set_id(Uint id) { m_id=id; };
     inline static std::vector<std::string> scalar_fields() {
         std::vector<std::string> fields = {"rho", "p", "c", "tau", "w", "S"};
         return fields;
@@ -217,6 +218,10 @@ public:
         //    m_particles.face
         //}
     }
+    void replace_node_ids(const std::vector<Uint>& old2new){
+        m_a_id = old2new[m_a_id];
+        m_b_id = old2new[m_b_id];
+    };
     void replace_node_ids(std::map<Uint, Uint>& old2new){
         m_a_id = old2new[m_a_id];
         m_b_id = old2new[m_b_id];
@@ -353,6 +358,24 @@ public:
     //std::vector<Edge<ParticleType>>& edges() { return m_edges; };
     std::vector<Edge>& edges() { return m_edges; };
     std::vector<Face<ParticleType>>& faces() { return m_faces; };
+    // Neighbours in memory become neighbours in the mesh; a particle keeps its
+    // first id, and the dump writes it
+    void sort_by_cell(){
+        const Uint N = m_particles.size();
+        if (!m_numbered){ _number_particles(); m_numbered = true; }
+        std::vector<Uint> order(N);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [this](const Uint a, const Uint b){
+            return m_particles[a].cell_id() < m_particles[b].cell_id(); });
+        std::vector<Uint> old2new(N);
+        for (Uint k = 0; k < N; ++k) old2new[order[k]] = k;
+        std::vector<ParticleType> sorted;
+        sorted.reserve(N);
+        for (const Uint k : order) sorted.push_back(m_particles[k]);
+        m_particles.swap(sorted);
+        for (auto & edge : m_edges) edge.replace_node_ids(old2new);
+        m_permuted = true;
+    };
     void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
     void color_particles(Real c0, Real c1){
         Uint i = 0;
@@ -422,6 +445,8 @@ protected:
     std::vector<Edge>     m_edges;
     std::vector<Face<ParticleType>>     m_faces;
     Uint                                m_Nrw_max;
+    bool m_numbered = false;
+    bool m_permuted = false;   // the array order is no longer the particle id
     //friend class Interpol;
     //template<class InterpolatorType>
     //friend class Integrator;
@@ -509,6 +534,15 @@ void Particles<ParticleType>::dump_hdf5(H5::H5File& h5f, const std::string& grou
         _vtmp.reserve(m_particles.size() * 3);
         _get_x_data(_vtmp);
         vector_to_h5(h5f, groupname + "/points", _vtmp, 3);
+        if (m_permuted){
+            std::vector<Uint> ids;
+            ids.reserve(m_particles.size());
+            for ( auto & particle : m_particles ) ids.push_back(particle.get_id());
+            hsize_t id_dims[2] = {ids.size(), 1};
+            H5::DataSpace id_dspace(2, id_dims);
+            H5::DataSet id_dset = h5f.createDataSet(groupname + "/id", H5::PredType::NATIVE_ULONG, id_dspace);
+            id_dset.write(ids.data(), H5::PredType::NATIVE_ULONG);
+        }
         if (output_fields["u"]){
             _get_u_data(_vtmp);
             vector_to_h5(h5f, groupname + "/u", _vtmp, 3);

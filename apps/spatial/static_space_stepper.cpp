@@ -1,4 +1,5 @@
 #include <iostream>
+#include <omp.h>
 #include <vector>
 #include <filesystem>
 #include <boost/algorithm/string.hpp>
@@ -58,10 +59,17 @@ Integrator_Spatial::Integrator_Spatial(const int int_order, const double u_min, 
 template<typename InterpolType, typename T>
 std::set<Uint> Integrator_Spatial::step_vec(InterpolType& intp, T& ps, const double t, const double ds) {
     std::set<Uint> outside_nodes;
+    // Nodes are independent; only the tally is shared
+    #pragma omp parallel
+    {
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
     bool is_inside;
     double uabs_est, dt;
     Vector3d dx;
 
+    #pragma omp for
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
         int cell_id = ps.get_cell_id(i);
@@ -90,20 +98,28 @@ std::set<Uint> Integrator_Spatial::step_vec(InterpolType& intp, T& ps, const dou
                 is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
+                #pragma omp critical
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
             }
         }
         // count things
         if (is_inside){
-            ++n_accepted;
+            ++n_accepted_loc;
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
             ps.set_cell_id(i, cell_id);
         }
         else {
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }
@@ -116,10 +132,17 @@ Integrator_Directional::Integrator_Directional(const Vector3d& direction, const 
 template<typename InterpolType, typename T>
 std::set<Uint> Integrator_Directional::step_vec(InterpolType& intp, T& ps, const double t, const double s) {
     std::set<Uint> outside_nodes;
+    // Nodes are independent; only the tally is shared
+    #pragma omp parallel
+    {
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
     bool is_inside;
     double s_prev, un_est, dt;
     Vector3d dx;
 
+    #pragma omp for
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
         int cell_id = ps.get_cell_id(i);
@@ -148,20 +171,28 @@ std::set<Uint> Integrator_Directional::step_vec(InterpolType& intp, T& ps, const
                 is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
+                #pragma omp critical
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
             }
         }
         // count things
         if (is_inside){
-            ++n_accepted;
+            ++n_accepted_loc;
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
             ps.set_cell_id(i, cell_id);
         }
         else {
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }
@@ -179,6 +210,11 @@ int main(int argc, char* argv[])
     return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(spatial_schema(), argc, argv);
+
+  if (prm.get<int>("num_threads") > 0){
+      omp_set_dynamic(0);
+      omp_set_num_threads(prm.get<int>("num_threads"));
+  }
 
   std::string infilename = prm.input_file();
 
@@ -249,9 +285,7 @@ int main(int argc, char* argv[])
 
   mesh.compute_maps();
 
-  // Initial refinement and coarsening, each following its own flag: sharing
-  // one block gave coarsen=true refine=false no initial pass at all, and
-  // refine=true coarsen=false one it had not asked for
+  // Initial refinement and coarsening, each following its own flag
   if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
@@ -303,6 +337,23 @@ int main(int argc, char* argv[])
   output_fields["t_loc"] = true;
   output_fields["tau"] = true;
 
+  // Coarsening runs at its interval whether or not it was asked for; with it
+  // off the threshold drops to what is numerically zero. Refinement is what
+  // raises a zero-length median, so the cleanup follows the refinement
+  // interval when coarsen_intv is one the run had no reason to set.
+  const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
+                                      : prm.get<double>("refine_intv");
+
+  // The loop reads these every step; each get is a lookup by string
+  const bool verbose = prm.get<bool>("verbose");
+  const double refine_intv = prm.get<double>("refine_intv");
+  const double stat_intv = prm.get<double>("stat_intv");
+  const double dump_intv = prm.get<double>("dump_intv");
+  const double checkpoint_intv = prm.get<double>("checkpoint_intv");
+  const double ds_max = prm.get<double>("ds_max");
+  const double Ln = prm.get<double>("Ln");
+  const double T_final = prm.get<double>("T");
+
   //std::string write_mode = prm.write_mode;
 
   std::ofstream statfile;
@@ -313,39 +364,39 @@ int main(int argc, char* argv[])
 
   // Simulation start
   std::clock_t clock_0 = std::clock();
-  while (xn <= prm.get<double>("Ln") && ps.N() > 0){
+  while (xn <= Ln && ps.N() > 0){
     // Statistics
-    if (at_interval(it, prm.get<double>("stat_intv"), dxn)){
+    if (at_interval(it, stat_intv, dxn)){
       std::cout << "Position = " << xn << std::endl;
-      mesh.write_statistics(statfile, xn, prm.get<double>("ds_max"), integrator);
+      mesh.write_statistics(statfile, xn, ds_max, integrator);
     }
     // Checkpoint
-    if (at_interval(it, prm.get<double>("checkpoint_intv"), dxn)){
+    if (at_interval(it, checkpoint_intv, dxn)){
       //std::cout << "Writing checkpoint..." << std::endl;
       prm.set<double>("xn0", xn);
       mesh.write_checkpoint(checkpointsfolder, xn, prm);
       //std::cout << "Done." << std::endl;
     }
     // Curvature computation
-    if ((refine && at_interval(it, prm.get<double>("refine_intv"), dxn)) || (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dxn)) || at_interval(it, prm.get<double>("dump_intv"), dxn)){
+    if ((refine && at_interval(it, refine_intv, dxn)) || at_interval(it, coarsen_intv, dxn) || at_interval(it, dump_intv, dxn)){
       mesh.compute_interior();
     }
 
     // Refinement
-    if (refine && at_interval(it, prm.get<double>("refine_intv"), dxn) && it > 0){
+    if (refine && at_interval(it, refine_intv, dxn) && it > 0){
       Uint n_add = mesh.refine();
-      if (prm.get<bool>("verbose"))
+      if (verbose)
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
-    if (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dxn)){
-      Uint n_rem = mesh.coarsen(true);
-      if (prm.get<bool>("verbose"))
+    if (at_interval(it, coarsen_intv, dxn)){
+      Uint n_rem = mesh.coarsen(coarsen);
+      if (verbose)
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
 
     // Dump detailed data
-    if (at_interval(it, prm.get<double>("dump_intv"), dxn)){
+    if (at_interval(it, dump_intv, dxn)){
       std::cout << "Dumping..." << std::endl;
       ps.update_fields(t0, output_fields);
 
@@ -369,11 +420,11 @@ int main(int argc, char* argv[])
 
     if (nodes_to_remove.size() > 0){
       // Nodes are dropped both when done and when trapped; locate the latter
-      if (prm.get<bool>("verbose")){
+      if (verbose){
         Vector3d x_trapped = {0., 0., 0.};
         Uint n_done = 0, n_trapped = 0;
         for (const Uint i : nodes_to_remove){
-          if (ps.t_loc(i) >= prm.get<double>("T")){
+          if (ps.t_loc(i) >= T_final){
             ++n_done;
           }
           else {

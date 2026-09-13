@@ -51,8 +51,7 @@ void Triangle::xy2bary(double x, double y,
 void Triangle::linearbasis( double r
                           , double s
                           , double t
-                          //, std::array<double, 3> &N
-                          , std::vector<double> &N
+                          , double *N
                           ) const
 {
   N[0] = r;
@@ -82,10 +81,8 @@ std::vector<double> Triangle::dof_coords(const int index) const {
 void Triangle::linearderiv( double r
                           , double s
                           , double t
-                          //, std::array<double, 3> &Nx
-                          //, std::array<double, 3> &Ny
-                          , std::vector<double> &Nx
-                          , std::vector<double> &Ny
+                          , double *Nx
+                          , double *Ny
                           ) const
 {
   Nx[0] = g1x_;
@@ -100,8 +97,7 @@ void Triangle::linearderiv( double r
 void Triangle::quadbasis( double r
                         , double s
                         , double t
-                        //, std::array<double, 6> &N
-                        , std::vector<double> &N
+                        , double *N
                         ) const
 {
   N[0] = r*(2*r-1);
@@ -115,10 +111,8 @@ void Triangle::quadbasis( double r
 void Triangle::quadderiv( double r
                         , double s
                         , double t
-                        //, std::array<double, 6> &Nx
-                        //, std::array<double, 6> &Ny
-                        , std::vector<double> &Nx
-                        , std::vector<double> &Ny
+                        , double *Nx
+                        , double *Ny
                         ) const
 {
   double a = 4.0*r-1.0;

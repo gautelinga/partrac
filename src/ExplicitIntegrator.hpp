@@ -15,6 +15,9 @@ public:
     //template<typename InterpolType, typename T>
     //std::set<Uint> step(InterpolType& intp, T& ps, const double t, const double dt);
     std::set<Uint> step(ParticleSet& ps, const double t, const double dt);
+    // the same loop with the interpolator known by type; see interpol_dispatch.hpp
+    template<typename Interp>
+    std::set<Uint> step(Interp& intp, ParticleSet& ps, const double t, const double dt);
 protected:
   double Dm;
   int int_order;
@@ -33,9 +36,12 @@ ExplicitIntegrator::ExplicitIntegrator(const double Dm, const int int_order, std
 //template<typename InterpolType, typename T>
 //std::set<Uint> ExplicitIntegrator::step(InterpolType& intp, T& ps, const double t, const double dt) {
 std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const double dt) {
-    std::set<Uint> outside_nodes;
+    return step(*ps.interpolator(), ps, t, dt);
+}
 
-    auto & intp = *ps.interpolator();
+template<typename Interp>
+std::set<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const double t, const double dt) {
+    std::set<Uint> outside_nodes;
 
     #pragma omp parallel 
     {

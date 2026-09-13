@@ -166,23 +166,62 @@ def test_diffusive_run_is_reproducible(tmp_path):
     assert np.array_equal(xa, xb)
 
 
+def read_stats(case_dir):
+    """The statistics file as a header and an array of rows."""
+    txt = [l for l in list(case_dir.glob("**/tdata_from_t*.dat"))[0]
+           .read_text().splitlines() if l.strip()]
+    head = [h for h in txt[0].lstrip("# ").split("\t") if h.strip()]
+    return head, np.array([[float(v) for v in l.split()] for l in txt[1:]])
+
+
+# uniform_x is a strip, so it exercises only the strip half of the statistics;
+# the sheet half is a separate set of reductions and needs its own run
+SHEET_STATS = ("mode=analytic init_mode=sheet_xy La=0.6 Lb=0.6 ds_init=0.05 "
+               "x0=0 y0=0 z0=0 Nrw=100 Nrw_max=200000 refine=true ds_max=0.1 "
+               "coarsen=false ds_min=1e-9 Dm=0 int_order=2 dt=0.01 "
+               "dump_intv=1e9 checkpoint_intv=0.05 random=false seed=3").split()
+
+
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("threads", [4, 16])
-def test_results_do_not_depend_on_the_thread_count(tmp_path, threads):
-    # every parallel loop writes one entry per particle, so the result must be
-    # identical whatever the schedule; the statistics reductions stay serial
-    ref = case(tmp_path, "t1")
-    other = case(tmp_path, "t%d" % threads)
-    args = [a for a in BASE if not a.startswith(("int_order=", "stat_intv="))]
-    args += ["T=0.2", "int_order=2", "stat_intv=0.01"]
+@pytest.mark.parametrize("kind", ["strip", "sheet"])
+def test_results_do_not_depend_on_the_thread_count(tmp_path, kind, threads):
+    # The trajectories are exact: every parallel loop writes one entry per
+    # particle, so the state must be identical whatever the schedule.
+    #
+    # The statistics are not, and deliberately so. They are parallel reductions,
+    # which add the per-thread partials in whatever order the threads finish --
+    # so they move in the last bits, between thread counts and between two
+    # identical runs alike. That is what buys them back from a fifth of a run's
+    # time at the intervals runs actually use. Measured at full precision over
+    # every column at 1, 4 and 16 threads, the spread is 1.4e-15, about six ulp.
+    #
+    # The tolerance below is not that number: the file is written at the
+    # ostream default of six significant digits, so a value sitting on a
+    # rounding boundary can flip its last printed digit, which for a mantissa
+    # just over 1 is 1e-5. The atol covers the columns that are zero by
+    # symmetry -- x_mean here -- which hold nothing but cancellation noise at
+    # 1e-17. A column that moves by more than this has a broken reduction, not
+    # a rounded one.
+    ref = case(tmp_path, "%s_t1" % kind)
+    other = case(tmp_path, "%s_t%d" % (kind, threads))
+    if kind == "strip":
+        args = [a for a in BASE if not a.startswith(("int_order=", "stat_intv="))]
+        args += ["T=0.2", "int_order=2", "stat_intv=0.01"]
+    else:
+        args = SHEET_STATS + ["T=0.1", "stat_intv=0.01"]
     run(PARTRAC, ref, args + ["num_threads=1"])
     run(PARTRAC, other, args + ["num_threads=%d" % threads])
 
     assert np.array_equal(final_positions(checkpoints(ref)[0]),
                           final_positions(checkpoints(other)[0]))
-    sa = list(ref.glob("**/tdata_from_t*.dat"))[0].read_text()
-    sb = list(other.glob("**/tdata_from_t*.dat"))[0].read_text()
-    assert sa == sb
+    ha, a = read_stats(ref)
+    hb, b = read_stats(other)
+    assert ha == hb, "the two runs wrote different columns"
+    assert a.shape == b.shape, "the two runs wrote a different number of rows"
+    bad = [ha[j] for j in range(a.shape[1])
+           if not np.allclose(a[:, j], b[:, j], rtol=1e-5, atol=1e-12)]
+    assert not bad, "columns differ beyond a reduction's rounding: %s" % bad
 
 
 WALKERS = app("weighted_walkers")

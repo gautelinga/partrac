@@ -41,6 +41,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
   s.opt<int>("seed", 0, "random seed");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
   s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
   s.opt<int>("filter_target", 0, "filter target");
   s.opt<bool>("verbose", false, "print the parameters");

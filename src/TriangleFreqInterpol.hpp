@@ -5,8 +5,9 @@
 #include "Interpol.hpp"
 #include "FreqStamps.hpp"
 #include "Triangle.hpp"
+#include "cell_locate.hpp"
 
-class TriangleFreqInterpol
+class TriangleFreqInterpol final
   : public Interpol
 {
 public:
@@ -72,10 +73,8 @@ protected:
 
   std::vector<Triangle> triangles_;
   std::vector<dolfin::Cell> dolfin_cells_;
-  std::vector<ufc::cell> ufc_cells_;
 
-  std::vector<std::set<Uint>> cell2cells_;
-  std::vector<std::vector<double>> coordinate_dofs_;
+  std::vector<CellNeighbours> cell2cells_;
 
   //std::vector<double> Nu_, Nux_, Nuy_;
   //std::vector<double> Np_;
@@ -105,7 +104,6 @@ protected:
 
   double omega0 = 0.;
 
-  void _modx(dolfin::Array<double>&, const Vector3d&);
   Vector3d _modx(const Vector3d&);
 
 };

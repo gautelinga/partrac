@@ -1,0 +1,107 @@
+"""StructuredInterpol across a change of timestamp.
+
+Three things were wrong here, and the shipped felbm data has two stamps
+holding the same field, so no test could see any of them.
+
+Two were in `update`. Stepping to the next stamp, the old *next* becomes the
+new *prev* by pointer swap, and the z-component read
+`std::swap(uz_prev, uz_prev)` -- a self-swap -- so uz_prev kept the stamp
+before last from the second stamp on. And the blend between the two stamps
+used a member `alpha_t` that nothing set, so every structured run held the
+previous stamp's field constant instead of interpolating in time. Both are
+pinned with u_z = 0, 1, 2 at t = 0, 1, 2, so that z(t) = t^2/2 exactly: the
+mean of u_z over [1, 1.5] separates the swap (1.25 blended, 1 held, 0.5 or 0
+with the self-swap), and z at the end separates the blend.
+
+The third is in `evaluate`, in the branch for cells within a node of a solid,
+which read the next stamp's x-derivatives from the previous stamp's field.
+Only int_order=2 reaches it, through gradU and gradA.
+"""
+
+import os
+import subprocess
+
+import numpy as np
+import pytest
+
+from paths import app
+
+FELBM = app("filaments_felbmRK4")
+INTERPOL = app("interpol")
+
+
+def three_stamp_felbm(d, shear=False):
+    """Stamp k holds u_z = k, and with shear also u_y = k x."""
+    h5py = pytest.importorskip("h5py")
+    n = 16
+    zero = np.zeros((n, n, n))
+    x = np.arange(n, dtype=float)[:, None, None] * np.ones((n, n, n))
+    solid = np.zeros((n, n, n), dtype=np.int32)
+    solid[0, :, :] = 1
+    solid[-1, :, :] = 1
+    with h5py.File(d / "output_is_solid.h5", "w") as f:
+        f.create_dataset("is_solid", data=solid)
+    for k in range(3):
+        fields = {"u_x": zero, "u_y": k * x if shear else zero,
+                  "u_z": np.full((n, n, n), float(k)),
+                  "density": np.ones((n, n, n)), "pressure": zero}
+        with h5py.File(d / ("output_%d.h5" % k), "w") as f:
+            for name, a in fields.items():
+                f.create_dataset(name, data=np.transpose(a, (2, 1, 0)).astype(float))
+    (d / "timestamps.dat").write_text("".join("%d\toutput_%d.h5\n" % (k, k) for k in range(3)))
+    (d / "felbm_params.dat").write_text(
+        "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n")
+
+
+@pytest.mark.skipif(not os.path.exists(FELBM), reason="filaments_felbmRK4 is not built")
+def test_uz_advances_with_the_timestamp(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    d = tmp_path / "felbm"
+    d.mkdir()
+    three_stamp_felbm(d)
+    r = subprocess.run([FELBM, str(d / "felbm_params.dat")] +
+                       ("Dm=0 dt=0.01 T=2.0 Nrw=2 Nrw_max=100 dump_intv=0.5 stat_intv=1e9 "
+                        "checkpoint_intv=1e9 init_mode=pairs_xy int_order=1 ds_init=0.5 "
+                        "x0=8 y0=8 z0=8 random=false seed=1").split(),
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    f = list(d.rglob("data_from_t*.h5"))
+    assert len(f) == 1
+    with h5py.File(f[0], "r") as h:
+        z = {float(k): np.array(h[k + "/points"])[:, 2].mean() for k in h.keys()}
+    assert 1.0 in z and 1.5 in z, sorted(z)
+    u_z_after = (z[1.5] - z[1.0]) / 0.5
+    assert u_z_after > 0.9, "u_z over [1, 1.5] is %.3f: stamp 1 did not become prev" % u_z_after
+    # the blend: z(t) = t^2/2, first-order Euler at dt = 0.01 short by t*dt/2
+    t = max(z)
+    assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
+
+
+def probe(d, t0):
+    h5py = pytest.importorskip("h5py")
+    r = subprocess.run([INTERPOL, str(d / "felbm_params.dat")] +
+                       ("mode=felbm Nrw=5000 int_order=2 t0=%g random=false seed=1" % t0).split(),
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    f = list(d.rglob("interpolation.h5part"))
+    assert len(f) == 1
+    with h5py.File(f[0], "r") as h:
+        return {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+
+
+@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+def test_gradient_blends_between_stamps(tmp_path):
+    """Stamp 0 is at rest, so halfway to stamp 1 the whole gradient must be
+    half of what it is at stamp 1. The x-column of the second stamp's
+    gradient used to be taken from the first, in the cells next to a wall."""
+    a = tmp_path / "half"
+    b = tmp_path / "whole"
+    for d in (a, b):
+        d.mkdir()
+        three_stamp_felbm(d, shear=True)
+    half = probe(a, 0.5)
+    whole = probe(b, 1.0)
+    assert np.array_equal(half["x"], whole["x"])
+    for c in ("uxx", "uxy", "uxz", "uyx", "uyy", "uyz", "uzx", "uzy", "uzz"):
+        assert np.allclose(half[c], 0.5 * whole[c], rtol=0, atol=1e-12), c
+    assert np.abs(whole["uyx"]).max() > 0.5   # the shear is actually there

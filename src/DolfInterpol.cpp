@@ -1,5 +1,7 @@
 #ifdef USE_DOLFIN
 #include "DolfInterpol.hpp"
+#include "dolfin_helpers.hpp"
+#include <omp.h>
 #include <boost/algorithm/string.hpp>
 
 DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename) {
@@ -67,6 +69,31 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     x_min[i_loc] = std::min(x_min[i_loc], xx[i]);
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
+
+  // As the other interpolators keep them, so locate can try the last cell first
+  const std::size_t ncells = mesh->num_cells();
+  dolfin_cells_.resize(ncells);
+  cell2cells_.resize(ncells);
+  if (dim == 2) triangles_.resize(ncells); else tets_.resize(ncells);
+  // A row of vertex coordinates per cell, flat: evaluate reads one per call
+  ncoords_ = (dim + 1) * dim;
+  coordinate_dofs_.resize(ncells * ncoords_);
+  std::vector<double> coords;
+  for (std::size_t i = 0; i < ncells; ++i){
+    dolfin::Cell dolfin_cell(*mesh, i);
+    dolfin_cell.get_coordinate_dofs(coords);
+    assert(coords.size() == ncoords_);
+    for (Uint k = 0; k < ncoords_; ++k)
+      coordinate_dofs_[i*ncoords_ + k] = coords[k];
+    dolfin_cells_[i] = dolfin_cell;
+    if (dim == 2) triangles_[i] = Triangle(dolfin_cell); else tets_[i] = Tet(dolfin_cell);
+  }
+  // All that was ever read of the ufc::cell kept per cell
+  cell_orientations_ = mesh->cell_orientations();
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
+  found_same_.resize(omp_get_max_threads());
+  found_nneigh_.resize(omp_get_max_threads());
+  found_other_.resize(omp_get_max_threads());
   //std::cout << x_min << std::endl;
   //std::cout << x_max << std::endl;
   //this->Lx = x_max[0]-x_min[0];
@@ -148,6 +175,29 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
   u_next_ = std::make_shared<dolfin::Function>(u_space);
   p_prev_ = std::make_shared<dolfin::Function>(p_space);
   p_next_ = std::make_shared<dolfin::Function>(p_space);
+  u_element_ = u_space->element();
+  p_element_ = p_space->element();
+  u_dim_ = u_element_->space_dimension();
+  p_dim_ = p_element_->space_dimension();
+  // evaluate sizes its basis buffers by the value size, so that is what must fit
+  const Uint u_value_size = u_element_->value_rank() == 0 ? 1 : u_element_->value_dimension(0);
+  const Uint p_value_size = p_element_->value_rank() == 0 ? 1 : p_element_->value_dimension(0);
+  if (u_value_size != dim || p_value_size != 1){
+    std::cout << "DolfInterpol: velocity has value size " << u_value_size
+              << " and pressure " << p_value_size
+              << ", against " << dim << " and 1" << std::endl;
+    exit(1);
+  }
+  u_dofs_.resize(ncells);
+  p_dofs_.resize(ncells);
+  const dolfin::GenericDofMap& u_dofmap = *u_space->dofmap();
+  const dolfin::GenericDofMap& p_dofmap = *p_space->dofmap();
+  for (std::size_t i = 0; i < ncells; ++i){
+    auto u_dofs = u_dofmap.cell_dofs(i);
+    auto p_dofs = p_dofmap.cell_dofs(i);
+    u_dofs_[i].assign(u_dofs.data(), u_dofs.data() + u_dofs.size());
+    p_dofs_[i].assign(p_dofs.data(), p_dofs.data() + p_dofs.size());
+  }
 
   //std::cout << "GOT THIS FAR" << std::endl;
 }
@@ -161,135 +211,88 @@ void DolfInterpol::update(const double t){
     dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
     prevfile.read(*u_prev_, "u");
     prevfile.read(*p_prev_, "p");
+    u_prev_->vector()->get_local(u_prev_data_);
+    p_prev_->vector()->get_local(p_prev_data_);
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
     nextfile.read(*u_next_, "u");
     nextfile.read(*p_next_, "p");
+    u_next_->vector()->get_local(u_next_data_);
+    p_next_->vector()->get_local(p_next_data_);
 
     is_initialized = true;
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  // alpha_t = sp.weight_next(t);
   t_update = t;
 }
 
 
 
-void DolfInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
+Vector3d DolfInterpol::_modx(const Vector3d &x){
+  Vector3d x_loc = x;
+  for (std::size_t i=0; i<dim; ++i)
+    if (periodic[i])
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-    else {
-      x_loc[i] = x[i];
-    }
-  }
+  return x_loc;
 }
 
 bool DolfInterpol::locate(const Vector3d &x, const double t, int& cell_id){
-  // TODO: Search neighborhood first. Copy from Triangle etc.
-  // FIXME: Not thread safe
-
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
-
-  const dolfin::Point point(dim, x_loc.data());
-  // index of cell containing point
-  unsigned int id
-    = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-
-  bool found = (id != std::numeric_limits<unsigned int>::max());
-  if (found)
-    cell_id = id;
-  return found;
+  assert(t <= t_next && t >= t_prev);
+  const Vector3d xx = _modx(x);
+  if (dim == 2)
+    return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, cell_id,
+                           found_same_, found_nneigh_, found_other_);
+  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, cell_id,
+                         found_same_, found_nneigh_, found_other_);
 }
 void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
 {
   assert(t <= t_next && t >= t_prev);
-  alpha_t = (t-t_prev)/(t_next-t_prev);
-  //const double* _x = x.data();
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
+  const double alpha_t = (t_next > t_prev) ? (t-t_prev)/(t_next-t_prev) : 0.;
+  const Vector3d x_loc = _modx(x);
 
-  const dolfin::Cell dolfin_cell(*mesh, id);
-  ufc::cell ufc_cell;
-  dolfin_cell.get_cell_data(ufc_cell);
+  const int orientation = cell_orientations_.empty() ? -1 : cell_orientations_[id];
+  const double* coordinate_dofs = coordinate_dofs_.data() + id*ncoords_;
+  const dolfin::FiniteElement& u_element = *u_element_;
+  const dolfin::FiniteElement& p_element = *p_element_;
 
-  const dolfin::FiniteElement u_element = *u_space->element();
-  const dolfin::FiniteElement p_element = *p_space->element();
+  const std::vector<dolfin::la_index>& u_dofs = u_dofs_[id];
+  const std::vector<dolfin::la_index>& p_dofs = p_dofs_[id];
 
-  Uint u_dim = u_element.space_dimension();
-  Uint p_dim = p_element.space_dimension();
-
-  // Work vectors for expansion coefficients
-  std::vector<double> u_prev_coefficients(u_dim);
-  std::vector<double> u_next_coefficients(u_dim);
-  std::vector<double> p_prev_coefficients(p_dim);
-  std::vector<double> p_next_coefficients(p_dim);
-
-  // Cell coordinates
-  std::vector<double> coordinate_dofs;
-  dolfin_cell.get_coordinate_dofs(coordinate_dofs);
-
-  u_prev_->restrict(u_prev_coefficients.data(), u_element, dolfin_cell,
-                    coordinate_dofs.data(), ufc_cell);
-  u_next_->restrict(u_next_coefficients.data(), u_element, dolfin_cell,
-                    coordinate_dofs.data(), ufc_cell);
-
-  p_prev_->restrict(p_prev_coefficients.data(), p_element, dolfin_cell,
-                    coordinate_dofs.data(), ufc_cell);
-  p_next_->restrict(p_next_coefficients.data(), p_element, dolfin_cell,
-                    coordinate_dofs.data(), ufc_cell);
+  // Value size and its first derivatives: three components at most, any degree
+  double u_basis[3], gradu_basis[9], p_basis;
 
   Vector3d U_prev = {0., 0., 0.};
   Vector3d U_next = {0., 0., 0.};
   double P_prev = 0.;
   double P_next = 0.;
+  Matrix3d gradU_prev = Matrix3d::Zero();
+  Matrix3d gradU_next = Matrix3d::Zero();
 
-  Matrix3d gradU_prev;
-  gradU_prev << 0., 0., 0., 0., 0., 0., 0., 0., 0.;
-  Matrix3d gradU_next;
-  gradU_next << 0., 0., 0., 0., 0., 0., 0., 0., 0.;
-  //Vector3d gradP_prev = {0., 0., 0.};
-  //Vector3d gradP_next = {0., 0., 0.};
+  const double* _x = x_loc.data();
 
-  // Work vector for basis
-  std::vector<double> u_basis(dim);
-  std::vector<double> p_basis(1);
-  std::vector<double> gradu_basis(dim*dim);
-  //std::vector<double> gradp_basis(dim);
-
-  double* _x = x_loc.data();
-
-  for (Uint i=0; i<u_dim; ++i){
-    u_element.evaluate_basis(i, u_basis.data(), _x,
-                              coordinate_dofs.data(),
-                              ufc_cell.orientation);
+  for (Uint i=0; i<u_dim_; ++i){
+    u_element.evaluate_basis(i, u_basis, _x, coordinate_dofs, orientation);
     for (Uint j=0; j<dim; ++j){
-      U_prev[j] += u_prev_coefficients[i]*u_basis[j];
-      U_next[j] += u_next_coefficients[i]*u_basis[j];
+      U_prev[j] += u_prev_data_[u_dofs[i]]*u_basis[j];
+      U_next[j] += u_next_data_[u_dofs[i]]*u_basis[j];
     }
   }
-  for (Uint i=0; i<p_dim; ++i){
-    p_element.evaluate_basis(i, p_basis.data(), _x,
-                              coordinate_dofs.data(),
-                              ufc_cell.orientation);
-    P_prev += p_prev_coefficients[i]*p_basis[0];
-    P_next += p_next_coefficients[i]*p_basis[0];
+  for (Uint i=0; i<p_dim_; ++i){
+    p_element.evaluate_basis(i, &p_basis, _x, coordinate_dofs, orientation);
+    P_prev += p_prev_data_[p_dofs[i]]*p_basis;
+    P_next += p_next_data_[p_dofs[i]]*p_basis;
   }
 
   if (this->int_order > 1){
-    for (Uint i=0; i<u_dim; ++i){
-      u_element.evaluate_basis_derivatives(i, 1,
-                                            gradu_basis.data(), _x,
-                                            coordinate_dofs.data(),
-                                            ufc_cell.orientation);
+    for (Uint i=0; i<u_dim_; ++i){
+      u_element.evaluate_basis_derivatives(i, 1, gradu_basis, _x, coordinate_dofs, orientation);
       for (Uint j=0; j<dim; ++j){
         for (Uint k=0; k<dim; ++k){
-          gradU_prev(j, k) += u_prev_coefficients[i]*gradu_basis[dim*j+k];
-          gradU_next(j, k) += u_next_coefficients[i]*gradu_basis[dim*j+k];
+          gradU_prev(j, k) += u_prev_data_[u_dofs[i]]*gradu_basis[dim*j+k];
+          gradU_next(j, k) += u_next_data_[u_dofs[i]]*gradu_basis[dim*j+k];
         }
       }
     }

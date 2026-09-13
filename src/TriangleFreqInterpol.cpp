@@ -1,5 +1,7 @@
 #ifdef USE_DOLFIN
 #include "TriangleFreqInterpol.hpp"
+#include <array>
+#include <numeric>
 #include "FreqStamps.hpp"
 //#include "H5Cpp.h"
 #include <boost/algorithm/string.hpp>
@@ -80,18 +82,13 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   // FIXME compute on the fly and save
   triangles_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
-  ufc_cells_.resize(mesh->num_cells());
-  coordinate_dofs_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
   for (std::size_t i = 0; i < mesh->num_cells(); ++i)
   {
     dolfin::Cell dolfin_cell(*mesh, i);
-    dolfin_cell.get_coordinate_dofs(coordinate_dofs_[i]);
-
     triangles_[i] = Triangle(dolfin_cell);
     dolfin_cells_[i] = dolfin_cell;
-    dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
   // Build cell neighbour list for lookup speed
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
@@ -162,18 +159,25 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     if (include_pressure)
       file_i.read(*p_, "p");
 
+    // Wanted here and nowhere else, so one of each is reused down the mesh
+    std::vector<double> coordinate_dofs;
+    ufc::cell ufc_cell;
     for (std::size_t id = 0; id < mesh->num_cells(); ++id)
     {
+      dolfin_cells_[id].get_coordinate_dofs(coordinate_dofs);
+      dolfin_cells_[id].get_cell_data(ufc_cell);
       u_coefficients_[iFreq][id].resize(dim*ncoeffs_u);
       u_->restrict(u_coefficients_[iFreq][id].data(), *u_space_->element(), dolfin_cells_[id],
-                   coordinate_dofs_[id].data(), ufc_cells_[id]);
+                   coordinate_dofs.data(), ufc_cell);
       if (include_pressure){
         p_coefficients_[iFreq][id].resize(ncoeffs_p);
         p_->restrict(p_coefficients_[iFreq][id].data(), *p_space_->element(), dolfin_cells_[id],
-                     coordinate_dofs_[id].data(), ufc_cells_[id]);
+                     coordinate_dofs.data(), ufc_cell);
       }
     }
   }
+
+  check_dofs_fit(ncoeffs_u, ncoeffs_p, Triangle::n_dofs_max, "TriangleFreqInterpol");
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
@@ -195,16 +199,6 @@ void TriangleFreqInterpol::update(const double t)
 
 
 
-void TriangleFreqInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
-      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-    else {
-      x_loc[i] = x[i];
-    }
-  }
-}
 
 Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
   Vector3d x_loc;
@@ -220,65 +214,10 @@ Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
 }
 
 bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, int& id_prev)
-// FIXME: Not thread safe
 {
-  //assert(t <= t_next && t >= t_prev);
-  
-  // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;
-
-  //dolfin::Array<double> x_loc(dim);
-  //_modx(x_loc, x);
-
-  auto xx_loc = _modx(x);
-
-  // Index of cell containing point
-  //const dolfin::Point point(dim, x_loc.data());
-  
-  bool inside_loc = false;
-  bool found = false;
-  unsigned int id = 0;
-
-  // Search in neighborhood first
-  if (id_prev >= 0){
-    //dolfin::Cell prev_cell(*mesh, id_prev);
-    //if (prev_cell.contains(point)){
-    if (triangles_[id_prev].contains(xx_loc)){
-      id = id_prev;
-      inside_loc = true;
-      found = true;
-      found_same_[omp_get_thread_num()]++;
-    }
-    else {
-      for ( auto neigh_id : cell2cells_[id_prev]){
-        //dolfin::Cell neigh_cell(*mesh, neigh_id);
-        //if (neigh_cell.contains(point)){
-        if (triangles_[neigh_id].contains(xx_loc)){
-          inside_loc = true;
-          found = true;
-          id = neigh_id;
-          found_nneigh_[omp_get_thread_num()]++;
-          break;
-        }
-      }
-    }
-  }
-  if (!found){
-    // Index of cell containing point
-    dolfin::Array<double> x_loc(dim);
-    _modx(x_loc, x);
-    const dolfin::Point point(dim, x_loc.data());
-
-    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-    inside_loc = (id != std::numeric_limits<unsigned int>::max());
-    if (inside_loc) {
-      found = true;
-      found_other_[omp_get_thread_num()]++;
-    }
-  }
-  if (found){
-    id_prev = id;
-  }
-  return inside_loc;
+  const Vector3d xx = _modx(x);
+  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
+                         found_same_, found_nneigh_, found_other_);
 }
 
 void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
@@ -287,8 +226,8 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
   // std::cout << "probing..." << std::endl;
 
   // update frequency weights
-  std::vector<double> w_f_(fs.size());
-  std::vector<double> wt_f_(fs.size());
+  static thread_local std::vector<double> w_f_; w_f_.resize(fs.size());
+  static thread_local std::vector<double> wt_f_; wt_f_.resize(fs.size());
   for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
     FreqStamp& f = fs.get(iFreq);
     double a = f.a; //fs.get_a(iFreq);
@@ -297,23 +236,22 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
     wt_f_[iFreq] = - a * omega0 * iFreq * sin(omega0 * (iFreq * t + t_shift));
   }
 
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
+  const Vector3d x_loc = _modx(x);
 
   // Compute Pk-Pl basis at x
   double r1, r2, r3;
   triangles_[id].xy2bary(x_loc[0], x_loc[1], r1, r2, r3);
 
-  std::vector<double> Nu_(ncoeffs_u);
-  std::vector<double> Np_(ncoeffs_p);
-  std::vector<double> Nux_(ncoeffs_u);
-  std::vector<double> Nuy_(ncoeffs_u);
+  std::array<double, Triangle::n_dofs_max> Nu_{};
+  std::array<double, Triangle::n_dofs_max> Np_{};
+  std::array<double, Triangle::n_dofs_max> Nux_{};
+  std::array<double, Triangle::n_dofs_max> Nuy_{};
 
   if (ncoeffs_u == 3){
-    triangles_[id].linearbasis(r1, r2, r3, Nu_);
+    triangles_[id].linearbasis(r1, r2, r3, Nu_.data());
   }
   else if (ncoeffs_u == 6){
-    triangles_[id].quadbasis(r1, r2, r3, Nu_);
+    triangles_[id].quadbasis(r1, r2, r3, Nu_.data());
   }
   else {
     std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
@@ -321,10 +259,10 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
   }
   if (include_pressure){
     if (ncoeffs_p == 3){
-      triangles_[id].linearbasis(r1, r2, r3, Np_);
+      triangles_[id].linearbasis(r1, r2, r3, Np_.data());
     }
     else if (ncoeffs_p == 6){
-      triangles_[id].quadbasis(r1, r2, r3, Np_);
+      triangles_[id].quadbasis(r1, r2, r3, Np_.data());
     }
     else {
       std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
@@ -332,15 +270,15 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
     }
   }
 
-  std::vector<double> ux_f_(fs.size());
-  std::vector<double> uy_f_(fs.size());
-  std::vector<double> p_f_(fs.size());
+  static thread_local std::vector<double> ux_f_; ux_f_.resize(fs.size());
+  static thread_local std::vector<double> uy_f_; uy_f_.resize(fs.size());
+  static thread_local std::vector<double> p_f_; p_f_.resize(fs.size());
 
   for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
-    ux_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
-    uy_f_[iFreq] = std::inner_product(Nu_.begin(), Nu_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
+    ux_f_[iFreq] = std::inner_product(Nu_.data(), Nu_.data()+ncoeffs_u, u_coefficients_[iFreq][id].begin(), 0.0);
+    uy_f_[iFreq] = std::inner_product(Nu_.data(), Nu_.data()+ncoeffs_u, &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
     if (include_pressure)
-      p_f_[iFreq] = std::inner_product(Np_.begin(), Np_.end(), p_coefficients_[iFreq][id].begin(), 0.0);
+      p_f_[iFreq] = std::inner_product(Np_.data(), Np_.data()+ncoeffs_p, p_coefficients_[iFreq][id].begin(), 0.0);
   }
 
   // Update
@@ -356,22 +294,22 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
 
   if (this->int_order > 1){
     if (ncoeffs_u == 3){
-      triangles_[id].linearderiv(r1, r2, r3, Nux_, Nuy_);
+      triangles_[id].linearderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
     }
     else if (ncoeffs_u == 6){
-      triangles_[id].quadderiv(r1, r2, r3, Nux_, Nuy_);
+      triangles_[id].quadderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
     }
 
-    std::vector<double> uxx_f_(fs.size());
-    std::vector<double> uxy_f_(fs.size());
-    std::vector<double> uyx_f_(fs.size());
-    std::vector<double> uyy_f_(fs.size());
+    static thread_local std::vector<double> uxx_f_; uxx_f_.resize(fs.size());
+    static thread_local std::vector<double> uxy_f_; uxy_f_.resize(fs.size());
+    static thread_local std::vector<double> uyx_f_; uyx_f_.resize(fs.size());
+    static thread_local std::vector<double> uyy_f_; uyy_f_.resize(fs.size());
   
     for (std::size_t iFreq=0; iFreq < static_cast<std::size_t>(fs.size()); ++iFreq){
-      uxx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
-      uxy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), u_coefficients_[iFreq][id].begin(), 0.0);
-      uyx_f_[iFreq] = std::inner_product(Nux_.begin(), Nux_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
-      uyy_f_[iFreq] = std::inner_product(Nuy_.begin(), Nuy_.end(), &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
+      uxx_f_[iFreq] = std::inner_product(Nux_.data(), Nux_.data()+ncoeffs_u, u_coefficients_[iFreq][id].begin(), 0.0);
+      uxy_f_[iFreq] = std::inner_product(Nuy_.data(), Nuy_.data()+ncoeffs_u, u_coefficients_[iFreq][id].begin(), 0.0);
+      uyx_f_[iFreq] = std::inner_product(Nux_.data(), Nux_.data()+ncoeffs_u, &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
+      uyy_f_[iFreq] = std::inner_product(Nuy_.data(), Nuy_.data()+ncoeffs_u, &u_coefficients_[iFreq][id][ncoeffs_u], 0.0);
     }
 
     fields.gradU(0, 0) = std::inner_product(w_f_.begin(), w_f_.end(), uxx_f_.begin(), 0.0);

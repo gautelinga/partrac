@@ -5,9 +5,10 @@
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 #include "Tet.hpp"
+#include "cell_locate.hpp"
 #include <omp.h>
 
-class XDMFTetInterpol
+class XDMFTetInterpol final
   : public Interpol
 {
 public:
@@ -88,11 +89,9 @@ protected:
 
   std::vector<Tet> tets_;
   std::vector<dolfin::Cell> dolfin_cells_;
-  std::vector<ufc::cell> ufc_cells_;
 
-  std::vector<std::set<Uint>> cell2cells_;
+  std::vector<CellNeighbours> cell2cells_;
 
-  std::vector<std::vector<double>> coordinate_dofs_;
 
   //std::vector<double> u_prev_coefficients_;
   //std::vector<double> u_next_coefficients_;
@@ -109,7 +108,6 @@ protected:
   std::vector<long unsigned int> found_nneigh_;
   std::vector<long unsigned int> found_other_;
 
-  void _modx(dolfin::Array<double>&, const Vector3d&);
   Vector3d _modx(const Vector3d&);
 
   std::string h5filename_u;

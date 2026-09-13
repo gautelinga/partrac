@@ -22,6 +22,8 @@ inline partrac::Schema filaments_felbmRK4_schema(){
             return true;
           },
           "intervals cannot be negative");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   return s;
 }
 

@@ -5,7 +5,7 @@
 
 //using namespace std;
 
-class Expr_BatchelorVortex : public Expr {
+class Expr_BatchelorVortex final : public Expr {
 public:
   Expr_BatchelorVortex(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R1 = getd(expr_params, "R1");

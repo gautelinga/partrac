@@ -5,7 +5,7 @@
 
 //using namespace std;
 
-class Expr_StokesSphere : public Expr {
+class Expr_StokesSphere final : public Expr {
 public:
   Expr_StokesSphere(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R = getd(expr_params, "R");

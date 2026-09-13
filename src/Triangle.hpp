@@ -11,6 +11,8 @@ class Triangle
 
 public:
 
+  static constexpr std::size_t n_dofs_max = 6;   // quadbasis writes this many
+
   Triangle() {}
   Triangle(const dolfin::Cell& cell);
 
@@ -22,33 +24,27 @@ public:
   void linearbasis( double r
                   , double s
                   , double t
-                  //, std::array<double, 3> &N
-                  , std::vector<double> &N
+                  , double *N
                   ) const;
 
   void linearderiv( double r
                   , double s
                   , double t
-                  //, std::array<double, 3> &Nx
-                  //, std::array<double, 3> &Ny
-                  , std::vector<double> &Nx
-                  , std::vector<double> &Ny
+                  , double *Nx
+                  , double *Ny
                   ) const;
 
   void quadbasis( double r
                 , double s
                 , double t
-                //, std::array<double, 6> &N
-                , std::vector<double> &N
+                , double *N
                 ) const;
 
   void quadderiv( double r
                 , double s
                 , double t
-                //, std::array<double, 6> &Nx
-                //, std::array<double, 6> &Ny
-                , std::vector<double> &Nx
-                , std::vector<double> &Ny
+                , double *Nx
+                , double *Ny
                 ) const;
 
   double get_det() const { return det; };

@@ -28,6 +28,9 @@
 #include "dolfin_elements/P2_3.h"
 #include "dolfin_elements/P3_3.h"
 #include "PeriodicBC.hpp"
+#include "Triangle.hpp"
+#include "Tet.hpp"
+#include "cell_locate.hpp"
 
 
 using namespace H5;
@@ -35,7 +38,8 @@ using namespace H5;
 //using namespace dolfin;
 
 
-class DolfInterpol : public Interpol {
+class DolfInterpol final
+  : public Interpol {
 public:
   DolfInterpol(const std::string& infilename);
   void update(const double t);
@@ -55,7 +59,6 @@ protected:
   Timestamps ts;
   double t_prev = 0.;
   double t_next = 0.;
-  double alpha_t;
 
   std::vector<bool> periodic = {false, false, false};
   //Vector3d x_min = {0., 0., 0.};
@@ -82,8 +85,22 @@ protected:
   std::shared_ptr<dolfin::Function> u_next_;
   std::shared_ptr<dolfin::Function> p_prev_;
   std::shared_ptr<dolfin::Function> p_next_;
+  // Per cell, once: what evaluate used to rebuild on every call
+  std::vector<dolfin::Cell> dolfin_cells_;
+  std::vector<int> cell_orientations_;   // empty when the mesh carries none
+  std::vector<double> coordinate_dofs_;  // ncoords_ of them per cell, flat
+  Uint ncoords_ = 0;
+  std::vector<Triangle> triangles_;   // one of these two is filled, by dim
+  std::vector<Tet> tets_;
+  std::vector<CellNeighbours> cell2cells_;
+  std::shared_ptr<const dolfin::FiniteElement> u_element_, p_element_;
+  Uint u_dim_ = 0, p_dim_ = 0;
+  // Read out whole at each load: dolfin's vector is not safe to read in parallel
+  std::vector<double> u_prev_data_, u_next_data_, p_prev_data_, p_next_data_;
+  std::vector<std::vector<dolfin::la_index>> u_dofs_, p_dofs_;
+  std::vector<long unsigned int> found_same_, found_nneigh_, found_other_;
+  Vector3d _modx(const Vector3d&);
 
-  void _modx(dolfin::Array<double>&, const Vector3d&);
 
 };
 

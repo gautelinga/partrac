@@ -139,7 +139,7 @@ int main(int argc, char* argv[])
     std::ofstream statfile;
     if (prm.get<double>("stat_intv") > 0.){
       statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-      write_stats_header(statfile, stats_columns(0., ps, 0));
+      write_stats_header(statfile, particle_stats_columns(0., ps, 0));
     }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -168,7 +168,13 @@ int main(int argc, char* argv[])
     // Simulation start
     std::clock_t clock_0 = std::clock();
 
+    const int sort_every = prm.get<int>("sort_every");
+
     while (t <= T){
+
+        if (sort_every > 0 && it % sort_every == 0 && it > 0)
+
+            ps.sort_by_cell();
         intp.update(t);
 
         // Update fields for output
@@ -179,7 +185,7 @@ int main(int argc, char* argv[])
         // Statistics
         if (at_interval(it, prm.get<double>("stat_intv"), dt)){
             std::cout << "Time = " << t << std::endl;
-            write_stats_row(statfile, stats_columns(t, ps, integrator.get_declined()));
+            write_stats_row(statfile, particle_stats_columns(t, ps, integrator.get_declined()));
 
             intp.print_found();
         }

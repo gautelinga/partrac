@@ -49,6 +49,8 @@ public:
     //Uint get_declined() { return integrator->get_declined(); };
     //template<typename T>
     void update_fields(const double t, std::map<std::string, bool> &output_fields);
+    template<typename Interp>
+    void update_fields(Interp&, const double, std::map<std::string, bool>&);
     //void reduce(ParticleSet& psb, std::map<std::string, bool> &output_fields);
     std::shared_ptr<Interpol>& interpolator() { return intp; };
     int get_cell_id(const Uint irw) const { return cell_id_rw[irw]; };
@@ -116,7 +118,7 @@ inline void ParticleSet::add(const std::vector<Vector3d> &pos_init, const Uint i
 
 // Add only the listed entries of pos_init
 inline void ParticleSet::add(const std::vector<Vector3d> &pos_init,
-                      const std::vector<Uint> &which, const Uint irw0) {
+                             const std::vector<Uint> &which, const Uint irw0) {
   for (Uint k=0; k < which.size(); ++k){
     const Uint irw = irw0 + k;
     x_rw[irw] = pos_init[which[k]];
@@ -205,7 +207,7 @@ inline void ParticleSet::copy_node(const Uint i, const Uint j){
 }
 
 inline double ParticleSet::triangle_area(const Uint iface,
-                                  const FacesType& faces, const EdgesType& edges) const {
+                                         const FacesType& faces, const EdgesType& edges) const {
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   return triangle_area(iedge, jedge, edges);
@@ -265,8 +267,8 @@ inline void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node
 }
 
 inline Vector3d ParticleSet::facet_normal(const Uint iface,
-                                   const FacesType &faces,
-                                   const EdgesType &edges){
+                                          const FacesType &faces,
+                                          const EdgesType &edges){
   Uint iedge = faces[iface].first[0];
   Uint jedge = faces[iface].first[1];
   Uint i00 = edges[iedge].first[0];
@@ -297,7 +299,7 @@ inline void ParticleSet::set_normals(const InteriorAnglesType& interior_angles, 
 }
 
 inline void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType &node2edges,
-                                    std::vector<double> edge_w, std::vector<double> mixed_areas){
+                                           std::vector<double> edge_w, std::vector<double> mixed_areas){
   for (Uint inode=0; inode<Nrw; ++inode){
     Vector3d lapl_v(0., 0., 0.);
     for (auto edgeit=node2edges[inode].begin();
@@ -313,7 +315,7 @@ inline void ParticleSet::compute_curvature(const EdgesType &edges, const Node2Ed
 }
 
 inline void ParticleSet::compute_strip_curvature(const EdgesType &edges,
-                                          const Node2EdgesType &node2edges){
+                                                 const Node2EdgesType &node2edges){
   for (Uint inode=0; inode<Nrw; ++inode){
     H_rw[inode] = 0.;
     n_rw[inode] = {1., 0., 0.};
@@ -346,7 +348,7 @@ inline void ParticleSet::load_scalar(const std::string filename, const std::stri
   else {
     // Unknown field: fail rather than silently do nothing
     std::cerr << "ParticleSet::load_scalar: no field '" << fieldname << "'"
-              << std::endl;
+              << "\n";
     exit(1);
   }
 }
@@ -361,7 +363,7 @@ inline void ParticleSet::dump_scalar(const std::string filename, const std::stri
   else {
     // Unknown field: fail rather than silently do nothing
     std::cerr << "ParticleSet::dump_scalar: no field '" << fieldname << "'"
-              << std::endl;
+              << "\n";
     exit(1);
   }
 }
@@ -379,6 +381,11 @@ inline void ParticleSet::dump_positions(const std::string filename) const {
 
 //template<typename T>
 inline void ParticleSet::update_fields(const double t, std::map<std::string, bool> &output_fields){
+  update_fields(*intp, t, output_fields);
+}
+
+template<typename Interp>
+inline void ParticleSet::update_fields(Interp& intp, const double t, std::map<std::string, bool> &output_fields){
   // operator[] inserts, so it cannot be called from the threads
   const bool do_rho = output_fields["rho"];
   const bool do_p = output_fields["p"];
@@ -386,10 +393,9 @@ inline void ParticleSet::update_fields(const double t, std::map<std::string, boo
   #pragma omp parallel for
   for (Uint irw=0; irw < N(); ++irw){
     int cell_id = get_cell_id(irw);
-    PointValues ptvals(intp->get_U0());
-    //intp->probe(x_rw[irw], t);
-    intp->locate(x_rw[irw], t, cell_id);
-    intp->evaluate(x_rw[irw], t, cell_id, ptvals);
+    PointValues ptvals(intp.get_U0());
+    intp.locate(x_rw[irw], t, cell_id);
+    intp.evaluate(x_rw[irw], t, cell_id, ptvals);
     // always computed: the statistics read it whatever gets dumped
     u_rw[irw] = ptvals.get_u();
     if (do_rho){

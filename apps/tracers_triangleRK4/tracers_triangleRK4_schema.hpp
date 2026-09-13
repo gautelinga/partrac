@@ -13,6 +13,8 @@ inline partrac::Schema tracers_triangleRK4_schema(){
   s.token_choices("init_mode", "_", {"points"});
   add_restart_params(s);
   s.require<int>("int_order", "integration order");
+  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   return s;
 }
 

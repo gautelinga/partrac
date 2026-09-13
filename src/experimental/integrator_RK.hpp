@@ -25,8 +25,15 @@ Integrator_RK4::Integrator_RK4() : Integrator() {
 template<typename InterpolType, typename T>
 std::set<Uint> Integrator_RK4::step(InterpolType& intp, T& ps, const Real t, const Real dt) {
     std::set<Uint> outside_nodes;
-    Uint i = 0;
-    for (auto & particle : ps.particles() ){
+    // Particles are independent; only the tally is shared
+    #pragma omp parallel
+    {
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
+    #pragma omp for
+    for (Uint i=0; i < ps.particles().size(); ++i){
+        auto & particle = ps.particles()[i];
         Vector x = particle.x();
         int cell_id = particle.cell_id(); // to accelerate search
         PointValues ptvals(intp.get_U0());
@@ -46,16 +53,22 @@ std::set<Uint> Integrator_RK4::step(InterpolType& intp, T& ps, const Real t, con
 
         Vector dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
         if (intp.locate(x + dx, t+dt, cell_id)){
-            ++n_accepted;
+            ++n_accepted_loc;
             particle.x() = x + dx;
             particle.cell_id() = cell_id;
         }
         else {
             //++n_stuck;
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
-        ++i;
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }
@@ -161,8 +174,14 @@ std::set<Uint> Integrator_RK4::step_vec(InterpolType& intp, T& ps, const Real t,
 template<typename InterpolType, typename T>
 std::set<Uint> Integrator_RK4::step_tensor(InterpolType& intp, T& ps, const Real t, const Real dt) {
     std::set<Uint> outside_nodes;
-    Uint i = 0;
-    for (auto & particle : ps.particles() ){
+    #pragma omp parallel
+    {
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
+    #pragma omp for
+    for (Uint i=0; i < ps.particles().size(); ++i){
+        auto & particle = ps.particles()[i];
         Vector x = particle.x();
         Matrix F = particle.F();
         int cell_id = particle.cell_id(); // to accelerate search
@@ -200,7 +219,7 @@ std::set<Uint> Integrator_RK4::step_tensor(InterpolType& intp, T& ps, const Real
         Matrix dF = (dFdt1 + 2*dFdt2 + 2*dFdt3 + dFdt4) * dt/6;
 
         if (intp.locate(x + dx, t+dt, cell_id)){
-            ++n_accepted;
+            ++n_accepted_loc;
             particle.x() = x + dx;
             particle.F() = F + dF;
             //particle.n() = el/el.norm();
@@ -212,10 +231,16 @@ std::set<Uint> Integrator_RK4::step_tensor(InterpolType& intp, T& ps, const Real
         }
         else {
             //++n_stuck;
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
-        ++i;
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }

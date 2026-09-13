@@ -12,6 +12,7 @@
 //#include "hdf5.h"
 #include <ctime>
 #include <omp.h>
+#include "interpol_dispatch.hpp"
 
 #include "io.hpp"
 #include "rng.hpp"
@@ -219,15 +220,29 @@ int main(int argc, char* argv[])
   output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
   output_fields["tau"] = prm.get<bool>("integrate_tau");
 
-  // Coarsening runs on every step its interval names, whether or not coarsening
-  // was asked for -- with it off the threshold drops to what is numerically
-  // zero. Refinement is what raises a zero-length median, so with coarsening
-  // off the cleanup follows the refinement interval: coarsen_intv is one such
-  // a run had no reason to set, and its default would leave the mesh degenerate
+  // Coarsening runs at its interval whether or not it was asked for, and with
+  // it off the threshold is numerically zero. Refinement is what raises a
+  // zero-length median, so the cleanup follows refine_intv instead
   const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
                                       : prm.get<double>("refine_intv");
 
-  bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && prm.get<double>("Ln") > 0;
+  // The loop reads these every step; each get is a lookup by string
+  const bool verbose = prm.get<bool>("verbose");
+  const bool inject = prm.get<bool>("inject");
+  const bool integrate_tau = prm.get<bool>("integrate_tau");
+  const double inject_intv = prm.get<double>("inject_intv");
+  const double T_inject = prm.get<double>("T_inject");
+  const double refine_intv = prm.get<double>("refine_intv");
+  const double filter_intv = prm.get<double>("filter_intv");
+  const double stat_intv = prm.get<double>("stat_intv");
+  const double dump_intv = prm.get<double>("dump_intv");
+  const double checkpoint_intv = prm.get<double>("checkpoint_intv");
+  const double tau_intv = prm.get<double>("tau_intv");
+  const double tau_max = prm.get<double>("tau_max");
+  const double ds_max = prm.get<double>("ds_max");
+  const double Ln = prm.get<double>("Ln");
+
+  bool any_exit_plane = (prm.get<std::string>("exit_plane") == "x" || prm.get<std::string>("exit_plane") == "y" || prm.get<std::string>("exit_plane") == "z") && Ln > 0;
   int exit_dim = prm.get<std::string>("exit_plane") == "x" ? 0 : (prm.get<std::string>("exit_plane") == "y" ? 1 : 2);
 
   //std::string write_mode = prm.write_mode;
@@ -239,27 +254,29 @@ int main(int argc, char* argv[])
   }
 
   // Simulation start
+  // The type behind the interpolator, settled once for the loop
+  auto* explicit_integrator = dynamic_cast<ExplicitIntegrator*>(integrator.get());
   std::clock_t clock_0 = std::clock();
   while (t < T + dt/2){
     if (!frozen_fields)
       intp->update(t);
 
     // Injection
-    if (prm.get<bool>("inject") && it > 0 && at_interval(it, prm.get<double>("inject_intv"), dt) && t <= prm.get<double>("T_inject")){
+    if (inject && it > 0 && at_interval(it, inject_intv, dt) && t <= T_inject){
       mesh.inject();
     }
     // Curvature computation
-    if ((refine && at_interval(it, prm.get<double>("refine_intv"), dt)) || (coarsen && at_interval(it, prm.get<double>("coarsen_intv"), dt)) || at_interval(it, prm.get<double>("dump_intv"), dt)){
+    if ((refine && at_interval(it, refine_intv, dt)) || at_interval(it, coarsen_intv, dt) || at_interval(it, dump_intv, dt)){
       mesh.compute_interior();
     }
 
     // Refinement
-    if (refine && at_interval(it, prm.get<double>("refine_intv"), dt) && it > 0){
+    if (refine && at_interval(it, refine_intv, dt) && it > 0){
       Uint n_add = mesh.refine();
       /*Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet,
                               ps, ds_max,
                               prm.curv_refine_factor, prm.cut_if_stuck);*/
-      if (prm.get<bool>("verbose"))
+      if (verbose)
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
@@ -270,16 +287,16 @@ int main(int argc, char* argv[])
                               edges_inlet, nodes_inlet,
                               ps, ds_min,
                               prm.curv_refine_factor);*/
-      if (prm.get<bool>("verbose"))
+      if (verbose)
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
     // Filtering
-    if (filter && at_interval(it, prm.get<double>("filter_intv"), dt)){
+    if (filter && at_interval(it, filter_intv, dt)){
       bool filtered = mesh.filter();
       /*bool filtered = filtering(faces, edges,
                                 edge2faces, node2edges,
                                 ps, prm.filter_target);*/
-      if (prm.get<bool>("verbose") && filtered)
+      if (verbose && filtered)
         std::cout << "Filtered edges." << std::endl;
     }
     // Resizing
@@ -289,31 +306,31 @@ int main(int argc, char* argv[])
         std::cout << "Resized edges." << std::endl;
     }*/
     // Removal
-    if (any_exit_plane && at_interval(it, prm.get<double>("filter_intv"), dt)){
-      Uint n_rem = mesh.remove_beyond(exit_dim, prm.get<double>("Ln"));
-      if (prm.get<bool>("verbose"))
+    if (any_exit_plane && at_interval(it, filter_intv, dt)){
+      Uint n_rem = mesh.remove_beyond(exit_dim, Ln);
+      if (verbose)
         std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
     }
 
     // Update fields if needed
-    if (at_interval(it, prm.get<double>("dump_intv"), dt) || at_interval(it, prm.get<double>("stat_intv"), dt)){
-      ps.update_fields(t, output_fields);
+    if (at_interval(it, dump_intv, dt) || at_interval(it, stat_intv, dt)){
+      with_concrete(*intp, [&](auto& ip){ ps.update_fields(ip, t, output_fields); });
     }
 
     // Statistics
-    if (at_interval(it, prm.get<double>("stat_intv"), dt)){
+    if (at_interval(it, stat_intv, dt)){
       std::cout << "Time = " << t << std::endl;
-      mesh.write_statistics(statfile, t, prm.get<double>("ds_max"), *integrator);
+      mesh.write_statistics(statfile, t, ds_max, *integrator);
     }
 
     // Checkpoint
-    if (at_interval(it, prm.get<double>("checkpoint_intv"), dt)){
+    if (at_interval(it, checkpoint_intv, dt)){
       prm.set<Uint>("it", it);
       mesh.write_checkpoint(checkpointsfolder, t, prm);
     }
 
     // Dump detailed data
-    if (at_interval(it, prm.get<double>("dump_intv"), dt)){
+    if (at_interval(it, dump_intv, dt)){
       std::string groupname = std::to_string(t);
         // Clear file if it exists, otherwise create
       if (at_interval(it, chunk_intv, dt) && it > 0){
@@ -328,15 +345,17 @@ int main(int argc, char* argv[])
       h5f.close();
     }
     
-    auto outside_nodes = integrator->step(ps, t, dt);
+    auto outside_nodes = explicit_integrator
+      ? with_concrete(*intp, [&](auto& ip){ return explicit_integrator->step(ip, ps, t, dt); })
+      : integrator->step(ps, t, dt);
 
     // Tau integration, after the step whose interval it covers
-    if (prm.get<bool>("integrate_tau") && at_interval(it + 1, prm.get<double>("tau_intv"), dt)){
-      mesh.integrate_tau(dt * steps_per(prm.get<double>("tau_intv"), dt), prm.get<double>("tau_max"));
+    if (integrate_tau && at_interval(it + 1, tau_intv, dt)){
+      mesh.integrate_tau(dt * steps_per(tau_intv, dt), tau_max);
     }
 
     // Nodes that could not move: they stay, but where they pile up is useful
-    if (outside_nodes.size() > 0 && prm.get<bool>("verbose")){
+    if (outside_nodes.size() > 0 && verbose){
       Vector3d x_stuck = {0., 0., 0.};
       for (const Uint i : outside_nodes)
         x_stuck += ps.x(i);

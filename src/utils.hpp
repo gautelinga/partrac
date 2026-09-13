@@ -35,7 +35,7 @@ public:
   double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 
-static double modulox(const double x, const double L){
+inline double modulox(const double x, const double L){
   if (x > 0){
     return fmod(x, L);
   }
@@ -44,46 +44,46 @@ static double modulox(const double x, const double L){
   }
 }
 
-static Uint imodulo(const int a, const int b) {
+inline Uint imodulo(const int a, const int b) {
   return ((a % b) + b) % b;
 }
 
-static double norm(const double x, const double y, const double z){
+inline double norm(const double x, const double y, const double z){
   return sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
 }
 
-static double norm(const Vector3d &r){
+inline double norm(const Vector3d &r){
   return r.norm();
 }
 
-static double dist(const Uint i1, const Uint i2, std::vector<Vector3d>& x_rw){
+inline double dist(const Uint i1, const Uint i2, std::vector<Vector3d>& x_rw){
   Vector3d dr = x_rw[i1]-x_rw[i2];
   return dr.norm();
 }
 
-static double dist(const Vector3d &pta, const Vector3d &ptb){
+inline double dist(const Vector3d &pta, const Vector3d &ptb){
   Vector3d dr = pta-ptb;
   return dr.norm();
 }
 
-static double dot(const Vector3d &a, const Vector3d &b){
+inline double dot(const Vector3d &a, const Vector3d &b){
   return a.dot(b);
 }
 
-static Vector3d diff(const Vector3d &a, const Vector3d &b){
+inline Vector3d diff(const Vector3d &a, const Vector3d &b){
   return a-b;
 }
 
-static Vector3d cross(const Vector3d &a, const Vector3d &b){
+inline Vector3d cross(const Vector3d &a, const Vector3d &b){
   return a.cross(b);
 }
 
-static double get_abs_angle(const Vector3d &a, const Vector3d &b){
+inline double get_abs_angle(const Vector3d &a, const Vector3d &b){
   double costheta = a.dot(b)/(a.norm()*b.norm());
   return acos(costheta);
 }
 
-static long double area(const Uint iedge, const Uint jedge,
+inline long double area(const Uint iedge, const Uint jedge,
                  std::vector<Vector3d>& x_rw,
                  const EdgesType& edges){
   Vector3d a = x_rw[edges[iedge].first[0]]-x_rw[edges[iedge].first[1]];
@@ -91,7 +91,7 @@ static long double area(const Uint iedge, const Uint jedge,
   return a.cross(b).norm()/2;
 }
 
-static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
+inline long double area(const Uint iface, std::vector<Vector3d>& x_rw,
                  const FacesType& faces, const EdgesType& edges){
   // To be decommissioned?
   Uint iedge = faces[iface].first[0];
@@ -99,7 +99,7 @@ static long double area(const Uint iface, std::vector<Vector3d>& x_rw,
   return area(iedge, jedge, x_rw, edges);
 }
 
-static std::vector<size_t> argsort_descending(const std::vector<double> &v){
+inline std::vector<size_t> argsort_descending(const std::vector<double> &v){
   std::vector<size_t> idx(v.size());
   iota(idx.begin(), idx.end(), 0);
   stable_sort(idx.begin(), idx.end(),
@@ -107,7 +107,7 @@ static std::vector<size_t> argsort_descending(const std::vector<double> &v){
   return idx;
 }
 
-static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
+inline Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint, 2> &b){
   for (std::array<Uint, 2>::const_iterator ait=a.begin();
        ait != a.end(); ++ait){
     for (std::array<Uint, 2>::const_iterator bit=b.begin();
@@ -123,14 +123,14 @@ static Uint get_intersection(const std::array<Uint, 2> &a, const std::array<Uint
   return 0;
 }
 
-static Uint get_other(const Uint i, const Uint j, const Uint k){
+inline Uint get_other(const Uint i, const Uint j, const Uint k){
   if (i==k)
     return j;
   assert(j==k);
   return i;
 }
 
-static double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
+inline double circumcenter(const Vector3d &A, const Vector3d &B, const Vector3d &C){
   Vector3d D((B-A).cross(C-A));
   double b = (A-C).norm();
   double c = (A-B).norm();
@@ -148,7 +148,7 @@ bool contains(const std::map<T1, T2>& container, const T1 &elem){
   return container.find(elem) != container.end();
 }
 
-static Vector3d vec_repl(const Uint inode,
+inline Vector3d vec_repl(const Uint inode,
                   std::vector<Vector3d>& x_rw,
                   const std::set<Uint> repl_nodes,
                   const Vector3d &x){
@@ -157,7 +157,7 @@ static Vector3d vec_repl(const Uint inode,
   return x_rw[inode];
 }
 
-static Vector3d get_normal(const Uint iface,
+inline Vector3d get_normal(const Uint iface,
                     const FacesType &faces,
                     const EdgesType &edges,
                     std::vector<Vector3d>& x_rw){
@@ -174,7 +174,7 @@ static Vector3d get_normal(const Uint iface,
   return crossprod/crossprod.norm();
 }
 
-static Vector3d get_normal(const Uint jedge, const Uint kedge,
+inline Vector3d get_normal(const Uint jedge, const Uint kedge,
                     const EdgesType &edges,
                     std::vector<Vector3d>& x_rw,
                     const std::set<Uint> repl_nodes,
@@ -186,7 +186,7 @@ static Vector3d get_normal(const Uint jedge, const Uint kedge,
   return drj.cross(drk);
 }
 
-static double getd(std::map<std::string, std::string> &expr_params, const std::string key){
+inline double getd(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stod(expr_params[key]);
   }
@@ -198,7 +198,7 @@ static double getd(std::map<std::string, std::string> &expr_params, const std::s
 }
 
 // Optional parameter: an expression that gained one must still read an old file
-static double getd(std::map<std::string, std::string> &expr_params,
+inline double getd(std::map<std::string, std::string> &expr_params,
                    const std::string key, const double fallback){
   if (expr_params.find(key) != expr_params.end()){
     return stod(expr_params[key]);
@@ -206,7 +206,7 @@ static double getd(std::map<std::string, std::string> &expr_params,
   return fallback;
 }
 
-static double geti(std::map<std::string, std::string> &expr_params, const std::string key){
+inline double geti(std::map<std::string, std::string> &expr_params, const std::string key){
   if (expr_params.find(key) != expr_params.end()){
     return stoi(expr_params[key]);
   }
@@ -217,7 +217,7 @@ static double geti(std::map<std::string, std::string> &expr_params, const std::s
   }
 }
 
-static std::vector<std::string> split_string(const std::string s, const std::string delim){
+inline std::vector<std::string> split_string(const std::string s, const std::string delim){
   std::vector<std::string> s_;
   auto start = 0U;
   auto end = s.find(delim);
@@ -230,11 +230,11 @@ static std::vector<std::string> split_string(const std::string s, const std::str
   return s_;
 }
 
-static bool contains(const std::string s, const std::string c){
+inline bool contains(const std::string s, const std::string c){
   return (s.find(c) != std::string::npos);
 }
 
-static std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
+inline std::vector<double> getdvec(std::map<std::string, std::string> &expr_params,
                        const std::string key){
   std::string token = ",";
   std::vector<double> dvec;
@@ -262,7 +262,7 @@ static std::vector<double> getdvec(std::map<std::string, std::string> &expr_para
   return dvec;
 }
 
-static std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
+inline std::vector<int> getivec(std::map<std::string, std::string> &expr_params,
                     const std::string key){
   std::string token = ",";
   std::vector<int> ivec;

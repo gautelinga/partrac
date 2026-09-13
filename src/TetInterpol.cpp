@@ -1,5 +1,7 @@
 #ifdef USE_DOLFIN
 #include "TetInterpol.hpp"
+#include <array>
+#include <numeric>
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
 #include <boost/algorithm/string.hpp>
@@ -92,18 +94,13 @@ TetInterpol::TetInterpol(const std::string& infilename)
   // FIXME compute on the fly and save
   tets_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
-  ufc_cells_.resize(mesh->num_cells());
-  coordinate_dofs_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
   for (std::size_t i = 0; i < mesh->num_cells(); ++i)
   {
     dolfin::Cell dolfin_cell(*mesh, i);
-    dolfin_cell.get_coordinate_dofs(coordinate_dofs_[i]);
-
     tets_[i] = Tet(dolfin_cell);
     dolfin_cells_[i] = dolfin_cell;
-    dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
   // Build cell neighbour list for lookup speed
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
@@ -214,6 +211,8 @@ TetInterpol::TetInterpol(const std::string& infilename)
     //Np_.resize(ncoeffs_p);
   }
 
+  check_dofs_fit(ncoeffs_u, ncoeffs_p, Tet::n_dofs_max, "TetInterpol");
+
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
   found_same_.resize(omp_get_max_threads());
@@ -293,16 +292,6 @@ void TetInterpol::update(const double t)
 }
 
 
-void TetInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
-      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-    else {
-      x_loc[i] = x[i];
-    }
-  }
-}
 
 Vector3d TetInterpol::_modx(const Vector3d &x){
   Vector3d x_loc;
@@ -318,58 +307,11 @@ Vector3d TetInterpol::_modx(const Vector3d &x){
 }
 
 
-bool TetInterpol::locate(const Vector3d &x, const double t, int &id_prev)
+bool TetInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 {
-  // FIXME: Not thread safe
-  //dolfin::Array<double> x_loc(dim);
-  //_modx(x_loc, x);
-  auto xx_loc = _modx(x);
-
-  // Index of cell containing point
-  //const dolfin::Point point(dim, x_loc.data());
-
-  bool found = false;
-  bool inside_loc = false;
-  unsigned int id = 0;
-
-  // Search in neighborhood first
-  if (id_prev >= 0){
-    //dolfin::Cell prev_cell(*mesh, id_prev);
-    //if (prev_cell.contains(point)){
-    if (tets_[id_prev].contains(xx_loc)){
-      id = id_prev;
-      inside_loc = true;
-      found = true;
-      //++found_same;
-      found_same_[omp_get_thread_num()]++;
-    }
-    else {
-      for ( auto neigh_id : cell2cells_[id_prev]){
-        //dolfin::Cell neigh_cell(*mesh, neigh_id);
-        //if (neigh_cell.contains(point)){
-        if (tets_[neigh_id].contains(xx_loc)){
-          inside_loc = true;
-          found = true;
-          id = neigh_id;
-          ++found_nneigh_[omp_get_thread_num()];
-          break;
-        }
-      }
-    }
-  }
-  if (!found){
-    const dolfin::Point point(dim, xx_loc.data());
-    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-    inside_loc = (id != std::numeric_limits<unsigned int>::max());
-    if (inside_loc) {
-      found = true;
-      ++found_other_[omp_get_thread_num()];
-    }
-  }
-  if (found){
-    id_prev = id;
-  }
-  return inside_loc;
+  const Vector3d xx = _modx(x);
+  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, id_prev,
+                         found_same_, found_nneigh_, found_other_);
 }
 
 void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
@@ -379,25 +321,22 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   // Assuming inside fluid
   assert(t <= t_next && t >= t_prev);
   double alpha_t = (t-t_prev)/(t_next-t_prev);
+  const Vector3d x_loc = _modx(x);
 
-  //dolfin::Array<double> x_loc(dim);
-  //_modx(x_loc, x);
-  auto x_loc = _modx(x);
-
-  std::vector<double> _Nu_(ncoeffs_u);
-  std::vector<double> _Np_(ncoeffs_p);
-  std::vector<double> _Nux_(ncoeffs_u);
-  std::vector<double> _Nuy_(ncoeffs_u);
-  std::vector<double> _Nuz_(ncoeffs_u);
+  std::array<double, Tet::n_dofs_max> _Nu_{};
+  std::array<double, Tet::n_dofs_max> _Np_{};
+  std::array<double, Tet::n_dofs_max> _Nux_{};
+  std::array<double, Tet::n_dofs_max> _Nuy_{};
+  std::array<double, Tet::n_dofs_max> _Nuz_{};
 
   // Compute P2-P1 basis at x
   double r1, r2, r3, r4;
   tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
   if (ncoeffs_u == 4){
-    tets_[id].linearbasis(r1, r2, r3, r4, _Nu_);
+    tets_[id].linearbasis(r1, r2, r3, r4, _Nu_.data());
   }
   else if (ncoeffs_u == 10){
-    tets_[id].quadbasis(r1, r2, r3, r4, _Nu_);
+    tets_[id].quadbasis(r1, r2, r3, r4, _Nu_.data());
   }
   else {
     std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
@@ -405,10 +344,10 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   }
   if (include_pressure){
     if (ncoeffs_p == 4){
-      tets_[id].linearbasis(r1, r2, r3, r4, _Np_);
+      tets_[id].linearbasis(r1, r2, r3, r4, _Np_.data());
     }
     else if (ncoeffs_p == 10){
-      tets_[id].quadbasis(r1, r2, r3, r4, _Np_);
+      tets_[id].quadbasis(r1, r2, r3, r4, _Np_.data());
     }
     else {
       std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
@@ -416,16 +355,10 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
     }
   }
 
-  std::vector<double> u_prev_coefficients_(dim*ncoeffs_u);
-  std::vector<double> u_next_coefficients_(dim*ncoeffs_u);
+  std::array<double, Tet::n_dofs_max*3> u_prev_coefficients_{};
+  std::array<double, Tet::n_dofs_max*3> u_next_coefficients_{};
 
-  // Restrict solution to cell
-  // DOES NOT WORK IN PARALLEL
-  
-  //u_prev_->restrict(u_prev_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
-  //                  coordinate_dofs_[id].data(), ufc_cells_[id]);
-  //u_next_->restrict(u_next_coefficients_.data(), *u_space_->element(), dolfin_cells_[id],
-  //                  coordinate_dofs_[id].data(), ufc_cells_[id]);
+  // restrict() reads dolfin's vector, which is not safe in parallel; gathered instead
 
   for (std::size_t i=0; i < u_dofs_[id].size(); ++i){
     u_prev_coefficients_[i] = u_prev_vec[u_dofs_[id][i]];
@@ -443,12 +376,12 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   //}
 
   // Evaluate
-  Vector3d U_prev = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_prev_coefficients_.begin(), 0.0),
-    std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
-    std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0)};
-  Vector3d U_next = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_next_coefficients_.begin(), 0.0),
-    std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
-    std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0)};
+  Vector3d U_prev = {std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, u_prev_coefficients_.begin(), 0.0),
+    std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+    std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_prev_coefficients_[2*ncoeffs_u], 0.0)};
+  Vector3d U_next = {std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, u_next_coefficients_.begin(), 0.0),
+    std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_next_coefficients_[1*ncoeffs_u], 0.0),
+    std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_next_coefficients_[2*ncoeffs_u], 0.0)};
   // else unrecognized element
 
   // Update
@@ -456,22 +389,17 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   fields.A = (U_next-U_prev)/(t_next-t_prev);
 
   if (include_pressure){
-    std::vector<double> p_prev_coefficients_(ncoeffs_p);
-    std::vector<double> p_next_coefficients_(ncoeffs_p);  
+    std::array<double, Tet::n_dofs_max> p_prev_coefficients_{};
+    std::array<double, Tet::n_dofs_max> p_next_coefficients_{};  
 
-    // Restrict solution to cell
-    //p_prev_->restrict(p_prev_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-    //                  coordinate_dofs_[id].data(), ufc_cells_[id]);
-    //p_next_->restrict(p_next_coefficients_.data(), *p_space_->element(), dolfin_cells_[id],
-    //                  coordinate_dofs_[id].data(), ufc_cells_[id]);
     for (std::size_t i=0; i < p_dofs_[id].size(); ++i){
       p_prev_coefficients_[i] = p_prev_vec[p_dofs_[id][i]];
       p_next_coefficients_[i] = p_next_vec[p_dofs_[id][i]];
     }
 
     // Evaluate
-    double P_prev = std::inner_product(_Np_.begin(), _Np_.end(), p_prev_coefficients_.begin(), 0.0);
-    double P_next = std::inner_product(_Np_.begin(), _Np_.end(), p_next_coefficients_.begin(), 0.0);
+    double P_prev = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, p_prev_coefficients_.begin(), 0.0);
+    double P_next = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, p_next_coefficients_.begin(), 0.0);
     // else unrecognized element
 
     // Update
@@ -483,35 +411,35 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
 
   if (this->int_order > 1){
     if (ncoeffs_u == 4){
-      tets_[id].linearderiv(r1, r2, r3, r4, _Nux_, _Nuy_, _Nuz_);
+      tets_[id].linearderiv(r1, r2, r3, r4, _Nux_.data(), _Nuy_.data(), _Nuz_.data());
     }
     else if (ncoeffs_u == 10){
-      tets_[id].quadderiv(r1, r2, r3, r4, _Nux_, _Nuy_, _Nuz_);
+      tets_[id].quadderiv(r1, r2, r3, r4, _Nux_.data(), _Nuy_.data(), _Nuz_.data());
     }
     else {
       std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
       exit(1);
     }
     Matrix3d gradU_prev;
-    gradU_prev << std::inner_product(_Nux_.begin(), _Nux_.end(), u_prev_coefficients_.begin(), 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_prev_coefficients_.begin(), 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), u_prev_coefficients_.begin(), 0.0),
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_prev_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_prev_coefficients_[2*ncoeffs_u], 0.0);
+    gradU_prev << std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, u_prev_coefficients_.begin(), 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, &u_prev_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_prev_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, &u_prev_coefficients_[2*ncoeffs_u], 0.0);
     Matrix3d gradU_next;
-    gradU_next << std::inner_product(_Nux_.begin(), _Nux_.end(), u_next_coefficients_.begin(), 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_next_coefficients_.begin(), 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), u_next_coefficients_.begin(), 0.0),
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_next_coefficients_[1*ncoeffs_u], 0.0),
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0),
-      std::inner_product(_Nuz_.begin(), _Nuz_.end(), &u_next_coefficients_[2*ncoeffs_u], 0.0);
+    gradU_next << std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, u_next_coefficients_.begin(), 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, u_next_coefficients_.begin(), 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, u_next_coefficients_.begin(), 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, &u_next_coefficients_[1*ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_next_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_next_coefficients_[2*ncoeffs_u], 0.0),
+      std::inner_product(_Nuz_.data(), _Nuz_.data()+ncoeffs_u, &u_next_coefficients_[2*ncoeffs_u], 0.0);
 
     // Update
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;

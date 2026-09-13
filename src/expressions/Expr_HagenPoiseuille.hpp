@@ -5,7 +5,7 @@
 
 //using namespace std;
 
-class Expr_HagenPoiseuille : public Expr {
+class Expr_HagenPoiseuille final : public Expr {
 public:
   Expr_HagenPoiseuille(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     //R = getd(expr_params, "R");

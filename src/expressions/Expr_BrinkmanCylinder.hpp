@@ -70,7 +70,7 @@ private:
   Uint N;
 };
 
-class Expr_BrinkmanCylinder : public Expr {
+class Expr_BrinkmanCylinder final : public Expr {
 public:
   Expr_BrinkmanCylinder(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R = getd(expr_params, "R");

@@ -14,7 +14,7 @@
 // to within a fit. Ekman pumping off the end plates is the a-mode; the two
 // exponentials in u_theta carry the corner singularities where the turning
 // inner cylinder slides past the stationary plates, c3 the bulk rotation.
-class Expr_TaylorCouette : public Expr {
+class Expr_TaylorCouette final : public Expr {
 public:
   Expr_TaylorCouette(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     R = getd(expr_params, "R");

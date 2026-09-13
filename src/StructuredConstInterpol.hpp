@@ -29,18 +29,13 @@ protected:
   Uint n[3] = {0, 0, 0};
   Vector3d dx;
 
-  int*** isSolid;
-  double*** levelZ;
-  double*** ux_prev;
-  double*** uy_prev;
-  double*** uz_prev;
-  double*** ux_next;
-  double*** uy_next;
-  double*** uz_next;
-  double*** rho_prev;
-  double*** rho_next;
-  double*** p_prev;
-  double*** p_next;
+  GridBlock<int> solid_;
+  GridBlock<double> fields_;
+  Grid3<int> isSolid;
+  Grid3<double> ux_prev, uy_prev, uz_prev;
+  Grid3<double> ux_next, uy_next, uz_next;
+  Grid3<double> rho_prev, rho_next;
+  Grid3<double> p_prev, p_next;
 
   Uint ind_pc[3] = {0, 0, 0};  // piecewise constant intp
 
@@ -124,46 +119,13 @@ StructuredConstInterpol::StructuredConstInterpol(const std::string& infilename) 
   dx << this->get_Lx()/n[0], this->get_Ly()/n[1], this->get_Lz()/n[2];
 
   // Create arrays
-  isSolid = new int**[n[0]];
-  levelZ = new double**[n[0]];
-  ux_prev = new double**[n[0]];
-  uy_prev = new double**[n[0]];
-  uz_prev = new double**[n[0]];
-  ux_next = new double**[n[0]];
-  uy_next = new double**[n[0]];
-  uz_next = new double**[n[0]];
-  rho_prev = new double**[n[0]];
-  rho_next = new double**[n[0]];
-  p_prev = new double**[n[0]];
-  p_next = new double**[n[0]];
-  for (Uint ix=0; ix<n[0]; ++ix){
-    isSolid[ix] = new int*[n[1]];
-    levelZ[ix] = new double*[n[1]];
-    ux_prev[ix] = new double*[n[1]];
-    uy_prev[ix] = new double*[n[1]];
-    uz_prev[ix] = new double*[n[1]];
-    ux_next[ix] = new double*[n[1]];
-    uy_next[ix] = new double*[n[1]];
-    uz_next[ix] = new double*[n[1]];
-    rho_prev[ix] = new double*[n[1]];
-    rho_next[ix] = new double*[n[1]];
-    p_prev[ix] = new double*[n[1]];
-    p_next[ix] = new double*[n[1]];
-    for (Uint iy=0; iy<n[1]; ++iy){
-      isSolid[ix][iy] = new int[n[2]];
-      levelZ[ix][iy] = new double[n[2]];
-      ux_prev[ix][iy] = new double[n[2]];
-      uy_prev[ix][iy] = new double[n[2]];
-      uz_prev[ix][iy] = new double[n[2]];
-      ux_next[ix][iy] = new double[n[2]];
-      uy_next[ix][iy] = new double[n[2]];
-      uz_next[ix][iy] = new double[n[2]];
-      rho_prev[ix][iy] = new double[n[2]];
-      rho_next[ix][iy] = new double[n[2]];
-      p_prev[ix][iy] = new double[n[2]];
-      p_next[ix][iy] = new double[n[2]];
-    }
-  }
+  solid_.resize(n[0], n[1], n[2], 1);
+  isSolid = solid_.field(0);
+  fields_.resize(n[0], n[1], n[2], 10);
+  Uint f = 0;
+  for (Grid3<double>* g : {&ux_prev, &ux_next, &uy_prev, &uy_next, &uz_prev, &uz_next,
+                           &rho_prev, &rho_next, &p_prev, &p_next})
+    *g = fields_.field(f++);
   load_int_field(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
 }
 
@@ -175,7 +137,7 @@ void StructuredConstInterpol::update(const double t){
       std::swap(ux_prev, ux_next);
       std::swap(uy_prev, uy_next);
       if (!ignore_uz)
-        std::swap(uz_prev, uz_prev);
+        std::swap(uz_prev, uz_next);
       if (!ignore_density)
         std::swap(rho_prev, rho_next);
       if (!ignore_pressure)

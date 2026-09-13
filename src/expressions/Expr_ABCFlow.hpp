@@ -1,11 +1,11 @@
 #include "Expr.hpp"
 
-#ifndef __EXPR_ABCFlOW_HPP
+#ifndef __EXPR_ABCFLOW_HPP
 #define __EXPR_ABCFLOW_HPP
 
 //using namespace std;
 
-class Expr_ABCFlow : public Expr {
+class Expr_ABCFlow final : public Expr {
 public:
   Expr_ABCFlow(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     A = getd(expr_params, "A");

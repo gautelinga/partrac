@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 
+import numpy as np
 import pytest
 
 from paths import REPO, app
@@ -143,3 +144,69 @@ def test_the_initial_pass_follows_its_own_flag(tmp_path, refine, coarsen):
     assert r.returncode == 0, r.stdout + r.stderr
     assert ("Initial refinement" in r.stdout) == (refine == "true")
     assert ("Initial coarsening" in r.stdout) == (coarsen == "true")
+
+
+# --- the time loops that were made parallel ------------------------------------
+
+# These integrators draw no random numbers, so their result may not depend on
+# how the work is divided. Each of them ran on one thread until the loop was
+# parallelised, and each has a parallel sibling in the same file it was written
+# to match; this is what says the match is right.
+PARALLELISED = [
+    # app, the loop that was serial
+    ("tracers_triangleRK4", "Integrator_RK4::step"),
+    ("filaments_triangleRK4", "Integrator_RK4::step"),
+    ("tracertensors_triangleRK4", "Integrator_RK4::step_tensor"),
+    ("static_space_stepper", "Integrator_Spatial::step_vec"),
+]
+
+
+def h5_datasets(d):
+    """Every dataset in every h5 the run wrote, keyed by file and path."""
+    import h5py
+    out = {}
+    for f in sorted(d.rglob("*.h5")):
+        if f.name in KEEP:
+            continue
+        h = h5py.File(f, "r")
+
+        def walk(g, p=""):
+            for k in g:
+                if isinstance(g[k], h5py.Group):
+                    walk(g[k], p + "/" + k)
+                else:
+                    out[f.name + p + "/" + k] = np.array(g[k])
+        walk(h)
+    return out
+
+
+@pytest.mark.parametrize("name,loop", PARALLELISED, ids=[a[0] for a in PARALLELISED])
+def test_the_result_does_not_depend_on_the_thread_count(
+        name, loop, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
+    if not os.path.exists(app(name)):
+        pytest.skip(name + " is not built")
+    kind = dict((a[0], a[1]) for a in APPS)[name]
+    args = dict((a[0], a[2]) for a in APPS)[name]
+    work = ("Nrw=800 Nrw_max=8000 dt=0.005 dump_intv=0.05 stat_intv=1e9 "
+            "checkpoint_intv=1e9 " +
+            ("Ln=0.1 dxn=0.005 T=1e9" if name == "static_space_stepper" else "T=0.1"))
+
+    out = {}
+    for nthreads in (1, 4):
+        parent = tmp_path / str(nthreads)
+        parent.mkdir()
+        d, cfg = case_dir(kind, parent, mesh_dir, felbm_dir, xdmf_dir)
+        argv = {}
+        for a in (args + " " + work).split():
+            argv[a.split("=")[0]] = a
+        r = subprocess.run([app(name), str(cfg)] + list(argv.values()),
+                           capture_output=True, text=True, timeout=900,
+                           env=dict(os.environ, OMP_NUM_THREADS=str(nthreads)))
+        assert r.returncode == 0, r.stdout + r.stderr
+        out[nthreads] = h5_datasets(d)
+        assert out[nthreads], name + " wrote no data to compare"
+
+    assert set(out[1]) == set(out[4]), loop + " wrote different datasets"
+    for k in out[1]:
+        assert np.array_equal(out[1][k], out[4][k]), \
+            "%s: %s differs between 1 and 4 threads" % (loop, k)

@@ -13,6 +13,7 @@ inline partrac::Schema tracervectors_triangle_spatial_schema(){
   s.token_choices("init_mode", "_", {"points"});
   add_restart_params(s);
   s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
+  s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.require<double>("ds_max", "max edge length");
   s.opt<double>("Lt", 0.0, "tangential extent of the exit plane");
   s.opt<double>("u_eps", 1e-7, "velocity cutoff");

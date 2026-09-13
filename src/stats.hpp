@@ -4,7 +4,7 @@
 #include "utils.hpp"
 #include "stats_columns.hpp"
 
-inline std::vector<StatsColumn> stats_columns(
+inline std::vector<StatsColumn> mesh_stats_columns(
                  const double t,
                  const ParticleSet& ps,
                  const FacesType &faces,
@@ -21,10 +21,18 @@ inline std::vector<StatsColumn> stats_columns(
   Vector3d dx2_mean = {0., 0., 0.};
   Vector3d u_mean = {0., 0., 0.};
   Uint Nrw = ps.N();
-  for (Uint irw=0; irw < Nrw; ++irw){
-    // Sample mean
-    x_mean += ps.x(irw); // /Nrw;
-    u_mean += ps.u(irw); // /Nrw;
+  // Summed in whatever order the threads finish, so the last digits move with it
+  {
+    double xm0=0., xm1=0., xm2=0., um0=0., um1=0., um2=0.;
+    #pragma omp parallel for reduction(+:xm0,xm1,xm2,um0,um1,um2)
+    for (Uint irw=0; irw < Nrw; ++irw){
+      // Sample mean
+      const Vector3d xi = ps.x(irw), ui = ps.u(irw);
+      xm0 += xi[0]; xm1 += xi[1]; xm2 += xi[2];
+      um0 += ui[0]; um1 += ui[1]; um2 += ui[2];
+    }
+    x_mean = {xm0, xm1, xm2};
+    u_mean = {um0, um1, um2};
   }
   // the mean of nothing, and the spread of a single point, are both
   // undefined; report zero rather than a NaN that spreads downstream
@@ -34,45 +42,43 @@ inline std::vector<StatsColumn> stats_columns(
   }
 
   if (Nrw > 1){
+    double v0=0., v1=0., v2=0.;
+    #pragma omp parallel for reduction(+:v0,v1,v2)
     for (Uint irw=0; irw < Nrw; ++irw){
       // Sample variance
       Vector3d dx = ps.x(irw)-x_mean;
-      dx2_mean += dx.cwiseProduct(dx)/(Nrw-1);
+      dx = dx.cwiseProduct(dx)/(Nrw-1);
+      v0 += dx[0]; v1 += dx[1]; v2 += dx[2];
     }
+    dx2_mean = {v0, v1, v2};
   }
 
-  cols.push_back({"t", t});
-  cols.push_back({"x_mean", x_mean[0]});
-  cols.push_back({"dx2_mean", dx2_mean[0]});
-  cols.push_back({"y_mean", x_mean[1]});
-  cols.push_back({"dy2_mean", dx2_mean[1]});
-  cols.push_back({"z_mean", x_mean[2]});
-  cols.push_back({"dz2_mean", dx2_mean[2]});
-  cols.push_back({"ux_mean", u_mean[0]});
-  cols.push_back({"uy_mean", u_mean[1]});
-  cols.push_back({"uz_mean", u_mean[2]});
-  cols.push_back({"Nrw", double(Nrw), true});
-  cols.push_back({"n_accepted", double(n_accepted), true});
-  cols.push_back({"n_declined", double(n_declined), true});
+  cols = {{"t", t},
+          {"x_mean", x_mean[0]}, {"dx2_mean", dx2_mean[0]},
+          {"y_mean", x_mean[1]}, {"dy2_mean", dx2_mean[1]},
+          {"z_mean", x_mean[2]}, {"dz2_mean", dx2_mean[2]},
+          {"ux_mean", u_mean[0]},
+          {"uy_mean", u_mean[1]},
+          {"uz_mean", u_mean[2]},
+          {"Nrw", double(Nrw), true},
+          {"n_accepted", double(n_accepted), true},
+          {"n_declined", double(n_declined), true}};
 
   double s = 0.;
   double s0 = 0.;
   double A = 0.;
   double A0 = 0.;
 
-  // Which columns this run writes is fixed by the dimension it settles into,
-  // not by what the mesh happens to be right now: the header is written once,
-  // before the loop, and an injecting run is still its inlet at that point.
-  // A sheet that has not been swept yet reports zero area rather than the
-  // length of the curve about to sweep it.
+  // Fixed by the dimension the run settles into, before the first injection
   const bool do_strip = mesh_dim == 1;
   const bool do_sheet = mesh_dim > 1;
 
-  if (do_strip || do_sheet){
+  if (do_sheet){
+    // the sheet's own loop is over faces, so its edges are measured here
     Uint n_too_long = 0;
-    for (EdgesType::const_iterator edgeit = edges.begin();
-         edgeit != edges.end(); ++edgeit)
-      if (ps.dist(edgeit->first[0], edgeit->first[1]) > ds_max)
+    #pragma omp parallel for reduction(+:n_too_long)
+    for (Uint i = 0; i < edges.size(); ++i)
+      if (ps.dist(edges[i].first[0], edges[i].first[1]) > ds_max)
         ++n_too_long;
     cols.push_back({"n_too_long", double(n_too_long), true});
   }
@@ -82,29 +88,35 @@ inline std::vector<StatsColumn> stats_columns(
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
 
-    std::vector<std::array<double, 3>> logelong_vec;
-    for (EdgesType::const_iterator edgeit = edges.begin();
-         edgeit != edges.end(); ++edgeit){
-      int inode = edgeit->first[0];
-      int jnode = edgeit->first[1];
-      double ds0 = edgeit->second;
+    // the strip measures every edge anyway, so the count rides along
+    Uint n_too_long = 0;
+    // Written by index, so the pass can be split
+    std::vector<std::array<double, 3>> logelong_vec(edges.size());
+    #pragma omp parallel for reduction(+:logelong_wmean,logelong_w0mean,s,s0,n_too_long)
+    for (Uint i = 0; i < edges.size(); ++i){
+      Uint inode = edges[i].first[0];
+      Uint jnode = edges[i].first[1];
+      double ds0 = edges[i].second;
       double ds = ps.dist(inode, jnode);
+      if (ds > ds_max)
+        ++n_too_long;
       double logelong = log(ds/ds0);
       logelong_wmean += logelong*ds;
       logelong_w0mean += logelong*ds0;
-      logelong_vec.push_back({logelong, ds, ds0});
+      logelong_vec[i] = {logelong, ds, ds0};
       s += ds;
       s0 += ds0;
     }
+    cols.push_back({"n_too_long", double(n_too_long), true});
     logelong_wmean = s > 0. ? logelong_wmean/s : 0.;
     logelong_w0mean = s0 > 0. ? logelong_w0mean/s0 : 0.;
 
     double logelong_wvar = 0.;
     double logelong_w0var = 0.;
-    for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
-         lit != logelong_vec.end(); ++lit){
-      logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
-      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
+    #pragma omp parallel for reduction(+:logelong_wvar,logelong_w0var)
+    for (Uint i = 0; i < logelong_vec.size(); ++i){
+      logelong_wvar += pow(logelong_vec[i][0]-logelong_wmean, 2)*logelong_vec[i][1];
+      logelong_w0var += pow(logelong_vec[i][0]-logelong_w0mean, 2)*logelong_vec[i][2];
     }
     logelong_wvar = s > 0. ? logelong_wvar/s : 0.;
     logelong_w0var = s0 > 0. ? logelong_w0var/s0 : 0.;
@@ -119,20 +131,21 @@ inline std::vector<StatsColumn> stats_columns(
     // Sheet method
     double logelong_wmean = 0.;
     double logelong_w0mean = 0.;
-    std::vector<std::array<double, 3>> logelong_vec;
-    for (FacesType::const_iterator faceit = faces.begin();
-         faceit != faces.end(); ++faceit){
-      Uint iedge = faceit->first[0];
-      Uint jedge = faceit->first[1];
-      // Uint kedge = faceit->first[2];
-      double dA0 = faceit->second;
+    // Written by index, so the pass can be split; a skipped face keeps its zeros
+    std::vector<std::array<double, 3>> logelong_vec(faces.size(), {0., 0., 0.});
+    #pragma omp parallel for reduction(+:logelong_wmean,logelong_w0mean,A,A0)
+    for (Uint i = 0; i < faces.size(); ++i){
+      Uint iedge = faces[i].first[0];
+      Uint jedge = faces[i].first[1];
+      // Uint kedge = faces[i].first[2];
+      double dA0 = faces[i].second;
       if (!(dA0 > 0.))
         continue;                 // a flat sweep, waiting to be culled
       double dA = ps.triangle_area(iedge, jedge, edges);
       double logelong = log(dA/dA0);
       logelong_wmean += logelong*dA;
       logelong_w0mean += logelong*dA0;
-      logelong_vec.push_back({logelong, dA, dA0});
+      logelong_vec[i] = {logelong, dA, dA0};
       A += dA;
       A0 += dA0;
     }
@@ -140,10 +153,10 @@ inline std::vector<StatsColumn> stats_columns(
     logelong_w0mean = A0 > 0. ? logelong_w0mean/A0 : 0.;
     double logelong_wvar = 0.;
     double logelong_w0var = 0.;
-    for (std::vector<std::array<double, 3>>::const_iterator lit = logelong_vec.begin();
-         lit != logelong_vec.end(); ++lit){
-      logelong_wvar += pow((*lit)[0]-logelong_wmean, 2)*(*lit)[1];
-      logelong_w0var += pow((*lit)[0]-logelong_w0mean, 2)*(*lit)[2];
+    #pragma omp parallel for reduction(+:logelong_wvar,logelong_w0var)
+    for (Uint i = 0; i < logelong_vec.size(); ++i){
+      logelong_wvar += pow(logelong_vec[i][0]-logelong_wmean, 2)*logelong_vec[i][1];
+      logelong_w0var += pow(logelong_vec[i][0]-logelong_w0mean, 2)*logelong_vec[i][2];
     }
     logelong_wvar = A > 0. ? logelong_wvar/A : 0.;
     logelong_w0var = A0 > 0. ? logelong_w0var/A0 : 0.;

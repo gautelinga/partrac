@@ -1,7 +1,7 @@
 #include "dolfin_helpers.hpp"
 #ifdef USE_DOLFIN
 
-void build_neighbor_list( std::vector<std::set<Uint>> &cell2cells_
+void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
                         , std::shared_ptr<dolfin::Mesh> mesh
                         , std::vector<dolfin::Cell> &dolfin_cells_)
 {
@@ -26,50 +26,8 @@ void build_neighbor_list( std::vector<std::set<Uint>> &cell2cells_
   // TODO: Include periodic neighbor cells
 }
 
-std::tuple<Uint, bool> locate_cell( int &id_prev
-                                  , dolfin::Array<double>& x_loc
-                                  , std::shared_ptr<dolfin::Mesh> mesh
-                                  , std::vector<std::set<Uint>>& cell2cells_){
-  // Index of cell containing point
-  Uint dim = mesh->geometry().dim();
-  const dolfin::Point point(dim, x_loc.data());
 
-  bool found = false;
-
-  unsigned int id = 0;
-  bool inside = false;
-  // Search in neighborhood first
-  if (id_prev >= 0){
-    dolfin::Cell prev_cell(*mesh, id_prev);
-    if (prev_cell.contains(point)){
-      id = id_prev;
-      inside = true;
-      found = true;
-    }
-    else {
-      for ( auto neigh_id : cell2cells_[id_prev]){
-        dolfin::Cell neigh_cell(*mesh, neigh_id);
-        if (neigh_cell.contains(point)){
-          inside = true;
-          found = true;
-          id = neigh_id;
-          break;
-        }
-      }
-    }
-  }
-  if (!found){
-    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-    inside = (id != std::numeric_limits<unsigned int>::max());
-    if (inside) found = true;
-  }
-  if (found){
-    id_prev = id;
-  }
-  return {id, inside};
-}
-
-void label_cell_type(std::vector<int>& cell_type_, std::vector<std::set<Uint>>& cell2cells_, const Uint dim){
+void label_cell_type(std::vector<int>& cell_type_, std::vector<CellNeighbours>& cell2cells_, const Uint dim){
   //cell_type_.clear(); // set all to zero
   // Cell types:
   // 0: bulk cell
@@ -94,7 +52,7 @@ void label_cell_type(std::vector<int>& cell_type_, std::vector<std::set<Uint>>& 
   }
 }
 
-void apply_periodic_boundaries(std::vector<std::set<Uint>>& cell2cells_,
+void apply_periodic_boundaries(std::vector<CellNeighbours>& cell2cells_,
                                //std::vector<int>& cell_type_,
                                const std::vector<bool>& periodic,
                                const Vector3d& x_min,

@@ -8,10 +8,10 @@
 // One list, read once for the header and once per row. ps.dim() decides the
 // columns in both, so the header cannot promise what the rows do not fill.
 template<typename T>
-std::vector<StatsColumn> stats_columns( const Real t
-                                      , T& ps
-                                      , const unsigned long int n_declined
-                                      )
+std::vector<StatsColumn> particle_stats_columns( const Real t
+                                                , T& ps
+                                                , const unsigned long int n_declined
+                                                )
 {
   std::vector<StatsColumn> cols;
   Vector x_mean = {0., 0., 0.};

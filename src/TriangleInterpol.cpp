@@ -1,5 +1,7 @@
 #ifdef USE_DOLFIN
 #include "TriangleInterpol.hpp"
+#include <array>
+#include <numeric>
 #include "Timestamps.hpp"
 //#include "H5Cpp.h"
 #include <boost/algorithm/string.hpp>
@@ -81,18 +83,13 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
   // FIXME compute on the fly and save
   triangles_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
-  ufc_cells_.resize(mesh->num_cells());
-  coordinate_dofs_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
   for (std::size_t i = 0; i < mesh->num_cells(); ++i)
   {
     dolfin::Cell dolfin_cell(*mesh, i);
-    dolfin_cell.get_coordinate_dofs(coordinate_dofs_[i]);
-
     triangles_[i] = Triangle(dolfin_cell);
     dolfin_cells_[i] = dolfin_cell;
-    dolfin_cell.get_cell_data(ufc_cells_[i]);
   }
   // Build cell neighbour list for lookup speed
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
@@ -159,6 +156,26 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
     Np_.resize(ncoeffs_p);
   }
 
+  // The dofs of every cell, once
+  u_dofs_.resize(mesh->num_cells());
+  {
+    const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
+    for (Uint id = 0; id < mesh->num_cells(); ++id){
+      auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
+      u_dofs_[id].assign(u_dofs.data(), u_dofs.data() + u_dofs.size());
+    }
+  }
+  if (include_pressure){
+    p_dofs_.resize(mesh->num_cells());
+    const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
+    for (Uint id = 0; id < mesh->num_cells(); ++id){
+      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
+      p_dofs_[id].assign(p_dofs.data(), p_dofs.data() + p_dofs.size());
+    }
+  }
+
+  check_dofs_fit(ncoeffs_u, ncoeffs_p, Triangle::n_dofs_max, "TriangleInterpol");
+
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
   found_same_.resize(omp_get_max_threads());
@@ -201,74 +218,27 @@ void TriangleInterpol::update(const double t)
 }
 
 
-void TriangleInterpol::_modx(dolfin::Array<double>& x_loc, const Vector3d &x){
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
-      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-    else {
-      x_loc[i] = x[i];
-    }
-  }
-}
 
+
+Vector3d TriangleInterpol::_modx(const Vector3d &x){
+  Vector3d x_loc = x;
+  for (std::size_t i=0; i<dim; ++i)
+    if (periodic[i])
+      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
+  return x_loc;
+}
 
 bool TriangleInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 {
   assert(t <= t_next && t >= t_prev);
-  
-  // std::cout << "t=" << t << " t_next=" << t_next << " t_prev=" << t_prev << " alpha_t=" << alpha_t << std::endl;
-
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
-
-  // Index of cell containing point
-  const dolfin::Point point(dim, x_loc.data());
-  
-  bool found = false;
-  bool inside_loc = false;
-
-  unsigned int id = 0;
-  // Search in neighborhood first
-  if (id_prev >= 0){
-    dolfin::Cell prev_cell(*mesh, id_prev);
-    if (prev_cell.contains(point)){
-      id = id_prev;
-      inside_loc = true;
-      found = true;
-      ++found_same_[omp_get_thread_num()];
-    }
-    else {
-      for ( auto neigh_id : cell2cells_[id_prev]){
-        dolfin::Cell neigh_cell(*mesh, neigh_id);
-        if (neigh_cell.contains(point)){
-          inside_loc = true;
-          found = true;
-          id = neigh_id;
-          ++found_nneigh_[omp_get_thread_num()];
-          break;
-        }
-      }
-    }
-  }
-  if (!found){
-    id = mesh->bounding_box_tree()->compute_first_entity_collision(point);
-    inside_loc = (id != std::numeric_limits<unsigned int>::max());
-    if (inside_loc) {
-      found = true;
-      ++found_other_[omp_get_thread_num()];
-    }
-  }
-  if (found){
-    id_prev = id;
-  }
-  return inside_loc;
+  const Vector3d xx = _modx(x);
+  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
+                         found_same_, found_nneigh_, found_other_);
 }
 
 void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
-  dolfin::Array<double> x_loc(dim);
-  _modx(x_loc, x);
+  const Vector3d x_loc = _modx(x);
 
   double _alpha_t = (tin-t_prev)/(t_next-t_prev);
 
@@ -276,16 +246,16 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
   double r, s, u;
   triangles_[id].xy2bary(x_loc[0], x_loc[1], r, s, u);
 
-  std::vector<double> _Nu_(ncoeffs_u);
-  std::vector<double> _Np_(ncoeffs_p);
-  std::vector<double> _Nux_(ncoeffs_u);
-  std::vector<double> _Nuy_(ncoeffs_u);
+  std::array<double, Triangle::n_dofs_max> _Nu_{};
+  std::array<double, Triangle::n_dofs_max> _Np_{};
+  std::array<double, Triangle::n_dofs_max> _Nux_{};
+  std::array<double, Triangle::n_dofs_max> _Nuy_{};
 
   if (ncoeffs_u == 3){
-    triangles_[id].linearbasis(r, s, u, _Nu_);
+    triangles_[id].linearbasis(r, s, u, _Nu_.data());
   }
   else if (ncoeffs_u == 6){
-    triangles_[id].quadbasis(r, s, u, _Nu_);
+    triangles_[id].quadbasis(r, s, u, _Nu_.data());
   }
   else {
     std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
@@ -293,10 +263,10 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
   }
   if (include_pressure){
     if (ncoeffs_p == 3){
-      triangles_[id].linearbasis(r, s, u, _Np_);
+      triangles_[id].linearbasis(r, s, u, _Np_.data());
     }
     else if (ncoeffs_p == 6){
-      triangles_[id].quadbasis(r, s, u, _Np_);
+      triangles_[id].quadbasis(r, s, u, _Np_.data());
     }
     else {
       std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
@@ -304,35 +274,29 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
     }
   }
 
-  std::vector<double> u_prev_block(ncoeffs_u*dim);
-  std::vector<double> u_next_block(ncoeffs_u*dim);
-  std::vector<double> p_prev_block(ncoeffs_p);
-  std::vector<double> p_next_block(ncoeffs_p);
+  std::array<double, Triangle::n_dofs_max*3> u_prev_block{};
+  std::array<double, Triangle::n_dofs_max*3> u_next_block{};
+  std::array<double, Triangle::n_dofs_max> p_prev_block{};
+  std::array<double, Triangle::n_dofs_max> p_next_block{};
 
   // Restrict solution to cell
-  const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
-  auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
-
-  for (std::size_t i = 0; i < static_cast<std::size_t>(u_dofs.size()); ++i){
-      u_prev_block[i] = u_prev_data_[u_dofs[i]];
-      u_next_block[i] = u_next_data_[u_dofs[i]];
+  for (std::size_t i = 0; i < u_dofs_[id].size(); ++i){
+      u_prev_block[i] = u_prev_data_[u_dofs_[id][i]];
+      u_next_block[i] = u_next_data_[u_dofs_[id][i]];
   }
   if (include_pressure){
-      const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
-
-      for (std::size_t i = 0; i < static_cast<std::size_t>(p_dofs.size()); ++i){
-          p_prev_block[i] = p_prev_data_[p_dofs[i]];
-          p_next_block[i] = p_next_data_[p_dofs[i]];
+      for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
+          p_prev_block[i] = p_prev_data_[p_dofs_[id][i]];
+          p_next_block[i] = p_next_data_[p_dofs_[id][i]];
       }
   }
 
   // Evaluate
-  Vector3d U_prev = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_prev_block.begin(), 0.0),
-                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_prev_block[ncoeffs_u], 0.0),
+  Vector3d U_prev = {std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, u_prev_block.begin(), 0.0),
+                     std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_prev_block[ncoeffs_u], 0.0),
                      0.0};
-  Vector3d U_next = {std::inner_product(_Nu_.begin(), _Nu_.end(), u_next_block.begin(), 0.0),
-                     std::inner_product(_Nu_.begin(), _Nu_.end(), &u_next_block[ncoeffs_u], 0.0),
+  Vector3d U_next = {std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, u_next_block.begin(), 0.0),
+                     std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_next_block[ncoeffs_u], 0.0),
                      0.0 };
 
 
@@ -342,37 +306,37 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
 
   if (include_pressure){
     // Evaluate
-    double P_prev = std::inner_product(_Np_.begin(), _Np_.end(), p_prev_block.begin(), 0.0);
-    double P_next = std::inner_product(_Np_.begin(), _Np_.end(), p_next_block.begin(), 0.0);
+    double P_prev = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, p_prev_block.begin(), 0.0);
+    double P_next = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, p_next_block.begin(), 0.0);
     fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
   }
 
   if (this->int_order > 1){
     if (ncoeffs_u == 3){
-      triangles_[id].linearderiv(r, s, u, _Nux_, _Nuy_);
+      triangles_[id].linearderiv(r, s, u, _Nux_.data(), _Nuy_.data());
     }
     else if (ncoeffs_u == 6){
-      triangles_[id].quadderiv(r, s, u, _Nux_, _Nuy_);
+      triangles_[id].quadderiv(r, s, u, _Nux_.data(), _Nuy_.data());
     }
 
     Matrix3d gradU_prev;
     gradU_prev <<
-      std::inner_product(_Nux_.begin(), _Nux_.end(), u_prev_block.begin(), 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_prev_block.begin(), 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, u_prev_block.begin(), 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, u_prev_block.begin(), 0.0),
       0.0,
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_prev_block[ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_prev_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_prev_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_prev_block[ncoeffs_u], 0.0),
       0.0,
       0.0,
       0.0,
       0.0;
     Matrix3d gradU_next;
     gradU_next << 
-      std::inner_product(_Nux_.begin(), _Nux_.end(), u_next_block.begin(), 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), u_next_block.begin(), 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, u_next_block.begin(), 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, u_next_block.begin(), 0.0),
       0.0,
-      std::inner_product(_Nux_.begin(), _Nux_.end(), &u_next_block[ncoeffs_u], 0.0),
-      std::inner_product(_Nuy_.begin(), _Nuy_.end(), &u_next_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nux_.data(), _Nux_.data()+ncoeffs_u, &u_next_block[ncoeffs_u], 0.0),
+      std::inner_product(_Nuy_.data(), _Nuy_.data()+ncoeffs_u, &u_next_block[ncoeffs_u], 0.0),
       0.0,
       0.0,
       0.0,

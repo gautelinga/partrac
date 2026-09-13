@@ -124,7 +124,7 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   }
 }
 
-static void write_h5part(const std::string& path,
+inline void write_h5part(const std::string& path,
                          const std::vector<std::string>& ptheader,
                          const std::vector<double>& ptdata_,
                          const double t0 = 0.0) {
@@ -138,6 +138,8 @@ static void write_h5part(const std::string& path,
     std::vector<double> col_data(num_rows);
 
     for (hsize_t ic = 0; ic < num_cols; ++ic) {
+        // One pass per column over an array interleaved by column, so every read is a miss
+        #pragma omp parallel for
         for (hsize_t ir = 0; ir < num_rows; ++ir)
             col_data[ir] = ptdata_[ir * num_cols + ic];
         auto space = H5Screate_simple(1, &num_rows, nullptr);
@@ -159,7 +161,7 @@ static void write_h5part(const std::string& path,
     H5Fclose(file);
 }
 
-static void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
+inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
                         const std::string &newfolder, const double t0,
                         std::vector<std::mt19937>& gens){
 

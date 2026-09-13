@@ -11,6 +11,8 @@ class Tet
 
 public:
 
+  static constexpr std::size_t n_dofs_max = 10;   // quadbasis writes this many
+
   Tet() {}
   Tet(const dolfin::Cell& cell);
 
@@ -20,28 +22,20 @@ public:
   bool contains(const Vector3d& x) const;
 
   void linearbasis(double r, double s, double t, double u,
-                   //std::array<double, 4> &N) const;
-                   std::vector<double> &N) const;
+                   double *N) const;
 
   void linearderiv(double, double, double, double,
-                   //std::array<double, 4> &Nx,
-                   //std::array<double, 4> &Ny,
-                   //std::array<double, 4> &Nz) const;
-                   std::vector<double> &Nx,
-                   std::vector<double> &Ny,
-                   std::vector<double> &Nz) const;
+                   double *Nx,
+                   double *Ny,
+                   double *Nz) const;
 
   void quadbasis(double r, double s, double t, double u,
-                 //std::array<double, 10> &N) const;
-                 std::vector<double> &N) const;
+                 double *N) const;
 
   void quadderiv(double r,double s,double t,double u,
-                 //std::array<double, 10> &Nx,
-                 //std::array<double, 10> &Ny,
-                 //std::array<double, 10> &Nz) const;
-                 std::vector<double> &Nx,
-                 std::vector<double> &Ny,
-                 std::vector<double> &Nz) const;
+                 double *Nx,
+                 double *Ny,
+                 double *Nz) const;
 
 private:
 

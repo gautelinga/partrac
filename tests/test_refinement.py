@@ -52,8 +52,10 @@ import pytest
 from paths import REPO, app
 
 PARTRAC = app("partrac")
+SSS = app("static_space_stepper")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
 ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
+PLANE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 PI = 3.14159265358979
 
 R, DT, NRW_MAX = 1.0, 0.005, 400000
@@ -66,6 +68,8 @@ BASE = ("mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw_max=%d "
 
 needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
                                    reason="partrac is not built")
+needs_sss = pytest.mark.skipif(not os.path.exists(SSS),
+                               reason="static_space_stepper is not built")
 
 
 def spacing(n):
@@ -78,6 +82,25 @@ SHEET = ("mode=analytic init_mode=sheet_xy La=1.0 Lb=1.0 ds_init=0.15 "
          "x0=%.14f y0=%.14f z0=%.14f Nrw=100 Nrw_max=200000 inject=false "
          "refine=true ds_max=0.25 coarsen=false ds_min=1e-9 Dm=0 int_order=2 "
          "dt=0.05 stat_intv=1e9 random=false seed=1" % (PI, PI, PI)).split()
+
+
+# the stepper advances a position rather than a time: Ln bounds the loop, T is
+# the local-time cutoff per node, and stat_intv=1e9 keeps it off
+SHEET_SSS = ("mode=analytic init_mode=sheet_xy La=0.5 Lb=0.5 ds_init=0.1 "
+             "Nrw=100 Nrw_max=20000 refine=true ds_max=0.4 coarsen=false "
+             "ds_min=1e-9 Dm=0 int_order=1 dt=0.005 T=1e9 dx_max=0.1 "
+             "dxn=0.05 stat_intv=1e9 random=false seed=1").split()
+
+
+def run_sss(tmp_path, extra):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    shutil.copy(PLANE, tmp_path / "expr_params.dat")
+    argv = {}
+    for a in SHEET_SSS + extra:
+        argv[a.split("=")[0]] = a
+    return subprocess.run([SSS, str(tmp_path / "expr_params.dat")]
+                          + list(argv.values()),
+                          capture_output=True, text=True, timeout=900)
 
 
 def run(tmp_path, extra, example=HAGEN, base=None):
@@ -284,3 +307,27 @@ def test_an_edge_of_no_length_is_collapsed_with_coarsening_off(tmp_path):
 
     assert out["control"] == (1, 1, 1)      # the weld survives when nothing runs
     assert out["cleaned"] == (0, 0, 0)      # and does not when the cleanup does
+
+
+@needs_sss
+def test_an_edge_of_no_length_is_collapsed_in_the_space_stepper(tmp_path):
+    # the same claim as above for the other app that refines. It kept the
+    # cleanup behind the coarsen flag, so a refining run with coarsening off
+    # carried the weld to the end
+    out = {}
+    for label, refine_intv in (("cleaned", "0.1"), ("control", "0")):
+        case = tmp_path / label
+        r = run_sss(case, ["refine_intv=0.1", "Ln=0.1", "checkpoint_intv=0.1",
+                           "dump_intv=0"])
+        assert r.returncode == 0, r.stdout + r.stderr
+        checkpoint = list(case.rglob("edges.edge"))
+        assert len(checkpoint) == 1
+        weld_two_nodes(checkpoint[0].parent)
+        r = run_sss(case, ["refine_intv=" + refine_intv, "Ln=0.3",
+                           "checkpoint_intv=1e9", "dump_intv=0.3",
+                           "restart_folder=" + str(checkpoint[0].parent.parent)])
+        assert r.returncode == 0, r.stdout + r.stderr
+        out[label] = degeneracies(case)
+
+    assert out["control"] == (1, 1, 1)
+    assert out["cleaned"] == (0, 0, 0)

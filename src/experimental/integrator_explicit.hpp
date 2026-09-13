@@ -3,6 +3,7 @@
 
 #include "typedefs.hpp"
 #include "integrator.hpp"
+#include <omp.h>
 #include <math.h>
 
 class Integrator_Explicit : public Integrator {
@@ -19,11 +20,10 @@ protected:
   Real Dm;
   int int_order;
   std::vector<std::mt19937>& gens;
-  std::normal_distribution<Real> rnd_normal;
 };
 
 Integrator_Explicit::Integrator_Explicit(const Real Dm, const int int_order, std::vector<std::mt19937>& gens)
-  : Integrator(), Dm(Dm), int_order(int_order), gens(gens), rnd_normal(0.0, 1.0) {
+  : Integrator(), Dm(Dm), int_order(int_order), gens(gens) {
     std::cout << "Choosing an explicit integrator of order " << int_order << " with diffusivity " << Dm << std::endl;
 }
 
@@ -31,38 +31,54 @@ template<typename InterpolType, typename T>
 std::set<Uint> Integrator_Explicit::step(InterpolType& intp, T& ps, const Real t, const Real dt) {
     std::set<Uint> outside_nodes;
     Real sqrt2Dmdt = sqrt(2*Dm*dt);
-    Uint i = 0;
-    for (auto & particle : ps.particles() ){
+    const double U0 = intp.get_U0();
+    // As step_parallel, but keeping the tally; the distribution has state of its
+    // own, so it is per thread as well
+    #pragma omp parallel
+    {
+    std::normal_distribution<Real> _rnd_normal(0., 1.0);
+    std::mt19937& gen = gens[omp_get_thread_num()];
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
+
+    #pragma omp for
+    for (Uint i = 0; i < ps.particles().size(); ++i){
+        auto & particle = ps.particles()[i];
         Vector x = particle.x();
         int cell_id = particle.cell_id();
 
-        PointValues ptvals(intp.get_U0());
+        PointValues ptvals(U0);
         intp.locate(x, t, cell_id);
         intp.evaluate(x, t, cell_id, ptvals);
         Vector dx = ptvals.get_u() * dt;
 
         // Second-order terms
         if (int_order >= 2){
-            //dx_rw += 0.5*a_rw[irw]*dt2;
             dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
         }
         if (Dm > 0.0){
-            std::mt19937& gen = gens[0]; // Not parallel yet
-            Vector eta = {rnd_normal(gen),
-                          rnd_normal(gen),
-                          rnd_normal(gen)};
+            Vector eta = {_rnd_normal(gen),
+                          _rnd_normal(gen),
+                          _rnd_normal(gen)};
             dx += sqrt2Dmdt * eta;
         }
         if (intp.locate(x+dx, t+dt, cell_id)){
-            ++n_accepted;
+            ++n_accepted_loc;
             particle.x() = x + dx;
             particle.cell_id() = cell_id;
         }
         else {
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
-        ++i;
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }

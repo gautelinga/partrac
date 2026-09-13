@@ -3,6 +3,7 @@
 
 #include "typedefs.hpp"
 #include "integrator.hpp"
+#include <omp.h>
 #include <math.h>
 
 class Integrator_Directional : public Integrator {
@@ -26,12 +27,19 @@ Integrator_Directional::Integrator_Directional(const Vector& direction, const in
 template<typename InterpolType, typename T>
 std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const Real t, const Real s) {
     std::set<Uint> outside_nodes;
-    Uint i = 0;
+    // Particles are independent; only the tally is shared
+    #pragma omp parallel
+    {
+    std::set<Uint> outside_nodes_loc;
+    Uint n_accepted_loc = 0;
+    Uint n_declined_loc = 0;
     bool is_inside;
     double s_prev, un_est, dt;
     Vector dx;
 
-    for (auto & particle : ps.particles() ){
+    #pragma omp for
+    for (Uint i = 0; i < ps.particles().size(); ++i){
+        auto & particle = ps.particles()[i];
         Vector x = particle.x();
 
         int cell_id = -1;
@@ -60,20 +68,27 @@ std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const Rea
                 is_inside = intp.locate(x + dx, t, cell_id);
             }
             else {
+                #pragma omp critical
                 std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
             }
         }
         // count things
         if (is_inside){
-            ++n_accepted;
+            ++n_accepted_loc;
             particle.x() = x + dx;
             particle.tau() += dt;
         }
         else {
-            outside_nodes.insert(i);
-            ++n_declined;
+            outside_nodes_loc.insert(i);
+            ++n_declined_loc;
         }
-        ++i;
+    }
+    #pragma omp critical
+    {
+        outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+        n_accepted += n_accepted_loc;
+        n_declined += n_declined_loc;
+    }
     }
     return outside_nodes;
 }

@@ -47,7 +47,7 @@ public:
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm);
   std::vector<StatsColumn> stats_header_columns(const double ds_max){
-    return stats_columns(0., ps, faces, edges, ds_max, 0, 0, dim_settled());
+    return mesh_stats_columns(0., ps, faces, edges, ds_max, 0, 0, dim_settled());
   }
   template<typename T>
   void write_statistics(std::ofstream &statfile, const double t, const double ds_max, //const bool do_dump_hist, const std::string histfolder, 
@@ -116,12 +116,9 @@ inline void Topology::check_dim(){
   exit(1);
 }
 
-// The dimension the run settles into, which is what the statistics columns
-// have to be chosen for. Injection raises what the inlet traces by one, and
-// the header is written before the first injection, so asking the mesh what
-// it is at that moment answers with the inlet it started as. Taking the
-// larger of the two is also right on a restart, where the sheet already
-// exists and must not be raised again.
+// The dimension the run settles into. Injection raises what the inlet
+// traces by one and the header is written before the first, so the larger
+// of the two is what to ask for -- on a restart as well
 inline int Topology::dim_settled(){
   int d = dim();
   if (injecting && inject_edges){
@@ -155,7 +152,11 @@ inline void Topology::clear(){
 
 inline void Topology::integrate_tau(const double dt, const double tau_max){
   if (faces.size() == 0){
-    for ( auto & edge : edges ){
+    // Each edge advances its own tau from its own rho_prev and read-only
+    // geometry, so the order is immaterial and the result is unchanged
+    #pragma omp parallel for
+    for (Uint i = 0; i < edges.size(); ++i){
+      auto & edge = edges[i];
       Uint inode = edge.first[0];
       Uint jnode = edge.first[1];
       double ds0 = edge.second;
@@ -180,8 +181,10 @@ inline void Topology::integrate_tau(const double dt, const double tau_max){
     }
   }
   else {
-    for ( auto & face : faces )
+    #pragma omp parallel for
+    for (Uint i = 0; i < faces.size(); ++i)
     {
+      auto & face = faces[i];
       Uint iedge = face.first[0];
       Uint jedge = face.first[1];
       double dA0 = face.second;
@@ -225,7 +228,6 @@ inline Uint Topology::refine(){
 // node to the opposite vertex of each face it splits, and that edge's length
 // is the face's business, not ds_max's -- on a nearly collinear face it comes
 // out at nothing, and the faces on it then have two vertices at one point.
-// Such an edge is not a coarsening question. It is not a mesh.
 inline Uint Topology::coarsen(const bool full){
   double ds_cut = ds_min;
   if (!full){
@@ -397,9 +399,8 @@ inline void Topology::load_initial_state(std::shared_ptr<Initializer> init_state
     for (Uint i=0; i<edges_inj.size(); ++i){
       edges_inlet.push_back(i);
     }
-    // Refinement splits an inlet edge together with the template behind it, so
-    // a ds_max below the template's own spacing does not stall -- it makes the
-    // injected curve finer, and with it the area each generation sweeps
+    // Refinement splits the inlet edge with its template, so a ds_max under its
+    // spacing refines the injected curve instead of stalling
     double ds_inj_max = 0.;
     for ( const auto & edge : edges_inj )
       ds_inj_max = std::max(ds_inj_max,
@@ -425,10 +426,10 @@ void Topology::write_statistics( std::ofstream &statfile
                            //const bool do_dump_hist,
                            //const std::string histfolder,
                            //std::shared_ptr<Integrator> integrator){
-  write_stats_row(statfile, stats_columns(t, ps, faces, edges, ds_max,
-                                          integrator.get_accepted(),
-                                          integrator.get_declined(),
-                                          dim_settled()));
+  write_stats_row(statfile, mesh_stats_columns(t, ps, faces, edges, ds_max,
+                                               integrator.get_accepted(),
+                                               integrator.get_declined(),
+                                               dim_settled()));
               //integrator->get_accepted(), integrator->get_declined());
 }
 

@@ -62,8 +62,7 @@ void Tet::linearbasis(double r,
                       double s,
                       double t,
                       double u,
-                      //std::array<double, 4> &N) const
-                      std::vector<double> &N) const
+                      double *N) const
 {
   N[0] = r;
   N[1] = s;
@@ -75,12 +74,9 @@ void Tet::linearderiv(double ,
                       double ,
                       double ,
                       double ,
-                      //std::array<double, 4> &Nx,
-                      //std::array<double, 4> &Ny,
-                      //std::array<double, 4> &Nz) const
-                      std::vector<double> &Nx,
-                      std::vector<double> &Ny,
-                      std::vector<double> &Nz) const
+                      double *Nx,
+                      double *Ny,
+                      double *Nz) const
 {
   Nx[0] = g1x_;
   Nx[1] = g2x_;
@@ -102,8 +98,7 @@ void Tet::quadbasis(double r,
                     double s,
                     double t,
                     double u,
-                    //std::array<double, 10> &N) const
-                    std::vector<double> &N) const
+                    double *N) const
 {
   N[0] = r*(2*r-1);
   N[1] = s*(2*s-1);
@@ -121,12 +116,9 @@ void Tet::quadderiv(double r,
                     double s,
                     double t,
                     double u,
-                    //std::array<double, 10> &Nx,
-                    //std::array<double, 10> &Ny,
-                    //std::array<double, 10> &Nz) const
-                    std::vector<double> &Nx,
-                    std::vector<double> &Ny,
-                    std::vector<double> &Nz) const
+                    double *Nx,
+                    double *Ny,
+                    double *Nz) const
 {
   double a = 4.0*r-1.0;
   double b = 4.0*s-1.0;

@@ -4,15 +4,8 @@
 #include <fstream>
 #include <vector>
 
-// A statistic is a name and a value together, so a header and its rows are two
-// readings of one list rather than two functions kept in step by hand. They had
-// drifted five times before this.
-//
-// What is shared here is the mechanism, not the columns: partrac reports a
-// mesh, the experimental apps report a particle set, and the tensor tracers
-// report their own thing. Those are three different statistics and merging them
-// would be a modelling decision, not a refactor. Drift is what they had in
-// common, and this is what removes it.
+// A statistic is a name and a value together, so the header and the rows are
+// two readings of one list
 struct StatsColumn {
   const char* name;
   double value;

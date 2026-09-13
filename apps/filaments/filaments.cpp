@@ -1,4 +1,5 @@
 #include <iostream>
+#include <omp.h>
 #include <vector>
 #include <filesystem>
 #include <boost/algorithm/string.hpp>
@@ -38,6 +39,11 @@ int main(int argc, char* argv[])
     return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(filaments_schema(), argc, argv);
+
+  if (prm.get<int>("num_threads") > 0){
+      omp_set_dynamic(0);
+      omp_set_num_threads(prm.get<int>("num_threads"));
+  }
 
   std::string infilename = prm.input_file();
 

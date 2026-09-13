@@ -27,10 +27,10 @@
 //#include "experimental/statistics.hpp"
 
 template<typename T>
-std::vector<StatsColumn> stats_columns( const Real t
-                                      , T& ps
-                                      , const unsigned long int n_declined
-                                      )
+std::vector<StatsColumn> phase_stats_columns( const Real t
+                                             , T& ps
+                                             , const unsigned long int n_declined
+                                             )
 {
   std::vector<StatsColumn> cols;
   Vector x_mean = {0., 0., 0.};
@@ -393,7 +393,7 @@ int main(int argc, char* argv[])
     std::ofstream statfile;
     if (prm.get<double>("stat_intv") > 0.){
       statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-      write_stats_header(statfile, stats_columns(0., ps, 0));
+      write_stats_header(statfile, phase_stats_columns(0., ps, 0));
     }
 
     std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
@@ -431,7 +431,13 @@ int main(int argc, char* argv[])
     double duration_step = 0.;
     double duration_other = 0.;
 
+    const int sort_every = prm.get<int>("sort_every");
+
     while (t < T + dt/2){
+
+        if (sort_every > 0 && it % sort_every == 0 && it > 0)
+
+            ps.sort_by_cell();
         auto ct0 = std::chrono::high_resolution_clock::now();
 
         intp.update(t);
@@ -449,7 +455,7 @@ int main(int argc, char* argv[])
             duration_step = 0;
             duration_other = 0;
 
-            write_stats_row(statfile, stats_columns(t, ps, integrator.get_declined()));
+            write_stats_row(statfile, phase_stats_columns(t, ps, integrator.get_declined()));
 
             intp.print_found();
         }

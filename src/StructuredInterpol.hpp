@@ -12,8 +12,33 @@ void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, const U
   }
 }
 
-static void load_field(H5::H5File &h5file
-                     , double*** u
+// One field of a GridBlock, indexed (i, j, k). A view, not an owner: good
+// only while its block is alive and unresized
+template<typename T>
+struct Grid3 {
+  T* p = nullptr;
+  std::size_t sx = 0, sy = 0, sz = 0;
+  T& operator()(const Uint i, const Uint j, const Uint k){ return p[i*sx + j*sy + k*sz]; }
+  const T& operator()(const Uint i, const Uint j, const Uint k) const { return p[i*sx + j*sy + k*sz]; }
+};
+
+// All fields in one block, z fastest and a node's fields adjacent, so a
+// cell's corners bring every field in the same lines
+template<typename T>
+struct GridBlock {
+  Uint ny = 0, nz = 0, nf = 0;   // nx sizes the block and is not needed after
+  std::vector<T> v;
+  void resize(const Uint nx, const Uint ny_, const Uint nz_, const Uint nf_){
+    ny = ny_; nz = nz_; nf = nf_;
+    v.assign(std::size_t(nx)*ny*nz*nf, T());
+  }
+  Grid3<T> field(const Uint f){
+    return {v.data() + f, std::size_t(ny)*nz*nf, std::size_t(nz)*nf, nf};
+  }
+};
+
+inline void load_field(H5::H5File &h5file
+                     , Grid3<double>& u
                      , const std::string field
                      , const int nx, const int ny, const int nz
                      ){
@@ -24,14 +49,14 @@ static void load_field(H5::H5File &h5file
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
-  	    u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
+  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix];
       }
     }
   }
 }
 
-static void load_int_field(H5::H5File &h5file
-                         , int*** u
+inline void load_int_field(H5::H5File &h5file
+                         , Grid3<int>& u
                          , const std::string field
                          , const int nx, const int ny, const int nz
                          )
@@ -43,14 +68,14 @@ static void load_int_field(H5::H5File &h5file
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
-  	    u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix];
+  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix];
       }
     }
   }
 }
 
-static void load_int_field_as_bool(H5::H5File &h5file
-                                 , bool*** u
+inline void load_int_field_as_bool(H5::H5File &h5file
+                                 , Grid3<unsigned char>& u
                                  , const std::string field
                                  , const int nx
                                  , const int ny
@@ -64,18 +89,18 @@ static void load_int_field_as_bool(H5::H5File &h5file
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
-  	    u[ix][iy][iz] = Uv[nx*ny*iz+nx*iy+ix] != 0;
+  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix] != 0;
       }
     }
   }
 }
 
-static void load_h5(const std::string h5filename
-                  , double*** ux
-                  , double*** uy
-                  , double*** uz
-                  , double*** rho
-                  , double*** p
+inline void load_h5(const std::string h5filename
+                  , Grid3<double>& ux
+                  , Grid3<double>& uy
+                  , Grid3<double>& uz
+                  , Grid3<double>& rho
+                  , Grid3<double>& p
                   , const int nx
                   , const int ny
                   , const int nz
@@ -101,21 +126,21 @@ static void load_h5(const std::string h5filename
   h5file.close();
 }
 
-static double weighted_sum(double*** C,
+inline double weighted_sum(const Grid3<double>& C,
                            const Uint ind[3][2],
                            const double w[2][2][2]){  
   double f = 0.0;
   for (Uint q0=0; q0<2; ++q0){
     for (Uint q1=0; q1<2; ++q1){
       for (Uint q2=0; q2<2; ++q2){
-        f += C[ind[0][q0]][ind[1][q1]][ind[2][q2]]*w[q0][q1][q2];
+        f += C(ind[0][q0], ind[1][q1], ind[2][q2])*w[q0][q1][q2];
       }
     }
   }
   return f;
 }
 
-static double inner_product(const double ww[2][2][2], const double bb[2][2][2]){
+inline double inner_product(const double ww[2][2][2], const double bb[2][2][2]){
   double sum = 0.;
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
@@ -126,7 +151,7 @@ static double inner_product(const double ww[2][2][2], const double bb[2][2][2]){
   }
   return sum;
 }
-static void matrix_product(double v[3][3][3], double*** u, const Uint ind[3][2], const double W[3][3][3][2][2][2]){
+inline void matrix_product(double v[3][3][3], const Grid3<double>& u, const Uint ind[3][2], const double W[3][3][3][2][2][2]){
   for (Uint i=0; i<3; ++i){
     for (Uint j=0; j<3; ++j){
       for (Uint k=0; k<3; ++k){
@@ -134,7 +159,7 @@ static void matrix_product(double v[3][3][3], double*** u, const Uint ind[3][2],
         for (Uint l=0; l<2; ++l){
           for (Uint m=0; m<2; ++m){
             for (Uint n=0; n<2; ++n){
-              v[i][j][k] += W[i][j][k][l][m][n] * u[ind[0][l]][ind[1][m]][ind[2][n]];
+              v[i][j][k] += W[i][j][k][l][m][n] * u(ind[0][l], ind[1][m], ind[2][n]);
             }
           }
         }
@@ -143,11 +168,11 @@ static void matrix_product(double v[3][3][3], double*** u, const Uint ind[3][2],
   }
 }
 
-static void enforce_noslip(double v[3][3][3], bool*** isSolid, const Uint ind[3][2]){
+inline void enforce_noslip(double v[3][3][3], const Grid3<unsigned char>& isSolid, const Uint ind[3][2]){
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
-        if (isSolid[ind[0][i]][ind[1][j]][ind[2][k]]){
+        if (isSolid(ind[0][i], ind[1][j], ind[2][k])){
           for (Uint l=0; l<2; ++l){
             for (Uint m=0; m<2; ++m){
               for (Uint n=0; n<2; ++n){
@@ -161,7 +186,7 @@ static void enforce_noslip(double v[3][3][3], bool*** isSolid, const Uint ind[3]
   }
 }
 
-static void compute_solid_local(bool is_solid_3[3][3][3], bool*** isSolid, const Uint ind[3][2]){
+inline void compute_solid_local(bool is_solid_3[3][3][3], const Grid3<unsigned char>& isSolid, const Uint ind[3][2]){
   for (Uint i=0; i<3; ++i){
     for (Uint j=0; j<3; ++j){
       for (Uint k=0; k<3; ++k){
@@ -172,7 +197,7 @@ static void compute_solid_local(bool is_solid_3[3][3][3], bool*** isSolid, const
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
-        if (isSolid[ind[0][i]][ind[1][j]][ind[2][k]]){
+        if (isSolid(ind[0][i], ind[1][j], ind[2][k])){
           for (Uint l=0; l<2; ++l){
             for (Uint m=0; m<2; ++m){
               for (Uint n=0; n<2; ++n){
@@ -186,7 +211,7 @@ static void compute_solid_local(bool is_solid_3[3][3][3], bool*** isSolid, const
   }
 }
 
-static void enforce_noslip(double V[2][2][2], const bool is_solid_2[2][2][2]){
+inline void enforce_noslip(double V[2][2][2], const bool is_solid_2[2][2][2]){
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
@@ -198,7 +223,7 @@ static void enforce_noslip(double V[2][2][2], const bool is_solid_2[2][2][2]){
 }
 
 template<typename T>
-static void get_subcube(T V[2][2][2], const T v[3][3][3], const bool sub_x[3]){
+inline void get_subcube(T V[2][2][2], const T v[3][3][3], const bool sub_x[3]){
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
@@ -208,15 +233,15 @@ static void get_subcube(T V[2][2][2], const T v[3][3][3], const bool sub_x[3]){
   }
 }
 
-//static void compute_velocity_subcube(double V[2][2][2], double*** u, bool*** isSolid, const bool sub_x[3], const Uint ind[3][2], const double W[3][3][3][2][2][2]){
-static void compute_velocity_subcube(double V[2][2][2], double*** u, const bool is_solid_2[2][2][2], const bool sub_x[3], const Uint ind[3][2], const double W[3][3][3][2][2][2]){
+inline void compute_velocity_subcube(double V[2][2][2], const Grid3<double>& u, const bool is_solid_2[2][2][2], const bool sub_x[3], const Uint ind[3][2], const double W[3][3][3][2][2][2]){
   double v[3][3][3];
   matrix_product(v, u, ind, W);
   get_subcube(V, v, sub_x);
   enforce_noslip(V, is_solid_2);
 }
 
-class StructuredInterpol : public Interpol {
+class StructuredInterpol final
+  : public Interpol {
 public:
   StructuredInterpol(const std::string& infilename);
   void update(const double t);
@@ -257,11 +282,9 @@ public:
   using Interpol::locate;
   using Interpol::evaluate;
 protected:
-  void probe_space(const Vector3d &x);
   Timestamps ts;
   double t_prev = 0.;
   double t_next = 0.;
-  double alpha_t;
 
   Uint n[3] = {0, 0, 0};
   Vector3d dx;
@@ -269,41 +292,13 @@ protected:
   double wq[3][2];
   double dwq[3][2];
 
-  bool*** isSolid;
-  double*** levelZ;
-  double*** ux_prev;
-  double*** uy_prev;
-  double*** uz_prev;
-  double*** ux_next;
-  double*** uy_next;
-  double*** uz_next;
-  double*** rho_prev;
-  double*** rho_next;
-  double*** p_prev;
-  double*** p_next;
-
-  Uint ind[3][2] = {{0, 0}, {0, 0}, {0, 0}};  // trilinear intp
-  Uint ind_pc[3] = {0, 0, 0};  // piecewise constant intp
-
-  double w[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dw_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dw_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dw_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-
-  double wux[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwux_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwux_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwux_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-
-  double wuy[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuy_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuy_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuy_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-
-  double wuz[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuz_x[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuz_y[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double dwuz_z[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
+  GridBlock<unsigned char> solid_;   // not bool: vector<bool> hands out proxies
+  GridBlock<double> fields_;
+  Grid3<unsigned char> isSolid;
+  Grid3<double> ux_prev, uy_prev, uz_prev;
+  Grid3<double> ux_next, uy_next, uz_next;
+  Grid3<double> rho_prev, rho_next;
+  Grid3<double> p_prev, p_next;
 
   double W[3][3][3][2][2][2];
 
@@ -401,46 +396,13 @@ StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol
   }
 
   // Create arrays
-  isSolid = new bool**[n[0]];
-  levelZ = new double**[n[0]];
-  ux_prev = new double**[n[0]];
-  uy_prev = new double**[n[0]];
-  uz_prev = new double**[n[0]];
-  ux_next = new double**[n[0]];
-  uy_next = new double**[n[0]];
-  uz_next = new double**[n[0]];
-  rho_prev = new double**[n[0]];
-  rho_next = new double**[n[0]];
-  p_prev = new double**[n[0]];
-  p_next = new double**[n[0]];
-  for (Uint ix=0; ix<n[0]; ++ix){
-    isSolid[ix] = new bool*[n[1]];
-    levelZ[ix] = new double*[n[1]];
-    ux_prev[ix] = new double*[n[1]];
-    uy_prev[ix] = new double*[n[1]];
-    uz_prev[ix] = new double*[n[1]];
-    ux_next[ix] = new double*[n[1]];
-    uy_next[ix] = new double*[n[1]];
-    uz_next[ix] = new double*[n[1]];
-    rho_prev[ix] = new double*[n[1]];
-    rho_next[ix] = new double*[n[1]];
-    p_prev[ix] = new double*[n[1]];
-    p_next[ix] = new double*[n[1]];
-    for (Uint iy=0; iy<n[1]; ++iy){
-      isSolid[ix][iy] = new bool[n[2]];
-      levelZ[ix][iy] = new double[n[2]];
-      ux_prev[ix][iy] = new double[n[2]];
-      uy_prev[ix][iy] = new double[n[2]];
-      uz_prev[ix][iy] = new double[n[2]];
-      ux_next[ix][iy] = new double[n[2]];
-      uy_next[ix][iy] = new double[n[2]];
-      uz_next[ix][iy] = new double[n[2]];
-      rho_prev[ix][iy] = new double[n[2]];
-      rho_next[ix][iy] = new double[n[2]];
-      p_prev[ix][iy] = new double[n[2]];
-      p_next[ix][iy] = new double[n[2]];
-    }
-  }
+  solid_.resize(n[0], n[1], n[2], 1);
+  isSolid = solid_.field(0);
+  fields_.resize(n[0], n[1], n[2], 10);
+  Uint f = 0;
+  for (Grid3<double>* g : {&ux_prev, &ux_next, &uy_prev, &uy_next, &uz_prev, &uz_next,
+                           &rho_prev, &rho_next, &p_prev, &p_next})
+    *g = fields_.field(f++);
 
   load_int_field_as_bool(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
   solid_file.close();
@@ -475,7 +437,7 @@ void StructuredInterpol::update(const double t){
       std::swap(ux_prev, ux_next);
       std::swap(uy_prev, uy_next);
       if (!ignore_uz)
-        std::swap(uz_prev, uz_prev);
+        std::swap(uz_prev, uz_next);
       if (!ignore_density)
         std::swap(rho_prev, rho_next);
       if (!ignore_pressure)
@@ -499,7 +461,6 @@ void StructuredInterpol::update(const double t){
     t_prev = sp.prev.t;
     t_next = sp.next.t;
   }
-  // alpha_t = sp.weight_next(t);
   t_update = t;
 }
 
@@ -507,10 +468,12 @@ void StructuredInterpol::update(const double t){
 bool StructuredInterpol::locate(const Vector3d &x, const double t, int& cell_id){
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
-  return !isSolid[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+  return !isSolid(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
 }
 
 void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
+  // Where t sits between the stamps; past the last one the previous field stands
+  const double alpha_t = (t_next > t_prev) ? (t - t_prev)/(t_next - t_prev) : 0.;
   // Assuming locate has already been called and found that the cell is not in solid
   double Ux_prev, Uy_prev, Uz_prev;
   double Ux_next, Uy_next, Uz_next;
@@ -623,26 +586,26 @@ void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int c
 
     Uint _ind_pc[3];
     compute_ind_pc(_ind_pc, x, dx, n);
-    Rho_prev = rho_prev[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
-    Rho_next = rho_next[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+    Rho_prev = rho_prev(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
+    Rho_next = rho_next(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
 
-    P_prev = p_prev[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
-    P_next = p_next[_ind_pc[0]][_ind_pc[1]][_ind_pc[2]];
+    P_prev = p_prev(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
+    P_next = p_next(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
 
     Uxx_prev = inner_product(_dwux_x, _Vx_prev);
-    Uxx_next = inner_product(_dwux_x, _Vx_prev);
+    Uxx_next = inner_product(_dwux_x, _Vx_next);
     Uxy_prev = inner_product(_dwux_y, _Vx_prev);
     Uxy_next = inner_product(_dwux_y, _Vx_next);
     Uxz_prev = inner_product(_dwux_z, _Vx_prev);
     Uxz_next = inner_product(_dwux_z, _Vx_next);
     Uyx_prev = inner_product(_dwux_x, _Vy_prev);
-    Uyx_next = inner_product(_dwux_x, _Vy_prev);
+    Uyx_next = inner_product(_dwux_x, _Vy_next);
     Uyy_prev = inner_product(_dwux_y, _Vy_prev);
     Uyy_next = inner_product(_dwux_y, _Vy_next);
     Uyz_prev = inner_product(_dwux_z, _Vy_prev);
     Uyz_next = inner_product(_dwux_z, _Vy_next);
     Uzx_prev = inner_product(_dwux_x, _Vz_prev);
-    Uzx_next = inner_product(_dwux_x, _Vz_prev);
+    Uzx_next = inner_product(_dwux_x, _Vz_next);
     Uzy_prev = inner_product(_dwux_y, _Vz_prev);
     Uzy_next = inner_product(_dwux_y, _Vz_next);
     Uzz_prev = inner_product(_dwux_z, _Vz_prev);
@@ -689,7 +652,7 @@ bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
-        if (isSolid[_ind[0][i]][_ind[1][j]][_ind[2][k]]) {
+        if (isSolid(_ind[0][i], _ind[1][j], _ind[2][k])) {
           return false;
         }
       }
@@ -821,149 +784,6 @@ void StructuredInterpol::probe_space_boundary(
   }
 }
 
-void StructuredInterpol::probe_space(const Vector3d &x){
-  // Computes ind, wq, w and inside_domain_factor
-
-  // Constant
-  for (Uint i=0; i<3; ++i){
-    ind_pc[i] = imodulo(round(x[i]/dx[i]), n[i]);
-  }
-  is_inside_domain = !isSolid[ind_pc[0]][ind_pc[1]][ind_pc[2]];
-
-  if (!is_inside_domain){
-    // All weights to zero
-    for (Uint i=0; i<2; ++i){
-      for (Uint j=0; j<2; ++j){
-        for (Uint k=0; k<2; ++k){
-          w[i][j][k] = 0.;
-          dw_x[i][j][k] = 0.;
-          dw_y[i][j][k] = 0.;
-          dw_z[i][j][k] = 0.;
-        }
-      }
-    }
-  }
-  else {
-    int ix_fl[3];
-    for (Uint i=0; i<3; ++i){
-      ix_fl[i] = floor(x[i]/dx[i]);
-    }
-
-    for (Uint i=0; i<3; ++i){
-      ind[i][0] = imodulo(ix_fl[i], n[i]);
-      ind[i][1] = imodulo(ind[i][0] + 1, n[i]);
-    }
-
-    is_bulk = true;
-    for (Uint i=0; i<2; ++i){
-      for (Uint j=0; j<2; ++j){
-        for (Uint k=0; k<2; ++k){
-          is_bulk = is_bulk && !isSolid[ind[0][i]][ind[1][j]][ind[2][k]];
-        }
-      }
-    }
-
-    // Testing:
-    //is_bulk = false;
-
-    if (is_bulk){
-      for (Uint i=0; i<3; ++i){
-        double wxi = (x[i]-dx[i]*ix_fl[i])/dx[i];
-        wq[i][0] = 1 - wxi;
-        wq[i][1] =     wxi;
-      }
-
-      for (Uint i=0; i<2; ++i){
-        for (Uint j=0; j<2; ++j){
-          for (Uint k=0; k<2; ++k){
-            w[i][j][k] = wq[0][i] * wq[1][j] * wq[2][k];
-          }
-        }
-      }
-      for (Uint i=0; i<2; ++i){
-        for (Uint j=0; j<2; ++j){
-          for (Uint k=0; k<2; ++k){
-            dw_x[i][j][k] = dwq[0][i] *  wq[1][j] *  wq[2][k];
-            dw_y[i][j][k] =  wq[0][i] * dwq[1][j] *  wq[2][k];
-            dw_z[i][j][k] =  wq[0][i] *  wq[1][j] * dwq[2][k];
-          }
-        }
-      }
-    }
-    else {
-      double xd[3];
-      for (Uint i=0; i<3; ++i){
-        xd[i] = x[i]/dx[i] - ix_fl[i];
-      }
-
-      bool sub_x[3];
-      for (Uint i=0; i<3; ++i){
-        sub_x[i] = xd[i] >= 0.5;
-      }
-
-      bool is_solid_3[3][3][3];
-      bool is_solid_2[2][2][2];
-      compute_solid_local(is_solid_3, isSolid, ind);
-      get_subcube(is_solid_2, is_solid_3, sub_x);
-
-      compute_velocity_subcube(Vx_prev, ux_prev, is_solid_2, sub_x, ind, W);
-      compute_velocity_subcube(Vy_prev, uy_prev, is_solid_2, sub_x, ind, W);
-      compute_velocity_subcube(Vz_prev, uz_prev, is_solid_2, sub_x, ind, W);
-
-      compute_velocity_subcube(Vx_next, ux_next, is_solid_2, sub_x, ind, W);
-      compute_velocity_subcube(Vy_next, uy_next, is_solid_2, sub_x, ind, W);
-      compute_velocity_subcube(Vz_next, uz_next, is_solid_2, sub_x, ind, W);
-
-      for (Uint i=0; i<3; ++i){
-        double wxi = sub_x[i] ? 2 * xd[i] - 1.0: 2 * xd[i];
-        wq[i][0] = 1 - wxi;
-        wq[i][1] =     wxi;
-      }
-
-      double gamma = 2;
-      for (Uint i=0; i<2; ++i){
-        for (Uint j=0; j<2; ++j){
-          for (Uint k=0; k<2; ++k){
-            double wqux = wq[0][i];
-            double dwqux = dwq[0][i];
-            if (is_solid_2[i == 0 ? 1 : 0][j][k]){
-              wqux = pow(wq[0][i], gamma);
-              dwqux = gamma * pow(wq[0][i], gamma-1) * dwq[0][i];
-            }
-            double wquy = wq[1][j];
-            double dwquy = dwq[1][j];
-            if (is_solid_2[i][j == 0 ? 1 : 0][k]){
-              wquy = pow(wq[1][j], gamma);
-              dwquy = gamma * pow(wq[1][j], gamma-1) * dwq[1][j];
-            }
-            double wquz = wq[2][k];
-            double dwquz = dwq[2][k];
-            if (is_solid_2[i][j][k == 0 ? 1 : 0]){
-              wquz = pow(wq[2][k], gamma);
-              dwquz = gamma * pow(wq[2][k], gamma-1) * dwq[2][k];
-            }
-
-            wux[i][j][k] = wqux     * wq[1][j] * wq[2][k];
-            wuy[i][j][k] = wq[0][i] * wquy     * wq[2][k];
-            wuz[i][j][k] = wq[0][i] * wq[1][j] * wquz;
-
-            dwux_x[i][j][k] = 2 * dwqux *  wq[1][j] *  wq[2][k];
-            dwux_y[i][j][k] = 2 *  wqux * dwq[1][j] *  wq[2][k];
-            dwux_z[i][j][k] = 2 *  wqux *  wq[1][j] * dwq[2][k];
-
-            dwuy_x[i][j][k] = 2 * dwq[0][i] *  wquy *  wq[2][k];
-            dwuy_y[i][j][k] = 2 *  wq[0][i] * dwquy *  wq[2][k];
-            dwuy_z[i][j][k] = 2 *  wq[0][i] *  wquy * dwq[2][k];
-
-            dwuz_x[i][j][k] = 2 * dwq[0][i] *  wq[1][j] *  wquz;
-            dwuz_y[i][j][k] = 2 *  wq[0][i] * dwq[1][j] *  wquz;
-            dwuz_z[i][j][k] = 2 *  wq[0][i] *  wq[1][j] * dwquz;
-          }
-        }
-      }
-    }
-  }
-}
 
 // Interpolate in space and time and enforce BCs
 

@@ -207,7 +207,7 @@ void dump_vector_field(const std::string& output_file,
     outfile << std::setprecision(checkpoint_precision)
             << x_rw[irw][0] << " "
             << x_rw[irw][1] << " "
-            << x_rw[irw][2] << std::endl;
+            << x_rw[irw][2] << "\n";
   }
   outfile.close();
 }
@@ -220,7 +220,7 @@ void dump_vector_field(const std::string& output_file,
     outfile << std::setprecision(checkpoint_precision)
             << (*posit)[0] << " "
             << (*posit)[1] << " "
-            << (*posit)[2] << std::endl;
+            << (*posit)[2] << "\n";
   }
   outfile.close();
 }
@@ -270,7 +270,7 @@ void dump_list(const std::string& output_file,
                const std::vector<Uint> &li){
   std::ofstream outfile(output_file);
   for (const Uint i : li){
-    outfile << i << std::endl;
+    outfile << i << "\n";
   }
   outfile.close();
 }
@@ -282,7 +282,7 @@ void dump_faces(const std::string& output_file,
        faceit != faces.end(); ++faceit){
     outfile << faceit->first[0] << " " << faceit->first[1] << " " << faceit->first[2]
             << " " << std::setprecision(checkpoint_precision) << faceit->second
-            << " " << faceit->tau << " " << faceit->rho_prev << std::endl;
+            << " " << faceit->tau << " " << faceit->rho_prev << "\n";
   }
   outfile.close();
 }
@@ -294,7 +294,7 @@ void dump_edges(const std::string& output_file,
        edgeit != edges.end(); ++edgeit){
     outfile << edgeit->first[0] << " " << edgeit->first[1] << " "
             << std::setprecision(checkpoint_precision) << edgeit->second
-            << " " << edgeit->tau << " " << edgeit->rho_prev << std::endl;
+            << " " << edgeit->tau << " " << edgeit->rho_prev << "\n";
   }
   outfile.close();
 }
@@ -314,7 +314,7 @@ void dump_scalar_field(const std::string& output_file,
                    // TODO: to hdf5
   std::ofstream outfile(output_file);
   for (Uint irw=0; irw < Nrw; ++irw){
-    outfile << std::setprecision(checkpoint_precision) << c_rw[irw] << std::endl;
+    outfile << std::setprecision(checkpoint_precision) << c_rw[irw] << "\n";
   }
   outfile.close();
 }

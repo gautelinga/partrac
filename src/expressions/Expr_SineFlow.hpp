@@ -6,7 +6,7 @@
 
 //using namespace std;
 
-class Expr_SineFlow : public Expr {
+class Expr_SineFlow final : public Expr {
 public:
   Expr_SineFlow(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     flowdir_ = getivec(expr_params, "flowdir");

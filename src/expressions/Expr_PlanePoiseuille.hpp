@@ -5,7 +5,7 @@
 
 //using namespace std;
 
-class Expr_PlanePoiseuille : public Expr {
+class Expr_PlanePoiseuille final : public Expr {
 public:
   Expr_PlanePoiseuille(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
     //R = getd(expr_params, "R");
