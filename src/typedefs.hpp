@@ -11,6 +11,9 @@
 
 typedef std::size_t Uint;
 
+// Inline everything in per-particle loops
+#define PARTRAC_HOT_LOOP __attribute__((flatten))
+
 class EdgeType {
 public:
     EdgeType (const std::array<Uint, 2>& a, const double b) : first(a), second(b) {};

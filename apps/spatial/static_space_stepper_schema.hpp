@@ -10,16 +10,18 @@ inline partrac::Schema spatial_schema(){
   partrac::Schema s("static_space_stepper");
   add_initializer_params(s);
   s.require<std::string>("mode", "interpolator type");
-  s.require<double>("T", "final position");
+  s.require<double>("T", "integration time after which a node stops");
   s.require<int>("int_order", "interpolation order");
   s.require<double>("dx_max", "max step length");
   s.require<double>("dxn", "normal step length");
   s.opt<double>("Dm", 0.0, "diffusivity, enters the folder name only");
   s.opt<double>("dt", 1.0, "timestep, enters the folder name only");
   s.opt<double>("U", 1.0, "velocity scale");
-  s.opt<double>("Ln", 0.0, "exit plane position");
+  s.opt<double>("Ln", 0.0, "path length the march ends at");
   s.opt<double>("xn0", 0.0, "path length the march starts from");
-  s.opt<double>("u_eps", 1e-7, "velocity cutoff");
+  s.opt<double>("u_eps", 1e-7, "a node this slow or slower cannot move");
+  s.opt<std::string>("outside", "remove", "a node that cannot take its step (outside, too slow, done, or a step longer than dx_max): ignore (it stays), mark (c = 2), or remove");
+  s.opt<int>("sort_every", 5, "reorder particles by cell every this many steps, 0 = never");
   s.opt<double>("dump_intv", 100.0, "dump interval");
   s.opt<double>("stat_intv", 100.0, "statistics interval");
   s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
@@ -42,16 +44,17 @@ inline partrac::Schema spatial_schema(){
   s.opt<std::string>("tag", "", "appended to the folder name");
   s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
-  s.runtime<double>("t", 0.0, "current time");
+  s.runtime<double>("t", 0.0, "path length marched");
+  s.runtime<Uint>("it", 0, "current step");
   s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
                      "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+  s.choices("outside", {"ignore", "mark", "remove"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");
-  // dump_intv and stat_intv become step counts, so they must not round to zero
-  // an interval of 0 turns that output off; a negative one is a typo
+  // Floor output intervals at one step; 0 is off, negative an error
   s.check([](const partrac::Params& p){
             for (const auto& key : {"checkpoint_intv", "coarsen_intv", "dump_intv", "refine_intv", "stat_intv"})
               if (p.get<double>(key) < 0.) return false;

@@ -55,8 +55,7 @@ private:
     if (a < 1e-3) return -0.5 + a/3. - a*a/8.;
     return (a*std::exp(-a) + std::expm1(-a))/(a*a);
   };
-  // Writes no members: the PointValues overload runs inside an omp for.
-  // phi(s^2/R1^2) absorbs the 1/s^2, so the axis is regular: solid-body at u0/R1.
+  // No member writes: called inside omp for. Regular on the axis
   void compute(const Vector3d &x, Vector3d& U_, Matrix3d& gradU_, double& P_) const {
     Vector3d r = x-x0;
     double s2 = r[0]*r[0]+r[1]*r[1];

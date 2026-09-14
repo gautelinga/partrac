@@ -3,17 +3,7 @@
 #ifndef __EXPR_TAYLORCOUETTE_HPP
 #define __EXPR_TAYLORCOUETTE_HPP
 
-// Martinez-Ruiz et al., J. Fluid Mech. 837 (2018) 230-257, equation (3.2):
-// the analytic fit to their measured Taylor-Couette flow, with the inner
-// cylinder at r = 1 turning at unit speed and the outer cylinder, the top and
-// the bottom at rest. Lengths are in units of the inner radius and time in
-// units of 1/Omega, so the cell is 1 <= r <= R, |z| <= H/2 about x0.
-//
-// The meridional part comes from a stream function, u_r = -(1/r) dPsi/dz and
-// u_z = (1/r) dPsi/dr, so it is divergence free by construction rather than
-// to within a fit. Ekman pumping off the end plates is the a-mode; the two
-// exponentials in u_theta carry the corner singularities where the turning
-// inner cylinder slides past the stationary plates, c3 the bulk rotation.
+// Martinez-Ruiz et al., J. Fluid Mech. 837 (2018), eq. (3.2); lengths in inner radii, time in 1/Omega
 class Expr_TaylorCouette final : public Expr {
 public:
   Expr_TaylorCouette(std::map<std::string, std::string> &expr_params) : Expr(expr_params) {
@@ -61,14 +51,13 @@ public:
   double uzy() { return gradU(2, 1); };
   double uzz() { return gradU(2, 2); };
 private:
-  // Writes no members: the PointValues overload runs inside an omp for
+  // No member writes: called inside omp for
   void compute(const Vector3d &x, Vector3d& U_, Matrix3d& gradU_) const {
     Vector3d d = x-x0;
     double s = sqrt(d[0]*d[0]+d[1]*d[1]);
     double z = d[2];
 
-    // the walls are streamlines, so a particle only leaves them by integration
-    // error; clamping keeps the corner terms finite for those excursions
+    // Clamp to the walls
     double dr = std::max(s-1., 0.);
     double t1 = tanh(c2*std::max(H/2-z, 0.));
     double t2 = tanh(c2*std::max(H/2+z, 0.));
@@ -100,8 +89,7 @@ private:
 
     double c = d[0]/s, sn = d[1]/s;
     U_ = {u_r*c - u_t*sn, u_r*sn + u_t*c, u_z};
-    // gradU_(i, j) is dU_i/dx_j; the basis vectors turn with theta, which is
-    // what the u_r/s and u_t/s terms are
+    // gradU_(i, j) is dU_i/dx_j
     gradU_ <<
       c*c*dur_dr - c*sn*dut_dr + (sn*sn*u_r + sn*c*u_t)/s,
       sn*c*dur_dr - sn*sn*dut_dr - (sn*c*u_r + c*c*u_t)/s,

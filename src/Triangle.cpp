@@ -12,19 +12,22 @@ Triangle::Triangle(const dolfin::Cell& cell)
   //   zz_[i] = coords[3*i+2];
   // }
 
+  std::array<double, 3> xx, yy;
   for (dolfin::VertexIterator v(cell); !v.end(); ++v)
   {
     const std::size_t pos = v.pos();
-    xx_[pos] = v->x(0);
-    yy_[pos] = v->x(1);
+    xx[pos] = v->x(0);
+    yy[pos] = v->x(1);
   }
+  x0_ = xx[0];
+  y0_ = yy[0];
 
-  double j11 = xx_[1]-xx_[0];
-  double j12 = yy_[1]-yy_[0];
-  double j21 = xx_[2]-xx_[0];
-  double j22 = yy_[2]-yy_[0];
+  double j11 = xx[1]-xx[0];
+  double j12 = yy[1]-yy[0];
+  double j21 = xx[2]-xx[0];
+  double j22 = yy[2]-yy[0];
 
-  det = j11 * j22 - j12*j21;
+  const double det = j11 * j22 - j12*j21;
 
   double d = 1.0/det;
   g2x_ = j22*d;   g3x_ = -j12*d;
@@ -42,7 +45,7 @@ bool Triangle::contains(const Vector3d& x) const
 void Triangle::xy2bary(double x, double y,
                        double &r, double &s, double &t) const
 {
-  double dx=x-xx_[0], dy=y-yy_[0];
+  double dx=x-x0_, dy=y-y0_;
   s = g2x_*dx+g2y_*dy;
   t = g3x_*dx+g3y_*dy;
   r = 1.-s-t;
@@ -58,25 +61,6 @@ void Triangle::linearbasis( double r
   N[1] = s;
   N[2] = t;
 }
-
-std::vector<double> Triangle::dof_coords(const int index) const {
-  if (index < 3){
-    return {xx_[index], yy_[index]};
-  }
-  else if (index == perm_[3]){
-    return {0.5*(xx_[0] + xx_[1]), 0.5*(yy_[0] + yy_[1])};
-  }
-  else if (index == perm_[4]){
-    return {0.5*(xx_[1] + xx_[2]), 0.5*(yy_[1] + yy_[2])};
-  }
-  else if (index == perm_[5]){
-    return {0.5*(xx_[0] + xx_[2]), 0.5*(yy_[0] + yy_[2])};
-  }
-  else {
-    std::cout << "ERROR: Triangle" << std::endl;
-    exit(1);
-  }
-};
 
 void Triangle::linearderiv( double r
                           , double s
@@ -132,13 +116,6 @@ void Triangle::quadderiv( double r
   Ny[perm_[3]] = 4*(r*g2y_+s*g1y_);
   Ny[perm_[4]] = 4*(s*g3y_+t*g2y_);
   Ny[perm_[5]] = 4*(t*g1y_+r*g3y_);
-}
-
-void Triangle::dump(){
-  for (Uint i=0; i<3; ++i){
-    std::cout << xx_[i] << " " << yy_[i] << std::endl;
-  }
-  std::cout << std::endl;
 }
 
 double Triangle::dot_grad_gi(const double vx, const double vy, const int index) const

@@ -11,6 +11,7 @@
 #include "expressions/Expr_BrinkmanCylinder.hpp"
 #include "expressions/Expr_HagenPoiseuille.hpp"
 #include "expressions/Expr_InfinitePlate.hpp"
+#include "expressions/Expr_LinearFlow.hpp"
 #include "expressions/Expr_PlanePoiseuille.hpp"
 #include "expressions/Expr_SineFlow.hpp"
 #include "expressions/Expr_StokesSphere.hpp"
@@ -190,6 +191,22 @@ TEST_CASE("PlanePoiseuille", "[expr]") {
            {"rho", "1.2"}, {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
   Expr_PlanePoiseuille e(p);
   check_all(e, {0.3, 0.2, 0.1}, {-0.4, 0.15, 0.6}, 0.);
+}
+
+TEST_CASE("LinearFlow", "[expr]") {
+  // a traceless A, so the incompressibility check applies too
+  Prm p = {{"Axx", "0.3"}, {"Axy", "-1.0"}, {"Ayx", "1.0"}, {"Ayy", "0.5"},
+           {"Azz", "-0.8"}, {"Azx", "0.2"}, {"x0", "0.1"}, {"y0", "0.0"}, {"z0", "-0.2"},
+           {"p_inf", "0.5"}, {"rho", "1.2"}};
+  Expr_LinearFlow e(p);
+  check_all(e, {0.3, 0.2, 0.1}, {-0.4, 0.15, 0.6}, 0.);
+  PointValues pv(1.0);
+  e.eval({0.1, 0.0, -0.2}, 0., pv);   // the origin is at rest
+  REQUIRE(pv.U.norm() == Approx(0.).margin(1e-15));
+  e.eval({1.1, 0.0, -0.2}, 0., pv);   // one unit along x picks the x column
+  REQUIRE(pv.U[0] == Approx(0.3));
+  REQUIRE(pv.U[1] == Approx(1.0));
+  REQUIRE(pv.U[2] == Approx(0.2));
 }
 
 TEST_CASE("HagenPoiseuille", "[expr]") {

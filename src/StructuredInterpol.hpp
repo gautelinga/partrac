@@ -1,19 +1,19 @@
 #ifndef __STRUCTUREDINTERPOL_HPP
 #define __STRUCTUREDINTERPOL_HPP
 
+#include <boost/algorithm/string.hpp>
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
 
-void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, const Uint n[3]){
+inline void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, const Uint n[3]){
   // Constant
   for (Uint i=0; i<3; ++i){
     ind_pc[i] = imodulo(round(x[i]/dx[i]), n[i]);
   }
 }
 
-// One field of a GridBlock, indexed (i, j, k). A view, not an owner: good
-// only while its block is alive and unresized
+// View of one GridBlock field; valid while the block is unresized
 template<typename T>
 struct Grid3 {
   T* p = nullptr;
@@ -22,11 +22,10 @@ struct Grid3 {
   const T& operator()(const Uint i, const Uint j, const Uint k) const { return p[i*sx + j*sy + k*sz]; }
 };
 
-// All fields in one block, z fastest and a node's fields adjacent, so a
-// cell's corners bring every field in the same lines
+// All fields in one block, z fastest, a node's fields adjacent
 template<typename T>
 struct GridBlock {
-  Uint ny = 0, nz = 0, nf = 0;   // nx sizes the block and is not needed after
+  Uint ny = 0, nz = 0, nf = 0;   // nx not stored
   std::vector<T> v;
   void resize(const Uint nx, const Uint ny_, const Uint nz_, const Uint nf_){
     ny = ny_; nz = nz_; nf = nf_;
@@ -292,7 +291,7 @@ protected:
   double wq[3][2];
   double dwq[3][2];
 
-  GridBlock<unsigned char> solid_;   // not bool: vector<bool> hands out proxies
+  GridBlock<unsigned char> solid_;   // not bool (vector<bool>)
   GridBlock<double> fields_;
   Grid3<unsigned char> isSolid;
   Grid3<double> ux_prev, uy_prev, uz_prev;
@@ -326,7 +325,7 @@ protected:
   bool ignore_uz = false;
 };
 
-StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol(infilename) {
+inline StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol(infilename) {
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
@@ -429,7 +428,7 @@ StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol
   }
 }
 
-void StructuredInterpol::update(const double t){
+inline void StructuredInterpol::update(const double t){
   StampPair sp = ts.get(t);
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
@@ -465,15 +464,15 @@ void StructuredInterpol::update(const double t){
 }
 
 
-bool StructuredInterpol::locate(const Vector3d &x, const double t, int& cell_id){
+inline bool StructuredInterpol::locate(const Vector3d &x, const double t, int& cell_id){
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
   return !isSolid(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
 }
 
-void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
-  // Where t sits between the stamps; past the last one the previous field stands
-  const double alpha_t = (t_next > t_prev) ? (t - t_prev)/(t_next - t_prev) : 0.;
+inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
+  // Time weight between stamps
+  const double alpha_t = stamp_weight(t, t_prev, t_next);
   // Assuming locate has already been called and found that the cell is not in solid
   double Ux_prev, Uy_prev, Uz_prev;
   double Ux_next, Uy_next, Uz_next;
@@ -615,9 +614,9 @@ void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int c
   fields.U = { alpha_t * Ux_next + (1-alpha_t) * Ux_prev,
                alpha_t * Uy_next + (1-alpha_t) * Uy_prev,
                alpha_t * Uz_next + (1-alpha_t) * Uz_prev };
-  fields.A = { (Ux_next-Ux_prev)/(t_next-t_prev),
-               (Uy_next-Uy_prev)/(t_next-t_prev),
-               (Uz_next-Uz_prev)/(t_next-t_prev) };
+  fields.A = { stamp_rate(Ux_next, Ux_prev, t_prev, t_next),
+               stamp_rate(Uy_next, Uy_prev, t_prev, t_next),
+               stamp_rate(Uz_next, Uz_prev, t_prev, t_next) };
 
   fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
   fields.Rho = alpha_t * Rho_next + (1-alpha_t) * Rho_prev;
@@ -637,7 +636,7 @@ void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int c
 }
 
 
-bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
+inline bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
   // Assuming this cell is not inside the solid phase
   for (Uint i=0; i<3; ++i){
     _ix_fl[i] = floor(x[i]/dx[i]);
@@ -661,7 +660,7 @@ bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix
   return true;
 }
 
-void StructuredInterpol::probe_space_bulk(const Vector3d &x, 
+inline void StructuredInterpol::probe_space_bulk(const Vector3d &x, 
     const Uint _ind[3][2],
     const int _ix_fl[3],
     double _w[2][2][2],
@@ -696,7 +695,7 @@ void StructuredInterpol::probe_space_bulk(const Vector3d &x,
   }
 }
 
-void StructuredInterpol::probe_space_boundary(
+inline void StructuredInterpol::probe_space_boundary(
   const Vector3d &x, 
   const Uint _ind[3][2],
   const int _ix_fl[3],

@@ -43,6 +43,8 @@ class DolfInterpol final
 public:
   DolfInterpol(const std::string& infilename);
   void update(const double t);
+  using Interpol::locate;
+  using Interpol::evaluate;
   bool locate(const Vector3d &x, const double t, int& cell_id);
   void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals);
   double get_t_min() { return ts.get_t_min(); };
@@ -97,8 +99,8 @@ protected:
   Uint u_dim_ = 0, p_dim_ = 0;
   // Read out whole at each load: dolfin's vector is not safe to read in parallel
   std::vector<double> u_prev_data_, u_next_data_, p_prev_data_, p_next_data_;
-  std::vector<std::vector<dolfin::la_index>> u_dofs_, p_dofs_;
-  std::vector<long unsigned int> found_same_, found_nneigh_, found_other_;
+  CellDofs u_dofs_, p_dofs_;
+  std::vector<FoundCounts> found_;
   Vector3d _modx(const Vector3d&);
 
 

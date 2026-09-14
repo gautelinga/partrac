@@ -113,7 +113,6 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
       init_state = std::make_shared<FileInitializer>(key_col, intp, prm);
     }
     else {
-      // leaving init_state null here means the caller dereferences it
       std::cout << "Unknown init_mode ('from' type): " << init_mode << std::endl;
       exit(1);
     }
@@ -138,7 +137,6 @@ inline void write_h5part(const std::string& path,
     std::vector<double> col_data(num_rows);
 
     for (hsize_t ic = 0; ic < num_cols; ++ic) {
-        // One pass per column over an array interleaved by column, so every read is a miss
         #pragma omp parallel for
         for (hsize_t ir = 0; ir < num_rows; ++ir)
             col_data[ir] = ptdata_[ir * num_cols + ic];

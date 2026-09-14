@@ -1,23 +1,25 @@
-"""The scalar reconstruction of the diffusive strip and sheet methods.
+"""The compressed time tau and the scalar reconstruction of diffusive strips and sheets.
 
-Meunier & Villermaux (2010) reduce the advection-diffusion problem across a
-strip to one variable. With the striation thickness s = s0/rho, their equation
-(2.6) counts time in units of the current diffusion time,
+Meunier & Villermaux (2010) reduce advection-diffusion across a strip of
+striation thickness s = s0/rho to one variable, time in units of the current
+diffusion time (their eq. 2.6),
 
     dtau/dt = D/s(t)^2,   so   tau = (D/s0^2) int_0^t rho^2 dt',
 
-and equation (2.8) gives the whole transverse profile from it,
+and the transverse profile follows from it (eq. 2.8),
 
     c(n, t) = c0 (1 + 4 tau)^(-1/2) exp[-(n/s)^2 / (1 + 4 tau)],
 
 so the maximum concentration is c0/sqrt(1 + 4 tau). partrac integrates the bare
-int rho^2 dt' per edge, or per face for a sheet, and writes it as `tau` beside
-`dl`/`dl0` in the dump; D and s0 are applied afterwards, which is what lets a
-finished run be rescaled in s0 (the paper makes the same point).
+int rho^2 dt' per edge (per face for a sheet) and dumps it as `tau` beside
+`dl`/`dl0`; D and s0 are applied afterwards, so a finished run can be rescaled
+in s0.
 
 Wherever the elongation has a closed form, so does tau. For a line laid along x
 in plane Poiseuille the velocity is constant along each path, so an edge at x
 has rho^2 = 1 + (a t)^2 with a = 3 u_inf x / R^2, and tau = t + a^2 t^3 / 3.
+The Batchelor vortex and Taylor-Couette flow give further closed forms and
+scaling laws.
 """
 
 import os
@@ -48,7 +50,7 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
 
 
 def run(tmp_path, example, extra, expr=None):
-    """One partrac run with tau integration on; returns the opened dump."""
+    """Run partrac with tau integration, optionally overriding expression keys; return the open dump."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     text = open(example).read()
     for key, value in (expr or {}).items():
@@ -66,22 +68,23 @@ def run(tmp_path, example, extra, expr=None):
 
 
 def times(dump):
+    """The dump's group names, sorted by time."""
     return sorted(dump.keys(), key=float)
 
 
 def c_max(tau, D, s0):
-    """Meunier & Villermaux equation (2.8) at n = 0, in units of c0."""
+    """Meunier & Villermaux (2010) eq. (2.8) at n = 0, in units of c0."""
     return 1.0 / np.sqrt(1.0 + 4.0 * D * np.asarray(tau) / s0 ** 2)
 
 
 def poiseuille_tau(x, t):
-    """int_0^t rho^2 dt' for an edge of a line laid along x."""
+    """Exact int_0^t rho^2 dt' in plane Poiseuille for an edge at x of a line along x."""
     a = 3 * U_INF * np.asarray(x) / R ** 2
     return t + a ** 2 * t ** 3 / 3
 
 
 def edge_midpoints_x(dump):
-    """Initial x of each edge, which labels it for the whole run."""
+    """Initial x of each edge midpoint, which labels the edge for the whole run."""
     first = times(dump)[0]
     p = np.array(dump[first + "/points"])
     e = np.array(dump[first + "/edges"])
@@ -90,6 +93,9 @@ def edge_midpoints_x(dump):
 
 @needs_partrac
 def test_tau_matches_the_exact_integral(tmp_path):
+    """In plane Poiseuille the dumped tau matches t + a^2 t^3/3 per edge, and is
+    zero at t = 0. Every scalar concentration the user reconstructs from a run
+    is a function of this value."""
     T = 0.5
     d = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0", "Nrw=200",
@@ -97,13 +103,17 @@ def test_tau_matches_the_exact_integral(tmp_path):
              "stat_intv=%g" % T, "dump_intv=%g" % T, "tau_intv=0.0025"])
     tau = np.array(d[times(d)[-1] + "/tau"]).ravel()
     assert tau == pytest.approx(poiseuille_tau(edge_midpoints_x(d), T), rel=1e-5)
-    # tau starts at zero: nothing has diffused before the run begins
+    # nothing has diffused before the run begins
     assert np.array(d[times(d)[0] + "/tau"]).ravel() == pytest.approx(0.0, abs=1e-15)
 
 
 @needs_partrac
 def test_tau_converges_at_second_order(tmp_path):
-    # the integrand is quadratic in t, so the trapezoid error is -a^2 h^2 T/6
+    """The tau error falls by 4 each time tau_intv halves, and its size is the
+    trapezoid-rule remainder. This confirms tau is integrated by the trapezoid
+    rule on tau_intv, so users can choose tau_intv from a known error bound."""
+    # the integrand 1 + (a t)^2 is quadratic in t, so the trapezoid error is
+    # exactly -a^2 h^2 T/6
     T, err = 0.5, []
     for intv in ("0.02", "0.01", "0.005"):
         d = run(tmp_path / intv, POISEUILLE,
@@ -117,7 +127,7 @@ def test_tau_converges_at_second_order(tmp_path):
     assert err[0] / err[1] == pytest.approx(4.0, rel=0.1)
     assert err[1] / err[2] == pytest.approx(4.0, rel=0.1)
 
-    # and the size of it is the trapezoid remainder, not something else
+    # the largest relative error is at the strip's end, x = 0.5
     a = 3 * U_INF * 0.5 / R ** 2
     predicted = (a ** 2 * 0.02 ** 2 * T / 6) / poiseuille_tau(0.5, T)
     assert err[0] == pytest.approx(predicted, rel=0.05)
@@ -125,6 +135,9 @@ def test_tau_converges_at_second_order(tmp_path):
 
 @needs_partrac
 def test_the_maximum_concentration_follows_the_ranz_form(tmp_path):
+    """c_max = 1/sqrt(1 + 4 D tau/s0^2) from the dumped tau matches the closed
+    form, starts at c0, decays monotonically, and decays fastest where the strip
+    stretches most. This is the quantity the diffusive strip method reports."""
     T = 0.5
     d = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0", "Nrw=200",
@@ -135,7 +148,6 @@ def test_the_maximum_concentration_follows_the_ranz_form(tmp_path):
     c_end = c_max(np.array(d[ts[-1] + "/tau"]).ravel(), D=1e-3, s0=0.01)
     assert c_end == pytest.approx(c_max(poiseuille_tau(x, T), 1e-3, 0.01), rel=1e-5)
 
-    # it starts at c0 and only ever decays, fastest where the strip stretches most
     series = np.array([c_max(np.array(d[t + "/tau"]).ravel(), 1e-3, 0.01) for t in ts])
     assert series[0] == pytest.approx(1.0)
     assert np.all(np.diff(series, axis=0) <= 0)
@@ -144,8 +156,9 @@ def test_the_maximum_concentration_follows_the_ranz_form(tmp_path):
 
 @needs_partrac
 def test_the_reconstruction_rescales_in_the_initial_thickness(tmp_path):
-    # tau is proportional to s0^-2, so a finished run can be re-read at another
-    # initial thickness without advecting anything again
+    """Because c_max depends on tau/s0^2, halving s0 is the same as quadrupling
+    tau. A finished run can therefore be re-read at another initial thickness
+    without advecting anything again."""
     T = 0.5
     d = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0", "Nrw=200",
@@ -159,7 +172,11 @@ def test_the_reconstruction_rescales_in_the_initial_thickness(tmp_path):
 
 @needs_partrac
 def test_tau_max_drops_strips_that_have_finished_mixing(tmp_path):
-    # the branch that does this is marked "untested!" in the source
+    """With tau_max > 0, edges whose tau exceeds it are removed, and a lower
+    tau_max removes more. This lets a run stop spending work on strips that are
+    already mixed."""
+    # at T = 0.5, tau ranges from 0.5 at x = 0 to 0.59375 at |x| = 0.5, so both
+    # thresholds cut part of the strip
     T = 0.5
     args = ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0", "Nrw=200",
             "Nrw_max=5000", "ds_max=1e9", "dt=0.0025", "T=%g" % T,
@@ -176,8 +193,10 @@ def test_tau_max_drops_strips_that_have_finished_mixing(tmp_path):
 
 @needs_partrac
 def test_refinement_carries_tau_across_a_split(tmp_path):
-    # a split edge takes its parent's tau and rho_prev, so its history is not
-    # restarted; x is invariant in this flow, so the closed form still applies
+    """A split edge inherits its parent's tau and rho_prev, so a refined strip
+    still matches the closed form. If splitting reset tau, refined regions,
+    which are the most stretched, would report the least mixing."""
+    # x is invariant in this flow, so the closed form applies to child edges
     T = 0.5
     common = ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0",
               "Nrw_max=20000", "dt=0.0025", "T=%g" % T, "stat_intv=%g" % T,
@@ -194,14 +213,15 @@ def test_refinement_carries_tau_across_a_split(tmp_path):
         x = 0.5 * (p[e[:, 0], 0] + p[e[:, 1], 0])
         err[name] = np.max(np.abs(tau / poiseuille_tau(x, T) - 1))
         assert len(tau) > 0
-    assert err["refined"] < 1e-4        # a reset tau would be far below this
+    assert err["refined"] < 1e-4        # a reset tau would miss by far more
     assert err["refined"] < 2 * err["plain"]
 
 
 @needs_partrac
 def test_a_sheet_carries_the_same_tau_as_the_strip(tmp_path):
-    # the flow depends on x alone, so a sheet spanning x and y is the strip
-    # extruded, and its faces integrate the elongation the edges do
+    """Faces of an x-y sheet integrate the same tau as the edges of an x strip.
+    The flow depends on x alone, so the sheet is the strip extruded, and the
+    sheet method must reproduce the strip's closed form."""
     T, ds_init = 0.5, 0.02
     d = run(tmp_path, POISEUILLE,
             ["init_mode=sheet_xy", "La=1.0", "Lb=0.4", "ds_init=%g" % ds_init,
@@ -210,14 +230,17 @@ def test_a_sheet_carries_the_same_tau_as_the_strip(tmp_path):
              "tau_intv=0.0025"])
     tau = np.array(d[times(d)[-1] + "/tau"]).ravel()
     assert tau.min() == pytest.approx(poiseuille_tau(0.0, T), rel=1e-3)
-    # the outermost face centre sits inside the strip's last node
+    # the outermost face centre lies within ds_init of the sheet edge x = 0.5
     assert poiseuille_tau(0.5 - ds_init, T) < tau.max() < poiseuille_tau(0.5, T)
 
 
 @needs_partrac
 def test_tau_in_a_vortex_matches_the_exact_integral(tmp_path):
-    # nothing moves radially, so an edge keeps its radius and rho^2 has the
-    # closed form of the deformation tests; q = 1 adds the axial jet
+    """In a Batchelor vortex with axial jet, tau per edge matches
+    T + ((s dOmega/ds)^2 + (du_z/ds)^2) T^3/3. This checks tau in a flow with
+    two shear components rather than one."""
+    # nothing moves radially, so each edge keeps its radius s from the axis at
+    # x = 5 and the shear rates are constant along its path; q = 1 adds the jet
     u0, R1, R2, q, T = 2.0, 0.5, 1.0, 1.0, 1.0
     d = run(tmp_path, BATCHELOR,
             ["init_mode=strip_x", "x0=6.2", "y0=5.0", "z0=5.0", "La=1.2",
@@ -241,12 +264,12 @@ def test_tau_in_a_vortex_matches_the_exact_integral(tmp_path):
 
 @needs_partrac
 def test_the_taylor_couette_concentration_decays_as_the_paper_predicts(tmp_path):
-    # Martinez-Ruiz et al. section 3.5. A sheet tangent to the stream torus keeps
-    # its thickness, so tau ~ t and c_max ~ t^-1/2; one carrying the radial
-    # direction thins as t^-1, so tau ~ t^3 and c_max ~ t^-3/2. The tangency is
-    # a statement about an infinitesimal triangle, and a finite patch drifts off
-    # it after t ~ 100 -- unchanged when dt is quartered, so it is the patch size
-    # and not the integration -- which is why the linear fit stops at 60.
+    """In Taylor-Couette flow (Martinez-Ruiz et al., section 3.5) a sheet tangent
+    to the stream torus keeps its thickness, so tau ~ t and c_max ~ t^-1/2,
+    while one carrying the radial direction thins as t^-1, so tau ~ t^3 and
+    c_max ~ t^-3/2. The sheet method must reproduce these published decay laws."""
+    # tangency holds for an infinitesimal triangle; a finite patch drifts off it
+    # at later times (around t ~ 100) because of its size, so the fit stops at 60
     T = 60.0
     args = ["x0=2.0", "y0=0.0", "z0=0.6", "La=0.02", "Lb=0.02", "ds_init=0.002",
             "Nrw=100", "Nrw_max=400000", "ds_max=1e9", "int_order=2", "dt=0.02",
@@ -269,7 +292,7 @@ def test_the_taylor_couette_concentration_decays_as_the_paper_predicts(tmp_path)
     slope = np.polyfit(np.log(t[late]), np.log(radial[late]), 1)[0]
     assert slope == pytest.approx(3.0, rel=0.05)              # tau ~ t^3
 
-    # and so the concentrations decay as t^-1/2 and t^-3/2
+    # so the concentrations decay as t^-1/2 and t^-3/2
     for series, expected in ((tangent, -0.5), (radial, -1.5)):
         c = c_max(series, D=1e4, s0=1.0)     # well past the mixing time
         got = np.polyfit(np.log(t[late]), np.log(c[late]), 1)[0]
@@ -278,6 +301,9 @@ def test_the_taylor_couette_concentration_decays_as_the_paper_predicts(tmp_path)
 
 @needs_partrac
 def test_tau_max_drops_faces_as_well_as_edges(tmp_path):
+    """tau_max removes sheet faces whose tau exceeds it, as it does strip edges,
+    and a lower tau_max removes more. The sheet method must honour the same cutoff
+    as the strip method."""
     T = 0.5
     args = ["init_mode=sheet_xy", "La=1.0", "Lb=0.4", "ds_init=0.05", "x0=0",
             "y0=0", "z0=0", "Nrw=100", "Nrw_max=20000", "ds_max=1e9",
@@ -295,8 +321,9 @@ def test_tau_max_drops_faces_as_well_as_edges(tmp_path):
 
 @needs_partrac
 def test_a_restart_carries_the_compressed_time(tmp_path):
-    # the edge and face checkpoints carry tau and rho_prev, so a restarted run
-    # resumes the history rather than starting from an unmixed element
+    """Edge checkpoints carry tau and rho_prev, so a resumed run continues the
+    closed-form tau at the resumed time. Otherwise a restarted run would resume
+    from an unmixed strip and underestimate mixing for the rest of the run."""
     T1 = 0.25
     common = ["init_mode=strip_x", "La=1.0", "x0=0", "y0=0", "z0=0", "Nrw=100",
               "Nrw_max=5000", "ds_max=1e9", "dt=0.0025", "stat_intv=1e9",
@@ -314,7 +341,7 @@ def test_a_restart_carries_the_compressed_time(tmp_path):
     call(["T=%g" % T1, "dump_intv=1e9", "checkpoint_intv=%g" % T1])
     checkpoint = list(tmp_path.rglob("edges.edge"))
     assert len(checkpoint) == 1
-    # a widened checkpoint: node, node, ds0, tau, rho_prev
+    # edge checkpoint columns: node, node, ds0, tau, rho_prev
     assert len(checkpoint[0].read_text().split("\n")[0].split()) == 5
     call(["T=0.5", "dump_intv=0.2", "checkpoint_intv=1e9",
           "restart_folder=" + str(checkpoint[0].parent.parent)])
@@ -326,7 +353,7 @@ def test_a_restart_carries_the_compressed_time(tmp_path):
     first = times(d)[0]
     tau = np.array(d[first + "/tau"]).ravel()
     x = edge_midpoints_x(d)
-    # the checkpoint holds tau belonging to the positions it stores, so the
-    # resumed tau matches the time the dump is labelled with
+    # the checkpointed tau belongs to the checkpointed positions, so it matches
+    # the time the first resumed dump is labelled with
     assert tau == pytest.approx(poiseuille_tau(x, float(first)), rel=1e-4)
-    assert tau.min() > 0.2                      # emphatically not reset to zero
+    assert tau.min() > 0.2                      # tau >= 0.25 here: not reset to zero

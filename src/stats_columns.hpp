@@ -4,12 +4,11 @@
 #include <fstream>
 #include <vector>
 
-// A statistic is a name and a value together, so the header and the rows are
-// two readings of one list
+// Statistics column
 struct StatsColumn {
   const char* name;
   double value;
-  bool is_count = false;   // written as an integer, not in the double format
+  bool is_count = false;   // written as an integer
 };
 
 inline void write_stats_header(std::ofstream &statfile,

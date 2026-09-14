@@ -196,7 +196,7 @@ void load_vector_field(const std::string& input_file,
   infile.close();
 }
 
-// enough digits that a double read back from a checkpoint is the one written
+// Full precision for checkpoints
 const int checkpoint_precision = std::numeric_limits<double>::max_digits10;
 
 void dump_vector_field(const std::string& output_file,
@@ -225,7 +225,7 @@ void dump_vector_field(const std::string& output_file,
   outfile.close();
 }
 
-// tau and rho_prev may be absent: an older checkpoint restarts unmixed
+// tau and rho_prev optional (older checkpoints)
 void load_faces(const std::string& input_file,
                 FacesType& faces){
   std::ifstream infile(input_file);
@@ -268,9 +268,14 @@ void load_list(const std::string& input_file,
 
 void dump_list(const std::string& output_file,
                const std::vector<Uint> &li){
+  dump_list(output_file, li, li.size());
+}
+
+void dump_list(const std::string& output_file,
+               const std::vector<Uint> &li, const Uint n){
   std::ofstream outfile(output_file);
-  for (const Uint i : li){
-    outfile << i << "\n";
+  for (Uint k = 0; k < n; ++k){
+    outfile << li[k] << "\n";
   }
   outfile.close();
 }
@@ -365,24 +370,84 @@ void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
   dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
+// Write storage directly
 void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw){
+  static_assert(sizeof(Vector3d) == 3*sizeof(double), "Vector3d is not three bare doubles");
   hsize_t dims[2];
   dims[0] = Nrw;
   dims[1] = 3;
   H5::DataSpace dspace(2, dims);
-  std::vector<double> data(Nrw*3);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    for (Uint d=0; d<3; ++d){
-      data[irw*3+d] = a_rw[irw][d];
-    }
-  }
   H5::DataSet dset = h5f.createDataSet(dsetname,
                                     H5::PredType::NATIVE_DOUBLE,
                                     dspace);
+  dset.write(Nrw > 0 ? a_rw[0].data() : nullptr, H5::PredType::NATIVE_DOUBLE);
+}
+
+
+// Row-major (Eigen is column-major)
+void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<Matrix3d>& M_rw,
+                 const Uint Nrw){
+  hsize_t dims[2];
+  dims[0] = Nrw;
+  dims[1] = 9;
+  H5::DataSpace dspace(2, dims);
+  std::vector<double> data(Nrw*9);
+  #pragma omp parallel for
+  for (Uint irw=0; irw < Nrw; ++irw){
+    for (Uint i=0; i<3; ++i)
+      for (Uint j=0; j<3; ++j)
+        data[irw*9 + 3*i + j] = M_rw[irw](i, j);
+  }
+  H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_DOUBLE, dspace);
   dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
+void ulong2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<Uint>& a, const Uint Nrw){
+  hsize_t dims[2];
+  dims[0] = Nrw;
+  dims[1] = 1;
+  H5::DataSpace dspace(2, dims);
+  H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_ULONG, dspace);
+  dset.write(a.data(), H5::PredType::NATIVE_ULONG);
+}
+
+void int2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<int>& a, const Uint Nrw){
+  hsize_t dims[2];
+  dims[0] = Nrw;
+  dims[1] = 1;
+  H5::DataSpace dspace(2, dims);
+  H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_INT, dspace);
+  dset.write(a.data(), H5::PredType::NATIVE_INT);
+}
+
+void dump_tensor_field(const std::string& output_file, const std::vector<Matrix3d>& M_rw, const Uint Nrw){
+  std::ofstream outfile(output_file);
+  outfile << std::setprecision(checkpoint_precision);
+  for (Uint irw=0; irw < Nrw; ++irw){
+    for (Uint i=0; i<3; ++i)
+      for (Uint j=0; j<3; ++j)
+        outfile << M_rw[irw](i, j) << (i == 2 && j == 2 ? "\n" : " ");
+  }
+  outfile.close();
+}
+
+void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_rw, const Uint Nrw){
+  std::ifstream infile(input_file);
+  for (Uint irw=0; irw < Nrw; ++irw)
+    for (Uint i=0; i<3; ++i)
+      for (Uint j=0; j<3; ++j)
+        infile >> M_rw[irw](i, j);
+  infile.close();
+}
+
+// Into a pre-sized array
+void load_vector_field(const std::string& input_file, std::vector<Vector3d>& a_rw, const Uint Nrw){
+  std::ifstream infile(input_file);
+  for (Uint irw=0; irw < Nrw; ++irw)
+    infile >> a_rw[irw][0] >> a_rw[irw][1] >> a_rw[irw][2];
+  infile.close();
+}
 
 void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw){
@@ -390,14 +455,10 @@ void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector
   dims[0] = Nrw;
   dims[1] = 1;
   H5::DataSpace dspace(2, dims);
-  std::vector<double> data(Nrw);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    data[irw] = c_rw[irw];
-  }
   H5::DataSet dset = h5f.createDataSet(dsetname,
                                     H5::PredType::NATIVE_DOUBLE,
                                     dspace);
-  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
+  dset.write(c_rw.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
 void print_mesh(const FacesType& faces, const EdgesType& edges,

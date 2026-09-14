@@ -1,53 +1,41 @@
 #ifndef __EXPLICITINTEGRATOR_HPP
 #define __EXPLICITINTEGRATOR_HPP
 
+#include <algorithm>
+#include <vector>
 #include "typedefs.hpp"
 #include "Interpol.hpp"
 #include "Integrator.hpp"
+#include "TransportElement.hpp"
 #include <math.h>
 
 class ExplicitIntegrator : public Integrator {
 public:
-    //ExplicitIntegrator(std::shared_ptr<Interpol> intp, const double Dm, const int int_order, std::mt19937& gen);
     ExplicitIntegrator(const double Dm, const int int_order, std::vector<std::mt19937>& gens);
     ~ExplicitIntegrator() {};
-    // Vector3d integrate(const Vector3d& x, const double t, const double dt);
-    //template<typename InterpolType, typename T>
-    //std::set<Uint> step(InterpolType& intp, T& ps, const double t, const double dt);
-    std::set<Uint> step(ParticleSet& ps, const double t, const double dt);
-    // the same loop with the interpolator known by type; see interpol_dispatch.hpp
-    template<typename Interp>
-    std::set<Uint> step(Interp& intp, ParticleSet& ps, const double t, const double dt);
+    // One loop for all transport elements
+    template<TransportElement E = TransportElement::Point, typename Interp>
+    std::vector<Uint> step(Interp& intp, ParticleSet& ps, const double t, const double dt);
 protected:
   double Dm;
   int int_order;
-  //std::mt19937& gen;
   std::vector<std::mt19937>& gens;
   std::normal_distribution<double> rnd_normal;
 };
 
-/*
-ExplicitIntegrator::ExplicitIntegrator(std::shared_ptr<Interpol> intp, const double Dm, const int int_order, std::mt19937& gen) : Integrator(intp), gen(gen), Dm(Dm), int_order(int_order), rnd_normal(0.0, 1.0) {
-}*/
-ExplicitIntegrator::ExplicitIntegrator(const double Dm, const int int_order, std::vector<std::mt19937>& gens) : Dm(Dm), int_order(int_order), gens(gens), rnd_normal(0.0, 1.0) {
+inline ExplicitIntegrator::ExplicitIntegrator(const double Dm, const int int_order, std::vector<std::mt19937>& gens) : Dm(Dm), int_order(int_order), gens(gens), rnd_normal(0.0, 1.0) {
 }
 
+template<TransportElement E, typename Interp>
+PARTRAC_HOT_LOOP
+std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const double t, const double dt) {
+    std::vector<Uint> outside_nodes;
 
-//template<typename InterpolType, typename T>
-//std::set<Uint> ExplicitIntegrator::step(InterpolType& intp, T& ps, const double t, const double dt) {
-std::set<Uint> ExplicitIntegrator::step(ParticleSet& ps, const double t, const double dt) {
-    return step(*ps.interpolator(), ps, t, dt);
-}
-
-template<typename Interp>
-std::set<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const double t, const double dt) {
-    std::set<Uint> outside_nodes;
-
-    #pragma omp parallel 
+    #pragma omp parallel
     {
         std::normal_distribution<double> _rnd_normal(0., 1.0);
         std::mt19937& gen = gens[omp_get_thread_num()];
-        std::set<Uint> outside_nodes_loc;
+        std::vector<Uint> outside_nodes_loc;
         Uint n_accepted_loc = 0;
         Uint n_declined_loc = 0;
 
@@ -60,17 +48,39 @@ std::set<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const dou
 
             PointValues ptvals(intp.get_U0());
 
+            // Carried element
+            [[maybe_unused]] Vector3d n0, el;
+            [[maybe_unused]] Matrix3d F0, Fel;
+            if constexpr (E == TransportElement::Vector){ n0 = ps.rhohat(i); el = n0; }
+            if constexpr (E == TransportElement::Tensor){ F0 = ps.F(i); Fel = F0; }
+
             bool is_inside = intp.locate(x, t, cell_id);
-            intp.evaluate(x, t, cell_id, ptvals);
-
-            //Vector3d dx_rw = intp.get_u() * dt;
-            Vector3d dx_rw = ptvals.get_u() * dt;
-
-            // Second-order terms
-            if (int_order >= 2){
-                //dx_rw += 0.5*a_rw[irw]*dt2;
-                //dx_rw += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
-                dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
+            Vector3d dx_rw = Vector3d::Zero();
+            if constexpr (E == TransportElement::Point){
+                // Evaluate even outside
+                intp.evaluate(x, t, cell_id, ptvals);
+                dx_rw = ptvals.get_u() * dt;
+                if (int_order >= 2){
+                    dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
+                }
+            }
+            else if (is_inside){
+                // Outside: not moved
+                intp.evaluate(x, t, cell_id, ptvals);
+                const Vector3d u1 = ptvals.get_u();
+                const Matrix3d J1 = ptvals.get_J();
+                dx_rw = u1 * dt;
+                if constexpr (E == TransportElement::Vector)
+                    el += J1 * el * dt;
+                if constexpr (E == TransportElement::Tensor)
+                    Fel += J1 * Fel * dt;
+                if (int_order >= 2){
+                    dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
+                    if constexpr (E == TransportElement::Vector)
+                        el += 0.5*(J1*(J1*n0) + ptvals.get_grada()*n0) * dt * dt;
+                    if constexpr (E == TransportElement::Tensor)
+                        Fel += 0.5*(J1*(J1*F0) + ptvals.get_grada()*F0) * dt * dt;
+                }
             }
             if (Dm > 0.0){
                 // TODO: Consider trying multiple times
@@ -89,20 +99,29 @@ std::set<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const dou
                 ps.set_x(i, x + dx_rw);
                 ps.set_t_loc(i, ps.t_loc(i) + dt);
                 ps.set_cell_id(i, cell_id);
+                if constexpr (E == TransportElement::Vector){
+                    const double len = el.norm();
+                    ps.set_rhohat(i, el/len);
+                    ps.set_w(i, ps.w(i) + log(len));
+                }
+                if constexpr (E == TransportElement::Tensor)
+                    ps.set_F(i, Fel);
                 ++n_accepted_loc;
             }
             else {
-                outside_nodes_loc.insert(i);
+                outside_nodes_loc.push_back(i);
                 ++n_declined_loc;
             }
         }
         #pragma omp critical
         {
-            outside_nodes.insert(outside_nodes_loc.begin(), outside_nodes_loc.end());
+            outside_nodes.insert(outside_nodes.end(), outside_nodes_loc.begin(), outside_nodes_loc.end());
             n_accepted += n_accepted_loc;
             n_declined += n_declined_loc;
         }
     }
+    // Sort: threads merge out of order
+    std::sort(outside_nodes.begin(), outside_nodes.end());
     return outside_nodes;
 }
 

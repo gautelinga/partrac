@@ -14,10 +14,11 @@ void Timestamps::initialize(const std::string& infilename){
   double key;
   while (input >> key >> fname){
     stamps[key] = fname;
+    // Unsorted input: separate tests
     if (key < t_min){
       t_min = key;
     }
-    else if (key > t_max){
+    if (key > t_max){
       t_max = key;
     }
   }
@@ -41,7 +42,7 @@ void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
     if (tkey < t_min){
       t_min = tkey;
     }
-    else if (tkey > t_max){
+    if (tkey > t_max){
       t_max = tkey;
     }
   }
@@ -91,7 +92,7 @@ void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector
     if (tkey < t_min){
       t_min = tkey;
     }
-    else if (tkey > t_max){
+    if (tkey > t_max){
       t_max = tkey;
     }
   }

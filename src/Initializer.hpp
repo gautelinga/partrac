@@ -27,20 +27,28 @@ inline bool init_mode_shape_ok(const std::string& init_mode){
   if (key[0] == "point") return key.size() == 1;
   if (key[0] == "pairs") return key.size() == 2 || key.size() == 3;
   if (key[0] == "randomgaussianstrip") return key.size() == 3;
+  if (key[0] == "randomgaussiancircle") return key.size() == 2 || key.size() == 3;
   return key.size() == 2;
 }
 
-// Parameters read by set_initial_state and the initializers it dispatches to.
-// La, Lb, ds_init and init_weight are only read by some init_modes.
+// Initializer parameters; La, Lb, ds_init and init_weight only for some init_modes
 inline void add_initializer_params(partrac::Schema& s){
   s.require<std::string>("init_mode", "initial distribution");
   s.require<Uint>("Nrw", "number of particles");
-  // Nrw stays the request; these record what happened
+  // Actual counts; Nrw is the request
   s.runtime<Uint>("Nrw_init", 0, "particles the initializer placed");
   s.runtime<Uint>("Nrw_current", 0, "particles in the set when this was written");
   s.require<Uint>("Nrw_max", "max number of particles");
-  s.require<double>("ds_max", "max edge length");
-  s.require<double>("ds_min", "min edge length");
+  // ds bounds only for edges or remeshing
+  auto has_edges_or_remeshes = [](const partrac::Params& p){
+    const bool cloud = init_mode_is(p, {"point", "points", "randomgaussianstrip", "randomgaussiancircle"});
+    const bool remeshes = (p.has("refine") && p.get<bool>("refine")) || (p.has("coarsen") && p.get<bool>("coarsen"));
+    return !cloud || remeshes;
+  };
+  s.require_if<double>("ds_max", 0.0, has_edges_or_remeshes,
+                       "the initial state has edges, or refine/coarsen is on", "max edge length");
+  s.require_if<double>("ds_min", 0.0, has_edges_or_remeshes,
+                       "the initial state has edges, or refine/coarsen is on", "min edge length");
   s.require_if<double>("La",
                        [](const partrac::Params& p){
                          return init_mode_is(p, {"strip", "sheet", "ellipsoid",
@@ -63,7 +71,7 @@ inline void add_initializer_params(partrac::Schema& s){
                        },
                        "init_mode is a sheet, pair or points distribution",
                        "initial edge length");
-  // uniform_* steps from one end of the domain to the other
+  // uniform steps across the domain
   s.check([](const partrac::Params& p){
             return !init_mode_is(p, {"uniform"}) || p.get<Uint>("Nrw") >= 2;
           },
@@ -86,6 +94,7 @@ inline void add_initializer_params(partrac::Schema& s){
           "init_mode has the wrong number of directions: most modes take one,"
             " as in uniform_x; point takes none; pairs takes one or two;"
             " randomgaussianstrip takes two, as in randomgaussianstrip_x_y;"
+            " randomgaussiancircle one or two, the second the spread's directions;"
             " from_file takes a path, as in from_file:positions.h5");
 }
 
@@ -297,7 +306,7 @@ public:
 
     NodesListType nodes_inlet_loc;
     EdgesListType edges_inlet_loc;
-    std::vector<Vector3d> pos_inj_loc;   // no inlet here, so no template
+    std::vector<Vector3d> pos_inj_loc;   // no inlet
     EdgesType edges_inj_loc;
 
     Uint n_add = 0;
@@ -508,7 +517,7 @@ public:
 
     NodesListType nodes_inlet_loc;
     EdgesListType edges_inlet_loc;
-    std::vector<Vector3d> pos_inj_loc;   // no inlet here, so no template
+    std::vector<Vector3d> pos_inj_loc;   // no inlet
     EdgesType edges_inj_loc;
     compute_edge2faces(edge2faces_loc, faces, edges);
     compute_node2edges(node2edges_loc, edges, pset_loc.N());
@@ -562,8 +571,7 @@ public:
     std::cout << "Npairs = " << Npairs << std::endl;
 
     Vector3d x0_ = x0;
-    // only this shape redraws the centre; any other keeps x0, so a centre
-    // outside the domain can never yield a pair
+    // Only this shape redraws the centre
     const bool centre_moves = (key[0] == "pairs" && key.size() == 3);
     if (!centre_moves && !intp->locate(x0_)){
       std::cout << "Pair centre is not inside the domain" << std::endl;
@@ -571,7 +579,7 @@ public:
     }
     Uint ipair=0;
     Uint failed_attempts = 0;
-    Uint max_failed_attempts = 1000000; // as in the gaussian initializers
+    Uint max_failed_attempts = 1000000;
     while (ipair < Npairs && failed_attempts < max_failed_attempts){
       if (centre_moves){
         if (contains(key[2], "x")){
@@ -709,37 +717,39 @@ public:
     std::cout << "dx: " << dx << " " << dy << " " << dz << std::endl;
     std::cout << "Nx: " << Nx << " " << Ny << " " << Nz << std::endl;
 
-    std::vector<double> wei;
-    std::vector<Vector3d> pos;
-    for (Uint ix=0; ix<Nx; ++ix){
-      for (Uint iy=0; iy<Ny; ++iy){
-        for (Uint iz=0; iz<Nz; ++iz){
-          Vector3d x = x0;
-          if (hasLx) x[0] = x_min[0]+(ix+0.5)*dx;
-          if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
-          if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
-          PointValues ptvals(intp->get_U0());
-          intp->evaluate(x, ptvals);
-          if (prm.get<std::string>("init_weight") == "ux"){
-            ww = abs(ptvals.U[0]);
-          }
-          else if (prm.get<std::string>("init_weight") == "uy"){
-            ww = abs(ptvals.U[1]);
-          }
-          else if (prm.get<std::string>("init_weight") == "uz"){
-            ww = abs(ptvals.U[2]);
-          }
-          else if (prm.get<std::string>("init_weight") == "u"){
-            ww = ptvals.U.norm();
-          }
-          else {
-            ww = 1.;
-          }
-
-          wei.push_back(ww);
-          pos.push_back(x);
-        }
+    // Grid weights
+    const std::string init_weight = prm.get<std::string>("init_weight");
+    std::vector<double> wei(Nx*Ny*Nz);
+    std::vector<Vector3d> pos(Nx*Ny*Nz);
+    #pragma omp parallel for private(ww)
+    for (Uint n=0; n < Nx*Ny*Nz; ++n){
+      const Uint ix = n/(Ny*Nz);
+      const Uint iy = (n/Nz) % Ny;
+      const Uint iz = n % Nz;
+      Vector3d x = x0;
+      if (hasLx) x[0] = x_min[0]+(ix+0.5)*dx;
+      if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
+      if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
+      PointValues ptvals(intp->get_U0());
+      intp->evaluate(x, ptvals);
+      if (init_weight == "ux"){
+        ww = abs(ptvals.U[0]);
       }
+      else if (init_weight == "uy"){
+        ww = abs(ptvals.U[1]);
+      }
+      else if (init_weight == "uz"){
+        ww = abs(ptvals.U[2]);
+      }
+      else if (init_weight == "u"){
+        ww = ptvals.U.norm();
+      }
+      else {
+        ww = 1.;
+      }
+
+      wei[n] = ww;
+      pos[n] = x;
     }
     std::uniform_real_distribution<> uni_dist_dx(-0.5*dx, 0.5*dx);
     std::uniform_real_distribution<> uni_dist_dy(-0.5*dy, 0.5*dy);
@@ -877,6 +887,11 @@ public:
     Uint failed_attempts = 0;
     Uint max_failed_attempts = 1000000; // Maybe not hardcode?
 
+    // Spread directions (all by default)
+    const std::vector<bool> spread = key.size() > 2
+      ? std::vector<bool>{contains(key[2], "x"), contains(key[2], "y"), contains(key[2], "z")}
+      : std::vector<bool>{true, true, true};
+
     Uint irw = 0;
     while (irw < prm.get<Uint>("Nrw") && failed_attempts < max_failed_attempts){
       double alpha1 = 1.;
@@ -888,7 +903,8 @@ public:
       
       Vector3d xi = x0 + R * (alpha1 * t1 + alpha2 * t2);
       for (Uint dim=0; dim<3; ++dim)
-        xi[dim] += sigma0 * rnd_normal(gen);
+        if (spread[dim])
+          xi[dim] += sigma0 * rnd_normal(gen);
 
       // check if inside domain
       if (intp->locate(xi)){

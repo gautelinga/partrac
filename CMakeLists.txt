@@ -106,6 +106,12 @@ add_subdirectory(src)
 
 # Each app installs itself, see partrac_add_app
 add_subdirectory(apps)
+# Build features for the tests
+if(PARTRAC_ENABLE_DOLFIN)
+  file(WRITE "${PROJECT_BINARY_DIR}/bin/build_features.txt" "dolfin=on\n")
+else()
+  file(WRITE "${PROJECT_BINARY_DIR}/bin/build_features.txt" "dolfin=off\n")
+endif()
 
 # FetchContent added in CMake 3.11, downloads during the configure step
 

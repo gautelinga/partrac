@@ -1,8 +1,14 @@
-"""What partrac does when a run has nothing left to compute.
+"""What partrac does at the edges of its domain of validity: meshes coarsened
+to almost nothing, point clouds without edges, exit planes that cut a mesh,
+edge injection that turns a line into a sheet, and runs with no particles.
 
-Each of these used to end in a crash, a NaN, or a silent success. A run whose
-mesh has lost its dimension, or that has no particles at all, is stopped rather
-than left to write rows nobody can interpret.
+The flow is plane Poiseuille, u_z = 1.5 (1 - x^2), which only shears along z.
+Several cases set u_inf = 0 so nothing moves: then every face keeps
+dA/dA0 = 1 and every face accumulates the same tau, and coarsening must
+preserve both exactly. Coarsening hands the reference length or area of a
+collapsed element to its neighbours, so the total s0 or dA0 is conserved.
+A run whose mesh has lost its dimension, or that has no particles left, is
+stopped with a message rather than left to write rows nobody can interpret.
 """
 
 import os
@@ -28,6 +34,7 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
 
 
 def run(tmp_path, example, extra):
+    """Run partrac on a copy of `example` with `extra` overriding BASE; return the process result."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     shutil.copy(example, tmp_path / "expr_params.dat")
     keys = {a.split("=")[0] for a in extra}
@@ -37,6 +44,7 @@ def run(tmp_path, example, extra):
 
 
 def last_row(tmp_path):
+    """The last statistics row under tmp_path, as column name -> string value."""
     f = list(tmp_path.rglob("tdata_from_t*.dat"))
     assert len(f) == 1
     rows = [l for l in f[0].read_text().splitlines() if l.strip()]
@@ -48,9 +56,10 @@ def last_row(tmp_path):
 
 @needs_partrac
 def test_a_strip_coarsened_to_nothing_keeps_its_end_edges(tmp_path):
-    # a ds_min larger than the whole strip collapses every interior edge. The
-    # two end edges are never collapsed: a tip node carries a single edge, and
-    # collapsing it would shorten the strip while its ds0 had nowhere to go.
+    """Coarsening with ds_min longer than the strip collapses every interior edge
+    but never an end edge: a tip node carries a single edge, and collapsing it
+    would shorten the strip with nowhere to put its ds0. The two end edges
+    survive and keep the whole reference length."""
     r = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0", "Nrw=10",
              "Nrw_max=2000", "ds_min=100", "coarsen=true", "coarsen_intv=0.01",
@@ -64,8 +73,9 @@ def test_a_strip_coarsened_to_nothing_keeps_its_end_edges(tmp_path):
 @needs_partrac
 @pytest.mark.parametrize("ds_min", ["0.02", "0.06", "0.2"])
 def test_coarsening_conserves_the_reference_length(tmp_path, ds_min):
-    # every collapse hands its ds0 to the neighbours it had, so the sum over
-    # edges is invariant however many of them go
+    """Every edge collapse hands its ds0 to the neighbours it had, so the total
+    reference length of the strip stays La however many edges go. Without that
+    the stretch s/s0 of a coarsened line would drift with the remeshing."""
     d = tmp_path / ds_min
     r = run(d, POISEUILLE,
             ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0", "Nrw=50",
@@ -80,7 +90,10 @@ def test_coarsening_conserves_the_reference_length(tmp_path, ds_min):
 @needs_partrac
 @pytest.mark.parametrize("ds_init", ["0.1", "0.05", "0.025"])
 def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
-    # Nothing moves, so every face must keep dA/dA0 = 1 through coarsening.
+    """In a sheet that does not move, every face has dA/dA0 = 1, and coarsening
+    must keep that on every surviving face while conserving the total dA0. A face
+    whose dA0 went wrong would report a stretch the flow never produced."""
+    # u_inf = 0: nothing moves
     d = tmp_path / ds_init
     d.mkdir(parents=True)
     (d / "expr_params.dat").write_text(
@@ -88,6 +101,7 @@ def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
     ds = float(ds_init)
 
     def areas(ds_min):
+        """dA and dA0 of every face in the first dump, coarsened with this ds_min."""
         case = d / ds_min
         case.mkdir(parents=True)
         (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
@@ -109,6 +123,7 @@ def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
                 np.array(h[key + "/dA0"]).ravel())
 
     dA_ref, _ = areas("1e-12")                      # nothing collapses
+    # just above the initial edge length, so many edges collapse
     dA, dA0 = areas("%g" % (1.2 * ds))
 
     assert len(dA) < 0.6 * len(dA_ref)              # it really coarsened
@@ -119,14 +134,18 @@ def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
 
 @needs_partrac
 def test_coarsening_a_sheet_of_uniform_tau_keeps_it_uniform(tmp_path):
-    # Nothing moves, so tau is the same on every face and must stay so through
-    # coarsening, including at t = 0 where every tau is zero.
+    """In a sheet that does not move, tau is the same on every face, and
+    coarsening must redistribute it so it stays the same, including at t = 0
+    where every tau is zero. A non-uniform result would be an artefact of the
+    remeshing, not of the flow."""
+    # u_inf = 0: nothing moves
     d = tmp_path
     d.mkdir(parents=True, exist_ok=True)
     (d / "expr_params.dat").write_text(
         open(POISEUILLE).read().replace("u_inf=1.0", "u_inf=0.0"))
 
     def taus(ds_min):
+        """tau of every face in the last dump, coarsened with this ds_min."""
         case = d / ds_min
         case.mkdir(parents=True)
         (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
@@ -158,6 +177,10 @@ def test_coarsening_a_sheet_of_uniform_tau_keeps_it_uniform(tmp_path):
 
 @needs_partrac
 def test_a_run_that_loses_every_particle_stops(tmp_path):
+    """When the exit plane removes every particle, the run stops with a non-zero
+    exit and says "no particles left", instead of carrying on and writing empty
+    or NaN statistics."""
+    # at Ln = 0.05 along z the whole strip crosses the plane long before T
     r = run(tmp_path, POISEUILLE,
             ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0", "Nrw=50",
              "Nrw_max=2000", "T=2.0", "stat_intv=0.1", "exit_plane=z",
@@ -168,8 +191,9 @@ def test_a_run_that_loses_every_particle_stops(tmp_path):
 
 @needs_partrac
 def test_an_exit_plane_on_a_point_cloud_removes_only_what_crosses(tmp_path):
-    # A cloud has no edges, so "a node no surviving edge reaches is dead" must
-    # not be applied to it: nothing is beyond the plane, so nothing may go.
+    """A point cloud has no edges, so the rule that a node no surviving edge
+    reaches is dead must not apply to it. With the plane out of reach nothing
+    crosses, and all 50 particles must survive the filter."""
     r = run(tmp_path, POISEUILLE,
             ["init_mode=uniform_x", "clear_initial_edges=true", "La=0.5",
              "x0=0", "y0=0", "z0=0", "Nrw=50", "Nrw_max=2000", "T=0.05",
@@ -180,8 +204,9 @@ def test_an_exit_plane_on_a_point_cloud_removes_only_what_crosses(tmp_path):
 
 @needs_partrac
 def test_coarsening_a_point_cloud_keeps_it(tmp_path):
-    # a cloud has no edges to collapse, so a pass over it must leave it alone.
-    # Deriving "dead" from the edges instead deleted every particle.
+    """A point cloud has no edges to collapse, so a coarsening pass must leave
+    every particle in place. Deriving which nodes are dead from the (absent)
+    edges would delete the whole cloud."""
     r = run(tmp_path, POISEUILLE,
             ["init_mode=point", "x0=0", "y0=0.1", "z0=0", "Nrw=20",
              "Nrw_max=2000", "coarsen=true", "coarsen_intv=0.01", "T=0.05"])
@@ -191,9 +216,11 @@ def test_coarsening_a_point_cloud_keeps_it(tmp_path):
 
 @needs_partrac
 def test_an_exit_plane_on_a_strip_removes_exactly_the_nodes_beyond(tmp_path):
-    # and on a strip it is the nodes beyond plus what they orphan, which for a
-    # strip is nothing: the node at the cut keeps its inward edge
+    """On a strip the exit plane removes the nodes beyond it plus whatever they
+    orphan, which for a strip is nothing: the node nearest the cut keeps its
+    inward edge. The result is still one open strip with consistent indices."""
     def points(case, Ln):
+        """Points and edges of the first dump with the exit plane at x = Ln."""
         r = run(tmp_path / case, POISEUILLE,
                 ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0",
                  "Nrw=51", "Nrw_max=2000", "T=0", "exit_plane=x",
@@ -206,6 +233,7 @@ def test_an_exit_plane_on_a_strip_removes_exactly_the_nodes_beyond(tmp_path):
         return np.array(h[key + "/points"]), np.array(h[key + "/edges"])
 
     whole, _ = points("whole", 1e9)               # strip_x is centred on x0
+    # between two nodes, which are 0.01 apart
     kept, edges = points("cut", 0.105)
     assert len(kept) < len(whole)                     # it really cut
     assert np.array_equal(kept, whole[whole[:, 0] <= 0.105])
@@ -215,9 +243,11 @@ def test_an_exit_plane_on_a_strip_removes_exactly_the_nodes_beyond(tmp_path):
 
 @needs_partrac
 def test_an_exit_plane_on_a_sheet_cuts_it(tmp_path):
-    # a sheet used to refuse this outright; the nodes beyond go, and with them
-    # every face and edge that reached one
+    """On a sheet the exit plane removes the nodes beyond it and every face and
+    edge that reached one. What remains is a non-empty sheet on the near side,
+    with valid face indices and no face that lost its area."""
     def state(case, Ln):
+        """Points, faces and dA0 of the first dump with the exit plane at x = Ln."""
         r = run(tmp_path / case, POISEUILLE,
                 ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=0.05",
                  "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000", "T=0",
@@ -245,10 +275,12 @@ INJECT = ["init_mode=uniform_x", "Nrw=20", "Nrw_max=200000", "inject=true",
 
 @needs_partrac
 def test_edge_injection_sweeps_the_inlet_into_a_sheet(tmp_path):
-    # inject_edges advects a 1-D inlet and stitches each generation to the last,
-    # so the mesh is 2-D from the first injection on. check_dim refused that.
+    """inject_edges advects a 1-D inlet and stitches each generation to the last,
+    so the mesh is 2-D from the first injection on and must be accepted as such.
+    Each injection adds the same strip of faces and the same swept area, with
+    no degenerate face."""
     # The inlet ends sit on the no-slip walls and never leave them, so those two
-    # nodes are reused rather than injected again: 18 nodes and 36 faces a
+    # nodes are reused rather than injected again: 18 nodes and 36 faces per
     # generation, not 20 and 38, and the same swept area either way.
     r = run(tmp_path, POISEUILLE, INJECT + ["dump_intv=0.1", "stat_intv=1e9"])
     assert r.returncode == 0, r.stdout + r.stderr
@@ -258,7 +290,8 @@ def test_edge_injection_sweeps_the_inlet_into_a_sheet(tmp_path):
     keys = sorted(h.keys(), key=float)
     faces = [len(np.array(h[k + "/faces"])) for k in keys if "faces" in h[k]]
     mass = [np.array(h[k + "/dA0"]).sum() for k in keys if "dA0" in h[k]]
-    assert len(faces) == 3                            # one generation per dump
+    # dump_intv = 2 inject_intv, so each dump sees two more generations
+    assert len(faces) == 3
     assert faces == [72, 144, 216]                    # 36 per injection
     assert mass[1] == pytest.approx(2 * mass[0], rel=1e-9)   # a strip each time
     assert mass[2] == pytest.approx(3 * mass[0], rel=1e-9)
@@ -270,8 +303,10 @@ def test_edge_injection_sweeps_the_inlet_into_a_sheet(tmp_path):
 
 @needs_partrac
 def test_an_injected_sheet_carries_a_finite_compressed_time(tmp_path):
-    # a zero-area face makes rho = dA/dA0 a 0/0, which spread NaN through tau
-    # and into every statistics row after it
+    """An injected sheet under refinement, coarsening and tau integration keeps
+    dA, dA0 and tau finite and every dA0 positive. A zero-area face makes
+    rho = dA/dA0 a 0/0, which would spread NaN through tau and into every
+    statistics row after it."""
     r = run(tmp_path, POISEUILLE,
             INJECT + ["ds_max=0.1", "ds_min=0.02", "refine=true",
                       "refine_intv=0.05", "coarsen=true", "coarsen_intv=0.05",
@@ -293,6 +328,8 @@ def test_an_injected_sheet_carries_a_finite_compressed_time(tmp_path):
 
 @needs_partrac
 def test_an_initializer_that_places_nothing_stops(tmp_path):
+    """An initializer that places no particle stops the run with "no particles
+    left" and a non-zero exit, rather than running an empty simulation."""
     # the axis is inside the solid inner cylinder, so every particle is rejected
     r = run(tmp_path, TAYLOR_COUETTE,
             ["init_mode=point", "x0=0", "y0=0", "z0=0", "Nrw=1", "Nrw_max=1",
@@ -303,7 +340,9 @@ def test_an_initializer_that_places_nothing_stops(tmp_path):
 
 @needs_partrac
 def test_a_single_particle_reports_zero_spread_not_nan(tmp_path):
-    # the sample variance divides by Nrw - 1
+    """A run with one particle writes finite statistics and a spread of exactly
+    zero. The sample variance divides by Nrw - 1, which would otherwise make a
+    single-particle run report NaN."""
     r = run(tmp_path, POISEUILLE,
             ["init_mode=point", "x0=0", "y0=0.2", "z0=0", "Nrw=1", "Nrw_max=1",
              "T=0.02"])

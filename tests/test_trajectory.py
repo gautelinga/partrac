@@ -1,8 +1,12 @@
-"""Trajectory-level checks on the integrators and the restart path.
+"""Trajectory-level invariants of the integrators, the restart path and the
+parallel loops.
 
-No golden numbers: these assert invariants the code must satisfy whatever the
-values are. A run must be reproducible, and stopping at T/2 and restarting must
-land in the same place as running straight through.
+The flow is the plane Poiseuille example, u = (0, 0, 1.5 (1 - x^2)). There are
+no golden numbers: runs are compared with runs, or with exact properties of
+the flow. A deterministic run must be reproducible; stopping at T/2 and
+restarting must land bit for bit where an uninterrupted run lands; the thread
+count must not change the positions; and since u is axial and depends only on
+x, every particle keeps its x and y exactly.
 """
 
 import os
@@ -18,7 +22,8 @@ PARTRAC = app("partrac")
 RK4APP = app("tracervectors_analyticRK4")
 EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 
-# Dm = 0 so there is no Brownian term, and random=false to pin the seed
+# Dm = 0 removes the Brownian term and random=false pins the seed, so two runs
+# with the same arguments must agree bit for bit
 BASE = ("mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=5000 ds_max=0.4 "
         "ds_min=0.1 Dm=0 int_order=1 dt=0.01 dump_intv=0.05 stat_intv=0.05 "
         "checkpoint_intv=0.05 random=false seed=3").split()
@@ -27,6 +32,7 @@ BASE = ("mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=5000 ds_max=0.4 "
 
 
 def case(tmp_path, name):
+    """Return a new case folder holding the plane Poiseuille parameter file."""
     d = tmp_path / name
     d.mkdir()
     shutil.copy(EXAMPLE, d / "expr_params.dat")
@@ -34,6 +40,7 @@ def case(tmp_path, name):
 
 
 def run(binary, case_dir, args):
+    """Run binary on the case with args, assert it succeeded, and return the completed process."""
     r = subprocess.run([binary, str(case_dir / "expr_params.dat")] + args,
                        capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -41,7 +48,7 @@ def run(binary, case_dir, args):
 
 
 def checkpoints(case_dir):
-    """Checkpoint position files, outermost run first.
+    """Return the checkpoint position files, outermost run first.
 
     A restarted run appends the rank to the folder a second time, so its
     checkpoint lands one level deeper than the run it resumed from.
@@ -53,12 +60,16 @@ def checkpoints(case_dir):
 
 
 def final_positions(path):
+    """Return the positions stored in a checkpoint file."""
     return np.loadtxt(path)
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("scheme", ["explicit", "RK4"])
 def test_run_is_reproducible(tmp_path, scheme):
+    """Two runs with the same arguments give bit-identical final positions,
+    for both schemes. Without this no result can be reproduced, and none of
+    the run-to-run comparisons below would mean anything."""
     a, b = case(tmp_path, "a"), case(tmp_path, "b")
     args = BASE + ["T=0.2", "scheme=" + scheme]
     run(PARTRAC, a, args)
@@ -72,6 +83,10 @@ def test_run_is_reproducible(tmp_path, scheme):
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("scheme", ["explicit", "RK4"])
 def test_restart_matches_an_uninterrupted_run(tmp_path, scheme):
+    """Running to T = 0.2 and restarting from its checkpoint to T = 0.4 gives
+    final positions bit-identical to a run straight to T = 0.4. The checkpoint
+    must hold the full state, or a long run split across jobs drifts from the
+    run that was intended."""
     direct, split = case(tmp_path, "direct"), case(tmp_path, "split")
     args = BASE + ["scheme=" + scheme]
     run(PARTRAC, direct, args + ["T=0.4"])
@@ -88,6 +103,9 @@ def test_restart_matches_an_uninterrupted_run(tmp_path, scheme):
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_command_line_beats_the_checkpoint_on_restart(tmp_path):
+    """On restart a parameter given on the command line overrides the value
+    stored with the checkpoint, so a finished run can be extended by passing a
+    larger T."""
     d = case(tmp_path, "c")
     run(PARTRAC, d, BASE + ["T=0.2"])
     resume_from = checkpoints(d)[0].parent.parent
@@ -103,8 +121,9 @@ def test_command_line_beats_the_checkpoint_on_restart(tmp_path):
 @pytest.mark.parametrize("scheme,int_order", [("explicit", 1), ("explicit", 2),
                                               ("RK4", 1)])
 def test_plane_poiseuille_advects_only_along_the_axis(tmp_path, scheme, int_order):
-    # u is axial and depends only on x, so a particle must keep its x and y
-    # whatever the scheme. Catches an integrator that mixes up components.
+    """u is axial and depends only on x, so every scheme and order keeps each
+    particle's x and y to round-off while it moves along z. An integrator that
+    mixes up components would carry particles across streamlines."""
     d = case(tmp_path, "axis")
     args = [a for a in BASE if not a.startswith("int_order=")]
     run(PARTRAC, d, args + ["T=0.3", "scheme=" + scheme,
@@ -118,13 +137,15 @@ def test_plane_poiseuille_advects_only_along_the_axis(tmp_path, scheme, int_orde
         last = np.array(h[keys[-1]]["points"])
     assert np.abs(last[:, 0] - first[:, 0]).max() < 1e-12
     assert np.abs(last[:, 1] - first[:, 1]).max() < 1e-12
-    assert np.abs(last[:, 2] - first[:, 2]).max() > 1e-3  # it did move
+    assert np.abs(last[:, 2] - first[:, 2]).max() > 1e-3  # it did move, so the checks above are not vacuous
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_statistics_do_not_depend_on_dump_verbosity(tmp_path):
-    # minimal_output selects what is written to the h5 dump; it must not change
-    # the statistics, which read the velocity whether or not it is dumped
+    """minimal_output selects only what goes into the h5 dump. The statistics
+    read the velocity whether or not it is dumped, so the mean velocities are
+    identical either way, while the minimal dump still holds fewer datasets.
+    Otherwise trimming the dump to save disk would change the statistics."""
     means = {}
     for minimal in ("true", "false"):
         d = case(tmp_path, "mo_" + minimal)
@@ -137,9 +158,8 @@ def test_statistics_do_not_depend_on_dump_verbosity(tmp_path):
         assert all(np.isfinite(v) for v in means[minimal]), means[minimal]
 
     assert means["true"] == means["false"]
-    assert abs(means["false"][2]) > 1e-6  # the flow is axial, so uz is nonzero
+    assert abs(means["false"][2]) > 1e-6  # the flow is axial, so uz_mean is nonzero and the equality is not 0 == 0
 
-    # and it still trims the dump
     sizes = {}
     h5py = pytest.importorskip("h5py")
     for minimal in ("true", "false"):
@@ -151,10 +171,10 @@ def test_statistics_do_not_depend_on_dump_verbosity(tmp_path):
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 def test_diffusive_run_is_reproducible(tmp_path):
-    # each thread draws from its own generator, so a run is only reproducible
-    # while the schedule is static and particle i always lands on the same
-    # thread. Switching the integrator to schedule(dynamic) breaks this, and
-    # the Dm=0 tests above would not notice.
+    """With Brownian noise on 4 threads, two runs with the same seed are
+    bit-identical. Each thread draws from its own generator, so this holds only
+    while the schedule is static and particle i always lands on the same
+    thread; the Dm = 0 tests cannot detect a change of schedule."""
     args = [a for a in BASE if not a.startswith("Dm=")]
     args += ["Dm=1e-4", "T=0.1", "num_threads=4"]
     a, b = case(tmp_path, "d1"), case(tmp_path, "d2")
@@ -167,7 +187,7 @@ def test_diffusive_run_is_reproducible(tmp_path):
 
 
 def read_stats(case_dir):
-    """The statistics file as a header and an array of rows."""
+    """Return the statistics file of a case as (column names, array of rows)."""
     txt = [l for l in list(case_dir.glob("**/tdata_from_t*.dat"))[0]
            .read_text().splitlines() if l.strip()]
     head = [h for h in txt[0].lstrip("# ").split("\t") if h.strip()]
@@ -186,23 +206,12 @@ SHEET_STATS = ("mode=analytic init_mode=sheet_xy La=0.6 Lb=0.6 ds_init=0.05 "
 @pytest.mark.parametrize("threads", [4, 16])
 @pytest.mark.parametrize("kind", ["strip", "sheet"])
 def test_results_do_not_depend_on_the_thread_count(tmp_path, kind, threads):
-    # The trajectories are exact: every parallel loop writes one entry per
-    # particle, so the state must be identical whatever the schedule.
-    #
-    # The statistics are not, and deliberately so. They are parallel reductions,
-    # which add the per-thread partials in whatever order the threads finish --
-    # so they move in the last bits, between thread counts and between two
-    # identical runs alike. That is what buys them back from a fifth of a run's
-    # time at the intervals runs actually use. Measured at full precision over
-    # every column at 1, 4 and 16 threads, the spread is 1.4e-15, about six ulp.
-    #
-    # The tolerance below is not that number: the file is written at the
-    # ostream default of six significant digits, so a value sitting on a
-    # rounding boundary can flip its last printed digit, which for a mantissa
-    # just over 1 is 1e-5. The atol covers the columns that are zero by
-    # symmetry -- x_mean here -- which hold nothing but cancellation noise at
-    # 1e-17. A column that moves by more than this has a broken reduction, not
-    # a rounded one.
+    """Positions on 4 or 16 threads are bit-identical to one thread, for a
+    strip and a sheet, since every parallel loop writes one entry per particle.
+    The statistics are parallel reductions that add per-thread partials in
+    whatever order the threads finish, so they may move in the last bits and
+    are compared to their printed precision; a larger difference is a broken
+    reduction."""
     ref = case(tmp_path, "%s_t1" % kind)
     other = case(tmp_path, "%s_t%d" % (kind, threads))
     if kind == "strip":
@@ -219,6 +228,10 @@ def test_results_do_not_depend_on_the_thread_count(tmp_path, kind, threads):
     hb, b = read_stats(other)
     assert ha == hb, "the two runs wrote different columns"
     assert a.shape == b.shape, "the two runs wrote a different number of rows"
+    # the file is written with six significant digits, so a value on a rounding
+    # boundary can flip its last printed digit: rtol=1e-5. The atol covers the
+    # columns that are zero by symmetry, such as x_mean, which hold only
+    # cancellation noise.
     bad = [ha[j] for j in range(a.shape[1])
            if not np.allclose(a[:, j], b[:, j], rtol=1e-5, atol=1e-12)]
     assert not bad, "columns differ beyond a reduction's rounding: %s" % bad
@@ -230,9 +243,10 @@ BRINKMAN = os.path.join(REPO, "data_example", "brinkman_cylinder", "expr_params.
 
 @pytest.mark.skipif(not os.path.exists(WALKERS), reason="weighted_walkers is not built")
 def test_separation_data_covers_every_exit_plane(tmp_path):
-    # for dim == 2 the selection is gated on exit_plane and checks the distance
-    # along the strip direction named by init_mode; exit_plane=z had no branch
-    # at all and silently wrote empty separation data
+    """For a 2D strip the separation data selects walkers by their distance
+    along the strip direction named by init_mode, for whichever exit plane is
+    set. With exit_plane=z and a strip along y the selection must be non-empty,
+    or the separation analysis of such a run has no data."""
     d = tmp_path / "ww"
     d.mkdir()
     shutil.copy(BRINKMAN, d / "expr_params.dat")
@@ -253,7 +267,9 @@ def test_separation_data_covers_every_exit_plane(tmp_path):
 
 @pytest.mark.skipif(not os.path.exists(RK4APP), reason="RK4 app is not built")
 def test_rk4_app_is_reproducible(tmp_path):
-    # the experimental integrator, which the apps use instead of RKIntegrator
+    """The RK4 apps use their own integrator rather than RKIntegrator, so they
+    are checked directly: two identical runs write bit-identical dumps, every
+    dataset at every time."""
     a, b = case(tmp_path, "a"), case(tmp_path, "b")
     args = ("init_mode=points_xy Nrw=100 Nrw_max=5000 Dm=0 dt=0.005 T=0.1 "
             "dump_intv=0.05 stat_intv=0.05 random=false seed=7").split()

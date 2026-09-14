@@ -47,7 +47,7 @@ public:
   double uzy() { return Ujk(2, 1); };
   double uzz() { return Ujk(2, 2); };
 private:
-  // Writes no members: the PointValues overload runs inside an omp for
+  // No member writes: called inside omp for
   void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_) const {
     int i = floor(t/tau);
     double chi = chi_[i % chi_.size()];

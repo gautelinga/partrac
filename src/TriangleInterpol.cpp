@@ -156,31 +156,16 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
     Np_.resize(ncoeffs_p);
   }
 
-  // The dofs of every cell, once
-  u_dofs_.resize(mesh->num_cells());
-  {
-    const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
-    for (Uint id = 0; id < mesh->num_cells(); ++id){
-      auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
-      u_dofs_[id].assign(u_dofs.data(), u_dofs.data() + u_dofs.size());
-    }
-  }
-  if (include_pressure){
-    p_dofs_.resize(mesh->num_cells());
-    const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-    for (Uint id = 0; id < mesh->num_cells(); ++id){
-      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
-      p_dofs_[id].assign(p_dofs.data(), p_dofs.data() + p_dofs.size());
-    }
-  }
+  // Precompute dofs of all cells
+  u_dofs_.build(*u_space_->dofmap(), dolfin_cells_, "TriangleInterpol");
+  if (include_pressure)
+    p_dofs_.build(*p_space_->dofmap(), dolfin_cells_, "TriangleInterpol");
 
   check_dofs_fit(ncoeffs_u, ncoeffs_p, Triangle::n_dofs_max, "TriangleInterpol");
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
-  found_same_.resize(omp_get_max_threads());
-  found_nneigh_.resize(omp_get_max_threads());
-  found_other_.resize(omp_get_max_threads());
+  found_.resize(omp_get_max_threads());
 }
 
 void TriangleInterpol::update(const double t)
@@ -191,22 +176,39 @@ void TriangleInterpol::update(const double t)
   // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
-    std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
-    dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-    prevfile.read(*u_prev_, "u");
-    u_prev_->vector()->get_local(u_prev_data_);
-    if (include_pressure){
-      prevfile.read(*p_prev_, "p");
-      p_prev_->vector()->get_local(p_prev_data_);
+    // Swap if possible
+    if (is_initialized && t_next == sp.prev.t){
+      std::cout << "Prev: Timestep = " << sp.prev.t << ", swapping... " << std::endl;
+      u_prev_data_.swap(u_next_data_);
+      if (include_pressure)
+        p_prev_data_.swap(p_next_data_);
+    }
+    else {
+      std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
+      dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+      prevfile.read(*u_prev_, "u");
+      u_prev_->vector()->get_local(u_prev_data_);
+      if (include_pressure){
+        prevfile.read(*p_prev_, "p");
+        p_prev_->vector()->get_local(p_prev_data_);
+      }
     }
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
-    nextfile.read(*u_next_, "u");
-    u_next_->vector()->get_local(u_next_data_);
-    if (include_pressure){
-      nextfile.read(*p_next_, "p");
-      p_next_->vector()->get_local(p_next_data_);
+    // Single stamp: copy prev
+    if (sp.next.filename == sp.prev.filename){
+      u_next_data_ = u_prev_data_;
+      if (include_pressure)
+        p_next_data_ = p_prev_data_;
+    }
+    else {
+      dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
+      nextfile.read(*u_next_, "u");
+      u_next_->vector()->get_local(u_next_data_);
+      if (include_pressure){
+        nextfile.read(*p_next_, "p");
+        p_next_->vector()->get_local(p_next_data_);
+      }
     }
 
     is_initialized = true;
@@ -233,14 +235,14 @@ bool TriangleInterpol::locate(const Vector3d &x, const double t, int& id_prev)
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
   return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
-                         found_same_, found_nneigh_, found_other_);
+                         found_);
 }
 
 void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
   const Vector3d x_loc = _modx(x);
 
-  double _alpha_t = (tin-t_prev)/(t_next-t_prev);
+  const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
   // Compute Pk-Pl basis at x
   double r, s, u;
@@ -280,14 +282,16 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
   std::array<double, Triangle::n_dofs_max> p_next_block{};
 
   // Restrict solution to cell
-  for (std::size_t i = 0; i < u_dofs_[id].size(); ++i){
-      u_prev_block[i] = u_prev_data_[u_dofs_[id][i]];
-      u_next_block[i] = u_next_data_[u_dofs_[id][i]];
+  const std::uint32_t* u_dofs = u_dofs_[id];
+  for (std::size_t i = 0; i < u_dofs_.stride(); ++i){
+      u_prev_block[i] = u_prev_data_[u_dofs[i]];
+      u_next_block[i] = u_next_data_[u_dofs[i]];
   }
   if (include_pressure){
-      for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
-          p_prev_block[i] = p_prev_data_[p_dofs_[id][i]];
-          p_next_block[i] = p_next_data_[p_dofs_[id][i]];
+      const std::uint32_t* p_dofs = p_dofs_[id];
+      for (std::size_t i = 0; i < p_dofs_.stride(); ++i){
+          p_prev_block[i] = p_prev_data_[p_dofs[i]];
+          p_next_block[i] = p_next_data_[p_dofs[i]];
       }
   }
 
@@ -302,7 +306,7 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
 
   // Update
   fields.U = _alpha_t * U_next + (1-_alpha_t) * U_prev;
-  fields.A = (U_next-U_prev)/(t_next-t_prev);
+  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
   if (include_pressure){
     // Evaluate
@@ -311,7 +315,7 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
     fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
   }
 
-  if (this->int_order > 1){
+  if (wants_gradient()){
     if (ncoeffs_u == 3){
       triangles_[id].linearderiv(r, s, u, _Nux_.data(), _Nuy_.data());
     }
@@ -343,7 +347,7 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
       0.0;
 
     fields.gradU = _alpha_t * gradU_next + (1-_alpha_t) * gradU_prev;
-    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 }
 

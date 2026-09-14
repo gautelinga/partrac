@@ -1,7 +1,7 @@
 """Where the built apps are.
 
-ctest passes PARTRAC_BIN; a bare `pytest tests/` falls back to the build tree
-the README tells you to make, then to the old in-source location.
+ctest passes PARTRAC_BIN; a bare `pytest tests/` falls back to build/bin, the
+build tree the README describes, and then to bin/ in the source tree.
 """
 
 import os
@@ -10,6 +10,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _bin_dir():
+    """The directory holding the app binaries."""
     env = os.environ.get("PARTRAC_BIN")
     if env:
         return env
@@ -23,12 +24,19 @@ BIN = _bin_dir()
 
 
 def app(name):
+    """The path of the app binary `name` (which may not exist)."""
     return os.path.join(BIN, name)
 
 def built_with_dolfin():
     """Whether the binaries support the mesh modes.
 
     Having dolfin importable in python says nothing about how partrac was
-    configured; the mesh-only apps are built only when dolfin is enabled.
+    configured; CMake writes build_features.txt next to the apps with the
+    options it was configured with. A build tree without that file is taken
+    as built without dolfin until CMake runs again.
     """
-    return os.path.exists(app("tracers_triangleRK4"))
+    features = os.path.join(BIN, "build_features.txt")
+    if not os.path.exists(features):
+        return False
+    with open(features) as f:
+        return "dolfin=on" in f.read().split()

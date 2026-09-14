@@ -28,20 +28,7 @@ public:
   };
   using Interpol::locate;
   using Interpol::evaluate;
-  void print_found() {
-    auto found_same = std::reduce(found_same_.begin(), found_same_.end());
-    auto found_nneigh = std::reduce(found_nneigh_.begin(), found_nneigh_.end());
-    auto found_other = std::reduce(found_other_.begin(), found_other_.end());
-
-    long int found_sum = found_same + found_nneigh + found_other;
-    double frac_same = double(found_same) / found_sum;
-    double frac_nneigh = double(found_nneigh) / found_sum;
-    double frac_other = 1. - frac_same - frac_nneigh;
-    std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
-    std::fill(found_same_.begin(), found_same_.end(), 0);
-    std::fill(found_nneigh_.begin(), found_nneigh_.end(), 0);
-    std::fill(found_other_.begin(), found_other_.end(), 0);
-  }
+  void print_found() { print_found_counts(found_); }
 protected:
   FreqStamps fs; // frequencies holder
   double t_prev = 0.;
@@ -80,7 +67,7 @@ protected:
   //std::vector<double> Np_;
 
   Uint ncoeffs_u;
-  Uint ncoeffs_p;
+  Uint ncoeffs_p = 0;   // stays 0 when pressure is ignored
 
   std::shared_ptr<dolfin::Function> u_;
   std::shared_ptr<dolfin::Function> p_;
@@ -95,12 +82,7 @@ protected:
   std::vector<std::vector<std::vector<double>>> u_coefficients_;
   std::vector<std::vector<std::vector<double>>> p_coefficients_;
 
-  //long unsigned int found_same = 0;
-  //long unsigned int found_nneigh = 0;
-  //long unsigned int found_other = 0;
-  std::vector<long unsigned int> found_same_;
-  std::vector<long unsigned int> found_nneigh_;
-  std::vector<long unsigned int> found_other_;
+  std::vector<FoundCounts> found_;
 
   double omega0 = 0.;
 

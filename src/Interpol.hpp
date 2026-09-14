@@ -7,6 +7,22 @@
 
 //using namespace std;
 
+// Time weight and rate between stamps; zero rate on a single stamp
+inline double stamp_weight(const double t, const double t_prev, const double t_next){
+  return (t_next > t_prev) ? (t - t_prev)/(t_next - t_prev) : 0.;
+}
+inline double stamp_rate(const double next, const double prev, const double t_prev, const double t_next){
+  return (t_next > t_prev) ? (next - prev)/(t_next - t_prev) : 0.;
+}
+inline Vector3d stamp_rate(const Vector3d& next, const Vector3d& prev, const double t_prev, const double t_next){
+  if (t_next > t_prev) return (next - prev)/(t_next - t_prev);
+  return Vector3d::Zero();
+}
+inline Matrix3d stamp_rate(const Matrix3d& next, const Matrix3d& prev, const double t_prev, const double t_next){
+  if (t_next > t_prev) return (next - prev)/(t_next - t_prev);
+  return Matrix3d::Zero();
+}
+
 class Interpol {  // Abstract base class
 public:
   Interpol(const std::string& infilename) { this->infilename=infilename; };
@@ -17,14 +33,16 @@ public:
   void set_U0(const double U0) { this->U0 = U0; };
   double get_U0() { return this->U0; };
   void set_int_order(const int int_order) { this->int_order = int_order; };
+  // Gradient needed for int_order > 1 or carried elements
+  void set_needs_gradient(const bool b) { needs_gradient_ = b; };
+  bool wants_gradient() const { return int_order > 1 || needs_gradient_; };
   //
   double get_Lx() { return x_max[0]-x_min[0]; };
   double get_Ly() { return x_max[1]-x_min[1]; };
   double get_Lz() { return x_max[2]-x_min[2]; };
   Vector3d get_x_min() const { return x_min; };
   Vector3d get_x_max() const { return x_max; };
-  // For the serial initialization path: no cell cache, and the time last set
-  // by update(). Both return whether the point is inside the domain.
+  // Serial versions: no cell cache, time from update()
   bool locate(const Vector3d &x){ int cell_id = -1; return locate(x, t_update, cell_id); };
   bool evaluate(const Vector3d &x, PointValues& ptvals){
     int cell_id = -1;
@@ -42,8 +60,6 @@ public:
   //
   virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded
   //
-  template<typename T>
-  void assign_fields(T&, const std::map<std::string, bool>& output_fields);
   virtual void reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id) { };
   bool can_reflect = false;
 protected:
@@ -52,6 +68,7 @@ protected:
   bool is_initialized = false;
   bool verbose = true;
   int int_order = 1;
+  bool needs_gradient_ = false;
   //double Lx = 0;
   //double Ly = 0;
   //double Lz = 0;
@@ -61,30 +78,5 @@ protected:
   double t_update;
 };
 
-template<typename T>
-void Interpol::assign_fields(T& ps, const std::map<std::string, bool>& output_fields){
-  double t = t_update;
-  #pragma omp parallel for
-  for ( auto & particle : ps.particles() ){
-    PointValues ptvals(get_U0());
-    int cell_id = particle.cell_id();
-    bool inside = true;
-    if (cell_id == -1 )
-      inside = locate(particle.get_x(), t, cell_id);
-    if (inside) {
-      evaluate(particle.get_x(), t, cell_id, ptvals);
-      if (output_fields.find("u")->second)
-        particle.u() = ptvals.get_u();
-      if (output_fields.find("rho")->second)
-        particle.rho() = ptvals.get_rho();
-      if (output_fields.find("p")->second)
-        particle.p() = ptvals.get_p();
-      if (output_fields.find("cell_type")->second)
-        particle.cell_type() = ptvals.get_cell_type();
-      if (output_fields.find("J")->second)
-        particle.J() = ptvals.get_J();
-    }
-  }
-}
 
 #endif

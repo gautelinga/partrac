@@ -62,6 +62,8 @@ void load_list(const std::string& input_file,
                std::vector<Uint> &li);
 void dump_list(const std::string& output_file,
                const std::vector<Uint> &li);
+void dump_list(const std::string& output_file,
+               const std::vector<Uint> &li, const Uint n);
 void dump_faces(const std::string& output_file,
                 const FacesType &faces);
 void dump_edges(const std::string& output_file,
@@ -81,6 +83,13 @@ void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const Uint Nrw);
 void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw);
+void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<Matrix3d>& M_rw,
+                 const Uint Nrw);
+void ulong2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<Uint>& a, const Uint Nrw);
+void int2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<int>& a, const Uint Nrw);
+void dump_tensor_field(const std::string& output_file, const std::vector<Matrix3d>& M_rw, const Uint Nrw);
+void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_rw, const Uint Nrw);
+void load_vector_field(const std::string& input_file, std::vector<Vector3d>& a_rw, const Uint Nrw);
 void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw);
 void print_mesh(const FacesType& faces, const EdgesType& edges,

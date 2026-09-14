@@ -1,10 +1,17 @@
 #include "dolfin_helpers.hpp"
 #ifdef USE_DOLFIN
+#include <algorithm>
+#include <cmath>
 
 void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
                         , std::shared_ptr<dolfin::Mesh> mesh
                         , std::vector<dolfin::Cell> &dolfin_cells_)
 {
+  // Cell ids must fit int
+  if (mesh->num_cells() > std::size_t(std::numeric_limits<int>::max())){
+    std::cout << "Mesh has " << mesh->num_cells() << " cells, more than a cell id can hold" << std::endl;
+    exit(1);
+  }
   Uint dim = mesh->geometry().dim();
   for (std::size_t i = 0; i < mesh->num_cells(); ++i){
     //std::cout << "Num cells:  " << dolfin_cells_[i].num_entities(dim) << std::endl;
@@ -100,19 +107,24 @@ void apply_periodic_boundaries(std::vector<CellNeighbours>& cell2cells_,
     std::cout << k << " " << bdry_l[k].size() << " " << bdry_h[k].size() << std::endl;
   }
 
+  // Match periodic facets within a sorted window
   for ( Uint k=0; k < dim; ++k ){
+    const Uint a = (k + 1) % dim;
+    auto & hi = bdry_h[k];
+    std::sort(hi.begin(), hi.end(), [a](const auto& p, const auto& q){ return p.first[a] < q.first[a]; });
     for ( auto & item1 : bdry_l[k] ){
       auto x1 = item1.first;
       auto id1 = item1.second;
-
-      for ( auto & item2 : bdry_h[k] ){
-        auto x2 = item2.first;
-        auto id2 = item2.second;
+      const double w = 2*tol + 4*std::numeric_limits<double>::epsilon()*(std::abs(x1[a]) + 1.);
+      auto it = std::lower_bound(hi.begin(), hi.end(), x1[a] - w,
+                                 [a](const auto& p, const double v){ return p.first[a] < v; });
+      for ( ; it != hi.end() && it->first[a] <= x1[a] + w; ++it ){
+        auto x2 = it->first;
+        auto id2 = it->second;
 
         double dx = (x1-x2).norm();
 
         if ( dx < tol ){
-          //std::cout << dx << " " << id1 << " " << id2 << std::endl;
           cell2cells_[id1].insert(id2);
           cell2cells_[id2].insert(id1);
         }

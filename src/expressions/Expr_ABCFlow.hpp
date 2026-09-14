@@ -17,7 +17,7 @@ public:
           getd(expr_params, "y0"),
           getd(expr_params, "z0")};
     p_inf = getd(expr_params, "p_inf");
-    // Optional forcing of A; zero leaves the steady flow
+    // Optional forcing of A
     A_amp = getd(expr_params, "A_amp", 0.);
     A_omega = getd(expr_params, "A_omega", 0.);
   };
@@ -47,7 +47,7 @@ public:
   double uzy() { return gradU(2, 1); };
   double uzz() { return gradU(2, 2); };
 private:
-  // Writes no members: the PointValues overload runs inside an omp for
+  // No member writes: called inside omp for
   void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_, double& P_) const {
     Vector3d r = x-x0;
     double k = 2*M_PI/L;
@@ -61,7 +61,7 @@ private:
     double cz = At*cos(k*r[2]);
 
     U_ = {sz + cy, sx + cz, sy + cx};
-    // The Bernoulli sum: the pressure only while A_amp is zero
+    // Pressure, valid for A_amp = 0
     P_ = p_inf - rho_inf*(sz*cy + sx*cz + sy*cx);
 
     // gradU_(i, j) is dU_i/dx_j

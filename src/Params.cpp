@@ -38,7 +38,7 @@ bool try_parse_real(const std::string& s, double& out) {
   return true;
 }
 
-// Via double, so scientific notation works; must round-trip as a whole number
+// Via double, to allow scientific notation
 bool try_parse_int(const std::string& s, long long& out) {
   double d;
   if (!try_parse_real(s, d)) return false;
@@ -150,7 +150,7 @@ std::string to_string(Source s) {
   return "?";
 }
 
-// Reals are written at full precision so that a dump round-trips exactly
+// Full precision, so a dump round-trips
 std::string value_to_string(const Value& v) {
   std::ostringstream ss;
   if (std::holds_alternative<bool>(v)) {
@@ -396,7 +396,7 @@ Params Schema::parse(const std::vector<std::string>& args) const {
     if (a == "--help" || a == "-h") { p.m_help = true; continue; }
     const auto eq = a.find('=');
     if (eq == std::string::npos) {
-      // the first bare argument is the interpolator file, wherever it appears
+      // First bare argument is the interpolator file
       if (!positional_seen && a.rfind("-", 0) != 0) {
         positional_seen = true;
         p.m_positional = a;

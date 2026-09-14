@@ -6,7 +6,7 @@
 #include <array>
 #include "typedefs.hpp"
 
-class Triangle
+class alignas(64) Triangle
 {
 
 public:
@@ -47,18 +47,15 @@ public:
                 , double *Ny
                 ) const;
 
-  double get_det() const { return det; };
-  void dump();
-  std::vector<double> dof_coords(const int index) const;
   double dot_grad_gi(const double vx, const double vy, const int index) const;
 
 private:
 
-  std::array<double, 3> xx_, yy_;
-  double g1x_, g1y_;
+  // Basis data only
+  double x0_, y0_;
   double g2x_, g2y_;
   double g3x_, g3y_;
-  double det;
+  double g1x_, g1y_;
 
   static constexpr std::array<int, 6> perm_ = {-1, -1, -1, 5, 3, 4};  // Check!
   // static constexpr std::array<int, 6> perm_alt_ = {-1, -1, -1, 4, 5, 3};

@@ -1,14 +1,15 @@
-"""A run stopped and resumed must be the run that was never stopped.
+"""A run stopped and resumed from a checkpoint is the run that was never stopped.
 
-Deterministically, that is not a tolerance question: if the checkpoint holds
-the whole state, the two agree bit for bit, and anything the checkpoint forgets
-shows up as a difference. This is what catches state that was never written --
-an edge's compressed time and rho_prev were absent until recently, so a
-restarted diffusive-strip run silently resumed from an unmixed strip.
+partrac is deterministic here (random=false, Dm=0, sine flow), so this is not a
+tolerance question: if the checkpoint holds the whole state, the continuous and
+resumed runs agree bit for bit at t = END, and any state the checkpoint omits
+(node positions, edges, dl0, an edge's compressed time tau and rho_prev, the
+step count that sets the phase of the remeshing intervals) shows up as a
+difference.
 
-The final checkpoint is written one step past T, so the runs are stopped at
-`n*dump_intv - dt` to put it on a round time that the uninterrupted run also
-dumps at; otherwise the two never share a timestamp to compare.
+The final checkpoint is written one step past T, so the split runs stop at
+`n*dump_intv - dt`; that puts the checkpoint on a round time the uninterrupted
+run also dumps at, and the two runs share timestamps to compare.
 """
 
 import os
@@ -24,6 +25,7 @@ from paths import REPO, app
 PARTRAC = app("partrac")
 SINE = os.path.join(REPO, "data_example", "sine_flow", "expr_params.dat")
 
+# DT divides STOP and END exactly in binary, so step counts are exact
 DT, STOP, END = 0.0625, 1.0, 2.0
 FIELDS = ("points", "edges", "dl", "dl0", "tau")
 
@@ -36,6 +38,7 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
 
 
 def call(case, extra):
+    """Run partrac in `case` with BASE, overridden by `extra`; assert success."""
     argv = [a for a in BASE if a.split("=")[0]
             not in {b.split("=")[0] for b in extra}] + extra
     r = subprocess.run([PARTRAC, str(case / "expr_params.dat")] + argv,
@@ -44,7 +47,7 @@ def call(case, extra):
 
 
 def state_at(case, t):
-    """Every dumped field at time t, from whichever file holds it."""
+    """Every field dumped at time t, from whichever dump file holds it."""
     for f in sorted(case.rglob("data_from_t*.h5")):
         h = h5py.File(f, "r")
         for key in h:
@@ -54,11 +57,13 @@ def state_at(case, t):
 
 
 def continuous_and_resumed(tmp_path, extra, stop=STOP - DT):
+    """State at END of an uninterrupted run and of one checkpointed at stop and resumed."""
     cont, split = tmp_path / "cont", tmp_path / "split"
     for d in (cont, split):
         d.mkdir(parents=True)
         shutil.copy(SINE, d / "expr_params.dat")
 
+    # T is half a step past END so the last step lands on END despite rounding
     call(cont, extra + ["T=%g" % (END + DT / 2), "checkpoint_intv=1e9"])
     call(split, extra + ["T=%g" % stop, "checkpoint_intv=%g" % stop])
     checkpoint = list(split.rglob("edges.edge"))
@@ -70,11 +75,15 @@ def continuous_and_resumed(tmp_path, extra, stop=STOP - DT):
 
 @needs_partrac
 def test_a_resumed_strip_is_identical_to_one_never_stopped(tmp_path):
+    """A refining and coarsening strip with tau integration resumes bit for bit.
+    If any edge state (dl0, tau, rho_prev) were missing from the checkpoint, a
+    restarted diffusive-strip run would silently continue from a wrong, e.g.
+    unmixed, strip."""
     a, b = continuous_and_resumed(
         tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
                    "refine=true", "refine_intv=%g" % DT,
                    "coarsen=true", "coarsen_intv=%g" % DT])
-    assert len(a["edges"]) > 200        # it really refined past the initial 199
+    assert len(a["edges"]) > 200        # refined past the initial 199 edges
     assert set(FIELDS) <= set(a)
     for name in sorted(set(a) & set(b)):
         assert np.array_equal(a[name], b[name]), name
@@ -82,7 +91,8 @@ def test_a_resumed_strip_is_identical_to_one_never_stopped(tmp_path):
 
 @needs_partrac
 def test_a_resumed_point_cloud_is_identical_too(tmp_path):
-    # no mesh, so a different path through the checkpoint
+    """A run with no mesh resumes bit for bit as well. It goes through a
+    different path of the checkpoint reader than a strip does."""
     a, b = continuous_and_resumed(
         tmp_path, ["init_mode=uniform_x", "La=0.5", "ds_max=1e9",
                    "ds_min=1e-12", "refine=false", "coarsen=false",
@@ -93,26 +103,27 @@ def test_a_resumed_point_cloud_is_identical_too(tmp_path):
 
 @needs_partrac
 def test_a_resume_that_is_not_on_a_remeshing_step_is_identical_too(tmp_path):
-    # The other tests remesh every step, so the checkpoint always lands on a
-    # remeshing step and the resumed run cannot get out of phase. Here the
-    # interval is 4*dt and the checkpoint is at 0.875, which no remeshing step
-    # falls on: the step count is what the resumed run needs to keep its phase,
-    # and without it the resumed run also remeshed at 0.875 itself.
+    """A resume between remeshing steps keeps the remeshing phase, because the
+    step count is restored from the checkpoint. Otherwise the resumed run would
+    remesh on different steps and diverge from the uninterrupted one."""
+    # remeshing every 4 dt; the checkpoint at t = 0.875 is not a multiple of
+    # 4 dt = 0.25, so it falls between remeshing steps
     a, b = continuous_and_resumed(
         tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
                    "refine=true", "refine_intv=%g" % (4 * DT),
                    "coarsen=true", "coarsen_intv=%g" % (4 * DT),
                    "dump_intv=%g" % DT],
         stop=0.875 - DT)
-    assert len(a["edges"]) > 200        # it really refined past the initial 199
+    assert len(a["edges"]) > 200        # refined past the initial 199 edges
     for name in sorted(set(a) & set(b)):
         assert np.array_equal(a[name], b[name]), name
 
 
 @needs_partrac
 def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
-    # An interval of 0 turns remeshing off. The initial pass ran once before
-    # the checkpoint was written, and resuming must not run it again on top.
+    """With refine_intv = coarsen_intv = 0 remeshing is off; the initial pass runs
+    once before the checkpoint and is not repeated on resume. Rerunning it would
+    change the mesh of a run the user asked not to remesh."""
     a, b = continuous_and_resumed(
         tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
                    "refine=true", "refine_intv=0",
@@ -120,3 +131,44 @@ def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
     assert len(a["edges"]) == len(b["edges"])
     for name in sorted(set(a) & set(b)):
         assert np.array_equal(a[name], b[name]), name
+
+
+# --- filaments ------------------------------------------------------------------
+
+FILAMENTS = app("filaments")
+ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
+
+
+@pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
+def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path):
+    """filaments resumes its step count from the checkpoint, so intervals keep
+    their phase and the resumed run is bitwise identical to a continuous one.
+    Here the resize runs every 3 steps and the run stops at step 20, which 3 does
+    not divide, so a step count reset to zero would resize on the wrong steps."""
+    from dumps import dump_at
+    pi = "3.14159265358979"
+    base = ("mode=analytic init_mode=pairs_xyz Nrw=50 Nrw_max=500 int_order=1 "
+            "ds_max=0.1 ds_min=0.01 ds_init=0.1 x0=%s y0=%s z0=%s Dm=0 scheme=RK4 "
+            "dt=0.01 dump_intv=0.1 stat_intv=1e9 checkpoint_intv=1e9 resize_intv=0.03 "
+            "random=false seed=1" % (pi, pi, pi)).split()
+
+    def go(d, extra):
+        d.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ABC, d / "expr_params.dat")
+        keys = {a.split("=")[0] for a in extra}
+        argv = [a for a in base if a.split("=")[0] not in keys] + extra
+        r = subprocess.run([FILAMENTS, str(d / "expr_params.dat")] + argv,
+                           capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    cont, split = tmp_path / "cont", tmp_path / "split"
+    go(cont, ["T=0.4"])
+    # the final checkpoint is written one step past T: t = 0.2, step 20
+    go(split, ["T=0.19"])
+    folder = os.path.dirname(os.path.dirname(next(split.rglob("Checkpoints/positions.pos"))))
+    go(split, ["T=0.4", "restart_folder=" + folder])
+    for t in (0.3, 0.4):
+        a, b = dump_at(cont, t), dump_at(split, t)
+        assert set(a) == set(b)
+        for k in a:
+            assert np.array_equal(a[k], b[k]), "%s differs at t = %g after a restart" % (k, t)

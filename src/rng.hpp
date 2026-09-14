@@ -7,7 +7,7 @@
 
 #include "Params.hpp"
 
-// One generator per thread. seed_seq mixes the pair, so the streams are independent.
+// One generator per thread
 inline std::vector<std::mt19937> make_generators(const partrac::Params& prm){
   std::vector<std::mt19937> gens;
   const int N = omp_get_max_threads();

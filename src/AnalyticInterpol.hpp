@@ -1,3 +1,4 @@
+#include <boost/algorithm/string.hpp>
 #include "Interpol.hpp"
 #include "utils.hpp"
 #include "expressions/Expr_StokesSphere.hpp"
@@ -9,6 +10,7 @@
 #include "expressions/Expr_PlanePoiseuille.hpp"
 #include "expressions/Expr_BrinkmanCylinder.hpp"
 #include "expressions/Expr_TaylorCouette.hpp"
+#include "expressions/Expr_LinearFlow.hpp"
 #include <fstream>
 
 #ifndef __ANALYTICINTERPOL_HPP
@@ -35,7 +37,7 @@ protected:
   std::shared_ptr<Expr> expr;
 };
 
-AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infilename) {
+inline AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infilename) {
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
@@ -104,6 +106,11 @@ AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interpol(infi
            expr_params["expression"] == "TaylorCouette"){
     std::cout << "TaylorCouette selected" << std::endl;
     expr = std::make_shared<Expr_TaylorCouette>(expr_params);
+  }
+  else if (expr_params["expression"] == "linear_flow" ||
+           expr_params["expression"] == "LinearFlow"){
+    std::cout << "LinearFlow selected" << std::endl;
+    expr = std::make_shared<Expr_LinearFlow>(expr_params);
   }
   else {
     std::cout << "Could not find expression: " << expr_params["expression"] << std::endl;

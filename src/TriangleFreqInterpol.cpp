@@ -159,7 +159,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     if (include_pressure)
       file_i.read(*p_, "p");
 
-    // Wanted here and nowhere else, so one of each is reused down the mesh
+    // Reused buffers
     std::vector<double> coordinate_dofs;
     ufc::cell ufc_cell;
     for (std::size_t id = 0; id < mesh->num_cells(); ++id)
@@ -181,9 +181,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
-  found_same_.resize(omp_get_max_threads());
-  found_nneigh_.resize(omp_get_max_threads());
-  found_other_.resize(omp_get_max_threads());
+  found_.resize(omp_get_max_threads());
 
   // todo: remove below
 }
@@ -217,7 +215,7 @@ bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, int& id_pre
 {
   const Vector3d xx = _modx(x);
   return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
-                         found_same_, found_nneigh_, found_other_);
+                         found_);
 }
 
 void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
@@ -292,7 +290,7 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
     fields.P = std::inner_product(w_f_.begin(), w_f_.end(), p_f_.begin(), 0.0);
   }
 
-  if (this->int_order > 1){
+  if (wants_gradient()){
     if (ncoeffs_u == 3){
       triangles_[id].linearderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
     }

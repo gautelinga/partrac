@@ -1,6 +1,7 @@
 #ifndef __STRUCTUREDCONSTINTERPOL_HPP
 #define __STRUCTUREDCONSTINTERPOL_HPP
 
+#include <boost/algorithm/string.hpp>
 #include "Interpol.hpp"
 #include "StructuredInterpol.hpp"
 #include "Timestamps.hpp"
@@ -54,7 +55,7 @@ protected:
   bool ignore_uz = false;
 };
 
-StructuredConstInterpol::StructuredConstInterpol(const std::string& infilename) : Interpol(infilename) {
+inline StructuredConstInterpol::StructuredConstInterpol(const std::string& infilename) : Interpol(infilename) {
   std::ifstream input(infilename);
   if (!input){
     std::cout << "File " << infilename <<" doesn't exist." << std::endl;
@@ -129,7 +130,7 @@ StructuredConstInterpol::StructuredConstInterpol(const std::string& infilename) 
   load_int_field(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
 }
 
-void StructuredConstInterpol::update(const double t){
+inline void StructuredConstInterpol::update(const double t){
   StampPair sp = ts.get(t);
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){

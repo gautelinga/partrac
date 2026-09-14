@@ -12,23 +12,27 @@ Tet::Tet(const dolfin::Cell& cell)
   //   zz_[i] = coords[3*i+2];
   // }
 
+  std::array<double, 4> xx, yy, zz;
   for (dolfin::VertexIterator v(cell); !v.end(); ++v)
   {
     const std::size_t pos = v.pos();
-    xx_[pos] = v->x(0);
-    yy_[pos] = v->x(1);
-    zz_[pos] = v->x(2);
+    xx[pos] = v->x(0);
+    yy[pos] = v->x(1);
+    zz[pos] = v->x(2);
   }
+  x0_ = xx[0];
+  y0_ = yy[0];
+  z0_ = zz[0];
 
-  double j11 = xx_[1]-xx_[0];
-  double j12 = yy_[1]-yy_[0];
-  double j13 = zz_[1]-zz_[0];
-  double j21 = xx_[2]-xx_[0];
-  double j22 = yy_[2]-yy_[0];
-  double j23 = zz_[2]-zz_[0];
-  double j31 = xx_[3]-xx_[0];
-  double j32 = yy_[3]-yy_[0];
-  double j33 = zz_[3]-zz_[0];
+  double j11 = xx[1]-xx[0];
+  double j12 = yy[1]-yy[0];
+  double j13 = zz[1]-zz[0];
+  double j21 = xx[2]-xx[0];
+  double j22 = yy[2]-yy[0];
+  double j23 = zz[2]-zz[0];
+  double j31 = xx[3]-xx[0];
+  double j32 = yy[3]-yy[0];
+  double j33 = zz[3]-zz[0];
 
   g2x_ = j22*j33-j23*j32;  g3x_ = j13*j32-j12*j33;  g4x_ = j12*j23-j13*j22;
   g2y_ = j23*j31-j21*j33;  g3y_ = j11*j33-j13*j31;  g4y_ = j13*j21-j11*j23;
@@ -44,7 +48,7 @@ Tet::Tet(const dolfin::Cell& cell)
 void Tet::xyz2bary(double x, double y, double z,
                    double &r,double &s,double &t,double &u) const
 {
-  double dx=x-xx_[0], dy=y-yy_[0], dz=z-zz_[0];
+  double dx=x-x0_, dy=y-y0_, dz=z-z0_;
   s = g2x_*dx+g2y_*dy+g2z_*dz;
   t = g3x_*dx+g3y_*dy+g3z_*dz;
   u = g4x_*dx+g4y_*dy+g4z_*dz;

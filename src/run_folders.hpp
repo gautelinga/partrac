@@ -8,9 +8,7 @@
 #include "Params.hpp"
 #include "io.hpp"
 
-// Output layout: <base>/<name>/<parameters>/0/{Positions,Checkpoints}/.
-// A restart reuses the folder recorded in its checkpoint, which already ends
-// in 0/.
+// Output layout: <base>/<name>/<parameters>/0/{Positions,Checkpoints}/
 
 inline std::string get_newfoldername(const std::string& rwfolder, const partrac::Params& prm){
   std::ostringstream ss_Dm, ss_dt, ss_Nrw, ss_seed;
@@ -27,11 +25,11 @@ inline std::string get_newfoldername(const std::string& rwfolder, const partrac:
          "/";
 }
 
-// Deviations from the layout above, as a bitmask.
+// Layout options (bitmask)
 enum RunFolderOpt : unsigned {
   DefaultLayout = 0,
   DryRun        = 1,   // work out the names, create nothing
-  NoSubfolders  = 2,   // apps that write neither positions nor checkpoints
+  NoSubfolders  = 2,   // no Positions/Checkpoints
   NoRunIndex    = 4    // no trailing 0/
 };
 

@@ -215,35 +215,17 @@ TetInterpol::TetInterpol(const std::string& infilename)
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
-  found_same_.resize(omp_get_max_threads());
-  found_nneigh_.resize(omp_get_max_threads());
-  found_other_.resize(omp_get_max_threads());
+  found_.resize(omp_get_max_threads());
 
   // Precomputing dofs
-  u_dofs_.resize(mesh->num_cells());
   const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
 
-  for (Uint id = 0; id < mesh->num_cells(); ++id)
-  {
-    auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
-    u_dofs_[id].resize(u_dofs.size());
-    for (std::size_t i = 0; i < static_cast<std::size_t>(u_dofs.size()); ++i){
-      u_dofs_[id][i] = u_dofs[i];
-    }
-  }
+  u_dofs_.build(u_dofmap, dolfin_cells_, "TetInterpol");
   
   if (include_pressure){
-    p_dofs_.resize(mesh->num_cells());
     const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
 
-    for (Uint id = 0; id < mesh->num_cells(); ++id)
-    {
-      auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
-      p_dofs_[id].resize(p_dofs.size());
-      for (std::size_t i = 0; i < static_cast<std::size_t>(p_dofs.size()); ++i){
-        p_dofs_[id][i] = p_dofs[i];
-      }
-    }
+    p_dofs_.build(p_dofmap, dolfin_cells_, "TetInterpol");
   }
   
   can_reflect = true;
@@ -255,7 +237,8 @@ void TetInterpol::update(const double t)
   StampPair sp = ts.get(t);
   // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
-  if ( (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max() ){
+  // Always load once; keep last bracket past t_max
+  if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) ){
 
     if (is_initialized && t_next == sp.prev.t)
     {
@@ -275,12 +258,20 @@ void TetInterpol::update(const double t)
     }
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
-    nextfile.read(*u_next_, dolfin_params["velocity_field"]);
-    u_next_->vector()->get_local(u_next_vec);
-    if (include_pressure){
-      nextfile.read(*p_next_, dolfin_params["pressure_field"]);
-      p_next_->vector()->get_local(p_next_vec);
+    // Single stamp: copy prev
+    if (sp.next.filename == sp.prev.filename){
+      u_next_vec = u_prev_vec;
+      if (include_pressure)
+        p_next_vec = p_prev_vec;
+    }
+    else {
+      dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
+      nextfile.read(*u_next_, dolfin_params["velocity_field"]);
+      u_next_->vector()->get_local(u_next_vec);
+      if (include_pressure){
+        nextfile.read(*p_next_, dolfin_params["pressure_field"]);
+        p_next_->vector()->get_local(p_next_vec);
+      }
     }
 
     is_initialized = true;
@@ -311,7 +302,7 @@ bool TetInterpol::locate(const Vector3d &x, const double t, int& id_prev)
 {
   const Vector3d xx = _modx(x);
   return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, id_prev,
-                         found_same_, found_nneigh_, found_other_);
+                         found_);
 }
 
 void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
@@ -320,7 +311,7 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
 
   // Assuming inside fluid
   assert(t <= t_next && t >= t_prev);
-  double alpha_t = (t-t_prev)/(t_next-t_prev);
+  const double alpha_t = stamp_weight(t, t_prev, t_next);
   const Vector3d x_loc = _modx(x);
 
   std::array<double, Tet::n_dofs_max> _Nu_{};
@@ -358,11 +349,12 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   std::array<double, Tet::n_dofs_max*3> u_prev_coefficients_{};
   std::array<double, Tet::n_dofs_max*3> u_next_coefficients_{};
 
-  // restrict() reads dolfin's vector, which is not safe in parallel; gathered instead
+  // Gathered: restrict() is not thread-safe
 
-  for (std::size_t i=0; i < u_dofs_[id].size(); ++i){
-    u_prev_coefficients_[i] = u_prev_vec[u_dofs_[id][i]];
-    u_next_coefficients_[i] = u_next_vec[u_dofs_[id][i]];
+  const std::uint32_t* u_dofs = u_dofs_[id];
+  for (std::size_t i=0; i < u_dofs_.stride(); ++i){
+    u_prev_coefficients_[i] = u_prev_vec[u_dofs[i]];
+    u_next_coefficients_[i] = u_next_vec[u_dofs[i]];
   }
 
   //std::cout << "VV " << vvec[0] << std::endl;
@@ -386,15 +378,16 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
 
   // Update
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
-  fields.A = (U_next-U_prev)/(t_next-t_prev);
+  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
   if (include_pressure){
     std::array<double, Tet::n_dofs_max> p_prev_coefficients_{};
     std::array<double, Tet::n_dofs_max> p_next_coefficients_{};  
 
-    for (std::size_t i=0; i < p_dofs_[id].size(); ++i){
-      p_prev_coefficients_[i] = p_prev_vec[p_dofs_[id][i]];
-      p_next_coefficients_[i] = p_next_vec[p_dofs_[id][i]];
+    const std::uint32_t* p_dofs = p_dofs_[id];
+    for (std::size_t i=0; i < p_dofs_.stride(); ++i){
+      p_prev_coefficients_[i] = p_prev_vec[p_dofs[i]];
+      p_next_coefficients_[i] = p_next_vec[p_dofs[i]];
     }
 
     // Evaluate
@@ -409,7 +402,7 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
     fields.P = 0.;
   }
 
-  if (this->int_order > 1){
+  if (wants_gradient()){
     if (ncoeffs_u == 4){
       tets_[id].linearderiv(r1, r2, r3, r4, _Nux_.data(), _Nuy_.data(), _Nuz_.data());
     }
@@ -443,7 +436,7 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
 
     // Update
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
-    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 }
 

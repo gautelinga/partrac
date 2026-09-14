@@ -23,7 +23,9 @@ inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const FacesType& faces
              , const EdgesType& edges
              , const bool output_tau
+             , const std::vector<Uint>* doublings = nullptr
              ){
+  const bool output_doublings = doublings != nullptr;
   // This function is here because it contains ps. Consider stripping that.
   // Faces
   if (faces.size() > 0){
@@ -37,19 +39,22 @@ inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
     std::vector<double> dA0(faces_dims[0]);
     std::vector<double> tau_(faces_dims[0]);
     
+    #pragma omp parallel for
     for (Uint iface=0; iface < faces_dims[0]; ++iface){
-      std::set<Uint> unique_nodes;
+      // Unique sorted face nodes
+      std::array<Uint, 6> nodes;
       for (Uint i=0; i<3; ++i){
         Uint iedge = faces[iface].first[i];
-        for (Uint j=0; j<2; ++j){
-          Uint inode = edges[iedge].first[j];
-          unique_nodes.insert(inode);
-        }
+        nodes[2*i] = edges[iedge].first[0];
+        nodes[2*i+1] = edges[iedge].first[1];
       }
+      std::sort(nodes.begin(), nodes.end());
       Uint count = 0;
-      for ( auto & inode : unique_nodes ){
-        faces_arr[iface*faces_dims[1] + count] = inode;
-        ++count;
+      for (Uint k=0; k < 6 && count < 3; ++k){
+        if (k == 0 || nodes[k] != nodes[k-1]){
+          faces_arr[iface*faces_dims[1] + count] = nodes[k];
+          ++count;
+        }
       }
       dA[iface] = ps.triangle_area(iface, faces, edges);
       dA0[iface] = faces[iface].second;
@@ -79,6 +84,8 @@ inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
     std::vector<double> dl(edges_dims[0]);
     std::vector<double> dl0(edges_dims[0]);
     std::vector<double> tau_(edges_dims[0]);
+    std::vector<double> logelong(output_doublings ? edges_dims[0] : 0);
+    #pragma omp parallel for
     for (Uint iedge=0; iedge < edges_dims[0]; ++iedge){
       for (Uint j=0; j<2; ++j){
         edges_arr[iedge*edges_dims[1] + j] = edges[iedge].first[j];
@@ -87,6 +94,9 @@ inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
       dl0[iedge] = edges[iedge].second;
       if (output_tau)
         tau_[iedge] = edges[iedge].tau;
+      if (output_doublings){
+        logelong[iedge] = log(dl[iedge]/dl0[iedge]) + (*doublings)[iedge] * log(2);
+      }
     }
 
     H5::DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
@@ -96,6 +106,10 @@ inline void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 
     scalar2hdf5(h5f, groupname + "/dl", dl, edges_dims[0]);
     scalar2hdf5(h5f, groupname + "/dl0", dl0, edges_dims[0]);
+    if (output_doublings){
+      scalar2hdf5(h5f, groupname + "/logelong", logelong, edges_dims[0]);
+      ulong2hdf5(h5f, groupname + "/doublings", *doublings, edges_dims[0]);
+    }
     if (output_tau)
       scalar2hdf5(h5f, groupname + "/tau", tau_, edges_dims[0]);
   }
@@ -159,13 +173,7 @@ inline std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge
 }
 
 
-// Splitting an inlet edge splits the template that injects it, so the next
-// generation is laid down at the finer spacing. Exempting the inlet instead
-// does not terminate: the exempt edge is then the longest in its face, the
-// sweep splits the second longest, and the median it creates comes back the
-// same length -- a triangle that reproduces itself, with dA0 halving each
-// pass until it denormalises. The fixed point is at two thirds of the inlet
-// edge.
+// Inlet edges are split along with their template
 inline Uint sheet_refinement(FacesType &faces,
                              EdgesType &edges,
                              Edge2FacesType &edge2faces,
@@ -183,8 +191,7 @@ inline Uint sheet_refinement(FacesType &faces,
   Uint n_add = 0;
   std::set<Uint> edges_to_remove;
 
-  // Template edge an edge carries, or -1, kept in step with edges through the
-  // splits below. Only an injecting run has an inlet to carry
+  // Template edge of each edge, or -1
   const bool has_inlet = !edges_inlet.empty();
   std::vector<int> inlet_of;
   if (has_inlet){
@@ -193,7 +200,7 @@ inline Uint sheet_refinement(FacesType &faces,
       inlet_of[edges_inlet[j]] = int(j);
   }
 
-  // Seeding and updating both come through here. Not ds/2: the node may be moved
+  // Not ds/2: the node may be moved
   auto ds_ratio_of = [&](const Uint inode, const Uint jnode){
     //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
     //double ds_max_loc = ds_max/(1.0 + curv_refine_factor*kappa);
@@ -201,25 +208,30 @@ inline Uint sheet_refinement(FacesType &faces,
     return ps.dist(inode, jnode)/ds_max_loc;
   };
 
-  // One independent gather per edge; the updates in the sweep below stay serial
+  // Edge ratios in parallel; the sweep stays serial
   std::vector<double> ds_ratio_(edges.size());
   #pragma omp parallel for
   for (Uint i = 0; i < edges.size(); ++i)
     ds_ratio_[i] = ds_ratio_of(edges[i].first[0], edges[i].first[1]);
 
+  // Edges over threshold; later passes rescan only leftovers and new edges
+  std::vector<std::pair<double, Uint>> over;
+  for (Uint iedge = 0; iedge < ds_ratio_.size(); ++iedge){
+    if (ds_ratio_[iedge] >= 1.0)
+      over.push_back({ds_ratio_[iedge], iedge});
+  }
+
   do {
     changed = false;
+    const Uint n_edges_before = edges.size();
 
-    // Only the edges over threshold need ordering, and a stable sort keeps it
-    std::vector<size_t> ids_;
-    for (size_t iedge = 0; iedge < ds_ratio_.size(); ++iedge){
-      if (ds_ratio_[iedge] >= 1.0)
-        ids_.push_back(iedge);
-    }
-    std::stable_sort(ids_.begin(), ids_.end(),
-                     [&ds_ratio_](size_t i1, size_t i2){ return ds_ratio_[i1] > ds_ratio_[i2]; });
+    // Longest first, ties by index
+    std::sort(over.begin(), over.end(), [](const auto& a, const auto& b){
+      return a.first > b.first || (a.first == b.first && a.second < b.second);
+    });
 
-    for ( auto & iedge : ids_ ){
+    for ( const auto & entry : over ){
+      const Uint iedge = entry.second;
 
       if (!ps.has_space()){
         // No more points can fit
@@ -291,15 +303,13 @@ inline Uint sheet_refinement(FacesType &faces,
           node2edges[knode].push_back(new_jedge);
         }
 
-        // Injection rebuilds the inlet from its template, so a split that is not
-        // followed here is forgotten at the next injection
+        // Split the inlet template too
         if (has_inlet && inlet_of[iedge] >= 0){
           const Uint j = Uint(inlet_of[iedge]);
           const Uint a = edges_inj[j].first[0];
           const Uint b = edges_inj[j].first[1];
           const Uint m = pos_inj.size();
-          // the inlet is a straight line or a point cloud, so its midpoint is
-          // on it -- a curved inlet would land on the chord, as a split does
+          // Midpoint: assumes a straight inlet
           pos_inj.push_back(0.5*(pos_inj[a] + pos_inj[b]));
           nodes_inlet.push_back(new_inode);
           const double ds0_inj = edges_inj[j].second;
@@ -317,6 +327,17 @@ inline Uint sheet_refinement(FacesType &faces,
           edges_to_remove.insert(iedge);
       }
     }
+
+    std::vector<std::pair<double, Uint>> next;
+    for (const auto & entry : over){
+      if (ds_ratio_[entry.second] >= 1.0)
+        next.push_back({ds_ratio_[entry.second], entry.second});
+    }
+    for (Uint iedge = n_edges_before; iedge < edges.size(); ++iedge){
+      if (ds_ratio_[iedge] >= 1.0)
+        next.push_back({ds_ratio_[iedge], iedge});
+    }
+    over.swap(next);
   } while (changed);
   if (edges_to_remove.size() > 0){
     //if (!cut_if_stuck){
@@ -348,7 +369,7 @@ inline Uint strip_refinement(FacesType &faces,
   Uint n_add = 0;
   Uint iedge = 0;
   std::set<Uint> edges_to_remove;
-  // Don't refine inlet edges; a strip has no face to raise a median against one
+  // Don't refine inlet edges
   std::vector<bool> is_inlet(edges.size(), false);
   for ( auto & jedge : edges_inlet )
     is_inlet[jedge] = true;
@@ -449,7 +470,7 @@ inline Uint refinement(FacesType &faces,
 inline void compute_edge2faces(Edge2FacesType &edge2faces,
                                const FacesType &faces,
                                const EdgesType &edges){
-  // Rows keep their capacity across rebuilds
+  // Keep row capacity
   edge2faces.resize(edges.size());
   for (auto & row : edge2faces)
     row.clear();
@@ -484,7 +505,7 @@ void print(const T vec){
   std::cout << std::endl;
 }
 
-// Nodes joined to inode by active edges, sorted, and the edge joining each
+// Sorted neighbour nodes of inode, and connecting edges
 inline void get_conodes(std::vector<Uint> &conodes,
                         std::vector<Uint> &coedges,
                         const Uint inode,
@@ -594,8 +615,8 @@ inline bool get_new_pos(Vector3d &x,
     x = 0.5*(ps.x(inode) + ps.x(jnode));
   }
   else if (both_are_border){
-    // Rim nodes merge at their midpoint, unless one is a corner: keep the corner
-    const double sharp = 0.25;   // radians; smooth rim curvature is far below
+    // Merge at midpoint, unless one is a corner
+    const double sharp = 0.25;   // radians
     const double turn_i = rim_turn(inode, ps, edges, edge2faces, node2edges);
     const double turn_j = rim_turn(jnode, ps, edges, edge2faces, node2edges);
     if (std::max(turn_i, turn_j) < sharp)
@@ -613,8 +634,7 @@ inline bool get_new_pos(Vector3d &x,
   return true;
 }
 
-// Cross product of a face's first two edges: twice the area by its norm, the
-// normal by its direction. With moved, both ends of iedge are read at x.
+// Twice the area times normal of a face; with moved, iedge ends are at x
 inline Vector3d face_cross(const Uint jface,
                            const Uint iedge,
                            const Vector3d &x,
@@ -634,8 +654,7 @@ inline Vector3d face_cross(const Uint jface,
   return drj.cross(drk);
 }
 
-// Check that no surviving face is turned over or flattened onto its own
-// opposite edge when both nodes move to x, and take the areas the move gives
+// Check for flipped faces when both nodes move to x; also computes new areas
 inline bool normals_are_ok(const Uint iedge,
                            const Vector3d &x,
                            const ParticleSet& ps,
@@ -649,7 +668,7 @@ inline bool normals_are_ok(const Uint iedge,
     const Vector3d c = face_cross(jfaces[k], iedge, x, true, ps, faces, edges);
     const double s2 = cross_old[k].squaredNorm();
     if (s2 > 0. && cross_old[k].dot(c) <= 1e-10*s2)
-      return false;   // a face with no area has none to lose
+      return false;   // flipped or flattened
     dAs_new[k] = c.norm()/2;
   }
   return true;
@@ -677,7 +696,7 @@ inline void get_incident_faces(std::vector<Uint> &kfaces,
     kfaces.erase(std::remove(kfaces.begin(), kfaces.end(), kface), kfaces.end());
 }
 
-// Scratch for collapse_edge, owned by the sweep
+// Buffers for collapse_edge
 struct CollapseBuffers {
   std::vector<Uint> inodes, jnodes, icoedges, jcoedges, joint_nodes;
   std::vector<Uint> kfaces, iedges_vec, ifaces;
@@ -710,8 +729,7 @@ inline bool collapse_edge(const Uint iedge,
   Uint jnode = std::max(edges[iedge].first[0], edges[iedge].first[1]);
   // double ds0 = edges[iedge].second;
   
-  // Nodes that are connected to the respective nodes, and the edges that
-  // connect them, sorted by node
+  // Neighbour nodes and edges, sorted by node
   auto &inodes = buf.inodes, &jnodes = buf.jnodes;
   auto &icoedges = buf.icoedges, &jcoedges = buf.jcoedges;
 
@@ -764,7 +782,7 @@ inline bool collapse_edge(const Uint iedge,
 
   auto &kfaces = buf.kfaces;
   get_incident_faces(kfaces, iedge, edges, edge2faces, node2edges);
-  // Areas of the incident faces now, and their normals for the check below
+  // Old areas and normals of incident faces
   auto &cross_old = buf.cross_old;
   auto &dAs_old = buf.dAs_old;
   cross_old.resize(kfaces.size());
@@ -778,8 +796,7 @@ inline bool collapse_edge(const Uint iedge,
   if (kfaces.empty())
     return false;
 
-  // Carry tau across only if every face in the patch has one. All equal:
-  // nothing to do. Fresh material (tau = 0) next to mixed material: decline.
+  // Share tau only if all faces have one
   bool share_tau = false;
   {
     const double tau_first = faces[kfaces.front()].tau;
@@ -802,7 +819,7 @@ inline bool collapse_edge(const Uint iedge,
       v_res += faces[iface].second/sqrt(faces[iface].tau);
   }
 
-  // A collapse may not flip a normal; this also takes the areas after the move
+  // No flipped normals; also computes new areas
   auto &dAs_new = buf.dAs_new;
   if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new))
     return false;
@@ -825,7 +842,7 @@ inline bool collapse_edge(const Uint iedge,
                            node2edges[jnode].begin(),
                            node2edges[jnode].end(),
                            back_inserter(iedges_vec));
-  // iedges_vec is sorted and unique, being a symmetric difference
+  // sorted and unique
 
   // Doubled edges at the joint nodes (at most two)
   auto &replace_edges = buf.replace_edges;
@@ -851,8 +868,7 @@ inline bool collapse_edge(const Uint iedge,
   //assert(edge_isactive[iedge]);
   edge_isactive[iedge] = false;
 
-  // The doubled edges are at the joint nodes, so every face that names one is
-  // incident on iedge; the rest of kfaces takes replaced() as the identity
+  // Replace doubled edges in incident faces
   for (auto & jface : kfaces ){
     for (Uint j=0; j<3; ++j)
       faces[jface].first[j] = replaced(faces[jface].first[j]);
@@ -861,11 +877,7 @@ inline bool collapse_edge(const Uint iedge,
     //     << faces[*jfaceit].first[1] << " "
     //     << faces[*jfaceit].first[2] << std::endl;
   }
-  // Distribute the removed mass over the incident faces that survive.
-  // The removed face's reference area is dA0_res, and its actual area is dA_res.
-  // The ratio r_res = dA0_res/dA_res is used to scale the contribution to the
-  // surviving faces based on how much their area changed.
-  // The mass is renormalized to conserve the total reference area of the patch.
+  // Distribute removed mass over surviving faces, conserving patch reference area
   const double r_res = dA_res > 0. ? dA0_res/dA_res : 0.; // density of removed face
   double dA0_patch = dA0_res;
   double dA0_est = 0.;
@@ -876,15 +888,14 @@ inline bool collapse_edge(const Uint iedge,
     const double w = dAs_new[k] - dAs_old[k];
     dA0_patch += dA0_k;
     if (w > 0.)
-      dA0_new[k] = dA0_k + r_res*w; // gets mass proportional to its area gain, with the density of the removed face
+      dA0_new[k] = dA0_k + r_res*w; // area gain, removed face density
     else if (w < 0. && dAs_old[k] > 0.)
-      dA0_new[k] = dA0_k*dAs_new[k]/dAs_old[k]; // loses mass proportional to its area loss, with its own density
+      dA0_new[k] = dA0_k*dAs_new[k]/dAs_old[k]; // area loss, own density
     else
       dA0_new[k] = dA0_k;
     dA0_est += dA0_new[k];
   }
-  // Share out the variance content dA0/sqrt(tau) the same way, from the old
-  // dA0 and tau. tau follows from the two shares.
+  // Same for the variance content dA0/sqrt(tau)
   const double q_res = dA_res > 0. ? v_res/dA_res : 0.;
   double v_patch = v_res;
   double v_est = 0.;
@@ -906,7 +917,7 @@ inline bool collapse_edge(const Uint iedge,
     assert (v_est > 0.);
   }
 
-  assert (dA0_est > 0.); // Ensure that the estimated reference area of the patch is positive before renormalizing
+  assert (dA0_est > 0.);
   for (Uint k=0; k < kfaces.size(); ++k)
     faces[kfaces[k]].second = dA0_patch*dA0_new[k]/dA0_est;
   if (share_tau){
@@ -915,7 +926,7 @@ inline bool collapse_edge(const Uint iedge,
       faces[kfaces[k]].tau = pow(faces[kfaces[k]].second/v, 2);
     }
   }
-  // Recompute rho_prev: dA0 and the geometry have changed
+  // Recompute rho_prev
   for (Uint k=0; k < kfaces.size(); ++k)
     faces[kfaces[k]].rho_prev = dAs_new[k]/faces[kfaces[k]].second;
 
@@ -1015,10 +1026,13 @@ inline void remove_nodes(EdgesType& edges,
   std::vector<Uint> new_index(ps.N());
   for (Uint i=0; i < ps.N(); ++i)
     new_index[i] = i;
+  Uint first_moved = used_nodes.size();
   for (Uint i=0; i<used_nodes.size(); ++i){
     new_index[used_nodes[i]] = i;
-    ps.copy_node(i, used_nodes[i]);
+    if (first_moved == used_nodes.size() && used_nodes[i] != i)
+      first_moved = i;
   }
+  ps.compact(used_nodes, first_moved);
   ps.set_N(used_nodes.size());
 
   for (auto & edge : edges){
@@ -1029,9 +1043,7 @@ inline void remove_nodes(EdgesType& edges,
     inode = new_index[inode];
 }
 
-// Remove everything the flags mark dead, and everything that leaves dangling.
-// A caller sets the flags it knows and passes all-true for the rest. What
-// propagates depends on the dimension: a cloud has no edges, a strip no faces.
+// Remove inactive entities and whatever they leave dangling
 inline void remove_inactive(FacesType &faces, EdgesType &edges,
                             Edge2FacesType &edge2faces, Node2EdgesType &node2edges,
                             EdgesListType &edges_inlet, NodesListType &nodes_inlet,
@@ -1045,8 +1057,7 @@ inline void remove_inactive(FacesType &faces, EdgesType &edges,
   const bool has_faces = faces.size() > 0;
   const bool has_edges = edges.size() > 0;
 
-  // The inlet is what the next generation stitches to, so it stays until it is
-  // no longer the inlet
+  // Keep the inlet
   for ( auto & iedge : edges_inlet )
     edge_isactive[iedge] = true;
   for ( auto & inode : nodes_inlet )
@@ -1068,8 +1079,7 @@ inline void remove_inactive(FacesType &faces, EdgesType &edges,
     }
   }
 
-  // A face the sweep gave no area is kept while it is at the inlet, and goes
-  // as soon as it is not
+  // Remove zero-area faces not at the inlet
   if (has_faces){
     std::vector<bool> at_inlet(faces.size(), false);
     for ( auto & iedge : edges_inlet ){
@@ -1082,7 +1092,7 @@ inline void remove_inactive(FacesType &faces, EdgesType &edges,
     }
   }
 
-  // and whatever is left with nothing above it goes too, inlets excepted
+  // Remove unused edges and nodes, except inlets
   if (has_faces){
     std::vector<bool> is_used(edges.size(), false);
     for (Uint iface=0; iface < faces.size(); ++iface){
@@ -1178,12 +1188,7 @@ inline Uint sheet_coarsening(FacesType &faces,
   Uint iedge;
   CollapseBuffers buf;
 
-  // One linear sweep per pass, as strip_coarsening does. A collapse marks
-  // entities inactive rather than erasing them, so every index stays valid
-  // and the sweep carries on past it; an edge it shortened earlier in the
-  // sweep is picked up by the next pass. Restarting the sweep from zero after
-  // each collapse instead cost a full pass per collapse -- 3e10 distance
-  // evaluations for 1e5 collapses, 70% of the run.
+  // One linear sweep per pass; collapsed entities are only marked inactive
   do {
     changed = false;
     for (iedge = 0; iedge < edges.size(); ++iedge){
@@ -1215,7 +1220,6 @@ inline Uint sheet_coarsening(FacesType &faces,
     }
   } while(changed);
 
-  // Nothing marked: collapse_edge returned before it touched anything
   if (n_coll > 0)
     remove_inactive(faces, edges, edge2faces, node2edges,
                     edges_inlet, nodes_inlet,
@@ -1223,7 +1227,7 @@ inline Uint sheet_coarsening(FacesType &faces,
   return n_coll;
 }
 
-// Adjacent edges normally agree on tau; refuse to merge the rare exception
+// Merge only edges with similar tau
 inline bool tau_compatible(const double a, const double b){
   if (a == b) return true;                 // including a run not tracking tau
   const double lo = std::min(a, b), hi = std::max(a, b);
@@ -1280,7 +1284,7 @@ inline Uint strip_coarsening(FacesType &faces,
           Uint jedge = get_other(jedges[0], jedges[1], iedge);
           Uint kedge = get_other(kedges[0], kedges[1], iedge);
 
-          // before anything is rewired, so there is nothing to undo
+          // Check tau before rewiring
           if (!tau_compatible(edges[jedge].tau, edges[iedge].tau) ||
               !tau_compatible(edges[kedge].tau, edges[iedge].tau)){
             ++iedge;
@@ -1305,10 +1309,9 @@ inline Uint strip_coarsening(FacesType &faces,
           edges[jedge].second += ds0/2;
           edges[kedge].second += ds0/2;
 
-          // collapse_nodes decides where to place the surviving node
           ps.collapse_nodes(inode, jnode, node2edges);
 
-          // ds0 and the geometry have changed, so the elongation must be recomputed
+          // Recompute elongation
           for (const Uint nedge : {jedge, kedge})
             edges[nedge].rho_prev = ps.dist(edges[nedge].first[0],
                                             edges[nedge].first[1])
@@ -1326,7 +1329,6 @@ inline Uint strip_coarsening(FacesType &faces,
     }
   } while(changed);
 
-  // Nothing marked: collapse_edge returned before it touched anything
   if (n_coll > 0)
     remove_inactive(faces, edges, edge2faces, node2edges,
                     edges_inlet, nodes_inlet,
@@ -1375,8 +1377,7 @@ inline bool strip_filtering(FacesType &faces,
     int index = rand() % edges.size();
     edges.erase(edges.begin() + index);
   }
-  // the edges are already gone; this collects the nodes they leave behind.
-  // Not compatible with injection: the schema refuses inject beside filter
+  // Remove nodes left behind (no injection with filter)
   std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
   std::vector<bool> edge_isactive(edges.size(), true);
   std::vector<bool> node_isactive(ps.N(), true);
@@ -1408,7 +1409,7 @@ inline bool sheet_filtering(FacesType &faces,
 
   std::vector<bool> face_isactive(faces.size(), false);
   for (Uint iface=0; iface < filter_target; ++iface){
-    face_isactive[ids[iface]] = true;   // the shuffle, not storage order
+    face_isactive[ids[iface]] = true;   // shuffled
   }
 
   std::vector<bool> edge_isactive(edges.size(), true);
@@ -1453,9 +1454,28 @@ inline bool resizing(EdgesType &edges,
     double rescale_factor = ds / dx.norm();
     if (rescale_factor < 1.0){
       resized = true;
-      // reference and geometry scale together, so ds/ds0 is unchanged
+      // Scale reference length too
       edge.second *= rescale_factor;
       ps.set_x(jnode, xi + dx * rescale_factor); // such that xj = xi + dx
+    }
+  }
+  return resized;
+}
+
+// Halve long edges to ds; count halvings per edge
+inline bool resizing_doublings(const EdgesType &edges, std::vector<Uint>& doublings, ParticleSet& ps, const double ds){
+  bool resized = false;
+  for (Uint iedge = 0; iedge < edges.size(); ++iedge){
+    const Uint inode = edges[iedge].first[0];
+    const Uint jnode = edges[iedge].first[1];
+    const Vector3d xi = ps.x(inode);
+    const Vector3d dx = xi - ps.x(jnode);
+    const double length = dx.norm();
+    if (length > ds){
+      const int n = ceil(log2(length / ds));
+      doublings[iedge] += n;
+      ps.set_x(jnode, xi - dx / exp2(n));
+      resized = true;
     }
   }
   return resized;
@@ -1631,12 +1651,7 @@ inline void compute_mean_curv(const FacesType &faces,
   }
 }
 
-// Lay down a generation of the inlet. With inject_edges the generations are
-// stitched to each other as well, which raises what they trace by a dimension:
-// a cloud draws lines, a curve sweeps a surface.
-// The stitching is one quad per inlet edge, split by the diagonal N_j -- O_j+1.
-// A node the flow has left on the inlet is reused rather than injected again;
-// its quad is then a triangle, closed by the old edge or by the new one.
+// Inject a generation; with inject_edges, stitch it to the previous one
 inline bool injection(const std::vector<Vector3d> &pos_inj,
                       const EdgesType &edges_inj,
                       EdgesListType &edges_inlet,
@@ -1654,7 +1669,7 @@ inline bool injection(const std::vector<Vector3d> &pos_inj,
     return true;
   assert(nodes_inlet.size() == n_inj);
 
-  // Only the stitching can go degenerate
+  // Reuse inlet nodes that stayed put
   std::vector<bool> reused(n_inj, false);
   if (inject_edges){
     double tol = 0.;
@@ -1678,7 +1693,7 @@ inline bool injection(const std::vector<Vector3d> &pos_inj,
   if (verbose)
     std::cout << "Added " << fresh.size() << " nodes." << std::endl;
 
-  // What carries each template node this generation
+  // Node for each template node
   NodesListType node_new(n_inj);
   for (Uint i=0, k=0; i < n_inj; ++i)
     node_new[i] = reused[i] ? nodes_inlet[i] : irw0 + k++;
@@ -1707,7 +1722,7 @@ inline bool injection(const std::vector<Vector3d> &pos_inj,
       return (ps.x(j) - ps.x(i)).cross(ps.x(k) - ps.x(i)).norm();
     };
 
-    // The new curve. An edge both of whose ends stayed put is the old one.
+    // New curve, reusing old edges
     EdgesListType edge_new(edges_inj.size());
     for (Uint j=0; j < edges_inj.size(); ++j){
       const Uint a = edges_inj[j].first[0];
@@ -1716,20 +1731,19 @@ inline bool injection(const std::vector<Vector3d> &pos_inj,
                   ? edges_inlet[j]
                   : add_edge(node_new[a], node_new[b], edges_inj[j].second);
     }
-    // The rungs, one per node that was actually injected
+    // Rungs
     std::vector<Uint> rung(n_inj, 0);
     for (Uint i=0; inject_edges && i < n_inj; ++i){
       if (!reused[i])
         rung[i] = add_edge(node_new[i], nodes_inlet[i],
                            ps.dist(node_new[i], nodes_inlet[i]));
     }
-    // The quads. A corner the flow has flattened is laid down like any other
-    // and culled once it is no longer at the inlet
+    // Quads
     for (Uint j=0; inject_edges && j < edges_inj.size(); ++j){
       const Uint a = edges_inj[j].first[0];
       const Uint b = edges_inj[j].first[1];
       if (reused[a] && reused[b])
-        continue;                     // no material arrived here at all
+        continue;                     // nothing injected
       const Uint Oa = nodes_inlet[a], Ob = nodes_inlet[b];
       const Uint Na = node_new[a], Nb = node_new[b];
       const Uint old_edge = edges_inlet[j];

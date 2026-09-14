@@ -197,7 +197,7 @@ inline double getd(std::map<std::string, std::string> &expr_params, const std::s
   }
 }
 
-// Optional parameter: an expression that gained one must still read an old file
+// Optional parameter with fallback
 inline double getd(std::map<std::string, std::string> &expr_params,
                    const std::string key, const double fallback){
   if (expr_params.find(key) != expr_params.end()){
@@ -305,7 +305,8 @@ public:
   Matrix3d gradU;
   Matrix3d gradA;
   double P = 0.;
-  double Rho = 0.;
+  double Rho = 0.;    // density
+  double Phi = 0.;    // phase field (XDMF)
   Vector3d get_u() { return U0 * U; };
   Matrix3d get_J() { return U0 * gradU; };
   Vector3d get_Ju() { return U0 * U0 * gradU * U; }; // check
@@ -313,6 +314,7 @@ public:
   Matrix3d get_grada() { return U0 * gradA; }
   double get_p() const { return P; };
   double get_rho() const { return Rho; };
+  double get_phi() const { return Phi; };
   int cell_type = 0;
   int get_cell_type() const { return cell_type; };
 private:
@@ -320,18 +322,16 @@ private:
 };
 
 
-// Timesteps in an interval, for use as a step count. Never zero, and saturating
-// rather than wrapping: int(1e9/0.005) does not fit an int.
+// Timesteps in an interval; at least 1, saturating
 inline Uint steps_per(const double intv, const double dt){
   const double n = intv/dt;
-  if (!(n > 1.)) return 1;  // shorter than a timestep, or not a number
+  if (!(n > 1.)) return 1;  // shorter than a timestep, or NaN
   if (n >= double(std::numeric_limits<Uint>::max()))
     return std::numeric_limits<Uint>::max();
   return Uint(n);
 }
 
-// Whether step it falls on the interval. A non-positive interval is off, at
-// it = 0 as well, which is the only way to turn an output off entirely.
+// Whether step it is on the interval; off if intv <= 0
 inline bool at_interval(const Uint it, const double intv, const double dt){
   if (!(intv > 0.)) return false;
   return it % steps_per(intv, dt) == 0;

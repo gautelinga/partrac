@@ -30,6 +30,27 @@ Passive tracers example:
 `./build/bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
 This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` and puts the simulation data into it.
 
+## Apps
+One app per kind of thing followed, all on the same run loop. Every app reads
+its field through any interpolator (`mode=`); the ones that step in time take
+`scheme=explicit` (with noise when `Dm > 0`) or `scheme=RK4`.
+
+| App | What it follows |
+|-----|-----------------|
+| `partrac` | Points, strips and sheets, with refinement, coarsening and injection |
+| `filaments` | Pairs of points and their stretching; `resize=` and `outside=reinject` for edges stuck in an underresolved field |
+| `tracers` | A cloud of points |
+| `tracervectors` | Points carrying a material line element |
+| `tracertensors` | Points carrying the deformation gradient |
+| `static_space_stepper` | Points, strips and sheets marched in path length along the streamlines, the fields frozen |
+| `tracervectors_spatial` | Line elements marched in path length |
+| `weighted_walkers` | Diffusive walkers past an exit plane, resampled by weight |
+| `interpol` | Probes the fields at random points |
+
+The older per-interpolator names (`tracervectors_triangleRK4`,
+`filaments_felbmRK4`, ...) still run: each is its app with the interpolator
+and the choices it used to fix pinned (`apps/CMakeLists.txt`).
+
 ## Mesh examples
 The `data_example` folders for the mesh modes (`ppf_triangle_p2`,
 `test_triangle_p2`, `test_tet_p1`, `test_tet_p2`, `sine_trianglefreq_p2`) ship a

@@ -1,21 +1,14 @@
 """StructuredInterpol across a change of timestamp.
 
-Three things were wrong here, and the shipped felbm data has two stamps
-holding the same field, so no test could see any of them.
-
-Two were in `update`. Stepping to the next stamp, the old *next* becomes the
-new *prev* by pointer swap, and the z-component read
-`std::swap(uz_prev, uz_prev)` -- a self-swap -- so uz_prev kept the stamp
-before last from the second stamp on. And the blend between the two stamps
-used a member `alpha_t` that nothing set, so every structured run held the
-previous stamp's field constant instead of interpolating in time. Both are
-pinned with u_z = 0, 1, 2 at t = 0, 1, 2, so that z(t) = t^2/2 exactly: the
-mean of u_z over [1, 1.5] separates the swap (1.25 blended, 1 held, 0.5 or 0
-with the self-swap), and z at the end separates the blend.
-
-The third is in `evaluate`, in the branch for cells within a node of a solid,
-which read the next stamp's x-derivatives from the previous stamp's field.
-Only int_order=2 reaches it, through gradU and gradA.
+A synthetic felbm case on a 16^3 grid, with solid walls at x = 0 and x = 15,
+has three stamps at t = 0, 1, 2. Stamp k holds the uniform field u_z = k, so
+with linear blending in time u_z(t) = t and z(t) = z0 + t^2/2 exactly. The
+mean u_z over [1, 1.5] is 1.25 only if, at the stamp change, the old next
+stamp becomes the previous one for every component and the two are blended;
+z at the end checks the blend itself. With shear, stamp k also holds
+u_y = k x, so the whole velocity gradient is linear in time: at t = 0.5 it is
+exactly half of its value at t = 1, also in the cells next to a wall that
+only int_order=2 reaches.
 """
 
 import os
@@ -31,7 +24,7 @@ INTERPOL = app("interpol")
 
 
 def three_stamp_felbm(d, shear=False):
-    """Stamp k holds u_z = k, and with shear also u_y = k x."""
+    """Write a felbm case in d where stamp k holds u_z = k, and with shear also u_y = k x."""
     h5py = pytest.importorskip("h5py")
     n = 16
     zero = np.zeros((n, n, n))
@@ -55,6 +48,10 @@ def three_stamp_felbm(d, shear=False):
 
 @pytest.mark.skipif(not os.path.exists(FELBM), reason="filaments_felbmRK4 is not built")
 def test_uz_advances_with_the_timestamp(tmp_path):
+    """Past stamp 1 the field is blended between stamps 1 and 2, so particles
+    move at u_z > 0.9 over [1, 1.5] and z(T) follows t^2/2. If a component
+    kept an older stamp, or the field were held constant between stamps, every
+    structured run would advect with a field that lags the data in time."""
     h5py = pytest.importorskip("h5py")
     d = tmp_path / "felbm"
     d.mkdir()
@@ -72,12 +69,13 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     assert 1.0 in z and 1.5 in z, sorted(z)
     u_z_after = (z[1.5] - z[1.0]) / 0.5
     assert u_z_after > 0.9, "u_z over [1, 1.5] is %.3f: stamp 1 did not become prev" % u_z_after
-    # the blend: z(t) = t^2/2, first-order Euler at dt = 0.01 short by t*dt/2
+    # z(t) = t^2/2; first-order Euler at dt = 0.01 falls short by t*dt/2, well inside 0.05
     t = max(z)
     assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
 
 
 def probe(d, t0):
+    """Run interpol with int_order=2 on the case in d at time t0; return the probed datasets by name."""
     h5py = pytest.importorskip("h5py")
     r = subprocess.run([INTERPOL, str(d / "felbm_params.dat")] +
                        ("mode=felbm Nrw=5000 int_order=2 t0=%g random=false seed=1" % t0).split(),
@@ -91,9 +89,10 @@ def probe(d, t0):
 
 @pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
 def test_gradient_blends_between_stamps(tmp_path):
-    """Stamp 0 is at rest, so halfway to stamp 1 the whole gradient must be
-    half of what it is at stamp 1. The x-column of the second stamp's
-    gradient used to be taken from the first, in the cells next to a wall."""
+    """Stamp 0 is at rest, so halfway to stamp 1 every component of the
+    velocity gradient is exactly half its value at stamp 1, in every cell
+    including those next to a wall. Otherwise gradU and gradA in second-order
+    runs near solids would mix derivatives from different stamps."""
     a = tmp_path / "half"
     b = tmp_path / "whole"
     for d in (a, b):
@@ -104,4 +103,4 @@ def test_gradient_blends_between_stamps(tmp_path):
     assert np.array_equal(half["x"], whole["x"])
     for c in ("uxx", "uxy", "uxz", "uyx", "uyy", "uyz", "uzx", "uzy", "uzz"):
         assert np.allclose(half[c], 0.5 * whole[c], rtol=0, atol=1e-12), c
-    assert np.abs(whole["uyx"]).max() > 0.5   # the shear is actually there
+    assert np.abs(whole["uyx"]).max() > 0.5   # the shear is there, so the check above is not 0 == 0

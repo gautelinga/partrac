@@ -1,6 +1,7 @@
 #ifndef __TOPOLOGY_HPP
 #define __TOPOLOGY_HPP
 
+#include <limits>
 #include "typedefs.hpp"
 #include "mesh.hpp"
 #include "Interpol.hpp"
@@ -27,14 +28,15 @@ public:
   bool computes_curvature() const { return curv_refine_factor > 0.; };
   void remove_nodes_safe(std::vector<bool>&);
   bool resize(const double);
+  bool resize_doublings(const double);
   void integrate_tau(const double, const double);
   EdgesType edges;
   FacesType faces;
   Edge2FacesType edge2faces;
   Node2EdgesType node2edges;
   std::vector<Vector3d> pos_inj;
-  int dim0 = -1;   // the dimension the mesh settled into, -1 until it has one
-  double Dm = 0.;  // not every app with a mesh has an integrator to declare it
+  int dim0 = -1;   // -1 until set
+  double Dm = 0.;  // not every app has an integrator
   EdgesType edges_inj;
   EdgesListType edges_inlet;
   NodesListType nodes_inlet;
@@ -42,10 +44,21 @@ public:
   InteriorAnglesType interior_ang;
   std::vector<double> mixed_areas;
   std::vector<Vector3d> face_normals;
+  // Sort particles by cell and renumber
+  bool sort_by_cell();
+  // Shuffle particles and renumber
+  void shuffle(std::mt19937& gen);
+  // Checkpoint t_loc
+  bool records_t_loc = false;
+  // Edge doublings (filaments)
+  bool records_doublings = false;
+  std::vector<Uint> doublings;
+  std::vector<Uint>& edge_doublings(){ doublings.resize(edges.size(), 0); return doublings; }
   void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
   void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm);
+  // Mesh statistics
   std::vector<StatsColumn> stats_header_columns(const double ds_max){
     return mesh_stats_columns(0., ps, faces, edges, ds_max, 0, 0, dim_settled());
   }
@@ -55,6 +68,7 @@ public:
                         //std::shared_ptr<Integrator> integrator);
 private:
   ParticleSet& ps;
+  void renumber(const std::vector<Uint>& old2new);
   double ds_min;
   double ds_max;
   double curv_refine_factor;
@@ -77,12 +91,7 @@ inline Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) 
   Dm = prm.has("Dm") ? prm.get<double>("Dm") : 0.;
 }
 
-// Nothing left to advect, or a manifold that changed dimension: a strip that
-// has lost its last edge, or a sheet its last face, has nothing left to
-// stretch, and every row written afterwards would sit under a header that no
-// longer describes it. Injection can legitimately start from nothing, so the
-// dimension latches on first use.
-// An empty set is the caller's policy; a changed dimension is always wrong
+// Stop on an empty set or a changed dimension
 inline void Topology::check_topology(){
   if (ps.N() == 0){
     std::cerr << "Error: no particles left. Stopping." << std::endl;
@@ -92,7 +101,7 @@ inline void Topology::check_topology(){
 }
 
 inline void Topology::check_dim(){
-  if (ps.N() == 0) return;   // no nodes, so no manifold to have changed
+  if (ps.N() == 0) return;
   const int d = dim();
   if (dim0 < 0){
     if (d > 0){
@@ -105,7 +114,7 @@ inline void Topology::check_dim(){
     return;
   }
   if (d == dim0) return;
-  // An injecting run traces a dimension more than its inlet, so it may rise
+  // Injection may raise the dimension
   if (d > dim0 && injecting){
     dim0 = d;
     return;
@@ -116,9 +125,7 @@ inline void Topology::check_dim(){
   exit(1);
 }
 
-// The dimension the run settles into. Injection raises what the inlet
-// traces by one and the header is written before the first, so the larger
-// of the two is what to ask for -- on a restart as well
+// Dimension the run settles into, including injection
 inline int Topology::dim_settled(){
   int d = dim();
   if (injecting && inject_edges){
@@ -152,8 +159,7 @@ inline void Topology::clear(){
 
 inline void Topology::integrate_tau(const double dt, const double tau_max){
   if (faces.size() == 0){
-    // Each edge advances its own tau from its own rho_prev and read-only
-    // geometry, so the order is immaterial and the result is unchanged
+    // Independent per edge
     #pragma omp parallel for
     for (Uint i = 0; i < edges.size(); ++i){
       auto & edge = edges[i];
@@ -177,7 +183,7 @@ inline void Topology::integrate_tau(const double dt, const double tau_max){
       remove_inactive(faces, edges, edge2faces, node2edges,
                       edges_inlet, nodes_inlet,
                       face_isactive, edge_isactive, node_isactive, ps);
-      check_topology();   // culling every edge would drop the dimension
+      check_topology();   // culling may drop the dimension
     }
   }
   else {
@@ -189,7 +195,7 @@ inline void Topology::integrate_tau(const double dt, const double tau_max){
       Uint jedge = face.first[1];
       double dA0 = face.second;
       if (!(dA0 > 0.))
-        continue;                 // a flat sweep, waiting to be culled
+        continue;                 // degenerate, culled later
       double dA = ps.triangle_area(iedge, jedge, edges);
       double rho = dA/dA0;
       face.tau += 0.5*dt*(pow(face.rho_prev, 2) + pow(rho, 2));
@@ -223,27 +229,28 @@ inline Uint Topology::refine(){
   return n;
 }
 
-// Coarsening runs whether or not it was asked for. With it off the threshold
-// drops to what is numerically zero: refinement raises a median from the new
-// node to the opposite vertex of each face it splits, and that edge's length
-// is the face's business, not ds_max's -- on a nearly collinear face it comes
-// out at nothing, and the faces on it then have two vertices at one point.
+// When not full, collapse only numerically zero edges (degenerate medians)
 inline Uint Topology::coarsen(const bool full){
-  double ds_cut = ds_min;
-  if (!full){
-    // Scaled from the mesh rather than from ds_max, which a run that does not
-    // refine is free to leave enormous
-    double ds_longest = 0.;
-    for ( const auto & edge : edges )
-      ds_longest = std::max(ds_longest,
-                            ps.dist(edge.first[0], edge.first[1]));
-    ds_cut = 1e-12 * ds_longest;
+  // Shortest and longest edge
+  double ds_shortest = std::numeric_limits<double>::infinity();
+  double ds_longest = 0.;
+  #pragma omp parallel for reduction(min:ds_shortest) reduction(max:ds_longest)
+  for (Uint i = 0; i < edges.size(); ++i){
+    const double ds = ps.dist(edges[i].first[0], edges[i].first[1]);
+    ds_shortest = std::min(ds_shortest, ds);
+    ds_longest = std::max(ds_longest, ds);
   }
-  Uint n = coarsening(faces, edges,
-                      edge2faces, node2edges,
-                      edges_inlet, nodes_inlet,
-                      ps, ds_cut,
-                      curv_refine_factor);
+  // Cut scaled from the mesh
+  const double ds_cut = full ? ds_min : 1e-12 * ds_longest;
+
+  // Skip if no edge is below the cut
+  Uint n = 0;
+  if (ds_shortest <= ds_cut * (1. + 1e-9))
+    n = coarsening(faces, edges,
+                   edge2faces, node2edges,
+                   edges_inlet, nodes_inlet,
+                   ps, ds_cut,
+                   curv_refine_factor);
   check_topology();
   return n;
 }
@@ -260,7 +267,7 @@ inline Uint Topology::inject(){
                    ps,
                    inject_edges,
                    verbose);
-  // the generation before this one is no longer at the inlet
+  // Cull what is no longer at the inlet
   std::vector<bool> face_isactive(faces.size(), true);
   std::vector<bool> edge_isactive(edges.size(), true);
   std::vector<bool> node_isactive(ps.N(), true);
@@ -272,7 +279,7 @@ inline Uint Topology::inject(){
 }
 
 inline void Topology::compute_interior(){
-  // Only the curvature-weighted refinement reads this
+  // Only for curvature-weighted refinement
   if (!computes_curvature())
     return;
   compute_interior_prop(interior_ang, mixed_areas, face_normals,
@@ -318,15 +325,23 @@ inline bool Topology::resize(const double ds){
   return resizing(edges, node2edges, ps, ds);
 }
 
+inline bool Topology::resize_doublings(const double ds){
+  return resizing_doublings(edges, edge_doublings(), ps, ds);
+}
+
 inline void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const {
   prm.set<double>("t", t);
-  // refinement and coarsening change the count, so refresh it here
   prm.set<Uint>("Nrw_current", ps.N());
   prm.dump(checkpointsfolder);
   // dump_positions(checkpointsfolder + "/positions.pos", ps.x_rw, ps.Nrw);
   ps.dump_positions(checkpointsfolder + "/positions.pos");
   dump_faces(checkpointsfolder + "/faces.face", faces);
   dump_edges(checkpointsfolder + "/edges.edge", edges);
+  if (records_doublings){
+    std::vector<Uint> d(doublings);
+    d.resize(edges.size(), 0);
+    dump_list(checkpointsfolder + "/doublings.list", d);
+  }
   //dump_colors(checkpointsfolder + "/colors.col", ps.c_rw, ps.Nrw);
   ps.dump_scalar(checkpointsfolder + "/colors.col", "c");
   if (prm.get<bool>("inject")){
@@ -335,9 +350,20 @@ inline void Topology::write_checkpoint(const std::string& checkpointsfolder, con
     dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
     dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
   }
-  if (prm.has("local_dt") && prm.get<bool>("local_dt")){
+  if (records_t_loc || (prm.has("local_dt") && prm.get<bool>("local_dt"))){
     ps.dump_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
   }
+  // Carried fields and ids
+  if (ps.carries() == TransportElement::Vector){
+    ps.dump_vector(checkpointsfolder + "/rhohat.vec", "rhohat");
+    ps.dump_scalar(checkpointsfolder + "/w.dat", "w");
+    ps.dump_scalar(checkpointsfolder + "/S.dat", "S");
+  }
+  if (ps.carries() == TransportElement::Tensor)
+    ps.dump_tensor(checkpointsfolder + "/F.ten", "F");
+  if (ps.records_generation())
+    ps.dump_scalar(checkpointsfolder + "/generation.dat", "generation");
+  ps.dump_ids(checkpointsfolder + "/id.list");
 }
 
 inline void Topology::load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm){
@@ -348,6 +374,10 @@ inline void Topology::load_checkpoint(const std::string& checkpointsfolder, cons
   load_faces(facefile, faces);
   std::string edgefile = checkpointsfolder + "/edges.edge";
   load_edges(edgefile, edges);
+  if (records_doublings){
+    load_list(checkpointsfolder + "/doublings.list", doublings);
+    doublings.resize(edges.size(), 0);
+  }
   std::string colfile = checkpointsfolder + "/colors.col";
   //load_colors(colfile, ps.c_rw, prm.Nrw);
   ps.load_scalar(colfile, "c");
@@ -361,15 +391,49 @@ inline void Topology::load_checkpoint(const std::string& checkpointsfolder, cons
     load_list(edgesinletfile, edges_inlet);
     load_list(nodesinletfile, nodes_inlet);
   }
-  if (prm.has("local_dt") && prm.get<bool>("local_dt")){
+  if (records_t_loc || (prm.has("local_dt") && prm.get<bool>("local_dt"))){
     ps.load_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
   }
+  if (ps.carries() == TransportElement::Vector){
+    ps.load_vector(checkpointsfolder + "/rhohat.vec", "rhohat");
+    ps.load_scalar(checkpointsfolder + "/w.dat", "w");
+    ps.load_scalar(checkpointsfolder + "/S.dat", "S");
+  }
+  if (ps.carries() == TransportElement::Tensor)
+    ps.load_tensor(checkpointsfolder + "/F.ten", "F");
+  if (ps.records_generation())
+    ps.load_scalar(checkpointsfolder + "/generation.dat", "generation");
+  ps.load_ids(checkpointsfolder + "/id.list");
+}
+
+inline bool Topology::sort_by_cell(){
+  const std::vector<Uint> old2new = ps.sort_by_cell();
+  if (old2new.empty())
+    return false;
+  renumber(old2new);
+  return true;
+}
+
+inline void Topology::shuffle(std::mt19937& gen){
+  const std::vector<Uint> old2new = ps.shuffle(gen);
+  if (!old2new.empty())
+    renumber(old2new);
+}
+
+// Remap node indices
+inline void Topology::renumber(const std::vector<Uint>& old2new){
+  for (auto & edge : edges)
+    for (Uint j = 0; j < 2; ++j)
+      edge.first[j] = old2new[edge.first[j]];
+  for (auto & inode : nodes_inlet)
+    inode = old2new[inode];
+  compute_node2edges(node2edges, edges, ps.N());
 }
 
 inline void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
   
   if (dim() > 0)
-    mesh2hdf(h5f, groupname, ps, faces, edges, output_fields["tau"]);
+    mesh2hdf(h5f, groupname, ps, faces, edges, output_fields["tau"], records_doublings ? &edge_doublings() : nullptr);
   ps.dump_hdf5(h5f, groupname, output_fields);
 }
 
@@ -384,8 +448,7 @@ inline void Topology::load_initial_state(std::shared_ptr<Initializer> init_state
     clear();
   }
   if (init_state->inject){
-    // Injection raises what the inlet traces by a dimension, so a sheet inlet
-    // would sweep a volume. What clear_initial_edges leaves is the inlet.
+    // A sheet inlet would sweep a volume
     if (faces.size() > 0){
       std::cerr << "Error: an inlet with faces would sweep a volume. Stopping."
                 << std::endl;
@@ -399,8 +462,7 @@ inline void Topology::load_initial_state(std::shared_ptr<Initializer> init_state
     for (Uint i=0; i<edges_inj.size(); ++i){
       edges_inlet.push_back(i);
     }
-    // Refinement splits the inlet edge with its template, so a ds_max under its
-    // spacing refines the injected curve instead of stalling
+    // Inlet is refined along with its template
     double ds_inj_max = 0.;
     for ( const auto & edge : edges_inj )
       ds_inj_max = std::max(ds_inj_max,
@@ -412,7 +474,7 @@ inline void Topology::load_initial_state(std::shared_ptr<Initializer> init_state
                 << "as the run goes on." << std::endl;
   }
   ps.add(init_state->nodes, 0);
-  // Nrw is the request; these are what was placed
+  // Actual counts; Nrw is the request
   prm.set<Uint>("Nrw_init", ps.N());
   prm.set<Uint>("Nrw_current", ps.N());
   check_topology();

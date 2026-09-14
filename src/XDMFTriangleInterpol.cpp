@@ -145,9 +145,7 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   cell_normal_.resize(mesh->num_cells());
   cell_facet_midpoint_.resize(mesh->num_cells());
   perm_.resize(mesh->num_cells());
-  // Which P2 dof sits on which edge. Found by interpolating dummy P1 data
-  // both ways at a point off every symmetry axis, so the one ordering that
-  // reproduces it is unambiguous
+  // P2 dof ordering on edges, found from dummy P1 data
   for ( Uint i = 0; i < mesh->num_cells(); ++i ){
     if (cell_type_[i] != 1) continue;
     const double r = 0.5, s = 0.3, t = 0.2;
@@ -263,38 +261,24 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
-  found_same_.resize(omp_get_max_threads());
-  found_nneigh_.resize(omp_get_max_threads());
-  found_other_.resize(omp_get_max_threads());
+  found_.resize(omp_get_max_threads());
 
   // Precomputing dofs
-  u_dofs_.resize(mesh->num_cells());
-  p_dofs_.resize(mesh->num_cells());
 
   const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
   const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
   
-  for (Uint id = 0; id < mesh->num_cells(); ++id)
-  {
-    auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
-    u_dofs_[id].resize(u_dofs.size());
-    for (std::size_t i = 0; i < static_cast<std::size_t>(u_dofs.size()); ++i){
-      u_dofs_[id][i] = u_dofs[i];
-    }
+  u_dofs_.build(u_dofmap, dolfin_cells_, "XDMFTriangleInterpol");
 
-    auto p_dofs = p_dofmap.cell_dofs(dolfin_cells_[id].index());
-    p_dofs_[id].resize(p_dofs.size());
-    for (std::size_t i = 0; i < static_cast<std::size_t>(p_dofs.size()); ++i){
-      p_dofs_[id][i] = p_dofs[i];
-    }
-  }
+  p_dofs_.build(p_dofmap, dolfin_cells_, "XDMFTriangleInterpol");
 }
 
 void XDMFTriangleInterpol::update(const double t)
 {
   MultiStampPair sp = ts.get(t);
 
-  if (( !is_initialized || t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max() )
+  // Always load once; keep last bracket past t_max
+  if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) )
   {
     std::vector<double> data_;
     // Swap if possible
@@ -373,14 +357,14 @@ bool XDMFTriangleInterpol::locate(const Vector3d &x, const double t, int& id_pre
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
   return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
-                         found_same_, found_nneigh_, found_other_);
+                         found_);
 }
 
 void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
 {
   const Vector3d x_loc = _modx(x);
 
-  double _alpha_t = (tin-t_prev)/(t_next-t_prev);
+  const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
   // Compute Pk-Pl basis at x
   double r1, r2, r3;
@@ -404,9 +388,10 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
   //const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
   //auto u_dofs = u_dofmap.cell_dofs(dolfin_cells_[id].index());
 
-  for (std::size_t i = 0; i < u_dofs_[id].size(); ++i){
-      u_prev_block[i] = u_prev_data_[u_dofs_[id][i]];
-      u_next_block[i] = u_next_data_[u_dofs_[id][i]];
+  const std::uint32_t* u_dofs = u_dofs_[id];
+  for (std::size_t i = 0; i < u_dofs_.stride(); ++i){
+      u_prev_block[i] = u_prev_data_[u_dofs[i]];
+      u_next_block[i] = u_next_data_[u_dofs[i]];
   }
 
   // Evaluate
@@ -417,9 +402,9 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
                      std::inner_product(_Nu_.data(), _Nu_.data()+ncoeffs_u, &u_next_block[ncoeffs_u], 0.0),
                      0.0 };
 
-  // only filled when int_order > 1, and only read under the same test
+  // Gradient
   Matrix3d gradU_prev = Matrix3d::Zero(), gradU_next = Matrix3d::Zero();
-  if (this->int_order > 1){
+  if (wants_gradient()){
     triangles_[id].linearderiv(r1, r2, r3, _Nux_.data(), _Nuy_.data());
 
     gradU_prev <<
@@ -536,7 +521,7 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
     U_next = U_next2;
     // = {0., 0., 0.}; //
   
-    if (this->int_order > 1){
+    if (wants_gradient()){
       Matrix3d gradU_prev2, gradU_next2;
 
       std::array<double, 6> _Nu2x_{};
@@ -572,20 +557,21 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
 
   // Update
   fields.U = _alpha_t * U_next + (1-_alpha_t) * U_prev;
-  fields.A = (U_next-U_prev)/(t_next-t_prev);
+  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
-  if (int_order > 1){
+  if (wants_gradient()){
     fields.gradU = _alpha_t * gradU_next + (1-_alpha_t) * gradU_prev;
-    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 
   if (include_pressure){
     std::array<double, Triangle::n_dofs_max> p_prev_block{};
     std::array<double, Triangle::n_dofs_max> p_next_block{};
     
-    for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
-        p_prev_block[i] = p_prev_data_[p_dofs_[id][i]];
-        p_next_block[i] = p_next_data_[p_dofs_[id][i]];
+    const std::uint32_t* p_dofs = p_dofs_[id];
+    for (std::size_t i = 0; i < p_dofs_.stride(); ++i){
+        p_prev_block[i] = p_prev_data_[p_dofs[i]];
+        p_next_block[i] = p_next_data_[p_dofs[i]];
     }
     
     // Evaluate
@@ -598,14 +584,15 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
     std::array<double, Triangle::n_dofs_max> phi_prev_block{};
     std::array<double, Triangle::n_dofs_max> phi_next_block{};
     
-    for (std::size_t i = 0; i < p_dofs_[id].size(); ++i){
-        phi_prev_block[i] = phi_prev_data_[p_dofs_[id][i]];
-        phi_next_block[i] = phi_next_data_[p_dofs_[id][i]];
+    const std::uint32_t* p_dofs = p_dofs_[id];
+    for (std::size_t i = 0; i < p_dofs_.stride(); ++i){
+        phi_prev_block[i] = phi_prev_data_[p_dofs[i]];
+        phi_next_block[i] = phi_next_data_[p_dofs[i]];
     }
 
     double Phi_prev = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, phi_prev_block.begin(), 0.0);
     double Phi_next = std::inner_product(_Np_.data(), _Np_.data()+ncoeffs_p, phi_next_block.begin(), 0.0);
-    fields.Rho = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
+    fields.Phi = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
   }
 
   // cell_type

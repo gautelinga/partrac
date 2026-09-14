@@ -1,3 +1,13 @@
+"""partrac on the analytic flows (mode=analytic, AnalyticInterpol).
+
+test_batchelor advects a line of particles through a Batchelor vortex and
+compares its total length against reference values for each dt. The other tests
+go through every shipped example whose expr_params.dat names an analytic
+expression: each must carry the domain bounds AnalyticInterpol reads, and each
+must run a few steps to a stats file of finite numbers with particles left in
+the domain.
+"""
+
 import json
 import os
 import shutil
@@ -15,6 +25,7 @@ PARTRAC = app("partrac")
 
 
 def make_temp_case(expr_params):
+    """A new temporary folder holding expr_params.dat written from the dict."""
     tmpdir = tempfile.mkdtemp()
     prmfile = open(os.path.join(tmpdir, "expr_params.dat"), "w+")
     for prm, val in expr_params.items():
@@ -23,6 +34,7 @@ def make_temp_case(expr_params):
 
 
 def destroy_temp_case(tmpdir):
+    """Delete everything under tmpdir (the folder itself is left)."""
     for root, dirs, files in os.walk(tmpdir, topdown=False):
         for name in files:
             os.remove(os.path.join(root, name))
@@ -31,6 +43,7 @@ def destroy_temp_case(tmpdir):
 
 
 def make_batchelor_case():
+    """A temporary case folder for a Batchelor vortex centred in a 10^3 box."""
     expr_params = dict(t_min=0.0,
                        t_max=10000000.0,
                        Lx=10.0,
@@ -61,6 +74,12 @@ def make_batchelor_case():
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("dt", [0.1, 0.2, 0.4])
 def test_batchelor(dt):
+    """A line of particles in a Batchelor vortex reaches its reference length at T = 10.
+
+    This is a regression check on the analytic velocity, the integrator and the
+    length bookkeeping: the final total length l and the initial length l0 must
+    match values recorded for each dt to 1e-5.
+    """
     tmpdir = make_batchelor_case()
     #with open("{}/expr_params.dat".format(tmpdir), "r") as ofile:
     #    print(ofile.read())
@@ -87,6 +106,7 @@ def test_batchelor(dt):
 
     with h5py.File(os.path.join(rwpath, rwkey1, str(0),
                                 "data_from_t0.000000.h5")) as h5f:
+        # leaves t at the last dump group in the file
         for t in h5f:
             pass
 
@@ -95,6 +115,7 @@ def test_batchelor(dt):
 
     #print(__file__, "test_batchelor", dt, [rwkey1, l, l0])
     #compare_reference(__file__, "test_batchelor", dt, [rwkey1, l, l0])
+    # l0 is the initial line length, the full box width
     data_ref = {
         0.1: {
             "l": 10.094533234085691,
@@ -140,7 +161,7 @@ if __name__ == "__main__":
 
 
 def analytic_examples():
-    """The shipped expr_params.dat files that name an analytic expression."""
+    """The names of the shipped example folders whose expr_params.dat names an analytic expression."""
     root = os.path.join(REPO, "data_example")
     return sorted(d for d in os.listdir(root)
                   if os.path.exists(os.path.join(root, d, "expr_params.dat"))
@@ -150,8 +171,11 @@ def analytic_examples():
 
 @pytest.mark.parametrize("case", analytic_examples())
 def test_every_shipped_analytic_example_has_domain_bounds(case):
-    # sine_flow, abc_flow and batchelor_vortex all shipped without the bounds
-    # AnalyticInterpol reads, so none of them could be run at all
+    """Every analytic example sets x_min, x_max, y_min, y_max, z_min and z_max.
+
+    AnalyticInterpol needs the bounds to decide what is inside the domain; an
+    example without them cannot be run at all.
+    """
     src = os.path.join(REPO, "data_example", case, "expr_params.dat")
     keys = dict(l.strip().split("=", 1) for l in open(src) if "=" in l)
     missing = [k + b for k in "xyz" for b in ("_min", "_max") if k + b not in keys]
@@ -161,9 +185,15 @@ def test_every_shipped_analytic_example_has_domain_bounds(case):
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
 @pytest.mark.parametrize("case", analytic_examples())
 def test_every_shipped_analytic_example_runs(case, tmp_path):
+    """Every analytic example runs two steps and writes finite statistics with particles left.
+
+    A user starting from a shipped example should get a working run, not one
+    whose particles all start outside the domain.
+    """
     src = os.path.join(REPO, "data_example", case, "expr_params.dat")
     keys = dict(l.strip().split("=", 1) for l in open(src) if "=" in l)
     shutil.copy(src, tmp_path / "expr_params.dat")
+    # start the short line at the centre of the example's own domain
     centre = ["%s0=%g" % (k, (float(keys[k + "_min"]) + float(keys[k + "_max"])) / 2)
               for k in "xyz"]
     r = subprocess.run(

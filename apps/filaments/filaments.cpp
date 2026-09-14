@@ -1,32 +1,46 @@
-#include <iostream>
-#include <omp.h>
-#include <vector>
-#include <filesystem>
-#include <boost/algorithm/string.hpp>
-#include <fstream>
-#include <sstream>
-#include <random>
 #include <cmath>
+#include <iostream>
+#include <map>
+#include <random>
 #include <set>
-#include <iterator>
-#include "H5Cpp.h"
-//#include "hdf5.h"
-#include <ctime>
+#include <string>
 
-#include "io.hpp"
-#include "rng.hpp"
-#include "utils.hpp"
-#include "Params.hpp"
-
-#include "ParticleSet.hpp"
-#include "Topology.hpp"
-#include "Integrator.hpp"
-#include "ExplicitIntegrator.hpp"
-#include "RKIntegrator.hpp"
-#include "Initializer.hpp"
-#include "helpers.hpp"
+#include "RunLoop.hpp"
+#include "TimeScheme.hpp"
 
 #include "filaments_schema.hpp"
+
+// Reinject whole edges that have a stuck node
+inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std::vector<Uint>& nodes){
+  std::vector<Uint> edge_ids;
+  for (const Uint i : nodes)
+    edge_ids.insert(edge_ids.end(), mesh.node2edges[i].begin(), mesh.node2edges[i].end());
+  std::sort(edge_ids.begin(), edge_ids.end());
+  edge_ids.erase(std::unique(edge_ids.begin(), edge_ids.end()), edge_ids.end());
+  const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
+  const std::string dirs = key.size() > 2 ? key[2] : key[1];
+  const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
+  const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
+  std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
+  for (const Uint e : edge_ids){
+    const Uint a = mesh.edges[e].first[0];
+    const Uint b = mesh.edges[e].first[1];
+    const Vector3d x0 = 0.5*(ps.x(a) + ps.x(b));
+    const Vector3d dx = ps.x(a) - ps.x(b);
+    Vector3d Dx = {0., 0., 0.};
+    bool outside = true;
+    while (outside){
+      if (rx) Dx[0] = ux(run.gens[0]);
+      if (ry) Dx[1] = uy(run.gens[0]);
+      if (rz) Dx[2] = uz(run.gens[0]);
+      const bool inside_a = run.intp->locate(x0 + Dx + 0.5*dx);
+      const bool inside_b = run.intp->locate(x0 + Dx - 0.5*dx);
+      outside = !(inside_a && inside_b);
+    }
+    ps.set_x(a, ps.x(a) + Dx);
+    ps.set_x(b, ps.x(b) + Dx);
+  }
+}
 
 int main(int argc, char* argv[])
 {
@@ -40,209 +54,59 @@ int main(int argc, char* argv[])
   }
   partrac::Params prm = partrac::parse_or_exit(filaments_schema(), argc, argv);
 
-  if (prm.get<int>("num_threads") > 0){
-      omp_set_dynamic(0);
-      omp_set_num_threads(prm.get<int>("num_threads"));
-  }
+  Run run = start_run(prm, "Filaments");
+  TimeScheme scheme(prm, run.gens);
 
-  std::string infilename = prm.input_file();
-
-  std::shared_ptr<Interpol> intp;
-  set_interpolate_mode(intp, prm.get<std::string>("mode"), infilename);
-  intp->set_U0(prm.get<double>("U"));
-  intp->set_int_order(prm.get<int>("int_order"));
-
-  double Dm = prm.get<double>("Dm");
-  double dt = prm.get<double>("dt");
-
-
-  bool frozen_fields = prm.get<bool>("frozen_fields");
-
-  std::string folder = intp->get_folder();
-  RunFolders out = make_run_folders(folder, "Filaments", prm);
-  const std::string& newfolder = out.run;
-  const std::string& checkpointsfolder = out.checkpoints;
-
-  if (prm.get<bool>("verbose"))
-    prm.print();
-
-  // Parallel generators
-  std::vector<std::mt19937> gens = make_generators(prm);
-
-  // TODO: These should not be stored in particle tracker parameters.
-  prm.set<double>("Lx", intp->get_Lx());
-  prm.set<double>("Ly", intp->get_Ly());
-  prm.set<double>("Lz", intp->get_Lz());
-
-  double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
-  double T = std::min(intp->get_t_max(), prm.get<double>("T"));
-  if (frozen_fields)
-    T = prm.get<double>("T");
-  prm.set<double>("t0", t0);
-  prm.set<double>("T", T);
-
-  if (prm.get<bool>("inject") && prm.get<bool>("filter")){
-      std::cout << "Cannot inject and filter at the same time (yet)." << std::endl;
-    exit(1);
-  }
-
-  // Higher-order time integration?
-  if (prm.get<int>("int_order") > 2){
-      std::cout << "No support for such high temporal integration order." << std::endl;
-    exit(1);
-  }
-  //if (prm.interpolation_test > 0){
-  //  std::cout << "Testing interpolation..." << std::endl;
-  //  test_interpolation(prm.interpolation_test, intp, newfolder, t0, gens[0]);
-  //}
-
-  if (frozen_fields)
-    intp->update(prm.get<double>("t_frozen"));
-  else
-    intp->update(t0);
-
-  std::shared_ptr<Integrator> integrator;
-  if (prm.get<std::string>("scheme") == "explicit")
-    integrator = std::make_shared<ExplicitIntegrator>(Dm, prm.get<int>("int_order"), gens);
-  else if (prm.get<std::string>("scheme") == "RK4")
-    integrator = std::make_shared<RK4Integrator>();
-  else {
-    std::cout << "Unrecognized (ODE integration) scheme: " << prm.get<std::string>("scheme") << std::endl;
-    exit(1);
-  }
-
-  ParticleSet ps(intp, prm.get<Uint>("Nrw_max"));
+  ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
   Topology mesh(ps, prm);
+  // Doublings
+  const bool doublings = prm.get<std::string>("resize") == "doublings";
+  mesh.records_doublings = doublings;
 
-  if (prm.get<bool>("inject")){
-    std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
-    if (key[0] == "uniform"){
-      std::cout << "Injection activated!" << std::endl;
-    }
-    else {
-      std::cout << "init_mode " << prm.get<std::string>("init_mode") << " incompatible with injection." << std::endl;
-      exit(1);
-    }
-  }
-
-  if (prm.get<std::string>("restart_folder") != ""){
-    mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
-  }
-  else {
-    std::shared_ptr<Initializer> init_state;
-    std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
-    if (key.size() == 0){
-      std::cout << "init_mode not specified." << std::endl;
-      exit(1);
-    }
-    else if (key[0] == "pair" || key[0] == "pairs"){
-      init_state = std::make_shared<RandomPairsInitializer>(key, intp, prm, gens[0]);
-    }
-    else if (key[0] == "points"){
-      init_state = std::make_shared<RandomPointsInitializer>(key, intp, prm, gens[0]);
-    }
-    else {
-      std::cout << "Unknown init_mode: " << prm.get<std::string>("init_mode") << std::endl;
-      exit(1);
-    }
-    mesh.load_initial_state(init_state, prm);
-  }
-
-  mesh.compute_maps();
-
-  int it = 0;
-  double t = t0;
-  if (prm.get<std::string>("restart_folder") != ""){
-    t = prm.get<double>("t");
-  }
-
-  prm.dump(newfolder, t);
-
-  std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-  // no dump file at all when dumping is off
-  H5::H5File h5f;
-  if (prm.get<double>("dump_intv") > 0.){
-    { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
-    h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
-  }
-
-  const double chunk_intv = prm.get<double>("dump_intv")*prm.get<int>("dump_chunk_size");
+  load_or_initialize(run, mesh);
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.get<bool>("minimal_output");
   output_fields["c"] = !prm.get<bool>("minimal_output");
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");        
-  // H and n are only computed with the curvature
+  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
+  // H and n need the curvature
   output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
   output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
 
-  std::ofstream statfile;
-  if (prm.get<double>("stat_intv") > 0.){
-    statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
-    write_stats_header(statfile, mesh.stats_header_columns(prm.get<double>("ds_max")));
-  }
-  
+  const double dt = prm.get<double>("dt");
+  const double resize_intv = prm.get<double>("resize_intv");
+  const double resize_to = prm.get<std::string>("resize_target") == "ds_init"
+                         ? prm.get<double>("ds_init") : prm.get<double>("ds_max");
+  const std::string outside = prm.get<std::string>("outside");
+  const bool verbose = prm.get<bool>("verbose");
 
-  // Simulation start
-  std::clock_t clock_0 = std::clock();
-  while (t <= T + dt/2){
-    if (!frozen_fields)
-      intp->update(t);
+  RunHooks hooks;
 
-    // Statistics
-    if (at_interval(it, prm.get<double>("stat_intv"), dt)){
-      std::cout << "Time = " << t << std::endl;
-      mesh.write_statistics(statfile, t, prm.get<double>("ds_max"), *integrator);
-    }
+  // Resizing
+  hooks.reshape = [&](const int it, const double){
+    if (!at_interval(it, resize_intv, dt))
+      return;
+    const bool resized = doublings ? mesh.resize_doublings(resize_to) : mesh.resize(resize_to);
+    if (resized && verbose)
+      std::cout << "Resized edges." << std::endl;
+  };
 
-    // Checkpoint
-    if (at_interval(it, prm.get<double>("checkpoint_intv"), dt)){
-      mesh.write_checkpoint(checkpointsfolder, t, prm);
-    }
+  // Pair statistics with doublings
+  if (doublings)
+    hooks.statistics = [&](const double t, Integrator& counters){
+      return pair_stats_columns(t, ps, mesh.edges, mesh.edge_doublings(), counters.get_declined());
+    };
 
-    // Resizing
-    if (at_interval(it, prm.get<double>("resize_intv"), dt)){
-      bool resized = mesh.resize(prm.get<double>("ds_max"));
-      if (prm.get<bool>("verbose") && resized)
-        std::cout << "Resized edges." << std::endl;
-    }
+  hooks.after_step = [&](const int, const double, const std::vector<Uint>& outside_nodes){
+    if (outside_nodes.size() == 0)
+      return;
+    std::cout << "Some nodes are outside.\n";
+    if (outside == "reinject")
+      reinject_edges(run, mesh, ps, outside_nodes);
+  };
 
-    // Dump detailed data
-    if (at_interval(it, prm.get<double>("dump_intv"), dt)){
-      ps.update_fields(t, output_fields);
-
-      std::string groupname = std::to_string(t);
-
-      // Clear file if it exists, otherwise create
-      if (at_interval(it, chunk_intv, dt) && it > 0){
-        h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-        h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-      }
-      else {
-        h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
-      }
-      h5f.createGroup(groupname + "/");
-      mesh.dump_hdf5(h5f, groupname, output_fields);
-      h5f.close();
-    }
-
-    auto outside_nodes = integrator->step(ps, t, dt);
-
-    if (outside_nodes.size() > 0)
-      std::cout << "Some nodes are outside." << std::endl;
-
-    t += dt;
-    it += 1;
-  }
-  std::clock_t clock_1 = std::clock();
-  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
-  std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
-
-  mesh.write_checkpoint(checkpointsfolder, t, prm);
-
-  // Close files
-  statfile.close();
+  run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
 
   return 0;
 }

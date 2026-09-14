@@ -1,21 +1,23 @@
-"""Run plane Poiseuille forwards, then backwards, and see what remeshing cost.
+"""Refinement and coarsening under flow reversal: forward to T, back to 2T.
 
-Reversing the flow at time T is the sharpest check there is on refinement and
-coarsening, because both answers are closed form. A line laid along x has
-rho = sqrt(1 + (a t)^2) with a = 3 u_inf x / R^2 on the way out; after the
-reversal the slope runs back down as a(2T - t), so
+Reversing the flow is a sharp check on remeshing because the answers are closed
+form. In plane Poiseuille a line laid along x has rho = sqrt(1 + (a t)^2) with
+a = 3 u_inf x / R^2 on the way out; after the reversal the slope runs back
+down as a(2T - t), so
 
     rho(2T) = 1                          the geometry returns exactly
     tau(2T) = 2 (T + a^2 T^3 / 3)        the compressed time does not
 
-The strip stretches on the first leg, so refinement splits edges; it contracts
-on the second, so coarsening merges them back. Any bookkeeping that does not
-invert shows up as a departure from those two values, with no reference run
-needed. This found a collapse that left the surviving node where it was while
-handing its neighbours the reference length of a move that never happened.
+The strip stretches on the first leg, so refinement splits edges, and contracts
+on the second, so coarsening merges them back. Any remeshing bookkeeping that
+does not invert (for example a collapse that hands neighbours reference lengths
+inconsistent with where the surviving node sits) shows up as a departure from
+these values, with no reference run needed. The reversal is done by
+checkpointing, negating u_inf in the expression file and restarting, so tau
+must also survive the checkpoint.
 
-The reversal is done by checkpointing, negating u_inf in the expression file,
-and restarting -- so it also exercises tau surviving a checkpoint.
+The sine flow is reversed the same way and, unlike Poiseuille, folds the strip,
+which is what makes coarsening merge edges whose compressed times differ.
 """
 
 import os
@@ -42,7 +44,7 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
 
 
 def there_and_back(tmp_path, extra):
-    """Advect to T, reverse the flow, come back; return the final dump."""
+    """Advect to T, reverse u_inf by restart, return to 2T; return the resumed run's dump file."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     cfg = tmp_path / "expr_params.dat"
     cfg.write_text(open(POISEUILLE).read())
@@ -54,8 +56,8 @@ def there_and_back(tmp_path, extra):
                            capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout + r.stderr
 
-    # the checkpoint lands one step past T, so stop a step short of it: the
-    # closed forms below are only right if the flow reverses exactly at T
+    # the checkpoint lands one step past the stop time, so stop a step short:
+    # the closed forms hold only if the flow reverses exactly at T
     call(["T=%g" % (T - DT), "dump_intv=1e9", "checkpoint_intv=%g" % T])
     checkpoint = list(tmp_path.rglob("edges.edge"))
     assert len(checkpoint) == 1
@@ -70,6 +72,7 @@ def there_and_back(tmp_path, extra):
 
 
 def errors(dump):
+    """Per-edge relative errors in rho and tau against the closed forms, edge count, and sum of dl0."""
     key = sorted(dump.keys(), key=float)[-1]
     t = float(key)
     assert t > 2 * T - 0.01, "the return leg did not finish"
@@ -90,18 +93,24 @@ def errors(dump):
 
 @needs_partrac
 def test_refinement_alone_is_reversible(tmp_path):
+    """With refinement only, the strip returns to rho = 1 and tau matches the
+    closed form, while the total reference length stays 1. Failure means edge
+    splits corrupt dl0 or tau, biasing every stretching and mixing statistic of
+    a refined run."""
     rho_err, tau_err, n, s0 = errors(
         there_and_back(tmp_path, ["coarsen=false", "ds_min=1e-12"]))
     assert n > 100                                   # it did refine
-    assert s0 == pytest.approx(1.0, rel=1e-12)       # and conserved the measure
+    assert s0 == pytest.approx(1.0, rel=1e-12)       # reference length conserved
     assert rho_err.max() < 1e-3
     assert tau_err.max() < 5e-2
 
 
 @needs_partrac
 def test_coarsening_is_reversible_too(tmp_path):
-    # the collapse must put the surviving node where the reference lengths it
-    # hands out say it went, or the strip comes back the wrong length
+    """Coarsening on the return leg merges the strip back down and still returns
+    rho = 1, exactly for edges never collapsed. A collapse must place the
+    surviving node where the reference lengths it hands out say it went, or the
+    strip comes back the wrong length."""
     rho_err, tau_err, n, s0 = errors(
         there_and_back(tmp_path, ["coarsen=true", "coarsen_intv=0.01",
                                   "ds_min=0.008"]))
@@ -114,8 +123,9 @@ def test_coarsening_is_reversible_too(tmp_path):
 
 @needs_partrac
 def test_coarsening_costs_no_more_than_refinement_alone(tmp_path):
-    # merging discards the collapsed edge's tau, which is only defensible while
-    # neighbours agree on it; if that ever stops holding, this is where it shows
+    """The tau error with coarsening is within a factor 2 of refinement alone.
+    Merging discards the collapsed edge's tau, which is only acceptable while
+    neighbouring edges agree on it."""
     plain = errors(there_and_back(tmp_path / "plain",
                                   ["coarsen=false", "ds_min=1e-12"]))
     merged = errors(there_and_back(tmp_path / "merged",
@@ -124,15 +134,14 @@ def test_coarsening_costs_no_more_than_refinement_alone(tmp_path):
     assert merged[1].max() < 2 * plain[1].max()
 
 
-# --- the same trick on the flow that actually folds ---------------------------
+# --- sine flow: reversed by negating u_inf and reversing the phases -------------
 #
-# The sine flow is a sequence of shears, so it reverses exactly too: negate the
+# The sine flow is a sequence of shears, so it reverses exactly: negate the
 # amplitude, replay the phases backwards, and swap the direction pair so the
-# shear that ran last is undone first. Unlike plane Poiseuille it folds, which
-# is the only way to make coarsening merge edges whose compressed times differ.
-# The expression file is written here rather than taken from data_example, so
-# the phase list is short enough to reverse by hand and cannot drift.
+# shear that ran last is undone first. The expression file is written here, not
+# taken from data_example, so the phase list is short and fixed.
 
+# DT_S = TAU/8, so every half period ends exactly on a step
 TAU, DT_S, N_HALF = 0.5, 0.0625, 2
 CHI = [1.2154, 3.1199, 4.2865, 5.6534, 1.9023, 5.1624]
 
@@ -143,6 +152,7 @@ SINE_BASE = ("mode=analytic init_mode=strip_x La=0.5 x0=0.5 y0=0.5 z0=0.5 "
 
 
 def write_sine(path, chi, u_inf, flowdir, depdir):
+    """Write a sine_flow expression file with the given phases, amplitude and shear directions."""
     keys = dict(t_min=0.0, t_max=1e7, x_min=0.0, y_min=0.0, z_min=0.0,
                 x_max=1.0, y_max=1.0, z_max=1.0, Lx=1.0, Ly=1.0, Lz=1.0,
                 expression="sine_flow", p_inf=1.0, rho=1.0, u_inf=u_inf,
@@ -155,7 +165,7 @@ def write_sine(path, chi, u_inf, flowdir, depdir):
 
 
 def sine_there_and_back(tmp_path, n_half, extra):
-    """Shear forwards through n_half half periods, then undo them."""
+    """Shear through n_half half periods and back; return size and tau at the turn and at the end."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     cfg = tmp_path / "expr_params.dat"
     chi = CHI[:n_half]
@@ -168,7 +178,8 @@ def sine_there_and_back(tmp_path, n_half, extra):
                            capture_output=True, text=True, timeout=900)
         assert r.returncode == 0, r.stdout + r.stderr
 
-    # the checkpoint lands one step past T, so stop a step short of the boundary
+    # the checkpoint lands one step past the stop time, so stop a step short
+    # of the half-period boundary
     forward = n_half * TAU - DT_S
     write_sine(cfg, chi, u, (1, 0), (0, 1))
     call(["T=%g" % forward, "dump_intv=1e9",
@@ -198,18 +209,23 @@ def sine_there_and_back(tmp_path, n_half, extra):
 
 @needs_partrac
 def test_the_sine_flow_reverses_exactly(tmp_path):
+    """Without remeshing, a strip sheared out and back returns to its reference
+    lengths to 1e-12 and ends with exactly twice the tau it had at the turn. This
+    validates the reversal itself, so the remeshing tests below measure only the
+    cost of remeshing."""
     half, whole = sine_there_and_back(tmp_path, N_HALF,
                                       ["ds_max=1e9", "ds_min=1e-12",
                                        "refine=false", "coarsen=false"])
-    assert half["w"].sum() / half["w0"].sum() > 2         # it really folded
+    assert half["w"].sum() / half["w0"].sum() > 2         # it really stretched
     assert np.max(np.abs(whole["w"] / whole["w0"] - 1)) < 1e-12
     assert whole["tau"] == pytest.approx(2 * half["tau"], rel=1e-9)
 
 
 @needs_partrac
 def test_a_sheet_reverses_exactly_too(tmp_path):
-    # the flow leaves z alone, so an x-z sheet is the x-strip extruded and its
-    # faces integrate tau on dA/dA0 as the edges do on ds/ds0
+    """An x-z sheet reverses exactly like the strip, with tau doubling on its
+    faces. The flow leaves z alone, so the sheet is the strip extruded and its
+    faces must integrate tau from dA/dA0 as edges do from dl/dl0."""
     half, whole = sine_there_and_back(tmp_path, N_HALF,
                                       ["init_mode=sheet_xz", "Lb=0.5",
                                        "ds_init=0.05", "ds_max=1e9",
@@ -222,10 +238,12 @@ def test_a_sheet_reverses_exactly_too(tmp_path):
 
 @needs_partrac
 def test_merging_across_cusps_preserves_the_aggregates(tmp_path):
-    # six half periods fold the strip enough to make cusps, where neighbouring
-    # edges finally disagree about tau; coarsening then merges across them. The
-    # uncoarsened run is the reference: a collapse currently drops the removed
-    # edge's tau outright, and this is what bounds what that costs.
+    """After six half periods out and back, coarsening that merges across cusps
+    conserves total reference length, doubles the dl0-weighted tau, and keeps the
+    reported scalar within 0.2% of an uncoarsened reference over two decades of
+    Peclet number. This pins the merge rule that conserves sum dl0/sqrt(tau)."""
+    # six half periods fold the strip into cusps, where neighbouring edges
+    # disagree on tau; the uncoarsened run is the reference
     mesh = ["ds_max=0.005", "refine=true", "refine_intv=%g" % DT_S]
     half, whole = sine_there_and_back(tmp_path / "merged", 6, mesh
                                       + ["ds_min=0.002", "coarsen=true",
@@ -237,17 +255,14 @@ def test_merging_across_cusps_preserves_the_aggregates(tmp_path):
     for s in (half, whole, ref_half, ref):
         assert s["w0"].sum() == pytest.approx(0.5, rel=1e-12)
 
-    # tau must still double, both with and without the merging
+    # tau must still double, with and without merging
     moment = lambda s: (s["w0"] * s["tau"]).sum()
     assert moment(ref) / moment(ref_half) == pytest.approx(2.0, rel=0.02)
     assert moment(whole) / moment(half) == pytest.approx(2.0, rel=0.02)
 
-    # and the scalar variance the method reports must survive the merging,
-    # over two decades of Peclet. The tolerance is what pins the merge rule: a
-    # collapse conserves the sum of ds0/sqrt(tau), and the alternatives -- a
-    # ds0-weighted mean of tau, or dropping the removed edge's tau outright --
-    # reach 0.3% and 0.4% at the mixed end, so they fail here rather than
-    # passing quietly.
+    # the 0.2% tolerance is tight enough that alternative merge rules (a
+    # dl0-weighted mean of tau, or dropping the removed edge's tau) fail it
+    # at the well-mixed end
     for k in (4e-3, 4e-2, 4e-1):
         c = lambda s: (s["w0"] / np.sqrt(1 + 4 * k * s["tau"])).sum()
         assert c(whole) == pytest.approx(c(ref), rel=0.002), k
@@ -255,9 +270,10 @@ def test_merging_across_cusps_preserves_the_aggregates(tmp_path):
 
 @pytest.fixture(scope="module")
 def folded_sheet(tmp_path_factory):
-    """Four half periods of the sine flow on an x-z sheet, coarsened and not.
+    """Sizes and tau of an x-z sheet at the turn and end of four sine half periods, coarsened and not.
 
-    Enough folding that the stars of the collapsed edges are not planar.
+    Four half periods fold the sheet enough that the stars of collapsed edges
+    are not planar.
     """
     if not os.path.exists(PARTRAC):
         pytest.skip("partrac is not built")
@@ -276,8 +292,9 @@ def folded_sheet(tmp_path_factory):
 
 @needs_partrac
 def test_coarsening_a_folded_sheet_conserves_its_reference_area(folded_sheet):
-    # A collapse on a folded sheet destroys area, since the star of the edge is
-    # not planar, but it must not destroy reference area.
+    """Total reference area stays 0.25 and every dA0 stays positive through
+    coarsening of a folded sheet. A collapse on a non-planar star loses current
+    area, but losing reference area would bias every area-weighted statistic."""
     for s in folded_sheet:
         assert s["w0"].sum() == pytest.approx(0.25, rel=1e-12)
         assert s["w0"].min() > 0                          # never through zero
@@ -285,8 +302,9 @@ def test_coarsening_a_folded_sheet_conserves_its_reference_area(folded_sheet):
 
 @needs_partrac
 def test_coarsening_a_folded_sheet_keeps_the_scalar_it_reports(folded_sheet):
-    # The scalar the method reports must survive coarsening, and its error must
-    # not depend on the Peclet number.
+    """On a folded sheet the reported scalar survives coarsening to within 0.5%
+    of the uncoarsened run, with an error nearly independent of Peclet number
+    over four decades. tau stays finite and positive on every face."""
     half, whole, ref_half, ref = folded_sheet
     assert np.isfinite(whole["tau"]).all() and whole["tau"].min() > 0
     c = lambda s, k: (s["w0"] / np.sqrt(1 + 4 * k * s["tau"])).sum()

@@ -10,11 +10,14 @@ inline partrac::Schema partrac_schema(){
   partrac::Schema s("partrac");
   add_initializer_params(s);
   s.require<std::string>("mode", "interpolator type");
+  s.opt<std::string>("outside", "ignore", "a particle that cannot take its step: ignore (it stays), reinject at a random offset, or mark (c = 2)");
+  s.opt<int>("sort_every", 5, "reorder particles by cell every this many steps, 0 = never");
+  s.opt<bool>("output_phi", false, "dump the phase field at each particle, and split the vector statistics on it");
   s.require<double>("Dm", "molecular diffusivity");
   s.require<double>("dt", "timestep");
   s.require<double>("T", "final time");
   s.require<int>("int_order", "integration order");
-  // exit_plane divides by int_filter_intv, and cuts at Ln
+  // exit_plane cuts at Ln
   s.require_if<double>("Ln", 0.0,
                        [](const partrac::Params& p){
                          return p.get<std::string>("exit_plane") != "none";
@@ -70,6 +73,7 @@ inline partrac::Schema partrac_schema(){
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
                      "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
   s.choices("scheme", {"explicit", "RK4"});
+  s.choices("outside", {"ignore", "reinject", "mark"});
   s.choices("exit_plane", {"none", "x", "y", "z"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");
@@ -77,13 +81,12 @@ inline partrac::Schema partrac_schema(){
             return !(p.get<bool>("inject") && p.get<bool>("filter"));
           },
           "cannot inject and filter at the same time");
-  // RK4Integrator takes no arguments, so Dm is dropped
+  // RK4 ignores Dm
   s.warn([](const partrac::Params& p){
            return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
          },
          "scheme=RK4 ignores Dm");
-  // dump_intv and stat_intv become step counts, so they must not round to zero
-  // an interval of 0 turns that output off; a negative one is a typo
+  // Floor output intervals at one step; 0 is off, negative an error
   s.check([](const partrac::Params& p){
             for (const auto& key : {"checkpoint_intv", "coarsen_intv", "dump_intv", "filter_intv", "inject_intv", "refine_intv", "stat_intv", "tau_intv"})
               if (p.get<double>(key) < 0.) return false;

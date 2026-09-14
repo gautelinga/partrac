@@ -70,12 +70,12 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
 
-  // As the other interpolators keep them, so locate can try the last cell first
+  // Per-cell data for locate
   const std::size_t ncells = mesh->num_cells();
   dolfin_cells_.resize(ncells);
   cell2cells_.resize(ncells);
   if (dim == 2) triangles_.resize(ncells); else tets_.resize(ncells);
-  // A row of vertex coordinates per cell, flat: evaluate reads one per call
+  // Flat vertex coordinates per cell
   ncoords_ = (dim + 1) * dim;
   coordinate_dofs_.resize(ncells * ncoords_);
   std::vector<double> coords;
@@ -88,12 +88,10 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     dolfin_cells_[i] = dolfin_cell;
     if (dim == 2) triangles_[i] = Triangle(dolfin_cell); else tets_[i] = Tet(dolfin_cell);
   }
-  // All that was ever read of the ufc::cell kept per cell
+  // Cell orientations (all evaluate needs of ufc::cell)
   cell_orientations_ = mesh->cell_orientations();
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
-  found_same_.resize(omp_get_max_threads());
-  found_nneigh_.resize(omp_get_max_threads());
-  found_other_.resize(omp_get_max_threads());
+  found_.resize(omp_get_max_threads());
   //std::cout << x_min << std::endl;
   //std::cout << x_max << std::endl;
   //this->Lx = x_max[0]-x_min[0];
@@ -179,7 +177,7 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
   p_element_ = p_space->element();
   u_dim_ = u_element_->space_dimension();
   p_dim_ = p_element_->space_dimension();
-  // evaluate sizes its basis buffers by the value size, so that is what must fit
+  // Basis buffers in evaluate are sized by value size
   const Uint u_value_size = u_element_->value_rank() == 0 ? 1 : u_element_->value_dimension(0);
   const Uint p_value_size = p_element_->value_rank() == 0 ? 1 : p_element_->value_dimension(0);
   if (u_value_size != dim || p_value_size != 1){
@@ -188,16 +186,8 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
               << ", against " << dim << " and 1" << std::endl;
     exit(1);
   }
-  u_dofs_.resize(ncells);
-  p_dofs_.resize(ncells);
-  const dolfin::GenericDofMap& u_dofmap = *u_space->dofmap();
-  const dolfin::GenericDofMap& p_dofmap = *p_space->dofmap();
-  for (std::size_t i = 0; i < ncells; ++i){
-    auto u_dofs = u_dofmap.cell_dofs(i);
-    auto p_dofs = p_dofmap.cell_dofs(i);
-    u_dofs_[i].assign(u_dofs.data(), u_dofs.data() + u_dofs.size());
-    p_dofs_[i].assign(p_dofs.data(), p_dofs.data() + p_dofs.size());
-  }
+  u_dofs_.build(*u_space->dofmap(), dolfin_cells_, "DolfInterpol");
+  p_dofs_.build(*p_space->dofmap(), dolfin_cells_, "DolfInterpol");
 
   //std::cout << "GOT THIS FAR" << std::endl;
 }
@@ -207,19 +197,34 @@ void DolfInterpol::update(const double t){
   // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
-    std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
-    dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-    prevfile.read(*u_prev_, "u");
-    prevfile.read(*p_prev_, "p");
-    u_prev_->vector()->get_local(u_prev_data_);
-    p_prev_->vector()->get_local(p_prev_data_);
+    // Swap if possible
+    if (is_initialized && t_next == sp.prev.t){
+      std::cout << "Prev: Timestep = " << sp.prev.t << ", swapping... " << std::endl;
+      u_prev_data_.swap(u_next_data_);
+      p_prev_data_.swap(p_next_data_);
+    }
+    else {
+      std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
+      dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
+      prevfile.read(*u_prev_, "u");
+      prevfile.read(*p_prev_, "p");
+      u_prev_->vector()->get_local(u_prev_data_);
+      p_prev_->vector()->get_local(p_prev_data_);
+    }
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
-    nextfile.read(*u_next_, "u");
-    nextfile.read(*p_next_, "p");
-    u_next_->vector()->get_local(u_next_data_);
-    p_next_->vector()->get_local(p_next_data_);
+    // Single stamp: copy prev
+    if (sp.next.filename == sp.prev.filename){
+      u_next_data_ = u_prev_data_;
+      p_next_data_ = p_prev_data_;
+    }
+    else {
+      dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
+      nextfile.read(*u_next_, "u");
+      nextfile.read(*p_next_, "p");
+      u_next_->vector()->get_local(u_next_data_);
+      p_next_->vector()->get_local(p_next_data_);
+    }
 
     is_initialized = true;
     t_prev = sp.prev.t;
@@ -243,14 +248,14 @@ bool DolfInterpol::locate(const Vector3d &x, const double t, int& cell_id){
   const Vector3d xx = _modx(x);
   if (dim == 2)
     return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, cell_id,
-                           found_same_, found_nneigh_, found_other_);
+                           found_);
   return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, cell_id,
-                         found_same_, found_nneigh_, found_other_);
+                         found_);
 }
 void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
 {
   assert(t <= t_next && t >= t_prev);
-  const double alpha_t = (t_next > t_prev) ? (t-t_prev)/(t_next-t_prev) : 0.;
+  const double alpha_t = stamp_weight(t, t_prev, t_next);
   const Vector3d x_loc = _modx(x);
 
   const int orientation = cell_orientations_.empty() ? -1 : cell_orientations_[id];
@@ -258,10 +263,10 @@ void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, Poi
   const dolfin::FiniteElement& u_element = *u_element_;
   const dolfin::FiniteElement& p_element = *p_element_;
 
-  const std::vector<dolfin::la_index>& u_dofs = u_dofs_[id];
-  const std::vector<dolfin::la_index>& p_dofs = p_dofs_[id];
+  const std::uint32_t* u_dofs = u_dofs_[id];
+  const std::uint32_t* p_dofs = p_dofs_[id];
 
-  // Value size and its first derivatives: three components at most, any degree
+  // At most three components
   double u_basis[3], gradu_basis[9], p_basis;
 
   Vector3d U_prev = {0., 0., 0.};
@@ -286,7 +291,7 @@ void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, Poi
     P_next += p_next_data_[p_dofs[i]]*p_basis;
   }
 
-  if (this->int_order > 1){
+  if (wants_gradient()){
     for (Uint i=0; i<u_dim_; ++i){
       u_element.evaluate_basis_derivatives(i, 1, gradu_basis, _x, coordinate_dofs, orientation);
       for (Uint j=0; j<dim; ++j){
@@ -299,11 +304,11 @@ void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, Poi
   }
 
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
-  fields.A = (U_next-U_prev)/(t_next-t_prev);
+  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
   fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
-  if (this->int_order > 1){
+  if (wants_gradient()){
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
-    fields.gradA = (gradU_next-gradU_prev)/(t_next-t_prev);
+    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 }
 

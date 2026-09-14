@@ -6,7 +6,7 @@
 #include <array>
 #include "typedefs.hpp"
 
-class Tet
+class alignas(64) Tet
 {
 
 public:
@@ -39,11 +39,12 @@ public:
 
 private:
 
-  std::array<double, 4> xx_, yy_, zz_;
-  double g1x_, g1y_, g1z_;
+  // Barycentric data first
+  double x0_, y0_, z0_;
   double g2x_, g2y_, g2z_;
   double g3x_, g3y_, g3z_;
   double g4x_, g4y_, g4z_;
+  double g1x_, g1y_, g1z_;
 
   static constexpr std::array<int, 10> perm_ = {-1, -1, -1, -1, 9, 6, 8, 7, 5, 4};
 };
