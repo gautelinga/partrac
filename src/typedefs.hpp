@@ -14,6 +14,12 @@ typedef std::size_t Uint;
 // Inline everything in per-particle loops
 #define PARTRAC_HOT_LOOP __attribute__((flatten))
 
+// A point's cell and its barycentric coordinates there
+struct CellPos {
+  int id = -1;
+  std::array<double, 4> bary;
+};
+
 class EdgeType {
 public:
     EdgeType (const std::array<Uint, 2>& a, const double b) : first(a), second(b) {};

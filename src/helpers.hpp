@@ -203,14 +203,14 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
     #pragma omp for
     for (Uint i = 0; i < num_points; ++i){
-      int cell_id = -1;
+      CellPos pos;
 
       Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
       
-      bool inside = intp->locate(x, t0, cell_id);
+      bool inside = intp->locate(x, t0, pos);
       if (inside){
         PointValues ptvals(intp->get_U0());
-        intp->evaluate(x, t0, cell_id, ptvals);
+        intp->evaluate(x, t0, pos, ptvals);
 
         Vector3d u = ptvals.get_u();
         Matrix3d gradu = ptvals.get_J();

@@ -221,11 +221,13 @@ TetInterpol::TetInterpol(const std::string& infilename)
   const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
 
   u_dofs_.build(u_dofmap, dolfin_cells_, "TetInterpol");
-  
+  u_dofs_.check_stride(3*ncoeffs_u, "TetInterpol");
+
   if (include_pressure){
     const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
 
     p_dofs_.build(p_dofmap, dolfin_cells_, "TetInterpol");
+    p_dofs_.check_stride(ncoeffs_p, "TetInterpol");
   }
   
   can_reflect = true;
@@ -298,31 +300,30 @@ Vector3d TetInterpol::_modx(const Vector3d &x){
 }
 
 
-bool TetInterpol::locate(const Vector3d &x, const double t, int& id_prev)
+bool TetInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   const Vector3d xx = _modx(x);
-  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, id_prev,
+  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
 
-void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
+void TetInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
   // FIXME: better interpolation than using "restrict" (see Triangle)
 
   // Assuming inside fluid
   assert(t <= t_next && t >= t_prev);
   const double alpha_t = stamp_weight(t, t_prev, t_next);
-  const Vector3d x_loc = _modx(x);
 
-  std::array<double, Tet::n_dofs_max> _Nu_{};
-  std::array<double, Tet::n_dofs_max> _Np_{};
-  std::array<double, Tet::n_dofs_max> _Nux_{};
-  std::array<double, Tet::n_dofs_max> _Nuy_{};
-  std::array<double, Tet::n_dofs_max> _Nuz_{};
+  std::array<double, Tet::n_dofs_max> _Nu_;
+  std::array<double, Tet::n_dofs_max> _Np_;
+  std::array<double, Tet::n_dofs_max> _Nux_;
+  std::array<double, Tet::n_dofs_max> _Nuy_;
+  std::array<double, Tet::n_dofs_max> _Nuz_;
 
   // Compute P2-P1 basis at x
-  double r1, r2, r3, r4;
-  tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
+  const int id = pos.id;
+  const double r1 = pos.bary[0], r2 = pos.bary[1], r3 = pos.bary[2], r4 = pos.bary[3];
   if (ncoeffs_u == 4){
     tets_[id].linearbasis(r1, r2, r3, r4, _Nu_.data());
   }
@@ -346,8 +347,8 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
     }
   }
 
-  std::array<double, Tet::n_dofs_max*3> u_prev_coefficients_{};
-  std::array<double, Tet::n_dofs_max*3> u_next_coefficients_{};
+  std::array<double, Tet::n_dofs_max*3> u_prev_coefficients_;
+  std::array<double, Tet::n_dofs_max*3> u_next_coefficients_;
 
   // Gathered: restrict() is not thread-safe
 
@@ -381,8 +382,8 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const int id, Poin
   fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
   if (include_pressure){
-    std::array<double, Tet::n_dofs_max> p_prev_coefficients_{};
-    std::array<double, Tet::n_dofs_max> p_next_coefficients_{};  
+    std::array<double, Tet::n_dofs_max> p_prev_coefficients_;
+    std::array<double, Tet::n_dofs_max> p_next_coefficients_;
 
     const std::uint32_t* p_dofs = p_dofs_[id];
     for (std::size_t i=0; i < p_dofs_.stride(); ++i){

@@ -158,8 +158,11 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
 
   // Precompute dofs of all cells
   u_dofs_.build(*u_space_->dofmap(), dolfin_cells_, "TriangleInterpol");
-  if (include_pressure)
+  u_dofs_.check_stride(2*ncoeffs_u, "TriangleInterpol");
+  if (include_pressure){
     p_dofs_.build(*p_space_->dofmap(), dolfin_cells_, "TriangleInterpol");
+    p_dofs_.check_stride(ncoeffs_p, "TriangleInterpol");
+  }
 
   check_dofs_fit(ncoeffs_u, ncoeffs_p, Triangle::n_dofs_max, "TriangleInterpol");
 
@@ -230,28 +233,26 @@ Vector3d TriangleInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-bool TriangleInterpol::locate(const Vector3d &x, const double t, int& id_prev)
+bool TriangleInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
-  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
+  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
 
-void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)
 {
-  const Vector3d x_loc = _modx(x);
-
   const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
   // Compute Pk-Pl basis at x
-  double r, s, u;
-  triangles_[id].xy2bary(x_loc[0], x_loc[1], r, s, u);
+  const int id = pos.id;
+  const double r = pos.bary[0], s = pos.bary[1], u = pos.bary[2];
 
-  std::array<double, Triangle::n_dofs_max> _Nu_{};
-  std::array<double, Triangle::n_dofs_max> _Np_{};
-  std::array<double, Triangle::n_dofs_max> _Nux_{};
-  std::array<double, Triangle::n_dofs_max> _Nuy_{};
+  std::array<double, Triangle::n_dofs_max> _Nu_;
+  std::array<double, Triangle::n_dofs_max> _Np_;
+  std::array<double, Triangle::n_dofs_max> _Nux_;
+  std::array<double, Triangle::n_dofs_max> _Nuy_;
 
   if (ncoeffs_u == 3){
     triangles_[id].linearbasis(r, s, u, _Nu_.data());
@@ -276,10 +277,10 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
     }
   }
 
-  std::array<double, Triangle::n_dofs_max*3> u_prev_block{};
-  std::array<double, Triangle::n_dofs_max*3> u_next_block{};
-  std::array<double, Triangle::n_dofs_max> p_prev_block{};
-  std::array<double, Triangle::n_dofs_max> p_next_block{};
+  std::array<double, Triangle::n_dofs_max*3> u_prev_block;
+  std::array<double, Triangle::n_dofs_max*3> u_next_block;
+  std::array<double, Triangle::n_dofs_max> p_prev_block;
+  std::array<double, Triangle::n_dofs_max> p_next_block;
 
   // Restrict solution to cell
   const std::uint32_t* u_dofs = u_dofs_[id];
@@ -321,6 +322,10 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const int i
     }
     else if (ncoeffs_u == 6){
       triangles_[id].quadderiv(r, s, u, _Nux_.data(), _Nuy_.data());
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+      exit(1);
     }
 
     Matrix3d gradU_prev;

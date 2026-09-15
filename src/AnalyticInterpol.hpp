@@ -22,10 +22,10 @@ class AnalyticInterpol : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t_update=t; };
-  bool locate(const Vector3d &x, const double t, int& cell_id) {
+  bool locate(const Vector3d &x, const double t, CellPos& pos) {
     return expr->inside(x, t);
   };
-  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) {
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) {
     expr->eval(x, t, ptvals);
   };
   double get_t_min() { return getd(expr_params, "t_min"); };

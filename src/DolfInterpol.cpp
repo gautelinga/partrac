@@ -243,17 +243,19 @@ Vector3d DolfInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-bool DolfInterpol::locate(const Vector3d &x, const double t, int& cell_id){
+bool DolfInterpol::locate(const Vector3d &x, const double t, CellPos& pos){
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
   if (dim == 2)
-    return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, cell_id,
+    return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
                            found_);
-  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, cell_id,
+  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
-void DolfInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
+// Basis from dolfin at x; bary unused
+void DolfInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
+  const int id = pos.id;
   assert(t <= t_next && t >= t_prev);
   const double alpha_t = stamp_weight(t, t_prev, t_next);
   const Vector3d x_loc = _modx(x);

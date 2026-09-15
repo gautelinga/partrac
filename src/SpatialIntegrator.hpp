@@ -55,11 +55,12 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
             continue;
         }
         Vector3d x = ps.x(i);
-        int cell_id = ps.get_cell_id(i);
+        CellPos pos;
+        pos.id = ps.get_cell_id(i);
 
         PointValues ptvals(intp.get_U0());
-        intp.locate(x, t, cell_id);
-        intp.evaluate(x, t, cell_id, ptvals);
+        intp.locate(x, t, pos);
+        intp.evaluate(x, t, pos, ptvals);
 
         Vector3d u_1 = ptvals.get_u();
 
@@ -91,8 +92,8 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
             }
 
             if (dx.norm() < m_dl_max){
-                // Frozen time, otherwise: locate(x+dx, t+dt, cell_id)
-                is_inside = intp.locate(x + dx, t, cell_id);
+                // Frozen time, otherwise: locate(x+dx, t+dt, pos)
+                is_inside = intp.locate(x + dx, t, pos);
             }
             else {
                 #pragma omp critical
@@ -104,7 +105,7 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
             ++n_accepted_loc;
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
-            ps.set_cell_id(i, cell_id);
+            ps.set_cell_id(i, pos.id);
             if constexpr (E == TransportElement::Vector){
                 const double len = el.norm();
                 ps.set_rhohat(i, el/len);

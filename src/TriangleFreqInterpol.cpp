@@ -211,15 +211,16 @@ Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
   return x_loc;
 }
 
-bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, int& id_prev)
+bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   const Vector3d xx = _modx(x);
-  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
+  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
 
-void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int id, PointValues& fields)
+void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
+  const int id = pos.id;
   // Assume found in fluid domain
   // std::cout << "probing..." << std::endl;
 
@@ -234,16 +235,13 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
     wt_f_[iFreq] = - a * omega0 * iFreq * sin(omega0 * (iFreq * t + t_shift));
   }
 
-  const Vector3d x_loc = _modx(x);
-
   // Compute Pk-Pl basis at x
-  double r1, r2, r3;
-  triangles_[id].xy2bary(x_loc[0], x_loc[1], r1, r2, r3);
+  const double r1 = pos.bary[0], r2 = pos.bary[1], r3 = pos.bary[2];
 
-  std::array<double, Triangle::n_dofs_max> Nu_{};
-  std::array<double, Triangle::n_dofs_max> Np_{};
-  std::array<double, Triangle::n_dofs_max> Nux_{};
-  std::array<double, Triangle::n_dofs_max> Nuy_{};
+  std::array<double, Triangle::n_dofs_max> Nu_;
+  std::array<double, Triangle::n_dofs_max> Np_;
+  std::array<double, Triangle::n_dofs_max> Nux_;
+  std::array<double, Triangle::n_dofs_max> Nuy_;
 
   if (ncoeffs_u == 3){
     triangles_[id].linearbasis(r1, r2, r3, Nu_.data());
@@ -296,6 +294,10 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const int
     }
     else if (ncoeffs_u == 6){
       triangles_[id].quadderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
+    }
+    else {
+      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
+      exit(1);
     }
 
     static thread_local std::vector<double> uxx_f_; uxx_f_.resize(fs.size());

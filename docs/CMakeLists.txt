@@ -1,4 +1,5 @@
 set(DOXYGEN_EXTRACT_ALL YES)
 set(DOXYGEN_BUILTIN_STL_SUPPORT YES)
 
-doxygen_add_docs(docs "${CMAKE_CURRENT_SOURCE_DIR}/mainpage.md")
+doxygen_add_docs(docs "${CMAKE_CURRENT_SOURCE_DIR}/mainpage.md"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/design.md")

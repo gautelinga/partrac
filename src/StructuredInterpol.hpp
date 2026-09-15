@@ -244,8 +244,8 @@ class StructuredInterpol final
 public:
   StructuredInterpol(const std::string& infilename);
   void update(const double t);
-  bool locate(const Vector3d &x, const double t, int& cell_id);
-  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields);
+  bool locate(const Vector3d &x, const double t, CellPos& pos);
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
   void probe_space_bulk(const Vector3d &x, 
     const Uint _ind[3][2],
@@ -464,13 +464,13 @@ inline void StructuredInterpol::update(const double t){
 }
 
 
-inline bool StructuredInterpol::locate(const Vector3d &x, const double t, int& cell_id){
+inline bool StructuredInterpol::locate(const Vector3d &x, const double t, CellPos& pos){
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
   return !isSolid(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
 }
 
-inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& fields){
+inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields){
   // Time weight between stamps
   const double alpha_t = stamp_weight(t, t_prev, t_next);
   // Assuming locate has already been called and found that the cell is not in solid

@@ -44,7 +44,8 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
         # pragma omp for
         for (Uint i=0; i < ps.N(); ++i){
             Vector3d x = ps.x(i);
-            int cell_id = ps.get_cell_id(i);
+            CellPos pos;
+            pos.id = ps.get_cell_id(i);
 
             PointValues ptvals(intp.get_U0());
 
@@ -54,11 +55,11 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
             if constexpr (E == TransportElement::Vector){ n0 = ps.rhohat(i); el = n0; }
             if constexpr (E == TransportElement::Tensor){ F0 = ps.F(i); Fel = F0; }
 
-            bool is_inside = intp.locate(x, t, cell_id);
+            bool is_inside = intp.locate(x, t, pos);
             Vector3d dx_rw = Vector3d::Zero();
             if constexpr (E == TransportElement::Point){
                 // Evaluate even outside
-                intp.evaluate(x, t, cell_id, ptvals);
+                intp.evaluate(x, t, pos, ptvals);
                 dx_rw = ptvals.get_u() * dt;
                 if (int_order >= 2){
                     dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
@@ -66,7 +67,7 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
             }
             else if (is_inside){
                 // Outside: not moved
-                intp.evaluate(x, t, cell_id, ptvals);
+                intp.evaluate(x, t, pos, ptvals);
                 const Vector3d u1 = ptvals.get_u();
                 const Matrix3d J1 = ptvals.get_J();
                 dx_rw = u1 * dt;
@@ -89,16 +90,16 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
                                 _rnd_normal(gen)};
                 dx_rw += sqrt2Dmdt * eta;
             }
-            is_inside = intp.locate(x+dx_rw, t+dt, cell_id);
+            is_inside = intp.locate(x+dx_rw, t+dt, pos);
             if (!is_inside && intp.can_reflect){
-                cell_id = ps.get_cell_id(i);
-                intp.reflect(x, dx_rw, t, dt, cell_id);
-                is_inside = intp.locate(x+dx_rw, t+dt, cell_id);
+                pos.id = ps.get_cell_id(i);
+                intp.reflect(x, dx_rw, t, dt, pos.id);
+                is_inside = intp.locate(x+dx_rw, t+dt, pos);
             }
             if (is_inside){
                 ps.set_x(i, x + dx_rw);
                 ps.set_t_loc(i, ps.t_loc(i) + dt);
-                ps.set_cell_id(i, cell_id);
+                ps.set_cell_id(i, pos.id);
                 if constexpr (E == TransportElement::Vector){
                     const double len = el.norm();
                     ps.set_rhohat(i, el/len);

@@ -63,6 +63,13 @@ public:
       }
     }
   }
+  // At least n dofs per cell
+  void check_stride(const std::size_t n, const char* what) const {
+    if (stride_ < n){
+      std::cout << what << ": " << stride_ << " dofs per cell, evaluate reads " << n << std::endl;
+      exit(1);
+    }
+  }
   const std::uint32_t* operator[](const std::size_t id) const { return dofs_.data() + id*stride_; }
   std::size_t stride() const { return stride_; }
 private:
@@ -94,18 +101,21 @@ inline bool locate_in_cells(const std::vector<Cell>& cells,
                             const dolfin::Mesh& mesh,
                             const Uint dim,
                             const Vector3d& xx,
-                            int& id_prev,
+                            CellPos& pos,
                             std::vector<FoundCounts>& found){
   FoundCounts& count = found[omp_get_thread_num()];
-  if (id_prev >= 0){
-    if (cells[id_prev].contains(xx)){
+  if (pos.id >= 0){
+    // On failure bary stays the stale cell's
+    if (cells[pos.id].contains(xx, pos.bary)){
       ++count.same;
       return true;
     }
-    for ( auto neigh_id : cell2cells[id_prev] ){
-      if (cells[neigh_id].contains(xx)){
+    std::array<double, 4> bary;
+    for ( auto neigh_id : cell2cells[pos.id] ){
+      if (cells[neigh_id].contains(xx, bary)){
         ++count.nneigh;
-        id_prev = neigh_id;
+        pos.id = neigh_id;
+        pos.bary = bary;
         return true;
       }
     }
@@ -115,7 +125,9 @@ inline bool locate_in_cells(const std::vector<Cell>& cells,
   if (id == std::numeric_limits<unsigned int>::max())
     return false;
   ++count.other;
-  id_prev = id;
+  pos.id = id;
+  // Tree tolerance: may sit just outside
+  cells[id].contains(xx, pos.bary);
   return true;
 }
 

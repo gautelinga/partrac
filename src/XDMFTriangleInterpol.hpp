@@ -15,8 +15,8 @@ public:
   XDMFTriangleInterpol(const std::string& infilename);
   ~XDMFTriangleInterpol() { std::cout << "Destructing XDMFTriangleInterpol." << std::endl; };
   void update(const double t);
-  bool locate(const Vector3d &x, const double t, int& id_prev);
-  void evaluate(const Vector3d &x, const double t, const int id, PointValues& );
+  bool locate(const Vector3d &x, const double t, CellPos& pos);
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& );
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double get_rho() {

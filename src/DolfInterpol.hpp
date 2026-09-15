@@ -45,8 +45,8 @@ public:
   void update(const double t);
   using Interpol::locate;
   using Interpol::evaluate;
-  bool locate(const Vector3d &x, const double t, int& cell_id);
-  void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals);
+  bool locate(const Vector3d &x, const double t, CellPos& pos);
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double get_rho() {

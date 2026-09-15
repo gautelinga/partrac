@@ -230,8 +230,10 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
   
   u_dofs_.build(u_dofmap, dolfin_cells_, "XDMFTetInterpol");
+  u_dofs_.check_stride(3*ncoeffs_u, "XDMFTetInterpol");
 
   p_dofs_.build(p_dofmap, dolfin_cells_, "XDMFTetInterpol");
+  p_dofs_.check_stride(ncoeffs_p, "XDMFTetInterpol");
 }
 
 void XDMFTetInterpol::update(const double t)
@@ -313,29 +315,27 @@ Vector3d XDMFTetInterpol::_modx(const Vector3d &x){
 }
 
 
-bool XDMFTetInterpol::locate(const Vector3d &x, const double t, int& id_prev)
+bool XDMFTetInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
-  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, id_prev,
+  return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
 
-void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)
 {
-  const Vector3d x_loc = _modx(x);
-
   const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
   // Compute Pk-Pl basis at x
-  double r1, r2, r3, r4;
-  tets_[id].xyz2bary(x_loc[0], x_loc[1], x_loc[2], r1, r2, r3, r4);
+  const int id = pos.id;
+  const double r1 = pos.bary[0], r2 = pos.bary[1], r3 = pos.bary[2], r4 = pos.bary[3];
 
-  std::array<double, Tet::n_dofs_max> _Nu_{};
-  std::array<double, Tet::n_dofs_max> _Np_{};
-  std::array<double, Tet::n_dofs_max> _Nux_{};
-  std::array<double, Tet::n_dofs_max> _Nuy_{};
-  std::array<double, Tet::n_dofs_max> _Nuz_{};
+  std::array<double, Tet::n_dofs_max> _Nu_;
+  std::array<double, Tet::n_dofs_max> _Np_;
+  std::array<double, Tet::n_dofs_max> _Nux_;
+  std::array<double, Tet::n_dofs_max> _Nuy_;
+  std::array<double, Tet::n_dofs_max> _Nuz_;
 
   tets_[id].linearbasis(r1, r2, r3, r4, _Nu_.data());
 
@@ -343,8 +343,8 @@ void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const int id
     tets_[id].linearbasis(r1, r2, r3, r4, _Np_.data());
   }
 
-  std::array<double, Tet::n_dofs_max*3> u_prev_block{};
-  std::array<double, Tet::n_dofs_max*3> u_next_block{};
+  std::array<double, Tet::n_dofs_max*3> u_prev_block;
+  std::array<double, Tet::n_dofs_max*3> u_next_block;
 
   // Restrict solution to cell
   //const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
@@ -402,8 +402,8 @@ void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const int id
   }
 
   if (include_pressure){
-    std::array<double, Tet::n_dofs_max> p_prev_block{};
-    std::array<double, Tet::n_dofs_max> p_next_block{};
+    std::array<double, Tet::n_dofs_max> p_prev_block;
+    std::array<double, Tet::n_dofs_max> p_next_block;
     
     const std::uint32_t* p_dofs = p_dofs_[id];
     for (std::size_t i = 0; i < p_dofs_.stride(); ++i){
@@ -418,8 +418,8 @@ void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const int id
   }
 
   if (include_phi){
-    std::array<double, Tet::n_dofs_max> phi_prev_block{};
-    std::array<double, Tet::n_dofs_max> phi_next_block{};
+    std::array<double, Tet::n_dofs_max> phi_prev_block;
+    std::array<double, Tet::n_dofs_max> phi_next_block;
     
     const std::uint32_t* p_dofs = p_dofs_[id];
     for (std::size_t i = 0; i < p_dofs_.stride(); ++i){

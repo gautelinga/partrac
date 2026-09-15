@@ -480,10 +480,11 @@ inline void ParticleSet::update_fields(Interp& intp, const double t, std::map<st
 
   #pragma omp parallel for
   for (Uint irw=0; irw < N(); ++irw){
-    int cell_id = get_cell_id(irw);
+    CellPos pos;
+    pos.id = get_cell_id(irw);
     PointValues ptvals(intp.get_U0());
-    intp.locate(x_rw[irw], t, cell_id);
-    intp.evaluate(x_rw[irw], t, cell_id, ptvals);
+    intp.locate(x_rw[irw], t, pos);
+    intp.evaluate(x_rw[irw], t, pos, ptvals);
     // Stretching rate
     if (do_S){
       const Matrix3d J = ptvals.get_J();

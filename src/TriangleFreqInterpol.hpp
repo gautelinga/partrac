@@ -14,8 +14,8 @@ public:
   TriangleFreqInterpol(const std::string& infilename);
   ~TriangleFreqInterpol() { std::cout << "Destructing TriangleFreqInterpol." << std::endl; };
   void update(const double t);
-  bool locate(const Vector3d &x, const double t, int& id_prev);
-  void evaluate(const Vector3d &x, const double t, const int id_prev, PointValues& fields);
+  bool locate(const Vector3d &x, const double t, CellPos& pos);
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() { return stod(dolfin_params["t_min"]); };
   double get_t_max() { return stod(dolfin_params["t_max"]); };
   double get_rho() {

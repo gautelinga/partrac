@@ -269,8 +269,10 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
   
   u_dofs_.build(u_dofmap, dolfin_cells_, "XDMFTriangleInterpol");
+  u_dofs_.check_stride(2*ncoeffs_u, "XDMFTriangleInterpol");
 
   p_dofs_.build(p_dofmap, dolfin_cells_, "XDMFTriangleInterpol");
+  p_dofs_.check_stride(ncoeffs_p, "XDMFTriangleInterpol");
 }
 
 void XDMFTriangleInterpol::update(const double t)
@@ -352,28 +354,26 @@ Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
 }
 
 
-bool XDMFTriangleInterpol::locate(const Vector3d &x, const double t, int& id_prev)
+bool XDMFTriangleInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
-  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, id_prev,
+  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
                          found_);
 }
 
-void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const int id, PointValues& fields)
+void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)
 {
-  const Vector3d x_loc = _modx(x);
-
   const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
   // Compute Pk-Pl basis at x
-  double r1, r2, r3;
-  triangles_[id].xy2bary(x_loc[0], x_loc[1], r1, r2, r3);
+  const int id = pos.id;
+  const double r1 = pos.bary[0], r2 = pos.bary[1], r3 = pos.bary[2];
 
-  std::array<double, Triangle::n_dofs_max> _Nu_{};
-  std::array<double, Triangle::n_dofs_max> _Np_{};
-  std::array<double, Triangle::n_dofs_max> _Nux_{};
-  std::array<double, Triangle::n_dofs_max> _Nuy_{};
+  std::array<double, Triangle::n_dofs_max> _Nu_;
+  std::array<double, Triangle::n_dofs_max> _Np_;
+  std::array<double, Triangle::n_dofs_max> _Nux_;
+  std::array<double, Triangle::n_dofs_max> _Nuy_;
 
   triangles_[id].linearbasis(r1, r2, r3, _Nu_.data());
 
@@ -381,8 +381,8 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
     triangles_[id].linearbasis(r1, r2, r3, _Np_.data());
   }
 
-  std::array<double, Triangle::n_dofs_max*3> u_prev_block{};
-  std::array<double, Triangle::n_dofs_max*3> u_next_block{};
+  std::array<double, Triangle::n_dofs_max*3> u_prev_block;
+  std::array<double, Triangle::n_dofs_max*3> u_next_block;
 
   // Restrict solution to cell
   //const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
@@ -431,7 +431,7 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
 
   if (cell_type_[id] == 1 && true){
     const Uint ncoeffs_u_2 = 6;
-    std::array<double, 6> _Nu2_{};
+    std::array<double, 6> _Nu2_;
 
     triangles_[id].quadbasis(r1, r2, r3, _Nu2_.data());
     std::array<double, Triangle::n_dofs_max*3> u_prev_block_2{};
@@ -524,8 +524,8 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
     if (wants_gradient()){
       Matrix3d gradU_prev2, gradU_next2;
 
-      std::array<double, 6> _Nu2x_{};
-      std::array<double, 6> _Nu2y_{};
+      std::array<double, 6> _Nu2x_;
+      std::array<double, 6> _Nu2y_;
 
       triangles_[id].quadderiv(r1, r2, r3, _Nu2x_.data(), _Nu2y_.data());
 
@@ -565,8 +565,8 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
   }
 
   if (include_pressure){
-    std::array<double, Triangle::n_dofs_max> p_prev_block{};
-    std::array<double, Triangle::n_dofs_max> p_next_block{};
+    std::array<double, Triangle::n_dofs_max> p_prev_block;
+    std::array<double, Triangle::n_dofs_max> p_next_block;
     
     const std::uint32_t* p_dofs = p_dofs_[id];
     for (std::size_t i = 0; i < p_dofs_.stride(); ++i){
@@ -581,8 +581,8 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const i
   }
 
   if (include_phi){
-    std::array<double, Triangle::n_dofs_max> phi_prev_block{};
-    std::array<double, Triangle::n_dofs_max> phi_next_block{};
+    std::array<double, Triangle::n_dofs_max> phi_prev_block;
+    std::array<double, Triangle::n_dofs_max> phi_next_block;
     
     const std::uint32_t* p_dofs = p_dofs_[id];
     for (std::size_t i = 0; i < p_dofs_.stride(); ++i){

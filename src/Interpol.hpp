@@ -43,11 +43,19 @@ public:
   Vector3d get_x_min() const { return x_min; };
   Vector3d get_x_max() const { return x_max; };
   // Serial versions: no cell cache, time from update()
-  bool locate(const Vector3d &x){ int cell_id = -1; return locate(x, t_update, cell_id); };
+  bool locate(const Vector3d &x){ CellPos pos; return locate(x, t_update, pos); };
   bool evaluate(const Vector3d &x, PointValues& ptvals){
-    int cell_id = -1;
-    const bool inside = locate(x, t_update, cell_id);
-    evaluate(x, t_update, cell_id, ptvals);
+    CellPos pos;
+    const bool inside = locate(x, t_update, pos);
+    evaluate(x, t_update, pos, ptvals);
+    return inside;
+  };
+  // Locate only
+  bool locate(const Vector3d &x, const double t, int& cell_id){
+    CellPos pos;
+    pos.id = cell_id;
+    const bool inside = locate(x, t, pos);
+    cell_id = pos.id;
     return inside;
   };
   //
@@ -55,8 +63,9 @@ public:
   virtual double get_t_max() = 0;
   //
   virtual void update(const double t) = 0;
-  virtual bool locate(const Vector3d &x, const double t, int& cell_id) = 0;
-  virtual void evaluate(const Vector3d &x, const double t, const int cell_id, PointValues& ptvals) = 0;
+  // After locate, pos describes x in pos.id, inside or not; on failure id is unchanged
+  virtual bool locate(const Vector3d &x, const double t, CellPos& pos) = 0;
+  virtual void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) = 0;
   //
   virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded
   //
