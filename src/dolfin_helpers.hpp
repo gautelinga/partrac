@@ -10,7 +10,8 @@
 
 void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
                         , std::shared_ptr<dolfin::Mesh> mesh
-                        , std::vector<dolfin::Cell> &dolfin_cells_);
+                        , std::vector<dolfin::Cell> &dolfin_cells_
+                        , const std::vector<std::uint32_t>* dolfin2local = nullptr);
 
 void label_cell_type(std::vector<int>& cell_type_, std::vector<CellNeighbours>& cell2cells_, const Uint dim);
 

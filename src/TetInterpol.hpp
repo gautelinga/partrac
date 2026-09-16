@@ -75,6 +75,7 @@ protected:
 
 
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
   // std::array<double, 30> u_prev_coefficients_;
   // std::array<double, 30> u_next_coefficients_;

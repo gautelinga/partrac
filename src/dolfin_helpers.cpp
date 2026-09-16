@@ -5,7 +5,8 @@
 
 void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
                         , std::shared_ptr<dolfin::Mesh> mesh
-                        , std::vector<dolfin::Cell> &dolfin_cells_)
+                        , std::vector<dolfin::Cell> &dolfin_cells_
+                        , const std::vector<std::uint32_t>* dolfin2local)
 {
   // Cell ids must fit int
   if (mesh->num_cells() > std::size_t(std::numeric_limits<int>::max())){
@@ -17,6 +18,8 @@ void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
     //std::cout << "Num cells:  " << dolfin_cells_[i].num_entities(dim) << std::endl;
     //std::cout << "Num facets: " << dolfin_cells_[i].num_entities(dim-1) << std::endl;
     
+    // dolfin's own index
+    const std::size_t self = dolfin_cells_[i].index();
     auto facets = dolfin_cells_[i].entities(dim-1);
     for ( std::size_t j = 0; j < dolfin_cells_[i].num_entities(dim-1); ++j ){
       //std::cout << "Index: " << facets[j] << std::endl;
@@ -24,8 +27,8 @@ void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
       auto neighbor_cells = dolfin_facet.entities(dim);
       for (std::size_t k = 0; k < dolfin_facet.num_entities(dim); ++k){
         //std::cout << "Neigh: " << neighbor_cells[k] << std::endl;
-        if (i != neighbor_cells[k]){
-          cell2cells_[i].insert(neighbor_cells[k]);
+        if (self != neighbor_cells[k]){
+          cell2cells_[i].insert(dolfin2local ? (*dolfin2local)[neighbor_cells[k]] : neighbor_cells[k]);
         }
       }
     }

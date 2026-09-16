@@ -62,6 +62,7 @@ protected:
   std::vector<dolfin::Cell> dolfin_cells_;
 
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
   //std::vector<double> Nu_, Nux_, Nuy_;
   //std::vector<double> Np_;

@@ -47,7 +47,8 @@ public:
   bool evaluate(const Vector3d &x, PointValues& ptvals){
     CellPos pos;
     const bool inside = locate(x, t_update, pos);
-    evaluate(x, t_update, pos, ptvals);
+    if (inside)
+      evaluate(x, t_update, pos, ptvals);
     return inside;
   };
   // Locate only
@@ -65,6 +66,7 @@ public:
   virtual void update(const double t) = 0;
   // After locate, pos describes x in pos.id, inside or not; on failure id is unchanged
   virtual bool locate(const Vector3d &x, const double t, CellPos& pos) = 0;
+  // Only after a successful locate: outside the fluid the velocity is zero
   virtual void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) = 0;
   //
   virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded

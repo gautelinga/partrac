@@ -96,60 +96,6 @@ TetInterpol::TetInterpol(const std::string& infilename)
   dolfin_cells_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
-  for (std::size_t i = 0; i < mesh->num_cells(); ++i)
-  {
-    dolfin::Cell dolfin_cell(*mesh, i);
-    tets_[i] = Tet(dolfin_cell);
-    dolfin_cells_[i] = dolfin_cell;
-  }
-  // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
-
-  double tol = 1e-12; // heuristic
-  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
-
-  cell_type_.resize(mesh->num_cells());
-  label_cell_type(cell_type_, cell2cells_, dim);
-
-  cell_facets_.resize(mesh->num_cells());
-
-  for ( Uint i=1; i < mesh->num_cells(); ++i)
-  {
-    if (cell_type_[i] == 1)
-    {
-      auto num_facets = dolfin_cells_[i].num_entities(dim-1);
-      auto facets = dolfin_cells_[i].entities(dim-1);
-      for ( std::size_t j = 0; j < num_facets; ++j ){
-        dolfin::Facet dolfin_facet(*mesh, facets[j]);
-
-        if (dolfin_facet.exterior()){
-          Vector3d pt(dolfin_facet.midpoint().coordinates());
-
-          bool periodic_facet = false;
-          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
-          {
-            if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
-            {
-              periodic_facet = true;
-              break;
-            }
-          }
-          if (!periodic_facet){
-            std::vector<Vector3d> facet_loc;
-            for (dolfin::VertexIterator v(dolfin_facet); !v.end(); ++v){
-              Vector3d vloc(v->point().coordinates());
-              facet_loc.push_back(vloc);
-            }
-            cell_facets_[i].push_back(facets_.size());
-            facets_.push_back(facet_loc);
-          }
-        }
-      }
-    }
-  }
-
-  hmin = mesh->hmin();
-
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
 
   // u_space_ = std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
@@ -189,6 +135,65 @@ TetInterpol::TetInterpol(const std::string& infilename)
   else {
     std::cout << "Note: Ignoring pressure." << std::endl;
   }
+
+
+  const std::size_t ncells = mesh->num_cells();
+  const std::vector<std::uint32_t> order =
+    cell_order(*u_space_->dofmap(), ncells, dolfin_params["renumber_cells"], dolfin2local_);
+  for (std::size_t l = 0; l < ncells; ++l)
+  {
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    tets_[l] = Tet(dolfin_cell);
+    dolfin_cells_[l] = dolfin_cell;
+  }
+  // Build cell neighbour list for lookup speed
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+
+  double tol = 1e-12; // heuristic
+  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
+
+  cell_type_.resize(mesh->num_cells());
+  label_cell_type(cell_type_, cell2cells_, dim);
+
+  cell_facets_.resize(mesh->num_cells());
+
+  for ( Uint i=0; i < mesh->num_cells(); ++i)
+  {
+    if (cell_type_[i] == 1)
+    {
+      auto num_facets = dolfin_cells_[i].num_entities(dim-1);
+      auto facets = dolfin_cells_[i].entities(dim-1);
+      for ( std::size_t j = 0; j < num_facets; ++j ){
+        dolfin::Facet dolfin_facet(*mesh, facets[j]);
+
+        if (dolfin_facet.exterior()){
+          Vector3d pt(dolfin_facet.midpoint().coordinates());
+
+          bool periodic_facet = false;
+          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
+          {
+            if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
+            {
+              periodic_facet = true;
+              break;
+            }
+          }
+          if (!periodic_facet){
+            std::vector<Vector3d> facet_loc;
+            for (dolfin::VertexIterator v(dolfin_facet); !v.end(); ++v){
+              Vector3d vloc(v->point().coordinates());
+              facet_loc.push_back(vloc);
+            }
+            cell_facets_[i].push_back(facets_.size());
+            facets_.push_back(facet_loc);
+          }
+        }
+      }
+    }
+  }
+
+  hmin = mesh->hmin();
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
@@ -304,7 +309,7 @@ bool TetInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
 {
   const Vector3d xx = _modx(x);
   return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
-                         found_);
+                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 void TetInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)

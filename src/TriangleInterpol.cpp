@@ -79,23 +79,6 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
   //this->Ly = x_max[1]-x_min[1];
   //this->Lz = x_max[2]-x_min[2];
 
-  // Precompute all triangles Taylor-Hood P2-P1
-  // FIXME compute on the fly and save
-  triangles_.resize(mesh->num_cells());
-  dolfin_cells_.resize(mesh->num_cells());
-  cell2cells_.resize(mesh->num_cells());
-
-  for (std::size_t i = 0; i < mesh->num_cells(); ++i)
-  {
-    dolfin::Cell dolfin_cell(*mesh, i);
-    triangles_[i] = Triangle(dolfin_cell);
-    dolfin_cells_[i] = dolfin_cell;
-  }
-  // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
-
-  std::cout << "Built neighbour list" << std::endl;
-  
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
   std::cout << "Made periodic domain." << std::endl;
 
@@ -135,6 +118,26 @@ TriangleInterpol::TriangleInterpol(const std::string& infilename)
     std::cout << "Note: Ignoring pressure." << std::endl;
   }
 
+  // Precompute all triangles Taylor-Hood P2-P1
+  // FIXME compute on the fly and save
+  triangles_.resize(mesh->num_cells());
+  dolfin_cells_.resize(mesh->num_cells());
+  cell2cells_.resize(mesh->num_cells());
+
+  const std::vector<std::uint32_t> order =
+    cell_order(*u_space_->dofmap(), mesh->num_cells(), dolfin_params["renumber_cells"], dolfin2local_);
+  for (std::size_t l = 0; l < mesh->num_cells(); ++l)
+  {
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    triangles_[l] = Triangle(dolfin_cell);
+    dolfin_cells_[l] = dolfin_cell;
+  }
+  // Build cell neighbour list for lookup speed
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+
+  std::cout << "Built neighbour list" << std::endl;
+  
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
 
@@ -238,7 +241,7 @@ bool TriangleInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
   return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
-                         found_);
+                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)

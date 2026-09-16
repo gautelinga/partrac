@@ -6,10 +6,17 @@
 #include "Timestamps.hpp"
 #include "H5Cpp.h"
 
+// std::round to int for |v| < 2^31, without the libm call
+inline int round_to_int(const double v){
+  const int r = static_cast<int>(v);
+  const double f = v - r;
+  return r + (f >= 0.5) - (f <= -0.5);
+}
+
 inline void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, const Uint n[3]){
   // Constant
   for (Uint i=0; i<3; ++i){
-    ind_pc[i] = imodulo(round(x[i]/dx[i]), n[i]);
+    ind_pc[i] = imodulo(round_to_int(x[i]/dx[i]), n[i]);
   }
 }
 

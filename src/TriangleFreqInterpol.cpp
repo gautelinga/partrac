@@ -78,26 +78,6 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
 
-  // Precompute all triangles Taylor-Hood P2-P1
-  // FIXME compute on the fly and save
-  triangles_.resize(mesh->num_cells());
-  dolfin_cells_.resize(mesh->num_cells());
-  cell2cells_.resize(mesh->num_cells());
-
-  for (std::size_t i = 0; i < mesh->num_cells(); ++i)
-  {
-    dolfin::Cell dolfin_cell(*mesh, i);
-    triangles_[i] = Triangle(dolfin_cell);
-    dolfin_cells_[i] = dolfin_cell;
-  }
-  // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
-
-  std::cout << "Built neighbour list" << std::endl;
-
-  double tol = 1e-12; // heuristic
-  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
-
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
   std::cout << "Made periodic domain." << std::endl;
 
@@ -136,6 +116,29 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   else {
     std::cout << "Note: Ignoring pressure." << std::endl;
   }
+
+  // Precompute all triangles Taylor-Hood P2-P1
+  // FIXME compute on the fly and save
+  triangles_.resize(mesh->num_cells());
+  dolfin_cells_.resize(mesh->num_cells());
+  cell2cells_.resize(mesh->num_cells());
+
+  const std::vector<std::uint32_t> order =
+    cell_order(*u_space_->dofmap(), mesh->num_cells(), dolfin_params["renumber_cells"], dolfin2local_);
+  for (std::size_t l = 0; l < mesh->num_cells(); ++l)
+  {
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    triangles_[l] = Triangle(dolfin_cell);
+    dolfin_cells_[l] = dolfin_cell;
+  }
+  // Build cell neighbour list for lookup speed
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+
+  std::cout << "Built neighbour list" << std::endl;
+
+  double tol = 1e-12; // heuristic
+  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
 
   // make structures
   u_ = std::make_shared<dolfin::Function>(u_space_);
@@ -215,7 +218,7 @@ bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, CellPos& po
 {
   const Vector3d xx = _modx(x);
   return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
-                         found_);
+                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)

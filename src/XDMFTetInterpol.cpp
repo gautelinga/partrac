@@ -121,20 +121,36 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
 
+  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
+  std::cout << "Made periodic domain." << std::endl;
+  
+  // Velocity
+  u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh, constrained_domain);
+  //u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh);
+  ncoeffs_u = 4;
+
+  // Pressure
+  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
+  //p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh);
+  ncoeffs_p = 4;
+
   // Precompute all tets Taylor-Hood P2-P1
   // FIXME compute on the fly and save
   tets_.resize(mesh->num_cells());
   dolfin_cells_.resize(mesh->num_cells());
   cell2cells_.resize(mesh->num_cells());
 
-  for (std::size_t i = 0; i < mesh->num_cells(); ++i)
+  const std::vector<std::uint32_t> order =
+    cell_order(*u_space_->dofmap(), mesh->num_cells(), dolfin_params["renumber_cells"], dolfin2local_);
+  for (std::size_t l = 0; l < mesh->num_cells(); ++l)
   {
-    dolfin::Cell dolfin_cell(*mesh, i);
-    tets_[i] = Tet(dolfin_cell);
-    dolfin_cells_[i] = dolfin_cell;
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    tets_[l] = Tet(dolfin_cell);
+    dolfin_cells_[l] = dolfin_cell;
   }
   // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
 
   // Identify edge cells
   cell_type_.resize(mesh->num_cells());
@@ -149,7 +165,7 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
   cell_facet_midpoint_.resize(mesh->num_cells());
   perm_.resize(mesh->num_cells());
 
-  for ( Uint i=1; i < mesh->num_cells(); ++i)
+  for ( Uint i=0; i < mesh->num_cells(); ++i)
   {
     if (cell_type_[i] == 1)
     {
@@ -181,19 +197,6 @@ XDMFTetInterpol::XDMFTetInterpol(const std::string& infilename)
 
   std::cout << "Built neighbour list" << std::endl;
   
-  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
-  std::cout << "Made periodic domain." << std::endl;
-  
-  // Velocity
-  u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh, constrained_domain);
-  //u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh);
-  ncoeffs_u = 4;
-
-  // Pressure
-  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
-  //p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh);
-  ncoeffs_p = 4;
-
   // const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
   auto xdof = p_space_->tabulate_dof_coordinates();
 
@@ -320,7 +323,7 @@ bool XDMFTetInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
   assert(t <= t_next && t >= t_prev);
   const Vector3d xx = _modx(x);
   return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
-                         found_);
+                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 void XDMFTetInterpol::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)

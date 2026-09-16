@@ -95,6 +95,7 @@ protected:
   std::vector<Triangle> triangles_;   // one of these two is filled, by dim
   std::vector<Tet> tets_;
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
   std::shared_ptr<const dolfin::FiniteElement> u_element_, p_element_;
   Uint u_dim_ = 0, p_dim_ = 0;
   // Read out whole at each load: dolfin's vector is not safe to read in parallel

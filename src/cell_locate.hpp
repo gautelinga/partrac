@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <vector>
 #include <omp.h>
 #include <iostream>
@@ -77,6 +78,85 @@ private:
   std::size_t stride_ = 0;
 };
 
+// Every cell's dofs, sorted, flat, fixed stride
+inline std::vector<int> sorted_dof_table(const dolfin::GenericDofMap& dofmap,
+                                         const std::size_t ncells, std::size_t& stride){
+  stride = ncells ? dofmap.cell_dofs(0).size() : 0;
+  std::vector<int> table(ncells * stride);
+  for (std::size_t i = 0; i < ncells; ++i){
+    const auto d = dofmap.cell_dofs(i);
+    if (std::size_t(d.size()) != stride){
+      std::cout << "cell " << i << " has " << d.size() << " dofs, the first cell " << stride << std::endl;
+      exit(1);
+    }
+    int* row = table.data() + i*stride;
+    std::copy(d.data(), d.data() + stride, row);
+    std::sort(row, row + stride);
+  }
+  return table;
+}
+
+// Fraction of consecutive cells sharing a dof; low in a poorly ordered mesh
+inline double dof_sharing(const dolfin::GenericDofMap& dofmap, const std::size_t ncells){
+  if (ncells < 2) return 1.;
+  std::size_t stride = 0;
+  const std::vector<int> table = sorted_dof_table(dofmap, ncells, stride);
+  std::size_t shared = 0;
+  for (std::size_t i = 1; i < ncells; ++i){
+    const int* prev = table.data() + (i-1)*stride;
+    const int* cur = table.data() + i*stride;
+    std::size_t a = 0, b = 0;
+    while (a < stride && b < stride){
+      if (prev[a] == cur[b]){ ++shared; break; }
+      (prev[a] < cur[b]) ? ++a : ++b;
+    }
+  }
+  return double(shared) / (ncells - 1);
+}
+
+// Cells in the order of their sorted dofs; returns map[old] -> new
+inline std::vector<std::uint32_t> order_cells_by_dofs(const dolfin::GenericDofMap& dofmap, const std::size_t ncells){
+  std::size_t stride = 0;
+  const std::vector<int> table = sorted_dof_table(dofmap, ncells, stride);
+  std::vector<std::uint32_t> by_key(ncells);
+  std::iota(by_key.begin(), by_key.end(), 0);
+  std::stable_sort(by_key.begin(), by_key.end(),
+                   [&](const std::uint32_t a, const std::uint32_t b){
+                     const int* ra = table.data() + a*stride;
+                     const int* rb = table.data() + b*stride;
+                     return std::lexicographical_compare(ra, ra + stride, rb, rb + stride);
+                   });
+  std::vector<std::uint32_t> map(ncells);
+  for (std::size_t l = 0; l < ncells; ++l) map[by_key[l]] = l;
+  return map;
+}
+
+// Cell order: dolfin's, unless consecutive cells rarely share a dof
+inline std::vector<std::uint32_t> cell_order(const dolfin::GenericDofMap& dofmap,
+                                            const std::size_t ncells,
+                                            const std::string& mode_in,
+                                            std::vector<std::uint32_t>& dolfin2local){
+  std::vector<std::uint32_t> order(ncells);
+  std::iota(order.begin(), order.end(), 0);
+  const std::string mode = mode_in.empty() ? "auto" : mode_in;
+  if (mode != "auto" && mode != "never" && mode != "always"){
+    std::cout << "renumber_cells must be auto, never or always, not " << mode << std::endl;
+    exit(1);
+  }
+  bool renumber = mode == "always";
+  if (mode == "auto"){
+    const double sharing = dof_sharing(dofmap, ncells);
+    renumber = sharing < 0.5;
+    std::cout << "Consecutive cells sharing a dof: " << sharing << std::endl;
+  }
+  if (renumber){
+    std::cout << "Cell order: renumbering cells by dofs" << std::endl;
+    dolfin2local = order_cells_by_dofs(dofmap, ncells);
+    for (std::size_t i = 0; i < ncells; ++i) order[dolfin2local[i]] = i;
+  }
+  return order;
+}
+
 // Per-thread locate counters, cache-line aligned
 struct alignas(64) FoundCounts {
   long unsigned int same = 0, nneigh = 0, other = 0;
@@ -102,7 +182,8 @@ inline bool locate_in_cells(const std::vector<Cell>& cells,
                             const Uint dim,
                             const Vector3d& xx,
                             CellPos& pos,
-                            std::vector<FoundCounts>& found){
+                            std::vector<FoundCounts>& found,
+                            const std::vector<std::uint32_t>* dolfin2local = nullptr){
   FoundCounts& count = found[omp_get_thread_num()];
   if (pos.id >= 0){
     // On failure bary stays the stale cell's
@@ -125,9 +206,9 @@ inline bool locate_in_cells(const std::vector<Cell>& cells,
   if (id == std::numeric_limits<unsigned int>::max())
     return false;
   ++count.other;
-  pos.id = id;
+  pos.id = dolfin2local ? int((*dolfin2local)[id]) : int(id);
   // Tree tolerance: may sit just outside
-  cells[id].contains(xx, pos.bary);
+  cells[pos.id].contains(xx, pos.bary);
   return true;
 }
 

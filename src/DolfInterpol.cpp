@@ -70,34 +70,6 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
 
-  // Per-cell data for locate
-  const std::size_t ncells = mesh->num_cells();
-  dolfin_cells_.resize(ncells);
-  cell2cells_.resize(ncells);
-  if (dim == 2) triangles_.resize(ncells); else tets_.resize(ncells);
-  // Flat vertex coordinates per cell
-  ncoords_ = (dim + 1) * dim;
-  coordinate_dofs_.resize(ncells * ncoords_);
-  std::vector<double> coords;
-  for (std::size_t i = 0; i < ncells; ++i){
-    dolfin::Cell dolfin_cell(*mesh, i);
-    dolfin_cell.get_coordinate_dofs(coords);
-    assert(coords.size() == ncoords_);
-    for (Uint k = 0; k < ncoords_; ++k)
-      coordinate_dofs_[i*ncoords_ + k] = coords[k];
-    dolfin_cells_[i] = dolfin_cell;
-    if (dim == 2) triangles_[i] = Triangle(dolfin_cell); else tets_[i] = Tet(dolfin_cell);
-  }
-  // Cell orientations (all evaluate needs of ufc::cell)
-  cell_orientations_ = mesh->cell_orientations();
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_);
-  found_.resize(omp_get_max_threads());
-  //std::cout << x_min << std::endl;
-  //std::cout << x_max << std::endl;
-  //this->Lx = x_max[0]-x_min[0];
-  //this->Ly = x_max[1]-x_min[1];
-  //this->Lz = x_max[2]-x_min[2];
-
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
 
   std::string u_el = dolfin_params["velocity_space"];
@@ -168,6 +140,42 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     std::cout << "Unsupported dimensionality" << std::endl;
     exit(1);
   }
+
+  // Per-cell data for locate
+  const std::size_t ncells = mesh->num_cells();
+  dolfin_cells_.resize(ncells);
+  cell2cells_.resize(ncells);
+  if (dim == 2) triangles_.resize(ncells); else tets_.resize(ncells);
+  // Flat vertex coordinates per cell
+  ncoords_ = (dim + 1) * dim;
+  coordinate_dofs_.resize(ncells * ncoords_);
+  std::vector<double> coords;
+  const std::vector<std::uint32_t> order =
+    cell_order(*u_space->dofmap(), ncells, dolfin_params["renumber_cells"], dolfin2local_);
+  for (std::size_t l = 0; l < ncells; ++l){
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    dolfin_cell.get_coordinate_dofs(coords);
+    assert(coords.size() == ncoords_);
+    for (Uint k = 0; k < ncoords_; ++k)
+      coordinate_dofs_[l*ncoords_ + k] = coords[k];
+    dolfin_cells_[l] = dolfin_cell;
+    if (dim == 2) triangles_[l] = Triangle(dolfin_cell); else tets_[l] = Tet(dolfin_cell);
+  }
+  // Cell orientations (all evaluate needs of ufc::cell), in the cells' order
+  cell_orientations_ = mesh->cell_orientations();
+  if (!dolfin2local_.empty() && !cell_orientations_.empty()){
+    std::vector<int> reordered(ncells);
+    for (std::size_t l = 0; l < ncells; ++l) reordered[l] = cell_orientations_[order[l]];
+    cell_orientations_.swap(reordered);
+  }
+  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+  found_.resize(omp_get_max_threads());
+  //std::cout << x_min << std::endl;
+  //std::cout << x_max << std::endl;
+  //this->Lx = x_max[0]-x_min[0];
+  //this->Ly = x_max[1]-x_min[1];
+  //this->Lz = x_max[2]-x_min[2];
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space);
   u_next_ = std::make_shared<dolfin::Function>(u_space);
@@ -248,9 +256,9 @@ bool DolfInterpol::locate(const Vector3d &x, const double t, CellPos& pos){
   const Vector3d xx = _modx(x);
   if (dim == 2)
     return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
-                           found_);
+                           found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
   return locate_in_cells(tets_, cell2cells_, *mesh, dim, xx, pos,
-                         found_);
+                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 // Basis from dolfin at x; bary unused
 void DolfInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)

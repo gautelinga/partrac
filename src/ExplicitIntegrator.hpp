@@ -57,30 +57,26 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
 
             bool is_inside = intp.locate(x, t, pos);
             Vector3d dx_rw = Vector3d::Zero();
-            if constexpr (E == TransportElement::Point){
-                // Evaluate even outside
+            if (is_inside){
+                // Outside: zero velocity
                 intp.evaluate(x, t, pos, ptvals);
                 dx_rw = ptvals.get_u() * dt;
                 if (int_order >= 2){
                     dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
                 }
-            }
-            else if (is_inside){
-                // Outside: not moved
-                intp.evaluate(x, t, pos, ptvals);
-                const Vector3d u1 = ptvals.get_u();
-                const Matrix3d J1 = ptvals.get_J();
-                dx_rw = u1 * dt;
-                if constexpr (E == TransportElement::Vector)
-                    el += J1 * el * dt;
-                if constexpr (E == TransportElement::Tensor)
-                    Fel += J1 * Fel * dt;
-                if (int_order >= 2){
-                    dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
-                    if constexpr (E == TransportElement::Vector)
-                        el += 0.5*(J1*(J1*n0) + ptvals.get_grada()*n0) * dt * dt;
-                    if constexpr (E == TransportElement::Tensor)
-                        Fel += 0.5*(J1*(J1*F0) + ptvals.get_grada()*F0) * dt * dt;
+                // The gradient, for what carries it
+                if constexpr (E != TransportElement::Point){
+                    const Matrix3d J1 = ptvals.get_J();
+                    if constexpr (E == TransportElement::Vector){
+                        el += J1 * el * dt;
+                        if (int_order >= 2)
+                            el += 0.5*(J1*(J1*n0) + ptvals.get_grada()*n0) * dt * dt;
+                    }
+                    if constexpr (E == TransportElement::Tensor){
+                        Fel += J1 * Fel * dt;
+                        if (int_order >= 2)
+                            Fel += 0.5*(J1*(J1*F0) + ptvals.get_grada()*F0) * dt * dt;
+                    }
                 }
             }
             if (Dm > 0.0){

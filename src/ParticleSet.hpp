@@ -483,8 +483,9 @@ inline void ParticleSet::update_fields(Interp& intp, const double t, std::map<st
     CellPos pos;
     pos.id = get_cell_id(irw);
     PointValues ptvals(intp.get_U0());
-    intp.locate(x_rw[irw], t, pos);
-    intp.evaluate(x_rw[irw], t, pos, ptvals);
+    // Outside: zero fields
+    if (intp.locate(x_rw[irw], t, pos))
+      intp.evaluate(x_rw[irw], t, pos, ptvals);
     // Stretching rate
     if (do_S){
       const Matrix3d J = ptvals.get_J();

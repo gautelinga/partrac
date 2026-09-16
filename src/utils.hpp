@@ -45,6 +45,8 @@ inline double modulox(const double x, const double L){
 }
 
 inline Uint imodulo(const int a, const int b) {
+  // In range: no division
+  if (static_cast<unsigned>(a) < static_cast<unsigned>(b)) return a;
   return ((a % b) + b) % b;
 }
 

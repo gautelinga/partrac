@@ -45,18 +45,24 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
         PointValues ptvals(intp.get_U0());
 
         if constexpr (E == TransportElement::Point){
-            intp.locate(x, t, pos);
-            intp.evaluate(x, t, pos, ptvals);
-            k1 = ptvals.get_u();
-            intp.locate(x + k1 * dt/2, t + dt/2, pos);
-            intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
-            k2 = ptvals.get_u();
-            intp.locate(x + k2 * dt/2, t + dt/2, pos);
-            intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
-            k3 = ptvals.get_u();
-            intp.locate(x + k3 * dt, t + dt, pos);
-            intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
-            k4 = ptvals.get_u();
+            // Outside stages contribute zero
+            k1 = k2 = k3 = k4 = Vector3d::Zero();
+            if (intp.locate(x, t, pos)){
+                intp.evaluate(x, t, pos, ptvals);
+                k1 = ptvals.get_u();
+            }
+            if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
+                intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
+                k2 = ptvals.get_u();
+            }
+            if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
+                intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
+                k3 = ptvals.get_u();
+            }
+            if (intp.locate(x + k3 * dt, t + dt, pos)){
+                intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
+                k4 = ptvals.get_u();
+            }
 
             dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
 
@@ -127,35 +133,38 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             }
         }
         if constexpr (E == TransportElement::Tensor){
-            // Deformation gradient: dF/dt = J F
+            // Deformation gradient: dF/dt = J F; outside stages contribute zero
             const Matrix3d F = ps.F(i);
+            k1 = k2 = k3 = k4 = Vector3d::Zero();
+            Matrix3d dFdt1 = Matrix3d::Zero(), dFdt2 = Matrix3d::Zero(), dFdt3 = Matrix3d::Zero(), dFdt4 = Matrix3d::Zero();
 
-            intp.locate(x, t, pos);
-            intp.evaluate(x, t, pos, ptvals);
-            k1 = ptvals.get_u();
-            Matrix3d J1 = ptvals.get_J();
-            Matrix3d dFdt1 = J1 * F;
-
-            intp.locate(x + k1 * dt/2, t + dt/2, pos);
-            intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
-            k2 = ptvals.get_u();
-            Matrix3d F2 = F + dFdt1 * dt/2;
-            Matrix3d J2 = ptvals.get_J();
-            Matrix3d dFdt2 = J2 * F2;
-
-            intp.locate(x + k2 * dt/2, t + dt/2, pos);
-            intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
-            k3 = ptvals.get_u();
-            Matrix3d F3 = F + dFdt2 * dt/2;
-            Matrix3d J3 = ptvals.get_J();
-            Matrix3d dFdt3 = J3 * F3;
-
-            intp.locate(x + k3 * dt, t + dt, pos);
-            intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
-            k4 = ptvals.get_u();
-            Matrix3d F4 = F + dFdt3 * dt;
-            Matrix3d J4 = ptvals.get_J();
-            Matrix3d dFdt4 = J4 * F4;
+            if (intp.locate(x, t, pos)){
+                intp.evaluate(x, t, pos, ptvals);
+                k1 = ptvals.get_u();
+                Matrix3d J1 = ptvals.get_J();
+                dFdt1 = J1 * F;
+            }
+            if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
+                intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
+                k2 = ptvals.get_u();
+                Matrix3d F2 = F + dFdt1 * dt/2;
+                Matrix3d J2 = ptvals.get_J();
+                dFdt2 = J2 * F2;
+            }
+            if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
+                intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
+                k3 = ptvals.get_u();
+                Matrix3d F3 = F + dFdt2 * dt/2;
+                Matrix3d J3 = ptvals.get_J();
+                dFdt3 = J3 * F3;
+            }
+            if (intp.locate(x + k3 * dt, t + dt, pos)){
+                intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
+                k4 = ptvals.get_u();
+                Matrix3d F4 = F + dFdt3 * dt;
+                Matrix3d J4 = ptvals.get_J();
+                dFdt4 = J4 * F4;
+            }
 
             dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
             Matrix3d dF = (dFdt1 + 2*dFdt2 + 2*dFdt3 + dFdt4) * dt/6;

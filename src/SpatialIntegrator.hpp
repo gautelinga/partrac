@@ -59,8 +59,9 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
         pos.id = ps.get_cell_id(i);
 
         PointValues ptvals(intp.get_U0());
-        intp.locate(x, t, pos);
-        intp.evaluate(x, t, pos, ptvals);
+        // Outside: zero velocity, so declined below
+        if (intp.locate(x, t, pos))
+            intp.evaluate(x, t, pos, ptvals);
 
         Vector3d u_1 = ptvals.get_u();
 
