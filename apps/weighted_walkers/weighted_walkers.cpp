@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <omp.h>
+#include "files.hpp"
 #include "H5Cpp.h"
 
 #include "RunLoop.hpp"
@@ -188,11 +189,7 @@ int main(int argc, char* argv[])
         mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
     }
     else {
-        std::shared_ptr<Initializer> init_state;
-        if (dim == 2)
-            init_state = std::make_shared<RandomGaussianStripInitializer>(key, run.intp, prm, run.gens[0]);
-        else
-            init_state = std::make_shared<RandomGaussianCircleInitializer>(key, run.intp, prm, run.gens[0]);
+        std::shared_ptr<Initializer> init_state = make_gaussian_initializer(dim, key, run.intp, prm, run.gens[0]);
         mesh.load_initial_state(init_state, prm);
     }
     mesh.compute_maps();
@@ -217,7 +214,7 @@ int main(int argc, char* argv[])
         ExplicitIntegrator& integrator;
         Integrator& counters(){ return integrator; }
         std::vector<Uint> step(Interpol& intp, ParticleSet& ps, const double t, const double dt){
-            return with_concrete(intp, [&](auto& ip){ return integrator.template step<TransportElement::Point>(ip, ps, t, dt); });
+            return explicit_step<TransportElement::Point>(integrator, intp, ps, t, dt);
         }
     } stepper{integrator};
 

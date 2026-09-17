@@ -17,16 +17,18 @@ add_executable(unittest
   test_expressions.cpp
   test_schemas.cpp
   test_mesh_core.cpp
+  test_param_files.cpp
 )
 
 target_link_libraries(unittest
 	PRIVATE
 	Catch2::Catch2
+	partrac_base
 	partrac_io
-	partrac_params
-	partrac_core)
-target_include_directories(unittest PRIVATE ../src/ ../apps/)
+	partrac_particles)
+target_include_directories(unittest PRIVATE ../apps/)
 target_compile_features(unittest PRIVATE cxx_std_17)
+target_compile_definitions(unittest PRIVATE PARTRAC_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 add_test(NAME unittesttest COMMAND unittest)
 

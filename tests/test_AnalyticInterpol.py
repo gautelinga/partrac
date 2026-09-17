@@ -216,3 +216,28 @@ def test_every_shipped_analytic_example_runs(case, tmp_path):
         assert len(values) == len(head), "tdata columns do not match its header"
         assert all(np.isfinite(float(v)) for v in values), row
     assert float(dict(zip(head, values))["Nrw"]) > 0
+
+
+@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+def test_a_misspelt_key_in_the_expression_file_stops_the_run(tmp_path):
+    """A key the expression does not read stops partrac before it runs, naming
+    the key and the one it resembles.
+
+    Read loosely, u_innf would be ignored and the flow would run with whatever
+    u_inf the file also sets, or stop later on a missing key without saying
+    which line was wrong.
+    """
+    src = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
+    text = open(src).read().replace("u_inf=", "u_innf=")
+    (tmp_path / "expr_params.dat").write_text(text)
+    r = subprocess.run(
+        [PARTRAC, str(tmp_path / "expr_params.dat"), "mode=analytic",
+         "init_mode=uniform_x", "La=0.2", "Nrw=20", "Nrw_max=20", "ds_max=1e9",
+         "ds_min=1e-12", "Dm=0", "int_order=1", "dt=0.01", "T=0.02"],
+        capture_output=True, text=True, timeout=300)
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "unknown parameter 'u_innf'" in out, out
+    assert "did you mean 'u_inf'" in out, out
+    assert "missing required parameter 'u_inf'" in out, out
+    assert not list(tmp_path.rglob("tdata_from_t*.dat"))

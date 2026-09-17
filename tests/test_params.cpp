@@ -502,3 +502,101 @@ TEST_CASE("a predicate reading a conditional key is caught by validate_self",
                        "La is large", "second extent");
   REQUIRE_THROWS_AS(s.validate_self(), ParamError);
 }
+
+// Parameter files, as the interpolators read them
+
+namespace {
+
+Schema file_schema() {
+  Schema s("dolfin_params.dat", "");
+  s.require<std::string>("mesh", "mesh file");
+  s.opt<bool>("periodic_x", false, "periodic along x");
+  s.optional<double>("rho", "density");
+  return s;
+}
+
+std::string write_file(const TempDir& d, const std::string& contents) {
+  const auto path = d.path / "params.dat";
+  std::ofstream f(path);
+  f << contents;
+  return path.string();
+}
+
+}  // namespace
+
+TEST_CASE("a parameter file skips comments and blank lines", "[params]") {
+  TempDir d;
+  // a comment may itself contain '='
+  const auto path = write_file(d, "# u = A (x - x0)\n\nmesh = mesh.h5\n  # indented\nperiodic_x=true\n");
+  Params p = file_schema().parse_file(path);
+  REQUIRE(p.get<std::string>("mesh") == "mesh.h5");
+  REQUIRE(p.get<bool>("periodic_x"));
+  REQUIRE(p.source("mesh") == Source::File);
+}
+
+TEST_CASE("a key missing from a parameter file takes its default", "[params]") {
+  TempDir d;
+  Params p = file_schema().parse_file(write_file(d, "mesh=mesh.h5\n"));
+  REQUIRE(!p.get<bool>("periodic_x"));
+  REQUIRE(p.source("periodic_x") == Source::Default);
+}
+
+TEST_CASE("an optional key says whether the file gave it", "[params]") {
+  TempDir d;
+  REQUIRE(!file_schema().parse_file(write_file(d, "mesh=m\n")).has("rho"));
+  Params p = file_schema().parse_file(write_file(d, "mesh=m\nrho=2.5\n"));
+  REQUIRE(p.has("rho"));
+  REQUIRE(p.get<double>("rho") == 2.5);
+}
+
+TEST_CASE("a misspelt key in a parameter file is refused with a suggestion", "[params]") {
+  // ignored, it would leave the default in force without a word
+  TempDir d;
+  try {
+    file_schema().parse_file(write_file(d, "mesh=m\nperiodic_xx=true\n"));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    const std::string all = all_problems(e);
+    REQUIRE(all.find("unknown parameter 'periodic_xx'") != std::string::npos);
+    REQUIRE(all.find("did you mean 'periodic_x'") != std::string::npos);
+  }
+}
+
+TEST_CASE("a parameter file line without '=' is an error naming the line", "[params]") {
+  TempDir d;
+  try {
+    file_schema().parse_file(write_file(d, "mesh=m\nperiodic_x\n"));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(all_problems(e).find(":2: 'periodic_x' is not key=value") != std::string::npos);
+  }
+}
+
+TEST_CASE("a parameter file problem is reported with the rest", "[params]") {
+  TempDir d;
+  try {
+    file_schema().parse_file(write_file(d, "mesh=m\nmesh=n\nperiodic_x=maybe\n"));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    const std::string all = all_problems(e);
+    REQUIRE(all.find("'mesh' given more than once") != std::string::npos);
+    REQUIRE(all.find("'maybe' is not a boolean") != std::string::npos);
+  }
+}
+
+TEST_CASE("a required key missing from a parameter file is an error", "[params]") {
+  TempDir d;
+  REQUIRE_THROWS_AS(file_schema().parse_file(write_file(d, "rho=1\n")), ParamError);
+}
+
+TEST_CASE("a missing parameter file is an error, not an empty file", "[params]") {
+  REQUIRE_THROWS_AS(file_schema().parse_file("/nonexistent/dolfin_params.dat"), ParamError);
+}
+
+TEST_CASE("peek_file reads one key before the schema is chosen", "[params]") {
+  TempDir d;
+  const auto path = write_file(d, "# expression=commented\nexpression = abc_flow\nA=1\n");
+  REQUIRE(partrac::peek_file(path, "expression") == "abc_flow");
+  REQUIRE(partrac::peek_file(path, "B") == "");
+}
+

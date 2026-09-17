@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from dumps import dump_at
-from paths import app
+from paths import app, built_with_dolfin
 from test_apps import KINDS
 
 TRACERS = app("tracers")
@@ -50,6 +50,7 @@ def run(case, tmp_path, kind, mode, renumber):
 
 
 @pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin")
 @pytest.mark.parametrize("kind,mode", CASES, ids=["%s-%s" % c for c in CASES])
 def test_renumbered_cells_give_identical_dumps(mesh_dir, xdmf_dir, tmp_path, kind, mode):
     """Renumbered and unrenumbered runs agree dataset by dataset, in particle-id

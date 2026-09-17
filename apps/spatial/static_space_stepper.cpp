@@ -132,7 +132,7 @@ int main(int argc, char* argv[])
     double t_fields;
     Integrator& counters(){ return integrator; }
     std::vector<Uint> step(Interpol& intp, ParticleSet& ps, const double, const double ds){
-      return with_concrete(intp, [&](auto& ip){ return integrator.step(ip, ps, t_fields, ds); });
+      return spatial_step<TransportElement::Point>(integrator, intp, ps, t_fields, ds);
     }
   } stepper{integrator, run.t_fields};
 

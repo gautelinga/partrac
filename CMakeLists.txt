@@ -62,11 +62,11 @@ if (PARTRAC_NATIVE_ARCH)
 endif()
 
 # Warnings belong to every build type: a bug only Release can see is still a
-# bug. The unused-* families are off because the headers are included whole by
-# every app, so they say nothing about the code that includes them.
+# bug. Unused parameters are off: the interfaces take arguments some
+# implementations ignore.
 # -fno-permissive comes last on purpose: DOLFIN_CXX_FLAGS carries -fpermissive,
 # which would otherwise downgrade errors across the whole tree.
-set(PARTRAC_WARNING_FLAGS "-Wall -Wextra -Wno-unused-function -Wno-unused-parameter -fno-permissive")
+set(PARTRAC_WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -fno-permissive")
 
 if( CMAKE_BUILD_TYPE MATCHES "Release")
   # Optimized build

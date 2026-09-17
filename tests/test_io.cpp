@@ -1,4 +1,5 @@
 #include <catch2/catch.hpp>
+#include "param_print.hpp"
 #include "io.hpp"
 #include "Interpol.hpp"
 #include "Timestamps.hpp"

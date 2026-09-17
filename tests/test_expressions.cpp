@@ -5,7 +5,8 @@
 #include <string>
 
 #include "typedefs.hpp"
-#include "utils.hpp"
+#include "PointValues.hpp"
+#include "Params.hpp"
 #include "expressions/Expr_ABCFlow.hpp"
 #include "expressions/Expr_BatchelorVortex.hpp"
 #include "expressions/Expr_BrinkmanCylinder.hpp"
@@ -20,6 +21,16 @@
 namespace {
 
 using Prm = std::map<std::string, std::string>;
+
+// The pairs parsed against the expression's own keys
+template<typename E>
+partrac::Params params_for(const Prm& p){
+  partrac::Schema s("test_expressions", "");
+  E::add_params(s);
+  std::vector<std::string> args{"test_expressions"};
+  for (const auto& kv : p) args.push_back(kv.first + "=" + kv.second);
+  return s.parse(args);
+}
 
 // gradU(i, j) must be dU_i/dx_j
 void check_gradient(Expr& e, const Vector3d& x, const double t){
@@ -112,7 +123,7 @@ Prm batchelor_params(){
 
 TEST_CASE("ABCFlow", "[expr]") {
   Prm p = abc_params();
-  Expr_ABCFlow e(p);
+  Expr_ABCFlow e(params_for<Expr_ABCFlow>(p));
   check_all(e, {1.3, 2.7, 4.1}, {2.2, 0.4, 7.9}, 0.);
 
   // Beltrami: curl u = k u. This is what fixes the sign of the pressure.
@@ -130,7 +141,7 @@ TEST_CASE("SineFlow", "[expr]") {
   Prm p = {{"flowdir", "1,0"}, {"depdir", "0,1"}, {"chi", "1.2154,3.1199"},
            {"u_inf", "0.7071"}, {"p_inf", "1.0"}, {"tau", "0.5"}, {"rho", "1.2"},
            {"Lx", "1.0"}, {"Ly", "1.0"}, {"Lz", "1.0"}};
-  Expr_SineFlow e(p);
+  Expr_SineFlow e(params_for<Expr_SineFlow>(p));
   // either side of a phase switch, since the flow depends on t
   check_all(e, {0.31, 0.62, 0.11}, {0.77, 0.05, 0.90}, 0.1);
   check_all(e, {0.31, 0.62, 0.11}, {0.77, 0.05, 0.90}, 0.7);
@@ -143,7 +154,7 @@ TEST_CASE("SineFlow", "[expr]") {
 
 TEST_CASE("BatchelorVortex", "[expr]") {
   Prm p = batchelor_params();
-  Expr_BatchelorVortex e(p);
+  Expr_BatchelorVortex e(params_for<Expr_BatchelorVortex>(p));
   check_all(e, {0.7, 0.3, 0.2}, {1.9, -0.4, 0.1}, 0.);
   for (double s : {2.0, 0.5, 1e-2, 1e-4})
     check_gradient(e, {s, s/2, 0.3}, 0.);
@@ -151,7 +162,7 @@ TEST_CASE("BatchelorVortex", "[expr]") {
 
 TEST_CASE("BatchelorVortex is regular on the axis", "[expr]") {
   Prm p = batchelor_params();
-  Expr_BatchelorVortex e(p);
+  Expr_BatchelorVortex e(params_for<Expr_BatchelorVortex>(p));
   const double u0 = 1.0, R1 = 1.0, q = 0.8;
 
   PointValues pv(1.0);
@@ -170,7 +181,7 @@ TEST_CASE("BatchelorVortex is regular on the axis", "[expr]") {
 
 TEST_CASE("BatchelorVortex has no kink at the series thresholds", "[expr]") {
   Prm p = batchelor_params();
-  Expr_BatchelorVortex e(p);
+  Expr_BatchelorVortex e(params_for<Expr_BatchelorVortex>(p));
   // phi switches to expm1 at a = 1e-8, dphi at a = 1e-3; R1 = 1 so a = s^2
   for (double a : {1e-3, 1e-8}){
     const double sm = std::sqrt(a*(1. - 1e-9)), sp = std::sqrt(a*(1. + 1e-9));
@@ -189,7 +200,7 @@ TEST_CASE("BatchelorVortex has no kink at the series thresholds", "[expr]") {
 TEST_CASE("PlanePoiseuille", "[expr]") {
   Prm p = {{"R", "1.0"}, {"mu", "1.0"}, {"u_inf", "1.0"}, {"p_inf", "0.5"},
            {"rho", "1.2"}, {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
-  Expr_PlanePoiseuille e(p);
+  Expr_PlanePoiseuille e(params_for<Expr_PlanePoiseuille>(p));
   check_all(e, {0.3, 0.2, 0.1}, {-0.4, 0.15, 0.6}, 0.);
 }
 
@@ -198,7 +209,7 @@ TEST_CASE("LinearFlow", "[expr]") {
   Prm p = {{"Axx", "0.3"}, {"Axy", "-1.0"}, {"Ayx", "1.0"}, {"Ayy", "0.5"},
            {"Azz", "-0.8"}, {"Azx", "0.2"}, {"x0", "0.1"}, {"y0", "0.0"}, {"z0", "-0.2"},
            {"p_inf", "0.5"}, {"rho", "1.2"}};
-  Expr_LinearFlow e(p);
+  Expr_LinearFlow e(params_for<Expr_LinearFlow>(p));
   check_all(e, {0.3, 0.2, 0.1}, {-0.4, 0.15, 0.6}, 0.);
   PointValues pv(1.0);
   e.eval({0.1, 0.0, -0.2}, 0., pv);   // the origin is at rest
@@ -212,21 +223,21 @@ TEST_CASE("LinearFlow", "[expr]") {
 TEST_CASE("HagenPoiseuille", "[expr]") {
   Prm p = {{"R", "1.0"}, {"mu", "1.0"}, {"u_inf", "1.0"}, {"p_inf", "0.5"},
            {"rho", "1.2"}, {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
-  Expr_HagenPoiseuille e(p);
+  Expr_HagenPoiseuille e(params_for<Expr_HagenPoiseuille>(p));
   check_all(e, {0.3, 0.2, 0.1}, {-0.4, 0.15, 0.6}, 0.);
 }
 
 TEST_CASE("InfinitePlate", "[expr]") {
   Prm p = {{"alpha", "0.5"}, {"mu", "1.0"}, {"p_inf", "0.5"}, {"rho", "1.2"},
            {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
-  Expr_InfinitePlane e(p);  // the file is named Plate, the class Plane
+  Expr_InfinitePlane e(params_for<Expr_InfinitePlane>(p));  // the file is named Plate, the class Plane
   check_all(e, {-0.4, 0.3, 0.1}, {-1.1, -0.2, 0.7}, 0.);
 }
 
 TEST_CASE("StokesSphere", "[expr]") {
   Prm p = {{"R", "1.0"}, {"mu", "1.0"}, {"u_inf", "1.0"}, {"p_inf", "0.5"},
            {"rho", "1.2"}, {"x0", "0.0"}, {"y0", "0.0"}, {"z0", "0.0"}};
-  Expr_StokesSphere e(p);
+  Expr_StokesSphere e(params_for<Expr_StokesSphere>(p));
   // outside the sphere, where the solution is defined
   check_all(e, {2.1, 1.3, 0.7}, {-1.8, 0.4, 2.2}, 0.);
 }
@@ -243,7 +254,7 @@ Prm brinkman_params(){
 
 TEST_CASE("BrinkmanCylinder", "[expr]") {
   Prm p = brinkman_params();
-  Expr_BrinkmanCylinder e(p);
+  Expr_BrinkmanCylinder e(params_for<Expr_BrinkmanCylinder>(p));
   // f, f' and f'' come from separate tables, which must resolve a difference
   // outside the cylinder, and away from the interpolation end points
   const Vector3d x{2.1, 1.3, 0.0}, x2{-1.8, 0.4, 0.0};
@@ -271,7 +282,7 @@ Vector3d cylindrical(Expr& e, const double s, const double theta, const double z
 
 TEST_CASE("TaylorCouette", "[expr]") {
   Prm p = taylor_couette_params();
-  Expr_TaylorCouette e(p);
+  Expr_TaylorCouette e(params_for<Expr_TaylorCouette>(p));
   check_all(e, {1.4, 0.9, 0.3}, {-1.9, 0.7, -0.8}, 0.);
   // across the cell, including near both plates where the corner terms bite
   for (double z : {-1.4, -0.7, 0.0, 0.7, 1.4})
@@ -283,7 +294,7 @@ TEST_CASE("TaylorCouette", "[expr]") {
 
 TEST_CASE("TaylorCouette holds its boundary conditions", "[expr]") {
   Prm p = taylor_couette_params();
-  Expr_TaylorCouette e(p);
+  Expr_TaylorCouette e(params_for<Expr_TaylorCouette>(p));
   const double R = 2.5, H = 3.0, tol = 1e-12;
 
   for (double z : {-1.2, -0.5, 0.0, 0.5, 1.2}){
@@ -306,7 +317,7 @@ TEST_CASE("TaylorCouette is finite in the singular corners", "[expr]") {
   // where the turning inner cylinder meets a stationary plate the fit is
   // genuinely discontinuous; it must still not produce a NaN
   Prm p = taylor_couette_params();
-  Expr_TaylorCouette e(p);
+  Expr_TaylorCouette e(params_for<Expr_TaylorCouette>(p));
   for (double z : {-1.5, 1.5}){
     for (double s : {1.0, 1.0 + 1e-14, 2.5}){
       PointValues pv(1.0);
