@@ -153,47 +153,6 @@ TetInterpol::TetInterpol(const std::string& infilename)
   double tol = 1e-12; // heuristic
   apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
 
-  cell_type_.resize(mesh->num_cells());
-  label_cell_type(cell_type_, cell2cells_, dim);
-
-  cell_facets_.resize(mesh->num_cells());
-
-  for ( Uint i=0; i < mesh->num_cells(); ++i)
-  {
-    if (cell_type_[i] == 1)
-    {
-      auto num_facets = dolfin_cells_[i].num_entities(dim-1);
-      auto facets = dolfin_cells_[i].entities(dim-1);
-      for ( std::size_t j = 0; j < num_facets; ++j ){
-        dolfin::Facet dolfin_facet(*mesh, facets[j]);
-
-        if (dolfin_facet.exterior()){
-          Vector3d pt(dolfin_facet.midpoint().coordinates());
-
-          bool periodic_facet = false;
-          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
-          {
-            if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
-            {
-              periodic_facet = true;
-              break;
-            }
-          }
-          if (!periodic_facet){
-            std::vector<Vector3d> facet_loc;
-            for (dolfin::VertexIterator v(dolfin_facet); !v.end(); ++v){
-              Vector3d vloc(v->point().coordinates());
-              facet_loc.push_back(vloc);
-            }
-            cell_facets_[i].push_back(facets_.size());
-            facets_.push_back(facet_loc);
-          }
-        }
-      }
-    }
-  }
-
-  hmin = mesh->hmin();
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
@@ -234,8 +193,6 @@ TetInterpol::TetInterpol(const std::string& infilename)
     p_dofs_.build(p_dofmap, dolfin_cells_, "TetInterpol");
     p_dofs_.check_stride(ncoeffs_p, "TetInterpol");
   }
-  
-  can_reflect = true;
 }
 
 void TetInterpol::update(const double t)
@@ -292,7 +249,7 @@ void TetInterpol::update(const double t)
 
 
 Vector3d TetInterpol::_modx(const Vector3d &x){
-  Vector3d x_loc;
+  Vector3d x_loc = x;
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
@@ -446,108 +403,19 @@ void TetInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos
   }
 }
 
-void TetInterpol::reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id){
-  if (cell_id == -1) locate(x, t, cell_id);
-  //std::cout << "Reflecting: " << cell_id ; // << std::endl;
-  //std::cout << " " << cell_type_[cell_id] << " ";
-  //for (auto & facet : cell_facets_[cell_id]) {
-  //  for (auto & pt : facet ){
-  //    std::cout << pt << " ";
-  //  }
-    //std::cout << facet.size() << " ";
-  //}
-  //std::cout << std::endl;
-
-  if (cell_type_[cell_id] != 1 || true){
-    int cell_id_tmp = cell_id;
-    Vector3d x_tmp = x;
-    bool is_inside_tmp = true;
-    int count = 0;
-    int splits = 1;
-    double ddx = 1e-3 * hmin;
-
-    int num_splits = log(dx_new.norm()/ddx)/log(2);
-
-    while (cell_type_[cell_id_tmp] != 1 || splits < num_splits)
-    {
-      //std::cout << count << " " << splits << " " << cell_type_[cell_id_tmp] << std::endl;
-      Vector3d ddx_tmp = pow(0.5, splits) * dx_new;
-
-      if ( (x_tmp+ddx_tmp-x).squaredNorm() > dx_new.squaredNorm() + 1e-7){
-        //std::cout << "Failed..." << std::endl;
-        exit(1);
-        break;
-      }
-
-      is_inside_tmp = locate(x_tmp + ddx_tmp, t + pow(0.5, splits)*dt, cell_id_tmp);
-      if (is_inside_tmp){
-        x_tmp = x_tmp + ddx_tmp;
-      }
-      else {
-        ++splits;
-        //ddx_tmp /= 2;
-      }
-      ++count;
-    }
-    //std::cout << std::endl;
-    cell_id = cell_id_tmp;
-  }
-
-  bool crossing = false;
-  double beta;
-  Vector3d N;
-
-  for (auto & facet_id : cell_facets_[cell_id]) {
-    auto facet = facets_[facet_id];
-    crossing = _cross_facet(beta, N, x, dx_new, facet);
-    if (crossing) break;
-  }
-  if (!crossing){
-    for (auto & facet : facets_){
-      crossing = _cross_facet(beta, N, x, dx_new, facet);
-      if (crossing) break;
-    }
-  }
-  if (crossing){
-    //Vector3d xc = x + beta * dx_new;
-    //Vector3d xpp = x + dx_new - 2*N*N.dot(dx_new) * (1-beta);
-    //Vector3d xmm = x + 2*N*N.dot(dx_new) * beta;
-    
-    Vector3d dx_out = dx_new - 2*N*N.dot(dx_new) * (1-beta);
-
-    dx_new = dx_out;
-    // TODO: multiple reflections
-
-  }
-
-  //return {0., 0., 0.};
+void TetInterpol::enable_reflection()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, 1e-12);
+  period_ = periodic_lengths(periodic, x_min, x_max, dim);
+  can_reflect = true;
 }
 
-bool TetInterpol::_cross_facet(double& beta, Vector3d& N, const Vector3d& x, const Vector3d &dx_new, std::vector<Vector3d> &facet)
+bool TetInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
 {
-  Vector3d p0 = (x_max + x_min)/2; // To avoid periodic effects
-  Vector3d p10 = facet[1]-facet[0];
-  Vector3d p20 = facet[2]-facet[0];
-  Vector3d s0 = _modx(x - facet[0] + p0);
-  Vector3d s10 = dx_new;
-  Vector3d sp0 = s0-p0;
-
-  Matrix3d A;
-  A.col(0) = -s10;
-  A.col(1) = p10;
-  A.col(2) = p20;
-
-  Vector3d tuv = A.inverse() * sp0;
-  bool crossing = (tuv[0] >= 0 && tuv[0] <= 1) && (tuv[1] >= 0 && tuv[1] <= 1) && (tuv[2] >= 0 && tuv[2] <= 1);
-
-  beta = tuv[0];
-
-  if (crossing){
-    N = p10.cross(p20);
-    N /= N.norm();
-  }
-
-  return crossing;
+  return reflect_in_cells(tets_, facet_neigh_, 4, period_, x, dx, pos,
+                          [this](const Vector3d& p){ return _modx(p); });
 }
 
 #endif

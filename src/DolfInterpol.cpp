@@ -322,4 +322,21 @@ void DolfInterpol::evaluate(const Vector3d &x, const double t, const CellPos& po
   }
 }
 
+void DolfInterpol::enable_reflection()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, 1e-12);
+  period_ = periodic_lengths(periodic, x_min, x_max, dim);
+  can_reflect = true;
+}
+
+bool DolfInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
+{
+  const auto wrap = [this](const Vector3d& p){ return _modx(p); };
+  if (dim == 2)
+    return reflect_in_cells(triangles_, facet_neigh_, 3, period_, x, dx, pos, wrap);
+  return reflect_in_cells(tets_, facet_neigh_, 4, period_, x, dx, pos, wrap);
+}
+
 #endif

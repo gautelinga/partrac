@@ -40,7 +40,7 @@ KINDS = {
     "triangle":     ("triangle", "x0=0.5 y0=0.5 z0=0"),
     "tet":          ("tet", "x0=0.5 y0=0.5 z0=0.5"),
     "trianglefreq": ("trianglefreq", "x0=0.5 y0=0.5 z0=0"),
-    "felbm":        ("felbm", "x0=8 y0=8 z0=8"),               # 16^3, solid at the x ends
+    "felbm":        ("felbm", "x0=8 y0=8 z0=8"),               # 16^3, solid at the z ends
     "xdmf":         ("xdmftriangle", "x0=0.5 y0=0.5 z0=0"),
 }
 

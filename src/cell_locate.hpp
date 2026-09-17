@@ -212,5 +212,75 @@ inline bool locate_in_cells(const std::vector<Cell>& cells,
   return true;
 }
 
+// Facet k of a cell faces vertex k; across it: a cell, a wall, or a periodic image
+constexpr std::int32_t facet_wall = -1;
+inline std::int32_t facet_periodic(const std::int32_t id){ return -2 - id; }
+
+// Walk dx from x, mirroring at walls
+template<typename Cell, typename Wrap>
+inline bool reflect_in_cells(const std::vector<Cell>& cells,
+                             const std::vector<std::int32_t>& across,
+                             const int nv,
+                             const Vector3d& period,
+                             const Vector3d& x,
+                             Vector3d& dx,
+                             CellPos& pos,
+                             const Wrap& wrap){
+  constexpr int max_bounces = 8;
+  constexpr int max_crossings = 1024;
+  if (pos.id < 0)
+    return false;
+  int id = pos.id;
+  Vector3d p = wrap(x);
+  Vector3d d = dx;
+  Vector3d walked = Vector3d::Zero();
+  std::array<double, 4> b0 = pos.bary, b1;
+  int bounces = 0;
+  for (int crossing = 0; crossing < max_crossings; ++crossing){
+    if (cells[id].contains(p + d, b1)){
+      pos.id = id;
+      pos.bary = b1;
+      dx = walked + d;
+      return true;
+    }
+    // First facet the segment leaves
+    int k_exit = 0;
+    double s = 2.;
+    for (int k = 0; k < nv; ++k){
+      if (b1[k] < 0.){
+        const double sk = (b0[k] > 0. && b1[k] < b0[k]) ? b0[k]/(b0[k] - b1[k]) : 0.;
+        if (sk < s){ s = sk; k_exit = k; }
+      }
+    }
+    const Vector3d part = s*d;
+    Vector3d rest = d - part;
+    p += part;
+    walked += part;
+    const std::int32_t a = across[std::size_t(id)*nv + k_exit];
+    if (a == facet_wall){
+      if (++bounces > max_bounces)
+        return false;
+      const Vector3d n = cells[id].bary_grad(k_exit).normalized();
+      const double rn = n.dot(rest);
+      if (rn < 0.)
+        rest -= 2*rn*n;
+    }
+    else if (a >= 0){
+      id = a;
+    }
+    else {
+      // Periodic image of p
+      const Vector3d n = cells[id].bary_grad(k_exit);
+      int axis = 0;
+      n.cwiseAbs().maxCoeff(&axis);
+      p[axis] += (n[axis] > 0. ? 1. : -1.)*period[axis];
+      id = facet_periodic(a);
+    }
+    d = rest;
+    cells[id].contains(p, b0);
+  }
+  return false;
+}
+
 #endif
 #endif

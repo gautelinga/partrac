@@ -22,6 +22,9 @@ public:
   // Writes the barycentrics, inside or not
   bool contains(const Vector3d& x, std::array<double, 4>& bary) const;
 
+  // Gradient of barycentric k: inward normal of the facet opposite vertex k
+  Vector3d bary_grad(const int k) const;
+
   void linearbasis(double r, double s, double t, double u,
                    double *N) const;
 
@@ -48,6 +51,11 @@ private:
   double g1x_, g1y_, g1z_;
 
   static constexpr std::array<int, 10> perm_ = {-1, -1, -1, -1, 9, 6, 8, 7, 5, 4};
+
+public:
+
+  // quadbasis slots of the midpoints of edges 01, 02, 03, 12, 13, 23
+  static constexpr std::array<int, 6> mid_ = {perm_[4], perm_[6], perm_[7], perm_[5], perm_[8], perm_[9]};
 };
 
 // Per-point functions
@@ -66,6 +74,16 @@ inline bool Tet::contains(const Vector3d& x, std::array<double, 4>& bary) const
 {
   xyz2bary(x[0], x[1], x[2], bary[0], bary[1], bary[2], bary[3]);
   return (bary[0] >= 0. && bary[1] >= 0. && bary[2] >= 0. && bary[3] >= 0.);
+}
+
+inline Vector3d Tet::bary_grad(const int k) const
+{
+  switch (k){
+    case 0: return {g1x_, g1y_, g1z_};
+    case 1: return {g2x_, g2y_, g2z_};
+    case 2: return {g3x_, g3y_, g3z_};
+    default: return {g4x_, g4y_, g4z_};
+  }
 }
 
 inline void Tet::linearbasis(double r,

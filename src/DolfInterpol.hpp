@@ -47,6 +47,10 @@ public:
   using Interpol::evaluate;
   bool locate(const Vector3d &x, const double t, CellPos& pos);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals);
+  // Walk a move off the walls
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
+  void enable_reflection();
+  double hmin() const { return mesh->hmin(); }
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double get_rho() {
@@ -95,6 +99,8 @@ protected:
   std::vector<Triangle> triangles_;   // one of these two is filled, by dim
   std::vector<Tet> tets_;
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::int32_t> facet_neigh_;   // reflect_in_cells
+  Vector3d period_ = Vector3d::Zero();
   std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
   std::shared_ptr<const dolfin::FiniteElement> u_element_, p_element_;
   Uint u_dim_ = 0, p_dim_ = 0;

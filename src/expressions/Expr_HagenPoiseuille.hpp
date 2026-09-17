@@ -43,6 +43,17 @@ public:
     Uzy = - 4 * u_inf * r[1]/pow(R, 2);
     Uzz = 0.;
   };
+  // Distance to the pipe wall, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const {
+    const Vector3d r = x-x0;
+    return R - std::hypot(r[0], r[1]);
+  };
+  Vector3d sdf_grad(const Vector3d &x) const {
+    const Vector3d r = x-x0;
+    const double s = std::hypot(r[0], r[1]);
+    return s > 0. ? Vector3d(-r[0]/s, -r[1]/s, 0.) : Vector3d::Zero();
+  };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
     double chi = pow(r[0]/R, 2) + pow(r[1]/R, 2);

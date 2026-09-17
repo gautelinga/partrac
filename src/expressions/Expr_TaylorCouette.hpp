@@ -26,6 +26,21 @@ public:
     is_inside = inside(x, 0.);
     compute(x, U, gradU);
   };
+  // Distance to the nearest of cylinders and plates, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const {
+    const Vector3d r = x-x0;
+    const double s = std::hypot(r[0], r[1]);
+    return std::min({s - 1., R - s, H/2 - std::abs(r[2])});
+  };
+  Vector3d sdf_grad(const Vector3d &x) const {
+    const Vector3d r = x-x0;
+    const double s = std::hypot(r[0], r[1]);
+    const double inner = s - 1., outer = R - s, plate = H/2 - std::abs(r[2]);
+    if (plate <= inner && plate <= outer) return {0., 0., r[2] > 0. ? -1. : 1.};
+    const Vector3d e = s > 0. ? Vector3d(r[0]/s, r[1]/s, 0.) : Vector3d::Zero();
+    return inner <= outer ? e : Vector3d(-e);
+  };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
     double s = sqrt(r[0]*r[0]+r[1]*r[1]);

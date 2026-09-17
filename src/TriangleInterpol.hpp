@@ -31,6 +31,10 @@ public:
   using Interpol::locate;
   using Interpol::evaluate;
   void print_found() { print_found_counts(found_); }
+  // Walk a move off the walls
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
+  void enable_reflection();
+  double hmin() const { return mesh->hmin(); }
 protected:
   Timestamps ts;
   double t_prev = 0.;
@@ -78,6 +82,8 @@ protected:
   std::vector<dolfin::Cell> dolfin_cells_;
 
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::int32_t> facet_neigh_;   // reflect_in_cells
+  Vector3d period_ = Vector3d::Zero();
   std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
 

@@ -202,7 +202,7 @@ void TriangleFreqInterpol::update(const double t)
 
 
 Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
-  Vector3d x_loc;
+  Vector3d x_loc = x;
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
@@ -325,6 +325,21 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const Cel
     fields.gradA(1, 0) = std::inner_product(wt_f_.begin(), wt_f_.end(), uyx_f_.begin(), 0.0);
     fields.gradA(1, 1) = std::inner_product(wt_f_.begin(), wt_f_.end(), uyy_f_.begin(), 0.0);
   }
+}
+
+void TriangleFreqInterpol::enable_reflection()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, 1e-12);
+  period_ = periodic_lengths(periodic, x_min, x_max, dim);
+  can_reflect = true;
+}
+
+bool TriangleFreqInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
+{
+  return reflect_in_cells(triangles_, facet_neigh_, 3, period_, x, dx, pos,
+                          [this](const Vector3d& p){ return _modx(p); });
 }
 
 #endif

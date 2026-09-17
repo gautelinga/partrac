@@ -43,6 +43,10 @@ public:
     Uzy = 0.;
     Uzz = 0.;
   };
+  // Distance to the nearer plate, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const { return R - std::abs(x[0]-x0[0]); };
+  Vector3d sdf_grad(const Vector3d &x) const { return {x[0] > x0[0] ? -1. : 1., 0., 0.}; };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
     double chi = pow(r[0]/R, 2);

@@ -22,6 +22,9 @@ public:
   // Writes the first three barycentrics, inside or not
   bool contains(const Vector3d& x, std::array<double, 4>& bary) const;
 
+  // Gradient of barycentric k: inward normal of the edge opposite vertex k
+  Vector3d bary_grad(const int k) const;
+
   void linearbasis( double r
                   , double s
                   , double t
@@ -60,6 +63,11 @@ private:
 
   static constexpr std::array<int, 6> perm_ = {-1, -1, -1, 5, 3, 4};  // Check!
   // static constexpr std::array<int, 6> perm_alt_ = {-1, -1, -1, 4, 5, 3};
+
+public:
+
+  // quadbasis slots of the midpoints of edges 01, 02, 12
+  static constexpr std::array<int, 3> mid_ = {perm_[3], perm_[5], perm_[4]};
 };
 
 // Per-point functions
@@ -77,6 +85,15 @@ inline bool Triangle::contains(const Vector3d& x, std::array<double, 4>& bary) c
 {
   xy2bary(x[0], x[1], bary[0], bary[1], bary[2]);
   return (bary[0] >= 0. && bary[1] >= 0. && bary[2] >= 0.);
+}
+
+inline Vector3d Triangle::bary_grad(const int k) const
+{
+  switch (k){
+    case 0: return {g1x_, g1y_, 0.};
+    case 1: return {g2x_, g2y_, 0.};
+    default: return {g3x_, g3y_, 0.};
+  }
 }
 
 inline void Triangle::linearbasis( double r

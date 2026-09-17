@@ -1,6 +1,6 @@
 """StructuredInterpol across a change of timestamp.
 
-A synthetic felbm case on a 16^3 grid, with solid walls at x = 0 and x = 15,
+A synthetic felbm case on a 16^3 grid, with solid walls at z = 0 and z = 15,
 has three stamps at t = 0, 1, 2. Stamp k holds the uniform field u_z = k, so
 with linear blending in time u_z(t) = t and z(t) = z0 + t^2/2 exactly. The
 mean u_z over [1, 1.5] is 1.25 only if, at the stamp change, the old next

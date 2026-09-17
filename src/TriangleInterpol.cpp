@@ -359,4 +359,19 @@ void TriangleInterpol::evaluate(const Vector3d &x, const double tin, const CellP
   }
 }
 
+void TriangleInterpol::enable_reflection()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, 1e-12);
+  period_ = periodic_lengths(periodic, x_min, x_max, dim);
+  can_reflect = true;
+}
+
+bool TriangleInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
+{
+  return reflect_in_cells(triangles_, facet_neigh_, 3, period_, x, dx, pos,
+                          [this](const Vector3d& p){ return _modx(p); });
+}
+
 #endif

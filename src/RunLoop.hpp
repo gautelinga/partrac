@@ -88,6 +88,17 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
 
   intp->update(frozen_fields ? prm.get<double>("t_frozen") : t0);
 
+  // Walls for the explicit diffusive step
+  const bool diffuses = prm.has("Dm") && prm.get<double>("Dm") > 0.;
+  if (diffuses && (!prm.has("scheme") || prm.get<std::string>("scheme") == "explicit")){
+    intp->enable_reflection();
+    // Warn when the noise step exceeds a cell
+    const double sigma = sqrt(2*prm.get<double>("Dm")*prm.get<double>("dt"));
+    const double h = intp->hmin();
+    if (intp->can_reflect && h > 0. && sigma > h)
+      std::cout << "Note: diffusive step " << sigma << " exceeds the smallest cell " << h << std::endl;
+  }
+
   return Run{prm, intp, out, std::move(gens), t0, T, frozen_fields, false, t0};
 }
 

@@ -28,6 +28,37 @@ public:
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) {
     expr->eval(x, t, ptvals);
   };
+  // Walk a move off the walls
+  __attribute__((noinline))
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos) {
+    constexpr int max_bounces = 8;
+    Vector3d p = x;
+    Vector3d d = dx;
+    Vector3d walked = Vector3d::Zero();
+    for (int bounce = 0; bounce <= max_bounces; ++bounce){
+      if (expr->inside(x + (walked + d), 0.)){
+        dx = walked + d;
+        return true;
+      }
+      // Crossing by bisection, to 1e-9 of the step: sdf(p) >= 0 > sdf(p + d)
+      double lo = 0., hi = 1.;
+      for (int k = 0; k < 30; ++k){
+        const double mid = 0.5*(lo + hi);
+        (expr->sdf(p + mid*d) >= 0. ? lo : hi) = mid;
+      }
+      const Vector3d part = lo*d;
+      Vector3d rest = d - part;
+      p += part;
+      walked += part;
+      const Vector3d n = expr->sdf_grad(p).normalized();
+      const double rn = n.dot(rest);
+      if (rn < 0.)
+        rest -= 2*rn*n;
+      d = rest;
+    }
+    return false;
+  };
+  void enable_reflection() { can_reflect = expr->has_wall(); };
   double get_t_min() { return getd(expr_params, "t_min"); };
   double get_t_max() { return getd(expr_params, "t_max"); };
   using Interpol::locate;

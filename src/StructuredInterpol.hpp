@@ -253,6 +253,9 @@ public:
   void update(const double t);
   bool locate(const Vector3d &x, const double t, CellPos& pos);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
+  void enable_reflection() { can_reflect = true; };
+  double hmin() const { return dx.minCoeff(); };
   bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
   void probe_space_bulk(const Vector3d &x, 
     const Uint _ind[3][2],
@@ -295,7 +298,6 @@ protected:
   Uint n[3] = {0, 0, 0};
   Vector3d dx;
 
-  double wq[3][2];
   double dwq[3][2];
 
   GridBlock<unsigned char> solid_;   // not bool (vector<bool>)
@@ -475,6 +477,54 @@ inline bool StructuredInterpol::locate(const Vector3d &x, const double t, CellPo
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
   return !isSolid(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
+}
+
+// Walk the node lattice; a wall is the mid-plane between a fluid and a solid node
+__attribute__((noinline))
+inline bool StructuredInterpol::reflect(const Vector3d& x, Vector3d& dx_move, CellPos& pos){
+  constexpr int max_bounces = 8;
+  constexpr int max_crossings = 4096;
+  // Lattice units, unwrapped node indices
+  Vector3d p = x.cwiseQuotient(dx);
+  Vector3d d = dx_move.cwiseQuotient(dx);
+  int idx[3];
+  for (Uint i=0; i<3; ++i)
+    idx[i] = round_to_int(p[i]);
+  const auto solid = [&](){
+    return isSolid(imodulo(idx[0], n[0]), imodulo(idx[1], n[1]), imodulo(idx[2], n[2]));
+  };
+  if (solid())
+    return false;
+  Vector3d walked = Vector3d::Zero();
+  int bounces = 0;
+  for (int crossing = 0; crossing < max_crossings; ++crossing){
+    // Nearest mid-plane ahead
+    int axis = -1;
+    double s = 1.;
+    for (int i=0; i<3; ++i){
+      if (d[i] == 0.) continue;
+      const double plane = idx[i] + (d[i] > 0. ? 0.5 : -0.5);
+      const double si = std::max((plane - p[i])/d[i], 0.);
+      if (si < s){ s = si; axis = i; }
+    }
+    if (axis < 0){
+      dx_move = (walked + d).cwiseProduct(dx);
+      return locate(x + dx_move, t_update, pos);
+    }
+    const Vector3d part = s*d;
+    p += part;
+    walked += part;
+    d -= part;
+    const int step = d[axis] > 0. ? 1 : -1;
+    idx[axis] += step;
+    if (solid()){
+      idx[axis] -= step;
+      if (++bounces > max_bounces)
+        return false;
+      d[axis] = -d[axis];
+    }
+  }
+  return false;
 }
 
 inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields){
@@ -748,11 +798,11 @@ inline void StructuredInterpol::probe_space_boundary(
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
-        double wqux = wq[0][i];
+        double wqux = _wq[0][i];
         double dwqux = dwq[0][i];
-        double wquy = wq[1][j];
+        double wquy = _wq[1][j];
         double dwquy = dwq[1][j];
-        double wquz = wq[2][k];
+        double wquz = _wq[2][k];
         double dwquz = dwq[2][k];
 
         if (_is_solid_2[i == 0 ? 1 : 0][j][k]){

@@ -42,6 +42,10 @@ public:
     Uzy = 0.;
     Uzz = 0.;
   };
+  // Distance to the plate, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const { return x0[0] - x[0]; };
+  Vector3d sdf_grad(const Vector3d &x __attribute__((unused))) const { return {-1., 0., 0.}; };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
     bool _is_inside = r[0] <= 0.;

@@ -24,5 +24,20 @@ void apply_periodic_boundaries(std::vector<CellNeighbours>& cell2cells_,
                                const std::vector<dolfin::Cell> &dolfin_cells_,
                                const Uint dim,
                                const double tol);
+
+// Per cell, the neighbour across the facet facing each vertex (reflect_in_cells)
+void build_facet_neighbours(std::vector<std::int32_t>& across,
+                            std::shared_ptr<dolfin::Mesh> mesh,
+                            const std::vector<dolfin::Cell>& dolfin_cells_,
+                            const std::vector<std::uint32_t>* dolfin2local,
+                            const std::vector<bool>& periodic,
+                            const Vector3d& x_min,
+                            const Vector3d& x_max,
+                            const Uint dim,
+                            const double tol);
+
+// Box lengths on periodic axes, zero on the others
+Vector3d periodic_lengths(const std::vector<bool>& periodic, const Vector3d& x_min,
+                          const Vector3d& x_max, const Uint dim);
 #endif
 #endif

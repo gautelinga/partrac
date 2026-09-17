@@ -1,6 +1,9 @@
 #ifdef USE_DOLFIN
 #include "XDMFTriangleInterpol.hpp"
 #include <array>
+#include <algorithm>
+#include <limits>
+#include <map>
 #include <numeric>
 #include "Timestamps.hpp"
 //#include "H5Cpp.h"
@@ -158,66 +161,18 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
 
   label_cell_type(cell_type_, cell2cells_, dim);
 
-  //compute_normals(cell_type_, triangles_);
-  cell_normal_.resize(mesh->num_cells());
-  cell_facet_midpoint_.resize(mesh->num_cells());
-  perm_.resize(mesh->num_cells());
-  // P2 dof ordering on edges, found from dummy P1 data
-  for ( Uint i = 0; i < mesh->num_cells(); ++i ){
-    if (cell_type_[i] != 1) continue;
-    const double r = 0.5, s = 0.3, t = 0.2;
-    std::array<double, 3> N1{}; triangles_[i].linearbasis(r, s, t, N1.data());
-    std::array<double, 6> N2{}; triangles_[i].quadbasis(r, s, t, N2.data());
-    const std::array<double, 3> u_block = {1.0, 2.0, 3.0};
-    const double U_1 = std::inner_product(N1.begin(), N1.end(), u_block.begin(), 0.0);
-    std::array<double, 6> u_block_2{};
-    for ( Uint k = 0; k < 3; ++k ) u_block_2[k] = u_block[k];
-    const std::vector<std::vector<int>> perm_loc = {{3, 4, 5}, {3, 5, 4}, {4, 3, 5}, {4, 5, 3}, {5, 3, 4}, {5, 4, 3}};
-    for (std::size_t iperm = 0; iperm < perm_loc.size(); ++iperm){
-      u_block_2[perm_loc[iperm][0]] = 0.5*(u_block[0] + u_block[1]);
-      u_block_2[perm_loc[iperm][1]] = 0.5*(u_block[0] + u_block[2]);
-      u_block_2[perm_loc[iperm][2]] = 0.5*(u_block[1] + u_block[2]);
-      const double U_2 = std::inner_product(N2.begin(), N2.end(), u_block_2.begin(), 0.0);
-      if (std::abs(U_2-U_1) < 1e-12){
-        perm_[i].assign(perm_loc[iperm].begin(), perm_loc[iperm].end());
-        break;
-      }
-    }
-    if (perm_[i].empty()){
-      std::cout << "ERROR: No permutations worked" << std::endl;
+  // P2 near walls: edge (default) or none
+  if (contains(dolfin_params, std::string("wall_p2"))){
+    const std::string& w = dolfin_params["wall_p2"];
+    if (w == "edge") wall_p2_ = WallP2::Edge;
+    else if (w == "none") wall_p2_ = WallP2::None;
+    else {
+      std::cout << "wall_p2 must be edge or none, not " << w << std::endl;
       exit(1);
     }
   }
-
-  for ( Uint i=0; i < mesh->num_cells(); ++i)
-  {
-    if (cell_type_[i] == 1)
-    {
-      auto facets = dolfin_cells_[i].entities(dim-1);
-      for ( std::size_t j = 0; j < dolfin_cells_[i].num_entities(dim-1); ++j ){
-        dolfin::Facet dolfin_facet(*mesh, facets[j]);
-
-        if (dolfin_facet.exterior()){
-          Vector3d pt(dolfin_facet.midpoint().coordinates());
-
-          bool periodic_facet = false;
-          for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
-          {
-            if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
-            {
-              periodic_facet = true;
-              break;
-            }
-          }
-          if (!periodic_facet){
-            Vector3d n_loc (dolfin_facet.normal().coordinates());
-            cell_normal_[i] = n_loc;
-            cell_facet_midpoint_[i] = pt;
-          }
-        }
-      }
-    }
-  }
+  if (wall_p2_ == WallP2::Edge)
+    build_wall_edges(tol);
 
   std::cout << "Built neighbour list" << std::endl;
   
@@ -233,10 +188,17 @@ XDMFTriangleInterpol::XDMFTriangleInterpol(const std::string& infilename)
   std::vector<double> xdata;
   read_dataset_vector(h5filename_u, geometry_path, xdata, dim);
 
-  j2i.resize(xdof.size()/2);
+  // Periodic images of a dof's vertex are not in xmap
+  const Uint unset = std::numeric_limits<Uint>::max();
+  j2i.assign(xdof.size()/2, unset);
   for ( Uint i=0; i < xdata.size()/2; ++i ){
-    Uint j = xmap[{xdata[2*i], xdata[2*i+1]}];
-    j2i[j] = i;
+    const auto it = xmap.find({xdata[2*i], xdata[2*i+1]});
+    if (it != xmap.end())
+      j2i[it->second] = i;
+  }
+  if (std::find(j2i.begin(), j2i.end(), unset) != j2i.end()){
+    std::cout << "XDMFTriangleInterpol: a dof has no vertex in " << h5filename_u << std::endl;
+    exit(1);
   }
 
   u_prev_data_.resize(xdof.size());
@@ -291,6 +253,7 @@ void XDMFTriangleInterpol::update(const double t)
     {
       std::cout << "Prev: Timestep = " << sp.prev.t << ", swapping... "<< std::endl;
       u_prev_data_.swap(u_next_data_);
+      rest_tol_prev_ = rest_tol_next_;
       if (include_pressure)
         p_prev_data_.swap(p_next_data_);
       if (include_phi)
@@ -302,6 +265,8 @@ void XDMFTriangleInterpol::update(const double t)
       std::cout << "Prev: Timestep = " << sp.prev.t << ", file = " << u_path_prev[0] << ":" << u_path_prev[1] << std::endl;
       read_dataset_vector(u_path_prev[0], u_path_prev[1], data_, dim);
       reorder_indices(u_prev_data_, data_, j2i, dim);
+      if (wall_p2_ == WallP2::Edge)
+        rest_tol_prev_ = rest_tol(u_prev_data_);
 
       if (include_pressure){
         auto p_path_prev = ts.get_path("p", sp.prev.it);
@@ -333,6 +298,9 @@ void XDMFTriangleInterpol::update(const double t)
       reorder_indices(phi_next_data_, data_, j2i, 1);
     }
 
+    if (wall_p2_ == WallP2::Edge)
+      rest_tol_next_ = rest_tol(u_next_data_);
+
     is_initialized = true;
     t_prev = sp.prev.t;
     t_next = sp.next.t;
@@ -343,8 +311,154 @@ void XDMFTriangleInterpol::update(const double t)
 
 
 
+void XDMFTriangleInterpol::build_wall_edges(const double tol)
+{
+  // Periodic images of a vertex share its P1 dof
+  const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
+  std::vector<std::size_t> vclass(mesh->num_vertices());
+  for (Uint l = 0; l < mesh->num_cells(); ++l){
+    const auto* vi = dolfin_cells_[l].entities(0);
+    const auto dofs = p_dofmap.cell_dofs(dolfin_cells_[l].index());
+    for (int k = 0; k < 3; ++k) vclass[vi[k]] = dofs[k];
+  }
+  const std::size_t nv = p_dofmap.global_dimension();
+
+  // Wall normals at vertices, from non-periodic exterior facets
+  std::vector<Vector3d> n_sum(nv, Vector3d::Zero());
+  std::vector<Vector3d> n_first(nv, Vector3d::Zero());
+  std::vector<std::uint8_t> n_count(nv, 0);
+  std::vector<bool> corner(nv, false);
+  std::vector<Vector3d> facet_normal(mesh->num_facets(), Vector3d::Zero());
+  for (dolfin::FacetIterator f(*mesh); !f.end(); ++f){
+    if (!f->exterior()) continue;
+    const Vector3d pt(f->midpoint().coordinates());
+    bool periodic_facet = false;
+    for (Uint k = 0; k < dim; ++k)
+      if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
+        periodic_facet = true;
+    if (periodic_facet) continue;
+    const Vector3d n(f->normal().coordinates());
+    facet_normal[f->index()] = n;
+    for (dolfin::VertexIterator v(*f); !v.end(); ++v){
+      const std::size_t iv = vclass[v->index()];
+      if (n_count[iv] == 0) n_first[iv] = n;
+      else if (n_count[iv] > 1 || n_first[iv].dot(n) < 0.5) corner[iv] = true;   // over 60 degrees
+      n_sum[iv] += n;
+      ++n_count[iv];
+    }
+  }
+
+  // Side edges of wall cells: sum of facet normals, per fluid end and wall end
+  const std::array<std::array<int, 2>, 3> edge_ends = {{{0, 1}, {0, 2}, {1, 2}}};
+  const auto opposite_edges = [&](const dolfin::Cell& cell){
+    // ei[k]: the edge opposite vertex k
+    const auto* vi = cell.entities(0);
+    const auto* ce = cell.entities(1);
+    std::array<std::size_t, 3> ei{};
+    for (int j = 0; j < 3; ++j){
+      const auto* ev = dolfin::Edge(*mesh, ce[j]).entities(0);
+      for (int k = 0; k < 3; ++k)
+        if (ev[0] != vi[k] && ev[1] != vi[k]) ei[k] = ce[j];
+    }
+    return ei;
+  };
+  std::map<std::pair<std::size_t, std::size_t>, Vector3d> side_normal;
+  for (Uint l = 0; l < mesh->num_cells(); ++l){
+    const auto* vi = dolfin_cells_[l].entities(0);
+    const auto ei = opposite_edges(dolfin_cells_[l]);
+    for (int k = 0; k < 3; ++k){
+      const Vector3d& n = facet_normal[ei[k]];
+      if (n.isZero()) continue;
+      for (int j = 0; j < 3; ++j){
+        if (j == k) continue;
+        side_normal.emplace(std::make_pair(vclass[vi[k]], vclass[vi[3 - j - k]]),
+                            Vector3d::Zero().eval()).first->second += n;
+      }
+    }
+  }
+
+  wall_index_.assign(mesh->num_cells(), -1);
+  wall_cells_.clear();
+  for (Uint l = 0; l < mesh->num_cells(); ++l){
+    const auto* vi = dolfin_cells_[l].entities(0);
+    WallEdges w{};
+    for (int k = 0; k < 3; ++k)
+      if (n_count[vclass[vi[k]]] > 0) w.wall |= 1 << k;
+    if (w.wall == 0) continue;
+
+    for (int e = 0; e < 3; ++e){
+      for (int o = 0; o < 2; ++o){
+        WallEnd& we = w.ends[2*e + o];
+        const std::size_t iw = vi[edge_ends[e][o]];
+        const std::size_t iv = vi[edge_ends[e][1-o]];
+        const std::size_t cw = vclass[iw];
+        we = {0.5, 0., 0., 0.5};   // linear
+        if (n_count[cw] == 0 || corner[cw]) continue;
+        const Vector3d edge = Vector3d(dolfin::Vertex(*mesh, iv).point().coordinates())
+                            - Vector3d(dolfin::Vertex(*mesh, iw).point().coordinates());
+        // over two wall facets: their mean normal
+        const auto side = side_normal.find({vclass[iv], cw});
+        const Vector3d n = (side != side_normal.end() ? side->second : n_sum[cw]).normalized();
+        const double delta = edge.dot(n);
+        // v_n ~ delta^2, divergence-free wall cell
+        Vector3d q = -0.25*n;
+        if (std::abs(delta) > 0.1*edge.norm())
+          q += (edge - delta*n)/(2*delta);
+        // M = I/2 + q n^T
+        we = {0.5 + q[0]*n[0], q[0]*n[1], q[1]*n[0], 0.5 + q[1]*n[1]};
+      }
+    }
+    wall_index_[l] = wall_cells_.size();
+    wall_cells_.push_back(w);
+  }
+  std::cout << "Wall cells: " << wall_cells_.size() << std::endl;
+}
+
+double XDMFTriangleInterpol::rest_tol(const std::vector<double>& u_data) const
+{
+  // Round-off of the largest velocity
+  double u_max = 0.;
+  for (const double u : u_data) u_max = std::max(u_max, std::abs(u));
+  return 1e-12*u_max;
+}
+
+bool XDMFTriangleInterpol::wall_block(const double* u, double* u2, const WallEdges& w,
+                                      const double tol) const
+{
+  // Walls: listed vertices at rest
+  unsigned rest = 0;
+  for (int k = 0; k < 3; ++k)
+    if ((w.wall >> k & 1) && std::abs(u[k]) <= tol && std::abs(u[ncoeffs_u + k]) <= tol)
+      rest |= 1u << k;
+  if (rest == 0) return false;
+
+  const std::array<std::array<int, 2>, 3> edge_ends = {{{0, 1}, {0, 2}, {1, 2}}};
+  for (int k = 0; k < 3; ++k){
+    const bool r = rest >> k & 1;
+    u2[k] = r ? 0. : u[k];
+    u2[6 + k] = r ? 0. : u[ncoeffs_u + k];
+  }
+  for (int e = 0; e < 3; ++e){
+    const int a = edge_ends[e][0], c = edge_ends[e][1];
+    const int m = Triangle::mid_[e];
+    const bool wa = rest >> a & 1, wc = rest >> c & 1;
+    const WallEnd& we = w.ends[2*e + (wa ? 0 : 1)];
+    if (wa != wc){
+      const int v = wa ? c : a;
+      const double ux = u[v], uy = u[ncoeffs_u + v];
+      u2[m] = we.mxx*ux + we.mxy*uy;
+      u2[6 + m] = we.myx*ux + we.myy*uy;
+    }
+    else {
+      u2[m] = 0.5*(u2[a] + u2[c]);
+      u2[6 + m] = 0.5*(u2[6 + a] + u2[6 + c]);
+    }
+  }
+  return true;
+}
+
 Vector3d XDMFTriangleInterpol::_modx(const Vector3d &x){
-  Vector3d x_loc;
+  Vector3d x_loc = x;
   for (std::size_t i=0; i<dim; ++i){
     if (periodic[i]){
       x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
@@ -432,130 +546,45 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const C
       0.0;
   }
 
-  if (cell_type_[id] == 1 && true){
+  // Quadratic near walls
+  std::array<double, 12> u_prev_block_2;
+  std::array<double, 12> u_next_block_2;
+  bool quad_prev = false;
+  bool quad_next = false;
+  if (wall_p2_ == WallP2::Edge && wall_index_[id] >= 0){
+    const WallEdges& w = wall_cells_[wall_index_[id]];
+    quad_prev = wall_block(u_prev_block.data(), u_prev_block_2.data(), w, rest_tol_prev_);
+    quad_next = wall_block(u_next_block.data(), u_next_block_2.data(), w, rest_tol_next_);
+  }
+
+  if (quad_prev || quad_next){
     const Uint ncoeffs_u_2 = 6;
     std::array<double, 6> _Nu2_;
-
+    std::array<double, 6> _Nu2x_;
+    std::array<double, 6> _Nu2y_;
     triangles_[id].quadbasis(r1, r2, r3, _Nu2_.data());
-    std::array<double, Triangle::n_dofs_max*3> u_prev_block_2{};
-    std::array<double, Triangle::n_dofs_max*3> u_next_block_2{};
-    
-    // Shouldn't do this every time...
-
-    Vector3d uu_prev = {0., 0., 0.};
-    Vector3d uu_next = {0., 0., 0.};
-
-    Uint id_uu = 0;
-    Uint count_uu = 0;
-
-    for (Uint i=0; i < ncoeffs_u; ++i)
-    {
-      Vector3d uu_prev_loc = {0., 0., 0.};
-      Vector3d uu_next_loc = {0., 0., 0.};
-      for (Uint j=0; j < dim; ++j)
-      {
-        uu_prev_loc[j] = u_prev_block[j*ncoeffs_u + i];
-        uu_next_loc[j] = u_next_block[j*ncoeffs_u + i];
-      }
-      //std::cout << uu << std::endl;
-      if (uu_prev_loc.norm() > 1e-14 || uu_next_loc.norm() > 1e-14){
-        uu_prev = uu_prev_loc;
-        uu_next = uu_next_loc;
-        id_uu = i;
-        ++count_uu;
-      }
-    }
-
-    //std::cout << "cell_id=" << id << " id_uu=" << id_uu << " count=" << count_uu << " norm=" << uu.norm() << std::endl;
-
-
-    if (count_uu == 1 && true)
-    {
-      const std::vector<std::vector<int>> neigh_dof_loc = {{perm_[id][0], perm_[id][1]}, 
-                                                           {perm_[id][0], perm_[id][2]},
-                                                           {perm_[id][1], perm_[id][2]}};
-
-      double un_prev = uu_prev.dot(cell_normal_[id]);
-      double un_next = uu_next.dot(cell_normal_[id]);
-
-      for ( Uint j=0; j < dim; ++j){
-        u_prev_block_2[j*ncoeffs_u_2 + id_uu] = u_prev_block[j*ncoeffs_u + id_uu];
-        u_next_block_2[j*ncoeffs_u_2 + id_uu] = u_next_block[j*ncoeffs_u + id_uu];
-      }
-      for ( auto & i_loc : neigh_dof_loc[id_uu] ){
-        for ( Uint j=0; j < dim; ++j){
-          u_prev_block_2[j*ncoeffs_u_2 + i_loc] += 0.5*u_prev_block[j*ncoeffs_u + id_uu];
-          u_next_block_2[j*ncoeffs_u_2 + i_loc] += 0.5*u_next_block[j*ncoeffs_u + id_uu];
-
-          // Normal correction
-          u_prev_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_prev * cell_normal_[id][j];
-          u_next_block_2[j*ncoeffs_u_2 + i_loc] -= 0.25 * un_next * cell_normal_[id][j];
-        }
-      }
-    }
-    else {
-      // Linear combination
-      for ( Uint j=0; j < dim; ++j){
-        for ( Uint i=0; i < ncoeffs_u; ++i)
-        {
-          u_prev_block_2[j*ncoeffs_u_2 + i] = u_prev_block[j*ncoeffs_u + i];
-          u_next_block_2[j*ncoeffs_u_2 + i] = u_next_block[j*ncoeffs_u + i];
-        }
-
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][0]] = 0.5*(u_prev_block[j*ncoeffs_u + 0] + u_prev_block[j*ncoeffs_u + 1]);
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][1]] = 0.5*(u_prev_block[j*ncoeffs_u + 0] + u_prev_block[j*ncoeffs_u + 2]);
-        u_prev_block_2[j*ncoeffs_u_2 + perm_[id][2]] = 0.5*(u_prev_block[j*ncoeffs_u + 1] + u_prev_block[j*ncoeffs_u + 2]);
-
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][0]] = 0.5*(u_next_block[j*ncoeffs_u + 0] + u_next_block[j*ncoeffs_u + 1]);
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][1]] = 0.5*(u_next_block[j*ncoeffs_u + 0] + u_next_block[j*ncoeffs_u + 2]);
-        u_next_block_2[j*ncoeffs_u_2 + perm_[id][2]] = 0.5*(u_next_block[j*ncoeffs_u + 1] + u_next_block[j*ncoeffs_u + 2]);
-      }
-    }
-
-    Vector3d U_prev2, U_next2;
-    U_prev2 = {std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, u_prev_block_2.begin(), 0.0),
-               std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, &u_prev_block_2[ncoeffs_u_2], 0.0),
-               0.0};
-    U_next2 = {std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, u_next_block_2.begin(), 0.0),
-               std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, &u_next_block_2[ncoeffs_u_2], 0.0),
-               0.0 };
-
-    U_prev = U_prev2;
-    U_next = U_next2;
-    // = {0., 0., 0.}; //
-  
-    if (wants_gradient()){
-      Matrix3d gradU_prev2, gradU_next2;
-
-      std::array<double, 6> _Nu2x_;
-      std::array<double, 6> _Nu2y_;
-
+    if (wants_gradient())
       triangles_[id].quadderiv(r1, r2, r3, _Nu2x_.data(), _Nu2y_.data());
 
-      gradU_prev2 <<
-        std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, u_prev_block_2.begin(), 0.0),
-        std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, u_prev_block_2.begin(), 0.0),
-        0.0,
-        std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, &u_prev_block_2[ncoeffs_u_2], 0.0),
-        std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, &u_prev_block_2[ncoeffs_u_2], 0.0),
-        0.0,
-        0.0,
-        0.0,
-        0.0;
-      gradU_next2 << 
-        std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, u_next_block_2.begin(), 0.0),
-        std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, u_next_block_2.begin(), 0.0),
-        0.0,
-        std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, &u_next_block_2[ncoeffs_u_2], 0.0),
-        std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, &u_next_block_2[ncoeffs_u_2], 0.0),
-        0.0,
-        0.0,
-        0.0,
-        0.0;
-
-      gradU_prev = gradU_prev2;
-      gradU_next = gradU_next2;
-    }
+    const auto quad = [&](const std::array<double, 12>& b, Vector3d& U, Matrix3d& gradU){
+      U = {std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, b.begin(), 0.0),
+           std::inner_product(_Nu2_.data(), _Nu2_.data()+ncoeffs_u_2, &b[ncoeffs_u_2], 0.0),
+           0.0};
+      if (wants_gradient()){
+        gradU <<
+          std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, b.begin(), 0.0),
+          std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, b.begin(), 0.0),
+          0.0,
+          std::inner_product(_Nu2x_.data(), _Nu2x_.data()+ncoeffs_u_2, &b[ncoeffs_u_2], 0.0),
+          std::inner_product(_Nu2y_.data(), _Nu2y_.data()+ncoeffs_u_2, &b[ncoeffs_u_2], 0.0),
+          0.0,
+          0.0,
+          0.0,
+          0.0;
+      }
+    };
+    if (quad_prev) quad(u_prev_block_2, U_prev, gradU_prev);
+    if (quad_next) quad(u_next_block_2, U_next, gradU_next);
   }
 
   // Update
@@ -600,6 +629,21 @@ void XDMFTriangleInterpol::evaluate(const Vector3d &x, const double tin, const C
 
   // cell_type
   fields.cell_type = cell_type_[id];
+}
+
+void XDMFTriangleInterpol::enable_reflection()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, 1e-12);
+  period_ = periodic_lengths(periodic, x_min, x_max, dim);
+  can_reflect = true;
+}
+
+bool XDMFTriangleInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
+{
+  return reflect_in_cells(triangles_, facet_neigh_, 3, period_, x, dx, pos,
+                          [this](const Vector3d& p){ return _modx(p); });
 }
 
 #endif

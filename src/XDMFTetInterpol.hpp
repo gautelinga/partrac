@@ -30,6 +30,10 @@ public:
   using Interpol::locate;
   using Interpol::evaluate;
   void print_found() { print_found_counts(found_); }
+  // Walk a move off the walls
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
+  void enable_reflection();
+  double hmin() const { return mesh->hmin(); }
   Vector3d get_boundary_normal(const Vector3d &x, int & cell_id)
   {
     return cell_normal_[cell_id];
@@ -77,6 +81,8 @@ protected:
   std::vector<dolfin::Cell> dolfin_cells_;
 
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::int32_t> facet_neigh_;   // reflect_in_cells
+  Vector3d period_ = Vector3d::Zero();
   std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
 
@@ -108,7 +114,27 @@ protected:
   std::vector<int> cell_type_;
   std::vector<Vector3d> cell_normal_;
   std::vector<Vector3d> cell_facet_midpoint_;
-  std::vector<std::vector<int>> perm_;
+
+  enum class WallP2 { Edge, None };
+  WallP2 wall_p2_ = WallP2::Edge;
+
+  // Midpoint of a wall-vertex edge: u_v/2 + (u_v.n) q
+  struct WallEnd {
+    double qx, qy, qz, nx, ny, nz;
+  };
+  // Ends by edge (01, 02, 03, 12, 13, 23), then (first, second)
+  struct WallEdges {
+    std::array<WallEnd, 12> ends;
+    std::uint8_t wall;   // bit k: vertex k lies on a wall
+  };
+  std::vector<std::int32_t> wall_index_;   // -1: no wall vertex
+  std::vector<WallEdges> wall_cells_;
+
+  void build_wall_edges(const double tol);
+  double rest_tol_prev_ = 0.;   // |u| at rest on a wall
+  double rest_tol_next_ = 0.;
+  double rest_tol(const std::vector<double>& u_data) const;
+  bool wall_block(const double* u, double* u2, const WallEdges& w, const double tol) const;
 
 };
 

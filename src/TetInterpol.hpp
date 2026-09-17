@@ -29,7 +29,10 @@ public:
     }
   };
   void print_found() { print_found_counts(found_); }
-  void reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id);
+  // Walk a move off the walls
+  bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
+  void enable_reflection();
+  double hmin() const { return mesh->hmin(); }
 protected:
 
   Timestamps ts;
@@ -75,6 +78,8 @@ protected:
 
 
   std::vector<CellNeighbours> cell2cells_;
+  std::vector<std::int32_t> facet_neigh_;   // reflect_in_cells
+  Vector3d period_ = Vector3d::Zero();
   std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
   // std::array<double, 30> u_prev_coefficients_;
@@ -102,12 +107,6 @@ protected:
 
   Vector3d _modx(const Vector3d&);
 
-  std::vector<int> cell_type_;
-  std::vector<std::vector<int>> cell_facets_;
-  std::vector<std::vector<Vector3d>> facets_;
-
-  double hmin;
-  bool _cross_facet(double& beta, Vector3d& N, const Vector3d& x, const Vector3d &dx_new, std::vector<Vector3d> &facet);
 };
 
 #endif

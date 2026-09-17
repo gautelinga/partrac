@@ -70,9 +70,12 @@ public:
   virtual void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) = 0;
   //
   virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded
-  //
-  virtual void reflect(Vector3d &x, Vector3d &dx_new, const double t, const double dt, int& cell_id) { };
+  // Walk dx from x, located in pos, off the walls; dx and pos give the end
+  virtual bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos) { return false; };
+  // Build what reflect needs
+  virtual void enable_reflection() {};
   bool can_reflect = false;
+  virtual double hmin() const { return 0.; };   // 0: no mesh scale
 protected:
   std::string infilename;
   std::string folder;

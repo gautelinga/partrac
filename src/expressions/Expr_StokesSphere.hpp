@@ -51,6 +51,10 @@ public:
     Uzy = (3.0/4.0)*R*r[1]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + r2*(R2 + r2))/r7;
     Uzz = (3.0/4.0)*R*r[2]*u_inf*(-2*pow(r[2], 2)*(R2 - r2) - pow(r[2], 2)*(3*R2 - r2) + 2*r2*(R2 - r2) + r2*(R2 + r2))/r7;
   };
+  // Distance to the sphere, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const { return (x-x0).norm() - R; };
+  Vector3d sdf_grad(const Vector3d &x) const { return (x-x0).normalized(); };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d r = x-x0;
     double r2 = r.squaredNorm();

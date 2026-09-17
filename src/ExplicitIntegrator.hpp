@@ -40,6 +40,7 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
         Uint n_declined_loc = 0;
 
         double sqrt2Dmdt = sqrt(2*Dm*dt);
+        const bool reflects = Dm > 0.0 && intp.can_reflect;
 
         # pragma omp for
         for (Uint i=0; i < ps.N(); ++i){
@@ -55,9 +56,9 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
             if constexpr (E == TransportElement::Vector){ n0 = ps.rhohat(i); el = n0; }
             if constexpr (E == TransportElement::Tensor){ F0 = ps.F(i); Fel = F0; }
 
-            bool is_inside = intp.locate(x, t, pos);
+            const bool x_inside = intp.locate(x, t, pos);
             Vector3d dx_rw = Vector3d::Zero();
-            if (is_inside){
+            if (x_inside){
                 // Outside: zero velocity
                 intp.evaluate(x, t, pos, ptvals);
                 dx_rw = ptvals.get_u() * dt;
@@ -86,12 +87,10 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
                                 _rnd_normal(gen)};
                 dx_rw += sqrt2Dmdt * eta;
             }
-            is_inside = intp.locate(x+dx_rw, t+dt, pos);
-            if (!is_inside && intp.can_reflect){
-                pos.id = ps.get_cell_id(i);
-                intp.reflect(x, dx_rw, t, dt, pos.id);
-                is_inside = intp.locate(x+dx_rw, t+dt, pos);
-            }
+            // Diffusive steps walk off the walls
+            const bool is_inside = (reflects && x_inside)
+                ? intp.reflect(x, dx_rw, pos)
+                : intp.locate(x+dx_rw, t+dt, pos);
             if (is_inside){
                 ps.set_x(i, x + dx_rw);
                 ps.set_t_loc(i, ps.t_loc(i) + dt);

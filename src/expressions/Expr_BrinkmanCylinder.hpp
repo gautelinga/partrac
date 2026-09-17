@@ -130,6 +130,13 @@ public:
 
     P = p_inf - mu * u_inf / R * prf_r * ct;
   };
+  // Distance to the cylinder, positive in the fluid
+  bool has_wall() const { return true; };
+  double sdf(const Vector3d &x) const { return std::hypot(x[0]-x0[0], x[1]-x0[1]) - R; };
+  Vector3d sdf_grad(const Vector3d &x) const {
+    const Vector3d r(x[0]-x0[0], x[1]-x0[1], 0.);
+    return r.normalized();
+  };
   bool inside(const Vector3d &x, const double t __attribute__((unused))) {
     Vector3d s = x-x0;
     s[2] = 0.;

@@ -67,7 +67,8 @@ def felbm_dir(tmp_path_factory):
     fields = {"u_x": zero, "u_y": 0.05 * np.sin(2 * np.pi * X / n), "u_z": zero,
               "density": np.ones((n, n, n)), "pressure": zero}
 
-    # solid walls at both x ends, open elsewhere
+    # solid walls at both z ends, open elsewhere: is_solid is not transposed,
+    # so its first h5 axis is z
     solid = np.zeros((n, n, n), dtype=np.int32)
     solid[0, :, :] = 1
     solid[-1, :, :] = 1
