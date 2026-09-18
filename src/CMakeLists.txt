@@ -33,12 +33,12 @@ target_link_libraries(${PROJECT_NAME}_io PUBLIC ${PROJECT_NAME}_base
 set(PARTRAC_INTERPOL_SOURCES interpol/interpol_factory.cpp)
 if (PARTRAC_ENABLE_DOLFIN)
   list(APPEND PARTRAC_INTERPOL_SOURCES
+    interpol/MeshInterpol.cpp
+    interpol/dolfin_spaces.cpp
     interpol/DolfInterpol.cpp
-    interpol/TetInterpol.cpp
-    interpol/TriangleInterpol.cpp
+    interpol/SimplexInterpol.cpp
     interpol/TriangleFreqInterpol.cpp
-    interpol/XDMFTriangleInterpol.cpp
-    interpol/XDMFTetInterpol.cpp
+    interpol/XDMFInterpol.cpp
     interpol/Tet.cpp
     interpol/Triangle.cpp
     interpol/dolfin_helpers.cpp

@@ -1,21 +1,19 @@
 #ifdef USE_DOLFIN
 #include "geometry.hpp"
 #include "loader_params.hpp"
+#include "dolfin_spaces.hpp"
+#include "p12_eval.hpp"
 #include "TriangleFreqInterpol.hpp"
 #include <array>
 #include <numeric>
 #include "FreqStamps.hpp"
 //#include "H5Cpp.h"
 #include <cassert>
-#include "dolfin_elements/P1_2.h"
-#include "dolfin_elements/P2_2.h"
-#include "dolfin_elements/vP1_2.h"
-#include "dolfin_elements/vP2_2.h"
 #include "PeriodicBC.hpp"
 #include "dolfin_helpers.hpp"
 
 TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
-  : Interpol(infilename)
+  : MeshInterpol<Triangle>(infilename)
 {
   dolfin_params = partrac::parse_file_or_exit(triangle_freq_schema(), infilename);
 
@@ -30,15 +28,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   // Using the FreqStamps class to hold frequency data
   fs.initialize(get_folder() + "/" + dolfin_params.get<std::string>("freqstamps"));
 
-  if (dolfin_params.get<bool>("periodic_x")){
-    periodic[0] = true;
-  }
-  if (dolfin_params.get<bool>("periodic_y")){
-    periodic[1] = true;
-  }
-  if (dolfin_params.get<bool>("ignore_pressure")){
-    include_pressure = false;
-  }
+  read_mesh_params();
   std::string meshfilename = get_folder() + "/" + dolfin_params.get<std::string>("mesh");
   dolfin::HDF5File meshfile(MPI_COMM_WORLD, meshfilename, "r");
 
@@ -46,22 +36,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   meshfile.read(mesh_in, "mesh", false);
 
   mesh = std::make_shared<dolfin::Mesh>(mesh_in);
-  dim = mesh->geometry().dim();
-  mesh->init();
-  mesh->bounding_box_tree();
-
-  std::vector<double> xx = mesh->coordinates();
-
-  for (Uint i=0; i<dim; ++i){
-    x_min[i] = xx[i];
-    x_max[i] = xx[i];
-  }
-
-  for (Uint i=0; i<xx.size(); ++i){
-    Uint i_loc = i % dim;
-    x_min[i_loc] = std::min(x_min[i_loc], xx[i]);
-    x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
-  }
+  init_mesh_geometry();
 
   auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
   std::cout << "Made periodic domain." << std::endl;
@@ -69,61 +44,15 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   std::string u_el = dolfin_params.get<std::string>("velocity_space");
   std::string p_el = dolfin_params.get<std::string>("pressure_space");
   
-  // Velocity
-  if (u_el == "P1"){
-    u_space_ = std::make_shared<vP1_2::FunctionSpace>(mesh, constrained_domain);
-    ncoeffs_u = 3;
-  }
-  else if (u_el == "P2"){
-    u_space_ = std::make_shared<vP2_2::FunctionSpace>(mesh, constrained_domain);
-    ncoeffs_u = 6;
-  }
-  else {
-    std::cout << "Unrecognized velocity element: " << u_el << std::endl;
-    exit(1);
-  }
-
-  // Pressure
-  if (include_pressure){
-    if (p_el == "P1"){
-      p_space_ = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
-      ncoeffs_p = 3;
-    }
-    else if (p_el == "P2"){
-      p_space_ = std::make_shared<P2_2::FunctionSpace>(mesh, constrained_domain);
-      ncoeffs_p = 6;
-    }
-    else {
-      std::cout << "Unrecognized pressure element: " << p_el << std::endl;
-      exit(1);
-    }
-  }
-  else {
-    std::cout << "Note: Ignoring pressure." << std::endl;
-  }
+  taylor_hood_spaces<Triangle>(u_el, p_el, include_pressure, mesh, constrained_domain,
+                         u_space_, p_space_, ncoeffs_u, ncoeffs_p);
 
   // Precompute all triangles Taylor-Hood P2-P1
   // FIXME compute on the fly and save
-  triangles_.resize(mesh->num_cells());
-  dolfin_cells_.resize(mesh->num_cells());
-  cell2cells_.resize(mesh->num_cells());
 
-  const std::vector<std::uint32_t> order =
-    cell_order(*u_space_->dofmap(), mesh->num_cells(), dolfin_params.get<std::string>("renumber_cells"), dolfin2local_);
-  for (std::size_t l = 0; l < mesh->num_cells(); ++l)
-  {
-    dolfin::Cell dolfin_cell(*mesh, order[l]);
-    triangles_[l] = Triangle(dolfin_cell);
-    dolfin_cells_[l] = dolfin_cell;
-  }
-  // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
-                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+  build_cells(*u_space_->dofmap(), true);
 
   std::cout << "Built neighbour list" << std::endl;
-
-  double tol = 1e-12; // heuristic
-  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, tol);
 
   // make structures
   u_ = std::make_shared<dolfin::Function>(u_space_);
@@ -143,9 +72,9 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
 
     FreqStamp& f = fs.get(iFreq);
     dolfin::HDF5File file_i(MPI_COMM_WORLD, get_folder() + "/" + f.filename, "r");
-    file_i.read(*u_, "u");
+    file_i.read(*u_, dolfin_params.get<std::string>("velocity_field"));
     if (include_pressure)
-      file_i.read(*p_, "p");
+      file_i.read(*p_, dolfin_params.get<std::string>("pressure_field"));
 
     // Reused buffers
     std::vector<double> coordinate_dofs;
@@ -169,8 +98,6 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
 
-  found_.resize(omp_get_max_threads());
-
   // todo: remove below
 }
 
@@ -181,29 +108,6 @@ void TriangleFreqInterpol::update(const double t)
     is_initialized = true;
   }
   t_update = t;
-}
-
-
-
-
-Vector3d TriangleFreqInterpol::_modx(const Vector3d &x){
-  Vector3d x_loc = x;
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
-      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-    else {
-      x_loc[i] = x[i];
-    }
-  }
-  return x_loc;
-}
-
-bool TriangleFreqInterpol::locate(const Vector3d &x, const double t, CellPos& pos)
-{
-  const Vector3d xx = _modx(x);
-  return locate_in_cells(triangles_, cell2cells_, *mesh, dim, xx, pos,
-                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
@@ -224,35 +128,15 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const Cel
   }
 
   // Compute Pk-Pl basis at x
-  const double r1 = pos.bary[0], r2 = pos.bary[1], r3 = pos.bary[2];
 
   std::array<double, Triangle::n_dofs_max> Nu_;
   std::array<double, Triangle::n_dofs_max> Np_;
   std::array<double, Triangle::n_dofs_max> Nux_;
   std::array<double, Triangle::n_dofs_max> Nuy_;
 
-  if (ncoeffs_u == 3){
-    triangles_[id].linearbasis(r1, r2, r3, Nu_.data());
-  }
-  else if (ncoeffs_u == 6){
-    triangles_[id].quadbasis(r1, r2, r3, Nu_.data());
-  }
-  else {
-    std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
-    exit(1);
-  }
-  if (include_pressure){
-    if (ncoeffs_p == 3){
-      triangles_[id].linearbasis(r1, r2, r3, Np_.data());
-    }
-    else if (ncoeffs_p == 6){
-      triangles_[id].quadbasis(r1, r2, r3, Np_.data());
-    }
-    else {
-      std::cout << "Unrecognized ncoeffs_p = " << ncoeffs_p << std::endl;
-      exit(1);
-    }
-  }
+  cell_basis(cells_[id], pos.bary, ncoeffs_u, Nu_.data(), "u");
+  if (include_pressure)
+    cell_basis(cells_[id], pos.bary, ncoeffs_p, Np_.data(), "p");
 
   static thread_local std::vector<double> ux_f_; ux_f_.resize(fs.size());
   static thread_local std::vector<double> uy_f_; uy_f_.resize(fs.size());
@@ -277,16 +161,7 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const Cel
   }
 
   if (wants_gradient()){
-    if (ncoeffs_u == 3){
-      triangles_[id].linearderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
-    }
-    else if (ncoeffs_u == 6){
-      triangles_[id].quadderiv(r1, r2, r3, Nux_.data(), Nuy_.data());
-    }
-    else {
-      std::cout << "Unrecognized ncoeffs_u = " << ncoeffs_u << std::endl;
-      exit(1);
-    }
+    cell_deriv(cells_[id], pos.bary, ncoeffs_u, Nux_.data(), Nuy_.data(), nullptr, "u");
 
     static thread_local std::vector<double> uxx_f_; uxx_f_.resize(fs.size());
     static thread_local std::vector<double> uxy_f_; uxy_f_.resize(fs.size());
@@ -310,21 +185,6 @@ void TriangleFreqInterpol::evaluate(const Vector3d &x, const double t, const Cel
     fields.gradA(1, 0) = std::inner_product(wt_f_.begin(), wt_f_.end(), uyx_f_.begin(), 0.0);
     fields.gradA(1, 1) = std::inner_product(wt_f_.begin(), wt_f_.end(), uyy_f_.begin(), 0.0);
   }
-}
-
-void TriangleFreqInterpol::enable_reflection()
-{
-  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
-                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
-                         periodic, x_min, x_max, dim, 1e-12);
-  period_ = periodic_lengths(periodic, x_min, x_max, dim);
-  can_reflect = true;
-}
-
-bool TriangleFreqInterpol::reflect(const Vector3d& x, Vector3d& dx, CellPos& pos)
-{
-  return reflect_in_cells(triangles_, facet_neigh_, 3, period_, x, dx, pos,
-                          [this](const Vector3d& p){ return _modx(p); });
 }
 
 #endif

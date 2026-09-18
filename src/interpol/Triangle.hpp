@@ -11,6 +11,7 @@ class alignas(64) Triangle
 
 public:
 
+  static constexpr int n_verts = 3;
   static constexpr std::size_t n_dofs_max = 6;   // quadbasis writes this many
 
   Triangle() {}

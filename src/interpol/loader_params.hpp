@@ -17,6 +17,12 @@ inline void add_mesh_params(partrac::Schema& s, const bool three_d){
   s.opt<bool>("ignore_pressure", false, "do not read the pressure");
 }
 
+// The datasets the field files hold
+inline void add_field_names(partrac::Schema& s){
+  s.opt<std::string>("velocity_field", "u", "velocity dataset in the field files");
+  s.opt<std::string>("pressure_field", "p", "pressure dataset in the field files");
+}
+
 // Fields in dolfin HDF5 files: mode tet, triangle or fenics
 inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   partrac::Schema s("dolfin_params.dat, mode=" + mode, "");
@@ -25,10 +31,7 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   s.require<std::string>("mesh", "mesh file");
   s.require<std::string>("velocity_space", "velocity element, as P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
-  if (mode == "tet"){
-    s.opt<std::string>("velocity_field", "u", "velocity dataset in the field files");
-    s.opt<std::string>("pressure_field", "p", "pressure dataset in the field files");
-  }
+  add_field_names(s);
   return s;
 }
 
@@ -40,6 +43,7 @@ inline partrac::Schema triangle_freq_schema(){
   s.require<std::string>("mesh", "mesh file");
   s.require<std::string>("velocity_space", "velocity element, as P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
+  add_field_names(s);
   s.require<double>("tau", "base period; 0 or less for none");
   s.require<double>("t_min", "start of the time interval");
   s.require<double>("t_max", "end of the time interval");

@@ -70,6 +70,7 @@ protected:
   double t_next = 0.;
 
   std::vector<bool> periodic = {false, false, false};
+  double periodic_tol = 1e-12;   // heuristic
   //Vector3d x_min = {0., 0., 0.};
   //Vector3d x_max = {0., 0., 0.};
 

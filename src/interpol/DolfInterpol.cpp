@@ -80,14 +80,14 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     if (p_el == "P1"){
       p_space = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
     }
-    else if (u_el == "P2"){
+    else if (p_el == "P2"){
       p_space = std::make_shared<P2_2::FunctionSpace>(mesh, constrained_domain);
     }
-    else if (u_el == "P3"){
+    else if (p_el == "P3"){
       p_space = std::make_shared<P3_2::FunctionSpace>(mesh, constrained_domain);
     }
     else {
-      std::cout << "Unrecognized pressure element: " << u_el << std::endl;
+      std::cout << "Unrecognized pressure element: " << p_el << std::endl;
       exit(1);
     }
     break;
@@ -110,14 +110,14 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
     if (p_el == "P1"){
       p_space = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
     }
-    else if (u_el == "P2"){
+    else if (p_el == "P2"){
       p_space = std::make_shared<P2_3::FunctionSpace>(mesh, constrained_domain);
     }
-    else if (u_el == "P3"){
+    else if (p_el == "P3"){
       p_space = std::make_shared<P3_3::FunctionSpace>(mesh, constrained_domain);
     }
     else {
-      std::cout << "Unrecognized pressure element: " << u_el << std::endl;
+      std::cout << "Unrecognized pressure element: " << p_el << std::endl;
       exit(1);
     }
     break;
@@ -155,6 +155,7 @@ DolfInterpol::DolfInterpol(const std::string& infilename) : Interpol(infilename)
   }
   build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
                       dolfin2local_.empty() ? nullptr : &dolfin2local_);
+  apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, periodic_tol);
   found_.resize(omp_get_max_threads());
   //std::cout << x_min << std::endl;
   //std::cout << x_max << std::endl;
@@ -189,7 +190,11 @@ void DolfInterpol::update(const double t){
   StampPair sp = ts.get(t);
   // std::cout << sp.prev.filename << " " << sp.next.filename << std::endl;
 
-  if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
+  // Always load once; keep last bracket past t_max
+  if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) ){
+    const std::string u_field = dolfin_params.get<std::string>("velocity_field");
+    const std::string p_field = dolfin_params.get<std::string>("pressure_field");
+
     // Swap if possible
     if (is_initialized && t_next == sp.prev.t){
       std::cout << "Prev: Timestep = " << sp.prev.t << ", swapping... " << std::endl;
@@ -199,8 +204,8 @@ void DolfInterpol::update(const double t){
     else {
       std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
       dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-      prevfile.read(*u_prev_, "u");
-      prevfile.read(*p_prev_, "p");
+      prevfile.read(*u_prev_, u_field);
+      prevfile.read(*p_prev_, p_field);
       u_prev_->vector()->get_local(u_prev_data_);
       p_prev_->vector()->get_local(p_prev_data_);
     }
@@ -213,8 +218,8 @@ void DolfInterpol::update(const double t){
     }
     else {
       dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
-      nextfile.read(*u_next_, "u");
-      nextfile.read(*p_next_, "p");
+      nextfile.read(*u_next_, u_field);
+      nextfile.read(*p_next_, p_field);
       u_next_->vector()->get_local(u_next_data_);
       p_next_->vector()->get_local(p_next_data_);
     }
@@ -311,7 +316,7 @@ void DolfInterpol::enable_reflection()
 {
   build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
                          dolfin2local_.empty() ? nullptr : &dolfin2local_,
-                         periodic, x_min, x_max, dim, 1e-12);
+                         periodic, x_min, x_max, dim, periodic_tol);
   period_ = periodic_lengths(periodic, x_min, x_max, dim);
   can_reflect = true;
 }

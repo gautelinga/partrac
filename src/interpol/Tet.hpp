@@ -11,6 +11,7 @@ class alignas(64) Tet
 
 public:
 
+  static constexpr int n_verts = 4;
   static constexpr std::size_t n_dofs_max = 10;   // quadbasis writes this many
 
   Tet() {}
