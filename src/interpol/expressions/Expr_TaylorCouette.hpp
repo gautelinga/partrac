@@ -37,10 +37,6 @@ public:
     s.require<double>("y0", "centre y");
     s.require<double>("z0", "centre z");
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused))) {
-    is_inside = inside(x, 0.);
-    compute(x, U, gradU);
-  };
   // Distance to the nearest of cylinders and plates, positive in the fluid
   bool has_wall() const { return true; };
   double sdf(const Vector3d &x) const {
@@ -66,20 +62,6 @@ public:
     ptvals.P = p_inf;
     ptvals.Rho = rho_inf;
   };
-  double ux() { return U(0); };
-  double uy() { return U(1); };
-  double uz() { return U(2); };
-  double rho() { return rho_inf; };
-  double p() { return p_inf; };
-  double uxx() { return gradU(0, 0); };
-  double uxy() { return gradU(0, 1); };
-  double uxz() { return gradU(0, 2); };
-  double uyx() { return gradU(1, 0); };
-  double uyy() { return gradU(1, 1); };
-  double uyz() { return gradU(1, 2); };
-  double uzx() { return gradU(2, 0); };
-  double uzy() { return gradU(2, 1); };
-  double uzz() { return gradU(2, 2); };
 private:
   // No member writes: called inside omp for
   void compute(const Vector3d &x, Vector3d& U_, Matrix3d& gradU_) const {
@@ -136,9 +118,6 @@ private:
   double p_inf;
   double rho_inf;
   Vector3d x0;
-  // Useful quantitites
-  Vector3d U;
-  Matrix3d gradU;
 };
 
 #endif

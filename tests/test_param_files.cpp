@@ -27,7 +27,7 @@ partrac::Schema schema_for(const fs::path& file) {
   const std::string name = file.filename().string();
   const std::string path = file.string();
   if (name == "felbm_params.dat")
-    return felbm_schema(false);
+    return felbm_schema();
   if (name == "expr_params.dat") {
     const ExprKind* kind = find_expr_kind(partrac::peek_file(path, "expression"));
     if (!kind)

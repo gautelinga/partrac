@@ -20,12 +20,15 @@ class SimplexInterpol final
 {
 public:
   SimplexInterpol(const std::string& infilename);
-  ~SimplexInterpol() { std::cout << "Destructing SimplexInterpol (" << mode << ")." << std::endl; };
   void update(const double t);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& );
+  // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
+  void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
 protected:
+  template<bool Scalars>
+  void evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   static constexpr int D = Cell::n_verts - 1;
   static constexpr const char* mode = D == 2 ? "triangle" : "tet";
   using Base = MeshInterpol<Cell>;

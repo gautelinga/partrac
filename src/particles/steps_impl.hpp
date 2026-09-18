@@ -11,6 +11,23 @@
 #include "RKIntegrator.hpp"
 #include "ExplicitIntegrator.hpp"
 #include "SpatialIntegrator.hpp"
+#include <type_traits>
+#include <utility>
+
+// A step reads velocity, acceleration and their gradients: an interpolator
+// with an evaluate_motion leaves the rest out; called on the concrete type,
+// so never through the vtable
+template<typename Interp, typename = void>
+struct has_evaluate_motion : std::false_type {};
+template<typename Interp>
+struct has_evaluate_motion<Interp, std::void_t<decltype(std::declval<Interp&>().evaluate_motion(
+  std::declval<const Vector3d&>(), 0., std::declval<const CellPos&>(), std::declval<PointValues&>()))>> : std::true_type {};
+
+template<typename Interp>
+inline void evaluate_motion(Interp& intp, const Vector3d& x, const double t, const CellPos& pos, PointValues& ptvals){
+  if constexpr (has_evaluate_motion<Interp>::value) intp.evaluate_motion(x, t, pos, ptvals);
+  else intp.evaluate(x, t, pos, ptvals);
+}
 
 template<TransportElement E, typename Interp>
 PARTRAC_HOT_LOOP
@@ -36,19 +53,19 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             // Outside stages contribute zero
             k1 = k2 = k3 = k4 = Vector3d::Zero();
             if (intp.locate(x, t, pos)){
-                intp.evaluate(x, t, pos, ptvals);
+                evaluate_motion(intp, x, t, pos, ptvals);
                 k1 = ptvals.get_u();
             }
             if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
-                intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
                 k2 = ptvals.get_u();
             }
             if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
-                intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
                 k3 = ptvals.get_u();
             }
             if (intp.locate(x + k3 * dt, t + dt, pos)){
-                intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
+                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
                 k4 = ptvals.get_u();
             }
 
@@ -74,14 +91,14 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
 
             bool is_inside = intp.locate(x, t, pos);
             if (is_inside){
-                intp.evaluate(x, t, pos, ptvals);
+                evaluate_motion(intp, x, t, pos, ptvals);
                 k1 = ptvals.get_u();
                 Matrix3d J1 = ptvals.get_J();
                 F1 = J1 * n;
             }
             is_inside = intp.locate(x + k1 * dt/2, t + dt/2, pos);
             if (is_inside){
-                intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
                 k2 = ptvals.get_u();
                 Vector3d n2 = n + F1 * dt/2;
                 Matrix3d J2 = ptvals.get_J();
@@ -89,7 +106,7 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             }
             is_inside = intp.locate(x + k2 * dt/2, t + dt/2, pos);
             if (is_inside){
-                intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
                 k3 = ptvals.get_u();
                 Vector3d n3 = n + F2 * dt/2;
                 Matrix3d J3 = ptvals.get_J();
@@ -97,7 +114,7 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             }
             is_inside = intp.locate(x + k3 * dt, t + dt, pos);
             if (is_inside){
-                intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
+                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
                 k4 = ptvals.get_u();
                 Vector3d n4 = n + F3 * dt;
                 Matrix3d J4 = ptvals.get_J();
@@ -127,27 +144,27 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             Matrix3d dFdt1 = Matrix3d::Zero(), dFdt2 = Matrix3d::Zero(), dFdt3 = Matrix3d::Zero(), dFdt4 = Matrix3d::Zero();
 
             if (intp.locate(x, t, pos)){
-                intp.evaluate(x, t, pos, ptvals);
+                evaluate_motion(intp, x, t, pos, ptvals);
                 k1 = ptvals.get_u();
                 Matrix3d J1 = ptvals.get_J();
                 dFdt1 = J1 * F;
             }
             if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
-                intp.evaluate(x + k1 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
                 k2 = ptvals.get_u();
                 Matrix3d F2 = F + dFdt1 * dt/2;
                 Matrix3d J2 = ptvals.get_J();
                 dFdt2 = J2 * F2;
             }
             if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
-                intp.evaluate(x + k2 * dt/2, t + dt/2, pos, ptvals);
+                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
                 k3 = ptvals.get_u();
                 Matrix3d F3 = F + dFdt2 * dt/2;
                 Matrix3d J3 = ptvals.get_J();
                 dFdt3 = J3 * F3;
             }
             if (intp.locate(x + k3 * dt, t + dt, pos)){
-                intp.evaluate(x + k3 * dt, t + dt, pos, ptvals);
+                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
                 k4 = ptvals.get_u();
                 Matrix3d F4 = F + dFdt3 * dt;
                 Matrix3d J4 = ptvals.get_J();
@@ -216,7 +233,7 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
             Vector3d dx_rw = Vector3d::Zero();
             if (x_inside){
                 // Outside: zero velocity
-                intp.evaluate(x, t, pos, ptvals);
+                evaluate_motion(intp, x, t, pos, ptvals);
                 dx_rw = ptvals.get_u() * dt;
                 if (int_order >= 2){
                     dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
@@ -308,7 +325,7 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
         PointValues ptvals(intp.get_U0());
         // Outside: zero velocity, so declined below
         if (intp.locate(x, t, pos))
-            intp.evaluate(x, t, pos, ptvals);
+            evaluate_motion(intp, x, t, pos, ptvals);
 
         Vector3d u_1 = ptvals.get_u();
 

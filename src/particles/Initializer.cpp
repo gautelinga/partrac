@@ -611,7 +611,9 @@ public:
       if (hasLy) x[1] = x_min[1]+(iy+0.5)*dy;
       if (hasLz) x[2] = x_min[2]+(iz+0.5)*dz;
       PointValues ptvals(intp->get_U0());
-      intp->evaluate(x, ptvals);
+      // Uniform weights need no field
+      if (init_weight != "uniform")
+        intp->evaluate(x, ptvals);
       if (init_weight == "ux"){
         ww = abs(ptvals.U[0]);
       }

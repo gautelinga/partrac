@@ -13,7 +13,6 @@ class TriangleFreqInterpol final
 {
 public:
   TriangleFreqInterpol(const std::string& infilename);
-  ~TriangleFreqInterpol() { std::cout << "Destructing TriangleFreqInterpol." << std::endl; };
   void update(const double t);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() { return dolfin_params.get<double>("t_min"); };

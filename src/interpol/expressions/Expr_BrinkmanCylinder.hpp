@@ -107,43 +107,6 @@ public:
     s.require<double>("z0", "centre z");
   };
 
-  void eval(const Vector3d &x, const double t __attribute__((unused))) {
-    //cout << "x = " << x << endl;
-    //cout << "x0 = " << x0 << endl;
-    //cout << "u_inf = " << u_inf << endl;
-
-    Vector3d s = x-x0;
-    s[2] = 0.;
-    Vector3d r = s/R;
-    double r2 = r.squaredNorm();
-    //double R2 = R*R;
-    is_inside = r2 >= 1.;
-
-    double rabs = sqrt(r2);
-
-
-    double st = r[1]/rabs; // sin(theta);
-    double ct = r[0]/rabs; // cos(theta);
-    double s2t = st*st;
-    double c2t = ct*ct;
-
-    // These are costly!
-    double f_r = f_intp.eval(rabs); // f(zeta, rabs);
-    double fr_r = fr_intp.eval(rabs); // fr(zeta, rabs);
-    double frr_r = frr_intp.eval(rabs); // frr(zeta, rabs);
-    double prf_r = prf_intp.eval(rabs); // prf(zeta, rabs);
-
-    Ux = u_inf * (s2t*fr_r + f_r*c2t/rabs);
-    Uy = u_inf * st*ct*(-fr_r + f_r/rabs);
-
-    // Hardcoded -- copied from consistency-checked Sympy code
-    Uxx = u_inf/R * (r2*s2t*frr_r - 3*rabs*s2t*fr_r + rabs*fr_r + 3*f_r*s2t - f_r)*ct/r2;
-    Uxy = u_inf/R * (r2*s2t*frr_r + 3*rabs*c2t*fr_r - 3*f_r*c2t)*st/r2;
-    Uyx = u_inf/R * (-r2*c2t*frr_r + 3*rabs*c2t*fr_r - rabs*fr_r - 3*f_r*c2t + f_r)*st/r2;
-    Uyy = u_inf/R * (-r2*s2t*frr_r + 3*rabs*s2t*fr_r - rabs*fr_r - 3*f_r*s2t + f_r)*ct/r2;
-
-    P = p_inf - mu * u_inf / R * prf_r * ct;
-  };
   // Distance to the cylinder, positive in the fluid
   bool has_wall() const { return true; };
   double sdf(const Vector3d &x) const { return std::hypot(x[0]-x0[0], x[1]-x0[1]) - R; };
@@ -196,20 +159,6 @@ public:
     ptvals.P = p_inf - mu * u_inf / R * prf_r * ct;
     ptvals.Rho = Rho;
   };
-  double ux() { return Ux; };
-  double uy() { return Uy; };
-  double uz() { return Uz; };
-  double rho() { return Rho; };
-  double p() { return P; };
-  double uxx() { return Uxx; };
-  double uxy() { return Uxy; };
-  double uxz() { return Uxz; };
-  double uyx() { return Uyx; };
-  double uyy() { return Uyy; };
-  double uyz() { return Uyz; };
-  double uzx() { return Uzx; };
-  double uzy() { return Uzy; };
-  double uzz() { return Uzz; };
 private:
   double R;  // Radius of cylinder
   double H;  // Height of cylinder
@@ -219,17 +168,6 @@ private:
   double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
   double zeta;
-  // Useful quantitites
-  double Ux;
-  double Uy;
-  double Uz = 0.;  // the flow is in the plane
-  double P;
-  double Uxx, Uxy, Uyx, Uyy;
-  double Uxz = 0.;
-  double Uyz = 0.;
-  double Uzx = 0.;
-  double Uzy = 0.;
-  double Uzz = 0.;
   LinIntp f_intp, fr_intp, frr_intp, prf_intp;
 };
 

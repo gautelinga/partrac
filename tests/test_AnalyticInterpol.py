@@ -183,6 +183,7 @@ def test_every_shipped_analytic_example_has_domain_bounds(case):
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@pytest.mark.slow
 @pytest.mark.parametrize("case", analytic_examples())
 def test_every_shipped_analytic_example_runs(case, tmp_path):
     """Every analytic example runs two steps and writes finite statistics with particles left.

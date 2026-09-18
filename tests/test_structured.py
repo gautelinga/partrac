@@ -8,7 +8,8 @@ stamp becomes the previous one for every component and the two are blended;
 z at the end checks the blend itself. With shear, stamp k also holds
 u_y = k x, so the whole velocity gradient is linear in time: at t = 0.5 it is
 exactly half of its value at t = 1, also in the cells next to a wall that
-only int_order=2 reaches.
+only int_order=2 reaches. With interpolation=constant each point takes the
+nearest node's values, so u_y is k times the nearest node's x.
 """
 
 import os
@@ -23,8 +24,10 @@ FELBM = app("filaments_felbmRK4")
 INTERPOL = app("interpol")
 
 
-def three_stamp_felbm(d, shear=False):
-    """Write a felbm case in d where stamp k holds u_z = k, and with shear also u_y = k x."""
+def three_stamp_felbm(d, shear=False, extra=""):
+    """Write a felbm case in d where stamp k holds u_z = k, and with shear also u_y = k x.
+
+    extra is appended to felbm_params.dat."""
     h5py = pytest.importorskip("h5py")
     n = 16
     zero = np.zeros((n, n, n))
@@ -43,7 +46,7 @@ def three_stamp_felbm(d, shear=False):
                 f.create_dataset(name, data=np.transpose(a, (2, 1, 0)).astype(float))
     (d / "timestamps.dat").write_text("".join("%d\toutput_%d.h5\n" % (k, k) for k in range(3)))
     (d / "felbm_params.dat").write_text(
-        "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n")
+        "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n" + extra)
 
 
 @pytest.mark.skipif(not os.path.exists(FELBM), reason="filaments_felbmRK4 is not built")
@@ -74,12 +77,17 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
 
 
-def probe(d, t0):
-    """Run interpol with int_order=2 on the case in d at time t0; return the probed datasets by name."""
+def run_probe(d, t0, int_order):
+    return subprocess.run([INTERPOL, str(d / "felbm_params.dat")] +
+                          ("mode=felbm Nrw=5000 int_order=%d t0=%g random=false seed=1"
+                           % (int_order, t0)).split(),
+                          capture_output=True, text=True, timeout=600)
+
+
+def probe(d, t0, int_order=2):
+    """Run interpol on the case in d at time t0; return the probed datasets by name."""
     h5py = pytest.importorskip("h5py")
-    r = subprocess.run([INTERPOL, str(d / "felbm_params.dat")] +
-                       ("mode=felbm Nrw=5000 int_order=2 t0=%g random=false seed=1" % t0).split(),
-                       capture_output=True, text=True, timeout=600)
+    r = run_probe(d, t0, int_order)
     assert r.returncode == 0, r.stdout + r.stderr
     f = list(d.rglob("interpolation.h5part"))
     assert len(f) == 1
@@ -104,3 +112,53 @@ def test_gradient_blends_between_stamps(tmp_path):
     for c in ("uxx", "uxy", "uxz", "uyx", "uyy", "uyz", "uzx", "uzy", "uzz"):
         assert np.allclose(half[c], 0.5 * whole[c], rtol=0, atol=1e-12), c
     assert np.abs(whole["uyx"]).max() > 0.5   # the shear is there, so the check above is not 0 == 0
+
+
+@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+def test_constant_takes_the_nearest_node(tmp_path):
+    """interpolation=constant: halfway between stamps 0 and 1 every point has
+    u_y = x_n/2 and u_z = 1/2, x_n the x of its nearest node (unit spacing,
+    periodic, so x_n = 16 is node 0), and no gradient. Trilinear
+    interpolation would give u_y = x/2 instead, so the check fails for
+    either a trilinear evaluate or a wrong node."""
+    d = tmp_path / "constant"
+    d.mkdir()
+    three_stamp_felbm(d, shear=True, extra="interpolation=constant\n")
+    v = probe(d, 0.5, int_order=1)
+    assert len(v["x"]) > 1000
+    nearest = np.floor(v["x"] + 0.5) % 16
+    assert np.array_equal(v["uy"], 0.5 * nearest)
+    assert np.array_equal(v["uz"], np.full_like(v["uz"], 0.5))
+    assert np.array_equal(v["ux"], np.zeros_like(v["ux"]))
+    assert np.array_equal(v["rho"], np.ones_like(v["rho"]))
+    for c in ("uxx", "uxy", "uxz", "uyx", "uyy", "uyz", "uzx", "uzy", "uzz"):
+        assert not v[c].any(), c
+    assert np.abs(v["uy"] - 0.5 * v["x"]).max() > 0.2   # not the trilinear field
+
+
+@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+def test_constant_refuses_a_gradient(tmp_path):
+    """A piecewise-constant field has no gradient, so a run that needs one
+    (int_order=2 here; vectors and tensors too) stops at setup with the
+    parameter-error code instead of running on a zero gradient."""
+    d = tmp_path / "constant"
+    d.mkdir()
+    three_stamp_felbm(d, shear=True, extra="interpolation=constant\n")
+    r = run_probe(d, 0.5, int_order=2)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "interpolation=constant" in r.stderr
+
+
+@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+def test_linear_is_the_default(tmp_path):
+    """interpolation=linear, written out, gives the same probe as a file
+    without the key, which is how every existing felbm file runs."""
+    a = tmp_path / "default"
+    b = tmp_path / "linear"
+    for d, extra in ((a, ""), (b, "interpolation=linear\n")):
+        d.mkdir()
+        three_stamp_felbm(d, shear=True, extra=extra)
+    va, vb = probe(a, 0.5), probe(b, 0.5)
+    assert va.keys() == vb.keys()
+    for k in va:
+        assert np.array_equal(va[k], vb[k]), k

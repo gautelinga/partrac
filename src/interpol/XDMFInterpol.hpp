@@ -41,25 +41,22 @@ class XDMFInterpol final
 {
 public:
   XDMFInterpol(const std::string& infilename);
-  ~XDMFInterpol() { std::cout << "Destructing XDMFInterpol (" << XDMFCell<Cell>::name << ")." << std::endl; };
   void update(const double t);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& );
+  // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
+  void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
-  // Only the tet loader fills the normals
-  Vector3d get_boundary_normal(const Vector3d &x, int & cell_id)
-  {
-    if constexpr (D == 3) return cell_normal_[cell_id];
-    else                  return Vector3d::Zero();
-  }
 protected:
+  template<bool Scalars>
+  void evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   static constexpr int D = Cell::n_verts - 1;
   using Base = MeshInterpol<Cell>;
   // Names the base owns
   using Base::dolfin_params; using Base::periodic; using Base::include_pressure;
   using Base::periodic_tol; using Base::mesh; using Base::dim;
   using Base::u_space_; using Base::p_space_; using Base::ncoeffs_u; using Base::ncoeffs_p;
-  using Base::cells_; using Base::dolfin_cells_; using Base::cell2cells_;
+  using Base::cells_; using Base::dolfin_cells_; using Base::facet_neigh_;
   using Base::u_dofs_; using Base::p_dofs_; using Base::t_prev; using Base::t_next;
   using Base::x_min; using Base::x_max; using Base::is_initialized; using Base::t_update;
   using Base::get_folder; using Base::set_folder; using Base::wants_gradient;
@@ -85,8 +82,6 @@ protected:
   std::vector<Uint> j2i;
 
   std::vector<int> cell_type_;
-  std::vector<Vector3d> cell_normal_;
-  std::vector<Vector3d> cell_facet_midpoint_;
 
   enum class WallP2 { Edge, None };
   WallP2 wall_p2_ = WallP2::Edge;

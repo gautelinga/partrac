@@ -5,7 +5,6 @@
 #include "PeriodicBC.hpp"
 #include "dolfin_helpers.hpp"
 #include "geometry.hpp"
-#include <omp.h>
 #include <cassert>
 
 template<typename Cell>
@@ -45,11 +44,10 @@ void MeshInterpol<Cell>::init_mesh_geometry(){
 }
 
 template<typename Cell>
-void MeshInterpol<Cell>::build_cells(const dolfin::GenericDofMap& dofmap, const bool pair_periodic){
+void MeshInterpol<Cell>::build_cells(const dolfin::GenericDofMap& dofmap){
   const std::size_t ncells = mesh->num_cells();
   cells_.resize(ncells);
   dolfin_cells_.resize(ncells);
-  cell2cells_.resize(ncells);
 
   const std::vector<std::uint32_t> order =
     cell_order(dofmap, ncells, dolfin_params.get<std::string>("renumber_cells"), dolfin2local_);
@@ -59,44 +57,43 @@ void MeshInterpol<Cell>::build_cells(const dolfin::GenericDofMap& dofmap, const 
     cells_[l] = Cell(dolfin_cell);
     dolfin_cells_[l] = dolfin_cell;
   }
-  // Build cell neighbour list for lookup speed
-  build_neighbor_list(cell2cells_, mesh, dolfin_cells_,
-                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
-
-  if (pair_periodic)
-    apply_periodic_boundaries(cell2cells_, periodic, x_min, x_max, mesh, dolfin_cells_, dim, periodic_tol);
-
-  found_.resize(omp_get_max_threads());
+  build_facet_table();
 }
 
 template<typename Cell>
-Vector3d MeshInterpol<Cell>::_modx(const Vector3d &x){
-  Vector3d x_loc = x;
-  for (std::size_t i=0; i<dim; ++i){
-    if (periodic[i]){
-      x_loc[i] = x_min[i] + modulox(x[i]-x_min[i], x_max[i]-x_min[i]);
-    }
-  }
-  return x_loc;
-}
-
-template<typename Cell>
-bool MeshInterpol<Cell>::locate(const Vector3d &x, const double t, CellPos& pos)
+bool MeshInterpol<Cell>::locate_tree(const Vector3d& xx, CellPos& pos)
 {
-  assert(t <= t_next && t >= t_prev);
-  const Vector3d xx = _modx(x);
-  return locate_in_cells(cells_, cell2cells_, *mesh, dim, xx, pos,
-                         found_, dolfin2local_.empty() ? nullptr : &dolfin2local_);
+  return tree_to_cell(cells_, *mesh, dim, xx, pos,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
 }
 
 template<typename Cell>
-void MeshInterpol<Cell>::enable_reflection()
+void MeshInterpol<Cell>::build_facet_table()
 {
   build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
                          dolfin2local_.empty() ? nullptr : &dolfin2local_,
                          periodic, x_min, x_max, dim, periodic_tol);
   period_ = periodic_lengths(periodic, x_min, x_max, dim);
+}
+
+template<typename Cell>
+void MeshInterpol<Cell>::enable_reflection()
+{
   can_reflect = true;
+}
+
+template<typename Cell>
+Vector3d MeshInterpol<Cell>::get_boundary_normal(const Vector3d &x, int& cell_id)
+{
+  if (cell_id < 0 || std::size_t(cell_id) >= cells_.size())
+    return Vector3d::Zero();
+  // The gradient of barycentric k points into the cell from the facet facing vertex k
+  Vector3d n = Vector3d::Zero();
+  for (int k = 0; k < Cell::n_verts; ++k)
+    if (facet_neigh_[std::size_t(cell_id)*Cell::n_verts + k] == facet_wall)
+      n -= cells_[cell_id].bary_grad(k).normalized();
+  const double len = n.norm();
+  return len > 0. ? Vector3d(n/len) : n;
 }
 
 template<typename Cell>

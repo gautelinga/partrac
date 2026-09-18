@@ -28,30 +28,6 @@ public:
     s.require<double>("y0", "centre y");
     s.require<double>("z0", "centre z");
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused))) {
-    //cout << "x = " << x << endl;
-    //cout << "x0 = " << x0 << endl;
-    //cout << "u_inf = " << u_inf << endl;
-
-    Vector3d r = x-x0;
-    is_inside = r[0] <= 0.;
-
-    Ux = alpha * r[0] * r[0];
-    Uy = - 2 * alpha * r[0] * r[1];
-    Uz = 0; // * alpha * r[0] * r[2];
-    P = p_inf + 2.0 * mu * alpha * r[0];
-
-    // Hardcoded -- copied from consistency-checked Sympy code
-    Uxx = 2 * alpha * r[0];
-    Uxy = 0.;
-    Uxz = 0.;
-    Uyx = - 2 * alpha * r[1];
-    Uyy = - 2 * alpha * r[0];
-    Uyz = 0.;
-    Uzx = 0.;
-    Uzy = 0.;
-    Uzz = 0.;
-  };
   // Distance to the plate, positive in the fluid
   bool has_wall() const { return true; };
   double sdf(const Vector3d &x) const { return x0[0] - x[0]; };
@@ -73,20 +49,6 @@ public:
                     - 2 * alpha * r[1], - 2 * alpha * r[0], 0.,
                     0., 0., 0.;
   };
-  double ux() { return Ux; };
-  double uy() { return Uy; };
-  double uz() { return Uz; };
-  double rho() { return Rho; };
-  double p() { return P; };
-  double uxx() { return Uxx; };
-  double uxy() { return Uxy; };
-  double uxz() { return Uxz; };
-  double uyx() { return Uyx; };
-  double uyy() { return Uyy; };
-  double uyz() { return Uyz; };
-  double uzx() { return Uzx; };
-  double uzy() { return Uzy; };
-  double uzz() { return Uzz; };
 private:
   double mu;  // Viscosity
   double alpha;  // alpha parameter = u''(x)
@@ -94,14 +56,6 @@ private:
   //double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
   double Rho;
-  // Useful quantitites
-  double Ux;
-  double Uy;
-  double Uz;
-  double P;
-  double Uxx, Uxy, Uxz;
-  double Uyx, Uyy, Uyz;
-  double Uzx, Uzy, Uzz;
 };
 
 #endif

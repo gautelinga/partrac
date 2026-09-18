@@ -40,7 +40,7 @@ SimplexInterpol<Cell>::SimplexInterpol(const std::string& infilename)
   taylor_hood_spaces<Cell>(u_el, p_el, include_pressure, mesh, constrained_domain,
                            u_space_, p_space_, ncoeffs_u, ncoeffs_p);
 
-  build_cells(*u_space_->dofmap(), true);
+  build_cells(*u_space_->dofmap());
 
   u_prev_ = std::make_shared<dolfin::Function>(u_space_);
   u_next_ = std::make_shared<dolfin::Function>(u_space_);
@@ -118,6 +118,19 @@ void SimplexInterpol<Cell>::update(const double t)
 template<typename Cell>
 void SimplexInterpol<Cell>::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
+  evaluate_impl<true>(x, t, pos, fields);
+}
+
+template<typename Cell>
+void SimplexInterpol<Cell>::evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
+{
+  evaluate_impl<false>(x, t, pos, fields);
+}
+
+template<typename Cell>
+template<bool Scalars>
+void SimplexInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
+{
   // Assuming inside fluid
   assert(t <= t_next && t >= t_prev);
   const double alpha_t = stamp_weight(t, t_prev, t_next);
@@ -127,8 +140,9 @@ void SimplexInterpol<Cell>::evaluate(const Vector3d &x, const double t, const Ce
   std::array<double, Cell::n_dofs_max> _Nu_, _Np_, _Nux_, _Nuy_, _Nuz_;   // _Nuz_ unused in 2D
 
   cell_basis(cells_[id], pos.bary, ncoeffs_u, _Nu_.data(), "u");
-  if (include_pressure)
-    cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
+  if constexpr (Scalars)
+    if (include_pressure)
+      cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
 
   // Gathered: restrict() is not thread-safe
   std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
@@ -143,7 +157,7 @@ void SimplexInterpol<Cell>::evaluate(const Vector3d &x, const double t, const Ce
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
   fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
-  if (include_pressure){
+  if constexpr (Scalars) if (include_pressure){
     std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
     gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
                   p_prev_block.data(), p_next_block.data());

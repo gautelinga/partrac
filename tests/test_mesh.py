@@ -195,3 +195,34 @@ def test_plane_poiseuille_on_a_mesh_conserves_x(mesh_case, tmp_path):
         last = by_id(h[keys[-1]])["points"]
     assert np.abs(last[:, 0] - first[:, 0]).max() < 1e-12
     assert np.abs(last[:, 1] - first[:, 1]).max() > 1e-3
+
+
+@pytest.mark.slow
+def test_fenics_ignores_the_pressure_when_asked(mesh_dir, tmp_path):
+    """ignore_pressure is a key of every mesh loader's file; mode=fenics read
+    the pressure regardless until it came onto the shared mesh base. With the
+    key set, a stamp file without a pressure field runs and dumps p = 0; without
+    it, the missing field stops the run. (The shipped test_tet_p2 case sets it.)"""
+    h5py = pytest.importorskip("h5py")
+    src = mesh_dir("tet")
+    for name, ignore in (("ignored", "true"), ("read", "false")):
+        d = tmp_path / name
+        d.mkdir()
+        for f in FILES:
+            shutil.copy(src / f, d / f)
+        with h5py.File(d / "up_0.h5", "a") as h:
+            del h["p"]
+        params = [l for l in (d / "dolfin_params.dat").read_text().splitlines()
+                  if not l.startswith("ignore_pressure")]
+        (d / "dolfin_params.dat").write_text("\n".join(params + ["ignore_pressure=" + ignore]) + "\n")
+        r = subprocess.run([PARTRAC, str(d / "dolfin_params.dat")] + BASE + ["mode=fenics"],
+                           capture_output=True, text=True, timeout=900)
+        if ignore == "false":
+            assert r.returncode != 0, "a missing pressure field went unnoticed"
+            continue
+        assert r.returncode == 0, r.stdout + r.stderr
+        dumps = list(d.rglob("data_from_t*.h5"))
+        assert dumps
+        with h5py.File(dumps[0], "r") as h:
+            ps = [np.array(h[g]["p"]) for g in h if "p" in h[g]]
+        assert ps and all(not p.any() for p in ps)

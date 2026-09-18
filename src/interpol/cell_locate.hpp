@@ -10,7 +10,6 @@
 #include <limits>
 #include <numeric>
 #include <vector>
-#include <omp.h>
 #include <iostream>
 #include "typedefs.hpp"
 #include "PointValues.hpp"
@@ -24,23 +23,6 @@ inline void check_dofs_fit(const Uint ncoeffs_u, const Uint ncoeffs_p,
     exit(1);
   }
 }
-
-// Face neighbours, sorted and unique (at most 4)
-struct CellNeighbours {
-  std::array<std::uint32_t, 4> id{};
-  unsigned char n = 0;
-  void insert(const Uint c){
-    unsigned char k = 0;
-    while (k < n && id[k] < c) ++k;
-    if (k < n && id[k] == c) return;
-    assert(n < 4);
-    for (unsigned char m = n; m > k; --m) id[m] = id[m-1];
-    id[k] = std::uint32_t(c); ++n;
-  }
-  std::size_t size() const { return n; }
-  const std::uint32_t* begin() const { return id.data(); }
-  const std::uint32_t* end() const { return id.data() + n; }
-};
 
 // Dof indices of all cells, flat, fixed stride
 class CellDofs {
@@ -158,64 +140,84 @@ inline std::vector<std::uint32_t> cell_order(const dolfin::GenericDofMap& dofmap
   return order;
 }
 
-// Per-thread locate counters, cache-line aligned
-struct alignas(64) FoundCounts {
-  long unsigned int same = 0, nneigh = 0, other = 0;
+// How locate found a point, for the tests
+struct FoundCounts {
+  long unsigned int same = 0, walk = 0, tree = 0;
 };
 
-inline void print_found_counts(std::vector<FoundCounts>& found){
-  long unsigned int same = 0, nneigh = 0, other = 0;
-  for (const auto & f : found){
-    same += f.same; nneigh += f.nneigh; other += f.other;
-  }
-  long int found_sum = same + nneigh + other;
-  double frac_same = double(same) / found_sum;
-  double frac_nneigh = double(nneigh) / found_sum;
-  double frac_other = 1. - frac_same - frac_nneigh;
-  std::cout << "Found in same cell: " << frac_same << ", nearest neighbour cell: " << frac_nneigh << ", other cell: " << frac_other << std::endl;
-  std::fill(found.begin(), found.end(), FoundCounts{});
-}
+// Facet k of a cell faces vertex k; across it: a cell, a wall, or a periodic image
+constexpr std::int32_t facet_wall = -1;
+inline std::int32_t facet_periodic(const std::int32_t id){ return -2 - id; }
 
+// From the known cell, try its periodic partners, then step across the facet
+// of the most negative barycentric; false at a wall or after max_walk steps
 template<typename Cell>
-inline bool locate_in_cells(const std::vector<Cell>& cells,
-                            const std::vector<CellNeighbours>& cell2cells,
-                            const dolfin::Mesh& mesh,
-                            const Uint dim,
-                            const Vector3d& xx,
-                            CellPos& pos,
-                            std::vector<FoundCounts>& found,
-                            const std::vector<std::uint32_t>* dolfin2local = nullptr){
-  FoundCounts& count = found[omp_get_thread_num()];
-  if (pos.id >= 0){
-    // On failure bary stays the stale cell's
-    if (cells[pos.id].contains(xx, pos.bary)){
-      ++count.same;
-      return true;
-    }
-    std::array<double, 4> bary;
-    for ( auto neigh_id : cell2cells[pos.id] ){
-      if (cells[neigh_id].contains(xx, bary)){
-        ++count.nneigh;
-        pos.id = neigh_id;
-        pos.bary = bary;
+inline bool walk_to_cell(const std::vector<Cell>& cells,
+                         const std::vector<std::int32_t>& across,
+                         const Vector3d& xx,
+                         CellPos& pos,
+                         FoundCounts* count = nullptr){
+  constexpr int max_walk = 8;
+  constexpr int nv = Cell::n_verts;
+  if (pos.id < 0)
+    return false;
+  // On failure bary stays the stale cell's
+  if (cells[pos.id].contains(xx, pos.bary)){
+    if (count) ++count->same;
+    return true;
+  }
+  std::array<double, 4> bary = pos.bary;
+  int id = pos.id;
+  for (int step = 0; step < max_walk; ++step){
+    const std::int32_t* row = across.data() + std::size_t(id)*nv;
+    // Periodic partners: the wrapped point lies across the box
+    for (int k = 0; k < nv; ++k){
+      if (row[k] >= facet_wall) continue;
+      const int j = facet_periodic(row[k]);
+      std::array<double, 4> b;
+      if (cells[j].contains(xx, b)){
+        if (count) ++count->walk;
+        pos.id = j;
+        pos.bary = b;
         return true;
       }
     }
+    int k_exit = 0;
+    for (int k = 1; k < nv; ++k)
+      if (bary[k] < bary[k_exit]) k_exit = k;
+    const std::int32_t a = row[k_exit];
+    if (a < 0)
+      return false;
+    id = a;
+    if (cells[id].contains(xx, bary)){
+      if (count) ++count->walk;
+      pos.id = id;
+      pos.bary = bary;
+      return true;
+    }
   }
+  return false;
+}
+
+// The bounding-box tree: every cell, from nothing known
+template<typename Cell>
+inline bool tree_to_cell(const std::vector<Cell>& cells,
+                         const dolfin::Mesh& mesh,
+                         const Uint dim,
+                         const Vector3d& xx,
+                         CellPos& pos,
+                         const std::vector<std::uint32_t>* dolfin2local = nullptr,
+                         FoundCounts* count = nullptr){
   const dolfin::Point point(dim, xx.data());
   const unsigned int id = mesh.bounding_box_tree()->compute_first_entity_collision(point);
   if (id == std::numeric_limits<unsigned int>::max())
     return false;
-  ++count.other;
+  if (count) ++count->tree;
   pos.id = dolfin2local ? int((*dolfin2local)[id]) : int(id);
   // Tree tolerance: may sit just outside
   cells[pos.id].contains(xx, pos.bary);
   return true;
 }
-
-// Facet k of a cell faces vertex k; across it: a cell, a wall, or a periodic image
-constexpr std::int32_t facet_wall = -1;
-inline std::int32_t facet_periodic(const std::int32_t id){ return -2 - id; }
 
 // Walk dx from x, mirroring at walls
 template<typename Cell, typename Wrap>

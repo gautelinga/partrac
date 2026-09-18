@@ -21,6 +21,7 @@
 #include "Params.hpp"
 #include "strings.hpp"
 #include "intervals.hpp"
+#include "perf_window.hpp"
 #include "io.hpp"
 #include "rng.hpp"
 #include "run_folders.hpp"
@@ -214,8 +215,13 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
                                                   : mesh.stats_header_columns(ds_max));
   }
 
+  // Counted from the second step: the first refreshes and checkpoints
+  PerfWindow counters;
+  const int it_counted = it + 1;
   std::clock_t clock_0 = std::clock();
   while (t < run.T + dt/2 && hooks.keep_going()){
+    if (it == it_counted)
+      counters.enable();
     // Sort by cell
     if (sort_every > 0 && it % sort_every == 0 && it > 0)
       mesh.sort_by_cell();
@@ -272,6 +278,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     it += 1;
   }
   std::clock_t clock_1 = std::clock();
+  counters.disable();
   double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
   std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 

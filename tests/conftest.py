@@ -16,6 +16,18 @@ from paths import REPO
 
 DATA = os.path.join(REPO, "data_example")
 
+# Under pytest-xdist the workers share the cores: an app's OpenMP threads,
+# unless a test sets them, get the machine divided by the workers. Spinning
+# OpenMP threads on an oversubscribed machine make the suite slower than serial.
+if "PYTEST_XDIST_WORKER_COUNT" in os.environ:
+    os.environ.setdefault("OMP_NUM_THREADS", str(max(1, (os.cpu_count() or 1)
+                                                     // int(os.environ["PYTEST_XDIST_WORKER_COUNT"]))))
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: left out of the quick run, pytest -m 'not slow'")
+
+
 # kind -> (example folder, generator arguments)
 MESH_KINDS = {
     "triangle": ("ppf_triangle_p2", ["-dim", "1"]),

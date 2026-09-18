@@ -59,9 +59,9 @@ endif()
 
 # The step loops, compiled once per interpolator; the same list as with_concrete
 # (interpol_dispatch.hpp) and set_interpolate_mode (interpol_factory.cpp)
-set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol)
+set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol StructuredConstInterpol)
 if (PARTRAC_ENABLE_DOLFIN)
-  list(APPEND PARTRAC_STEP_INTERPOLATORS DolfInterpol TetInterpol TriangleInterpol
+  list(APPEND PARTRAC_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol TetInterpol TriangleInterpol
     TriangleFreqInterpol XDMFTriangleInterpol XDMFTetInterpol)
 endif()
 set(PARTRAC_STEP_SOURCES)

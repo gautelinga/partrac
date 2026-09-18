@@ -50,7 +50,7 @@ TriangleFreqInterpol::TriangleFreqInterpol(const std::string& infilename)
   // Precompute all triangles Taylor-Hood P2-P1
   // FIXME compute on the fly and save
 
-  build_cells(*u_space_->dofmap(), true);
+  build_cells(*u_space_->dofmap());
 
   std::cout << "Built neighbour list" << std::endl;
 

@@ -48,10 +48,6 @@ public:
     s.require<double>("p_inf", "pressure");
     s.require<double>("rho", "density");
   };
-  void eval(const Vector3d &x, const double t) {
-    is_inside = true;
-    compute(x, t, U, Ujk);
-  };
   bool inside(const Vector3d &x __attribute__((unused)), const double t __attribute__((unused))) {
     return true;
   };
@@ -60,20 +56,6 @@ public:
     ptvals.P = p_inf;
     ptvals.Rho = rho_inf;
   };
-  double ux() { return U(0); };
-  double uy() { return U(1); };
-  double uz() { return U(2); };
-  double rho() { return rho_inf; };
-  double p() { return p_inf; };
-  double uxx() { return Ujk(0, 0); };
-  double uxy() { return Ujk(0, 1); };
-  double uxz() { return Ujk(0, 2); };
-  double uyx() { return Ujk(1, 0); };
-  double uyy() { return Ujk(1, 1); };
-  double uyz() { return Ujk(1, 2); };
-  double uzx() { return Ujk(2, 0); };
-  double uzy() { return Ujk(2, 1); };
-  double uzz() { return Ujk(2, 2); };
 private:
   // No member writes: called inside omp for
   void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_) const {
@@ -99,9 +81,6 @@ private:
   double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
   double rho_inf;
-  // Useful quantitites
-  Vector3d U;
-  Matrix3d Ujk;
   Vector3d L;
 };
 

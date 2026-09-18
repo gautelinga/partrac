@@ -13,23 +13,23 @@
 #include "Interpol.hpp"
 #include "Params.hpp"
 #include "cell_locate.hpp"
+#include "geometry.hpp"
 #include "strings.hpp"
 
 template<typename Cell>
 class MeshInterpol : public Interpol {
 public:
   MeshInterpol(const std::string& infilename) : Interpol(infilename) {}
-  bool locate(const Vector3d &x, const double t, CellPos& pos);
+  bool locate(const Vector3d &x, const double t, CellPos& pos){
+    assert(t <= t_next && t >= t_prev);
+    const Vector3d xx = _modx(x);
+    return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos);
+  }
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection();
+  // Outward unit normal of the cell's wall facets, their mean at an edge; zero off the wall
+  Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
   double hmin() const { return mesh->hmin(); }
-  void print_found() { print_found_counts(found_); }
-  double get_rho() {
-    if (dolfin_params.has("rho"))
-      return dolfin_params.get<double>("rho");
-    std::cout << "dolfin_params does not contain \"rho\"" << std::endl;
-    exit(1);
-  };
   using Interpol::locate;
   using Interpol::evaluate;
 protected:
@@ -37,9 +37,20 @@ protected:
   void read_mesh_params();
   // Dimension, mesh tables, bounding box tree and the domain bounds
   void init_mesh_geometry();
-  // Cells in dof order, with their neighbours; pair_periodic for periodic neighbours
-  void build_cells(const dolfin::GenericDofMap& dofmap, const bool pair_periodic);
-  Vector3d _modx(const Vector3d&);
+  // Cells in dof order, with their facet table
+  void build_cells(const dolfin::GenericDofMap& dofmap);
+  // Out of the step loops: the tree, when the walk does not find the cell
+  bool locate_tree(const Vector3d& xx, CellPos& pos);
+  // Into the box along the periodic axes
+  Vector3d _modx(const Vector3d& x) const {
+    Vector3d x_loc = x;
+    for (Uint i = 0; i < dim; ++i)
+      if (period_[i] > 0. && (x[i] < x_min[i] || x[i] >= x_max[i]))
+        x_loc[i] = x_min[i] + modulox(x[i] - x_min[i], period_[i]);
+    return x_loc;
+  }
+  // The neighbour across each facet: a cell, a wall or a periodic image
+  void build_facet_table();
 
   partrac::Params dolfin_params;
   double t_prev = 0.;   // the stamps the fields are between
@@ -57,13 +68,11 @@ protected:
 
   std::vector<Cell> cells_;
   std::vector<dolfin::Cell> dolfin_cells_;
-  std::vector<CellNeighbours> cell2cells_;
   std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
-  std::vector<std::int32_t> facet_neigh_;     // reflect_in_cells
+  std::vector<std::int32_t> facet_neigh_;     // walk_to_cell, reflect_in_cells
   Vector3d period_ = Vector3d::Zero();
   CellDofs u_dofs_;
   CellDofs p_dofs_;
-  std::vector<FoundCounts> found_;
 };
 
 #endif

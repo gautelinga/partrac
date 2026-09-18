@@ -8,24 +8,10 @@
 #include <tuple>
 #include <dolfin.h>
 
-void build_neighbor_list( std::vector<CellNeighbours> &cell2cells_
-                        , std::shared_ptr<dolfin::Mesh> mesh
-                        , std::vector<dolfin::Cell> &dolfin_cells_
-                        , const std::vector<std::uint32_t>* dolfin2local = nullptr);
+// 0 bulk, 1 on a wall, 2 next to a cell on a wall; from the facet table
+void label_cell_type(std::vector<int>& cell_type_, const std::vector<std::int32_t>& across, const Uint nv);
 
-void label_cell_type(std::vector<int>& cell_type_, std::vector<CellNeighbours>& cell2cells_, const Uint dim);
-
-void apply_periodic_boundaries(std::vector<CellNeighbours>& cell2cells_,
-                               //std::vector<int>& cell_type_,
-                               const std::vector<bool>& periodic,
-                               const Vector3d& x_min,
-                               const Vector3d& x_max,
-                               std::shared_ptr<dolfin::Mesh> mesh,
-                               const std::vector<dolfin::Cell> &dolfin_cells_,
-                               const Uint dim,
-                               const double tol);
-
-// Per cell, the neighbour across the facet facing each vertex (reflect_in_cells)
+// Per cell, the neighbour across the facet facing each vertex (walk_to_cell, reflect_in_cells)
 void build_facet_neighbours(std::vector<std::int32_t>& across,
                             std::shared_ptr<dolfin::Mesh> mesh,
                             const std::vector<dolfin::Cell>& dolfin_cells_,

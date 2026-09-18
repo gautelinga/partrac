@@ -18,6 +18,7 @@ add_executable(unittest
   test_schemas.cpp
   test_mesh_core.cpp
   test_param_files.cpp
+  test_interpol_core.cpp
 )
 
 target_link_libraries(unittest

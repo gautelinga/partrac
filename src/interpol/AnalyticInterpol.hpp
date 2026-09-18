@@ -18,7 +18,7 @@
 
 //using namespace std;
 
-class AnalyticInterpol : public Interpol {
+class AnalyticInterpol final : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t_update=t; };

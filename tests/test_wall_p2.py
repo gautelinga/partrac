@@ -45,6 +45,7 @@ from paths import app, built_with_dolfin
 TRACERS = app("tracers")
 
 pytestmark = [
+    pytest.mark.slow,
     pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin"),
     pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built"),
 ]

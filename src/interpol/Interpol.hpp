@@ -27,16 +27,17 @@ inline Matrix3d stamp_rate(const Matrix3d& next, const Matrix3d& prev, const dou
 class Interpol {  // Abstract base class
 public:
   Interpol(const std::string& infilename) { this->infilename=infilename; };
-  //virtual ~Interpol() = default;
-  virtual ~Interpol(){ std::cout << "Destructing Interpol." << std::endl; };
+  virtual ~Interpol() = default;
   void set_folder(const std::string& folder){ this->folder=folder; };
   std::string get_folder() const { return folder; };
   void set_U0(const double U0) { this->U0 = U0; };
   double get_U0() { return this->U0; };
-  void set_int_order(const int int_order) { this->int_order = int_order; };
+  void set_int_order(const int int_order) { this->int_order = int_order; check_gradient(); };
   // Gradient needed for int_order > 1 or carried elements
-  void set_needs_gradient(const bool b) { needs_gradient_ = b; };
+  void set_needs_gradient(const bool b) { needs_gradient_ = b; check_gradient(); };
   bool wants_gradient() const { return int_order > 1 || needs_gradient_; };
+  // A field without a gradient refuses a run that wants one
+  virtual void check_gradient() const {};
   //
   double get_Lx() { return x_max[0]-x_min[0]; };
   double get_Ly() { return x_max[1]-x_min[1]; };

@@ -47,6 +47,7 @@ inline Vector3d block_value(const double* N, const double* block, const Uint nco
 
 // gradU(i, j) is dU_i/dx_j
 template<int Dim>
+__attribute__((always_inline))
 inline Matrix3d block_gradient(const double* dNx, const double* dNy, const double* dNz,
                                const double* block, const Uint ncoeffs){
   const double* dN[3] = {dNx, dNy, dNz};

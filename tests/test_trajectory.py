@@ -242,6 +242,7 @@ BRINKMAN = os.path.join(REPO, "data_example", "brinkman_cylinder", "expr_params.
 
 
 @pytest.mark.skipif(not os.path.exists(WALKERS), reason="weighted_walkers is not built")
+@pytest.mark.slow
 def test_separation_data_covers_every_exit_plane(tmp_path):
     """For a 2D strip the separation data selects walkers by their distance
     along the strip direction named by init_mode, for whichever exit plane is

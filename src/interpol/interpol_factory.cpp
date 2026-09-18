@@ -2,10 +2,9 @@
 #include "interpol_factory.hpp"
 #include "AnalyticInterpol.hpp"
 #include "StructuredInterpol.hpp"
-// No mode builds it; included so it keeps compiling
-#include "StructuredConstInterpol.hpp"
 #ifdef USE_DOLFIN
-#include "DolfInterpol.hpp"
+#include "DolfTriangleInterpol.hpp"
+#include "DolfTetInterpol.hpp"
 #include "TetInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
@@ -38,7 +37,11 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
       intp = std::make_shared<XDMFTriangleInterpol>(infilename);
     }
     else if (mode == "fenics"){
-      intp = std::make_shared<DolfInterpol>(infilename);
+      // The cell type is the mesh's; a file without one fails in the tet loader's checks
+      if (dolfin_mesh_dim(infilename) == 2)
+        intp = std::make_shared<DolfTriangleInterpol>(infilename);
+      else
+        intp = std::make_shared<DolfTetInterpol>(infilename);
     }
     else if (mode == "xdmf"){
       std::cout << "XDMF format is not implemented yet." << std::endl;
@@ -54,7 +57,10 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
 #endif
   }
   else if (mode == "structured" || mode == "lbm" || mode == "felbm"){
-    intp = std::make_shared<StructuredInterpol>(infilename);
+    if (partrac::peek_file(infilename, "interpolation") == "constant")
+      intp = std::make_shared<StructuredConstInterpol>(infilename);
+    else
+      intp = std::make_shared<StructuredInterpol>(infilename);
   }
   else {
     std::cout << "Mode not supported." << std::endl;

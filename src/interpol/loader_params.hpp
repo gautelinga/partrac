@@ -67,15 +67,16 @@ inline partrac::Schema xdmf_schema(const std::string& mode){
 }
 
 // Lattice Boltzmann fields: mode felbm (structured, lbm)
-inline partrac::Schema felbm_schema(const bool boundary_mode){
+inline partrac::Schema felbm_schema(){
   partrac::Schema s("felbm_params.dat", "");
   s.opt<std::string>("timestamps", "timestamps.dat", "file listing each stamp's time and field file");
   s.opt<std::string>("is_solid_file", "output_is_solid.h5", "solid mask");
   s.opt<bool>("ignore_pressure", false, "do not read the pressure");
   s.opt<bool>("ignore_density", false, "do not read the density");
   s.opt<bool>("ignore_uz", false, "do not read u_z");
-  if (boundary_mode)
-    s.opt<std::string>("boundary_mode", "rounded", "treatment of the solid boundary");
+  s.opt<std::string>("interpolation", "linear",
+                     "in space: linear (trilinear, no slip at the walls) or constant (the nearest node, no gradient)");
+  s.choices("interpolation", {"linear", "constant"});
   return s;
 }
 

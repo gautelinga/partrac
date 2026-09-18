@@ -104,47 +104,10 @@ XDMFInterpol<Cell>::XDMFInterpol(const std::string& infilename)
   // Precompute all cells
   // FIXME compute on the fly and save
 
-  build_cells(*u_space_->dofmap(), true);
+  build_cells(*u_space_->dofmap());
 
   // Identify edge cells
-  cell_type_.resize(mesh->num_cells());
-
-  label_cell_type(cell_type_, cell2cells_, dim);
-
-  if constexpr (D == 3){
-    cell_normal_.resize(mesh->num_cells());
-    cell_facet_midpoint_.resize(mesh->num_cells());
-
-    for ( Uint i=0; i < mesh->num_cells(); ++i)
-    {
-      if (cell_type_[i] == 1)
-      {
-        auto facets = dolfin_cells_[i].entities(dim-1);
-        for ( std::size_t j = 0; j < dolfin_cells_[i].num_entities(dim-1); ++j ){
-          dolfin::Facet dolfin_facet(*mesh, facets[j]);
-
-          if (dolfin_facet.exterior()){
-            Vector3d pt(dolfin_facet.midpoint().coordinates());
-
-            bool periodic_facet = false;
-            for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
-            {
-              if (periodic[k] && (pt[k] < x_min[k] + periodic_tol || pt[k] > x_max[k] - periodic_tol))
-              {
-                periodic_facet = true;
-                break;
-              }
-            }
-            if (!periodic_facet){
-              Vector3d n_loc (dolfin_facet.normal().coordinates());
-              cell_normal_[i] = n_loc;
-              cell_facet_midpoint_[i] = pt;
-            }
-          }
-        }
-      }
-    }
-  }
+  label_cell_type(cell_type_, facet_neigh_, Cell::n_verts);
 
   // P2 near walls: edge (default) or none
   wall_p2_ = dolfin_params.template get<std::string>("wall_p2") == "none" ? WallP2::None : WallP2::Edge;
@@ -285,7 +248,20 @@ double XDMFInterpol<Cell>::rest_tol(const std::vector<double>& u_data) const
 }
 
 template<typename Cell>
-void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)
+void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
+{
+  evaluate_impl<true>(x, t, pos, fields);
+}
+
+template<typename Cell>
+void XDMFInterpol<Cell>::evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
+{
+  evaluate_impl<false>(x, t, pos, fields);
+}
+
+template<typename Cell>
+template<bool Scalars>
+void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, const CellPos& pos, PointValues& fields)
 {
   const double _alpha_t = stamp_weight(tin, t_prev, t_next);
 
@@ -294,8 +270,9 @@ void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const Cel
   std::array<double, Cell::n_dofs_max> _Nu_, _Np_, _Nux_, _Nuy_, _Nuz_;   // _Nuz_ unused in 2D
 
   cell_basis(cells_[id], pos.bary, ncoeffs_u, _Nu_.data(), "u");
-  if (include_pressure)
-    cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
+  if constexpr (Scalars)
+    if (include_pressure)
+      cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
 
   // Restrict solution to cell
   std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
@@ -331,13 +308,16 @@ void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const Cel
     if (wants_gradient())
       cell_deriv(cells_[id], pos.bary, n2, _Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), "u");
 
-    const auto quad = [&](const std::array<double, D*Cell::n_dofs_max>& b, Vector3d& U, Matrix3d& gradU){
-      U = block_value<D>(_Nu2_.data(), b.data(), n2);
+    if (quad_prev){
+      U_prev = block_value<D>(_Nu2_.data(), u_prev_block_2.data(), n2);
       if (wants_gradient())
-        gradU = block_gradient<D>(_Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), b.data(), n2);
-    };
-    if (quad_prev) quad(u_prev_block_2, U_prev, gradU_prev);
-    if (quad_next) quad(u_next_block_2, U_next, gradU_next);
+        gradU_prev = block_gradient<D>(_Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), u_prev_block_2.data(), n2);
+    }
+    if (quad_next){
+      U_next = block_value<D>(_Nu2_.data(), u_next_block_2.data(), n2);
+      if (wants_gradient())
+        gradU_next = block_gradient<D>(_Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), u_next_block_2.data(), n2);
+    }
   }
 
   // Update
@@ -349,7 +329,7 @@ void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const Cel
     fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 
-  if (include_pressure){
+  if constexpr (Scalars) if (include_pressure){
     std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
     gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
                   p_prev_block.data(), p_next_block.data());
@@ -358,7 +338,7 @@ void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const Cel
     fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
   }
 
-  if (include_phi){
+  if constexpr (Scalars) if (include_phi){
     std::array<double, Cell::n_dofs_max> phi_prev_block, phi_next_block;
     gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), phi_prev_data_, phi_next_data_,
                   phi_prev_block.data(), phi_next_block.data());
@@ -367,8 +347,8 @@ void XDMFInterpol<Cell>::evaluate(const Vector3d &x, const double tin, const Cel
     fields.Phi = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
   }
 
-  // cell_type
-  fields.cell_type = cell_type_[id];
+  if constexpr (Scalars)
+    fields.cell_type = cell_type_[id];
 }
 
 template<>

@@ -34,10 +34,6 @@ public:
     s.opt<double>("p_inf", 0., "pressure");
     s.opt<double>("rho", 1., "density");
   };
-  void eval(const Vector3d &x, const double t __attribute__((unused))) {
-    is_inside = true;
-    U = A * (x - x0);
-  };
   bool inside(const Vector3d &x __attribute__((unused)), const double t __attribute__((unused))) {
     return true;
   };
@@ -47,24 +43,9 @@ public:
     ptvals.Rho = Rho;
     ptvals.gradU = A;
   };
-  double ux() { return U[0]; };
-  double uy() { return U[1]; };
-  double uz() { return U[2]; };
-  double rho() { return Rho; };
-  double p() { return p_inf; };
-  double uxx() { return A(0, 0); };
-  double uxy() { return A(0, 1); };
-  double uxz() { return A(0, 2); };
-  double uyx() { return A(1, 0); };
-  double uyy() { return A(1, 1); };
-  double uyz() { return A(1, 2); };
-  double uzx() { return A(2, 0); };
-  double uzy() { return A(2, 1); };
-  double uzz() { return A(2, 2); };
 private:
   Matrix3d A;
   Vector3d x0;
-  Vector3d U;
   double p_inf;
   double Rho;
 };

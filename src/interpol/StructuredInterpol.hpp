@@ -251,13 +251,13 @@ inline void compute_velocity_subcube(double V[2][2][2], const Grid3<double>& u, 
   enforce_noslip(V, is_solid_2);
 }
 
-class StructuredInterpol final
+// The felbm lattice: loading, stamps, locate and reflect; the two below evaluate on it
+class StructuredLattice
   : public Interpol {
 public:
-  StructuredInterpol(const std::string& infilename);
+  StructuredLattice(const std::string& infilename, const std::string& interpolation);
   void update(const double t);
   bool locate(const Vector3d &x, const double t, CellPos& pos);
-  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection() { can_reflect = true; };
   double hmin() const { return dx.minCoeff(); };
@@ -339,8 +339,28 @@ protected:
   bool ignore_uz = false;
 };
 
-inline StructuredInterpol::StructuredInterpol(const std::string& infilename) : Interpol(infilename) {
-  felbm_params = partrac::parse_file_or_exit(felbm_schema(false), infilename);
+// Trilinear in space, no slip at the walls
+class StructuredInterpol final
+  : public StructuredLattice {
+public:
+  StructuredInterpol(const std::string& infilename) : StructuredLattice(infilename, "linear") {}
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
+  using Interpol::evaluate;
+};
+
+// The nearest node in space; no gradient
+class StructuredConstInterpol final
+  : public StructuredLattice {
+public:
+  StructuredConstInterpol(const std::string& infilename) : StructuredLattice(infilename, "constant") {}
+  void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
+  void check_gradient() const;
+  using Interpol::evaluate;
+};
+
+inline StructuredLattice::StructuredLattice(const std::string& infilename, const std::string& interpolation)
+  : Interpol(infilename) {
+  felbm_params = partrac::parse_file_or_exit(felbm_schema(), infilename);
   std::cout << "Chosen parameters:" << std::endl;
   felbm_params.print();
 
@@ -352,6 +372,11 @@ inline StructuredInterpol::StructuredInterpol(const std::string& infilename) : I
   }
   if (felbm_params.get<bool>("ignore_uz")){
     ignore_uz = true;
+  }
+  if (felbm_params.get<std::string>("interpolation") != interpolation){
+    std::cerr << "felbm_params.dat: interpolation=" << felbm_params.get<std::string>("interpolation")
+              << ", built as " << interpolation << std::endl;
+    exit(1);
   }
 
   std::size_t botDirPos = infilename.find_last_of("/");
@@ -414,7 +439,7 @@ inline StructuredInterpol::StructuredInterpol(const std::string& infilename) : I
   }
 }
 
-inline void StructuredInterpol::update(const double t){
+inline void StructuredLattice::update(const double t){
   StampPair sp = ts.get(t);
 
   if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
@@ -450,7 +475,7 @@ inline void StructuredInterpol::update(const double t){
 }
 
 
-inline bool StructuredInterpol::locate(const Vector3d &x, const double t, CellPos& pos){
+inline bool StructuredLattice::locate(const Vector3d &x, const double t, CellPos& pos){
   Uint _ind_pc[3];
   compute_ind_pc(_ind_pc, x, dx, n);
   return !isSolid(_ind_pc[0], _ind_pc[1], _ind_pc[2]);
@@ -458,7 +483,7 @@ inline bool StructuredInterpol::locate(const Vector3d &x, const double t, CellPo
 
 // Walk the node lattice; a wall is the mid-plane between a fluid and a solid node
 __attribute__((noinline))
-inline bool StructuredInterpol::reflect(const Vector3d& x, Vector3d& dx_move, CellPos& pos){
+inline bool StructuredLattice::reflect(const Vector3d& x, Vector3d& dx_move, CellPos& pos){
   constexpr int max_bounces = 8;
   constexpr int max_crossings = 4096;
   // Lattice units, unwrapped node indices
@@ -486,7 +511,7 @@ inline bool StructuredInterpol::reflect(const Vector3d& x, Vector3d& dx_move, Ce
     }
     if (axis < 0){
       dx_move = (walked + d).cwiseProduct(dx);
-      return locate(x + dx_move, t_update, pos);
+      return StructuredLattice::locate(x + dx_move, t_update, pos);
     }
     const Vector3d part = s*d;
     p += part;
@@ -502,6 +527,28 @@ inline bool StructuredInterpol::reflect(const Vector3d& x, Vector3d& dx_move, Ce
     }
   }
   return false;
+}
+
+// The nearest node's values, blended in time
+inline void StructuredConstInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields){
+  const double alpha_t = stamp_weight(t, t_prev, t_next);
+  Uint i[3];
+  compute_ind_pc(i, x, dx, n);
+  const Vector3d U_prev(ux_prev(i[0], i[1], i[2]), uy_prev(i[0], i[1], i[2]), uz_prev(i[0], i[1], i[2]));
+  const Vector3d U_next(ux_next(i[0], i[1], i[2]), uy_next(i[0], i[1], i[2]), uz_next(i[0], i[1], i[2]));
+  fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
+  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
+  fields.P = alpha_t * p_next(i[0], i[1], i[2]) + (1-alpha_t) * p_prev(i[0], i[1], i[2]);
+  fields.Rho = alpha_t * rho_next(i[0], i[1], i[2]) + (1-alpha_t) * rho_prev(i[0], i[1], i[2]);
+  fields.gradU = Matrix3d::Zero();
+}
+
+inline void StructuredConstInterpol::check_gradient() const {
+  if (wants_gradient()){
+    std::cerr << "felbm_params.dat: interpolation=constant has no velocity gradient, "
+              << "which int_order=2, vectors and tensors need" << std::endl;
+    exit(2);
+  }
 }
 
 inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields){
@@ -670,7 +717,7 @@ inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, cons
 }
 
 
-inline bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
+inline bool StructuredLattice::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
   // Assuming this cell is not inside the solid phase
   for (Uint i=0; i<3; ++i){
     _ix_fl[i] = floor(x[i]/dx[i]);
@@ -694,7 +741,7 @@ inline bool StructuredInterpol::compute_ind(const Vector3d &x, Uint _ind[3][2], 
   return true;
 }
 
-inline void StructuredInterpol::probe_space_bulk(const Vector3d &x, 
+inline void StructuredLattice::probe_space_bulk(const Vector3d &x, 
     const Uint _ind[3][2],
     const int _ix_fl[3],
     double _w[2][2][2],
@@ -729,7 +776,7 @@ inline void StructuredInterpol::probe_space_bulk(const Vector3d &x,
   }
 }
 
-inline void StructuredInterpol::probe_space_boundary(
+inline void StructuredLattice::probe_space_boundary(
   const Vector3d &x, 
   const Uint _ind[3][2],
   const int _ix_fl[3],
