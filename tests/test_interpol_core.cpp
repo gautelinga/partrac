@@ -429,6 +429,7 @@ void check_periodic_walk(){
 template<typename Cell>
 struct BareMesh : public MeshInterpol<Cell> {
   using MeshInterpol<Cell>::dolfin_cells_;
+  const Cell& cell(const int id) const { return this->cells_[id]; }
   BareMesh(std::shared_ptr<dolfin::Mesh> m, const std::vector<bool>& periodic) : MeshInterpol<Cell>("") {
     this->mesh = m;
     this->periodic = periodic;
@@ -503,6 +504,44 @@ TEST_CASE("The reflecting walk mirrors a move at the walls", "[interpol]") {
 TEST_CASE("The walk crosses a periodic boundary into the image cell", "[interpol]") {
   SECTION("triangle") { check_periodic_walk<Triangle>(); }
   SECTION("tet") { check_periodic_walk<Tet>(); }
+}
+
+// MeshInterpol::locate, wrap included, on a box periodic in x and y
+template<typename Cell>
+void check_periodic_locate(){
+  const double z = dim_of<Cell> == 3 ? 0.45 : 0.;
+  BareMesh<Cell> m(unit_mesh<Cell>(4, false), {true, true, false});
+  std::array<double, 4> bary;
+  const auto found_at = [&](const Vector3d& from, const Vector3d& to, const Vector3d& image){
+    CellPos pos{};
+    REQUIRE(m.locate(from, 0., pos));
+    const int start = pos.id;
+    REQUIRE(m.locate(to, 0., pos));
+    INFO("from cell " << start << " to cell " << pos.id);
+    REQUIRE(m.cell(pos.id).contains(image, bary));
+  };
+  // Through a face, an edge of the box and its corner, and several boxes away
+  found_at(Vector3d(0.97, 0.40, z), Vector3d(1.03, 0.41, z), Vector3d(0.03, 0.41, z));
+  found_at(Vector3d(0.97, 0.97, z), Vector3d(1.03, 1.02, z), Vector3d(0.03, 0.02, z));
+  found_at(Vector3d(0.02, 0.03, z), Vector3d(-0.04, -0.02, z), Vector3d(0.96, 0.98, z));
+  found_at(Vector3d(0.30, 0.40, z), Vector3d(7.30, -3.60, z), Vector3d(0.30, 0.40, z));
+  // Inside the box a point keeps its bits: same cell, same barycentrics
+  CellPos a{}, b{};
+  REQUIRE(m.locate(Vector3d(0.3125, 0.4375, z), 0., a));
+  b = a;
+  REQUIRE(m.locate(Vector3d(0.3125, 0.4375, z), 0., b));
+  REQUIRE(a.id == b.id);
+  for (int k = 0; k < Cell::n_verts; ++k) REQUIRE(a.bary[k] == b.bary[k]);
+  // Not periodic in z: outside
+  if (dim_of<Cell> == 3){
+    CellPos pos{};
+    REQUIRE_FALSE(m.locate(Vector3d(0.5, 0.5, 1.2), 0., pos));
+  }
+}
+
+TEST_CASE("locate wraps a point through a face, an edge and a corner of a periodic box", "[interpol]") {
+  SECTION("triangle") { check_periodic_locate<Triangle>(); }
+  SECTION("tet") { check_periodic_locate<Tet>(); }
 }
 
 TEST_CASE("A mesh or element the evaluation cannot take throws partrac::Error", "[interpol][errors]") {

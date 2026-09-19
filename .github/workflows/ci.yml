@@ -111,6 +111,54 @@ jobs:
         # tests/test_mesh.py generates a mesh here rather than skipping
         run: ctest --test-dir build --output-on-failure
 
+  # Which lines the tests run, reported to Codecov. A job of its own, in the
+  # dolfin container since only there every app is built and the mesh tests
+  # run, and never failing the workflow: the upload depends on a service.
+  coverage:
+    name: coverage (dolfin ON)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools the tests and the report need
+        # xdist because instrumented apps are slower and ctest runs pytest serially
+        run: python3 -m pip install --no-cache-dir h5py gcovr pytest-xdist
+      - name: Configure
+        run: |
+          cmake -S . -B build-cov -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=ON \
+            -DPARTRAC_COVERAGE=ON \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build-cov --parallel $(nproc)
+      - name: Unit tests
+        run: build-cov/tests/unittest
+      - name: Python tests
+        run: PARTRAC_BIN=$PWD/build-cov/bin python3 -m pytest -q -n $(nproc) tests/
+      - name: Report
+        # gcovr.cfg holds the filters; the summary goes to the run's page.
+        # always(): a failing suite is when the map is most worth having
+        if: always()
+        run: |
+          mkdir -p build-cov/report
+          gcovr --cobertura build-cov/report/coverage.xml \
+                --html-details build-cov/report/index.html \
+                --txt build-cov/report/coverage.txt
+          { echo '```'; tail -n 4 build-cov/report/coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: build-cov/report
+      - uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: build-cov/report/coverage.xml
+          disable_search: true
+          fail_ci_if_error: false
+
   # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
   # SIGILL on an older machine. Check the option still reaches the compiler.
   options:

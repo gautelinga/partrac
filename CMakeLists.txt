@@ -78,6 +78,15 @@ else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DDEBUG -O2 ${PARTRAC_ARCH_FLAGS} -ggdb3 -pedantic-errors -pg")
 endif()
 
+# Line and branch counters for gcov/gcovr, in a build of its own (build-cov).
+# -O0 so that lines are not merged; atomic because the step loops run on OpenMP
+# threads, where plain counters lose counts; absolute paths so that reports can
+# be made from any directory.
+option(PARTRAC_COVERAGE "Instrument for test coverage (gcov)." OFF)
+if (PARTRAC_COVERAGE)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 --coverage -fprofile-update=atomic -fprofile-abs-path")
+endif()
+
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
 
 # Profiling: Use as LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libprofiler.so.0 CPUPROFILE=prof.txt ./partrac ...

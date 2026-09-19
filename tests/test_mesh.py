@@ -19,6 +19,7 @@ from dumps import by_id
 from paths import REPO, app, built_with_dolfin
 
 PARTRAC = app("partrac")
+INTERPOL = app("interpol")
 DATA = os.path.join(REPO, "data_example")
 
 pytestmark = pytest.mark.skipif(not built_with_dolfin(),
@@ -226,3 +227,50 @@ def test_fenics_ignores_the_pressure_when_asked(mesh_dir, tmp_path):
         with h5py.File(dumps[0], "r") as h:
             ps = [np.array(h[g]["p"]) for g in h if "p" in h[g]]
         assert ps and all(not p.any() for p in ps)
+
+
+@pytest.mark.parametrize("dim", [2, 3])
+def test_fenics_reads_a_p3_p2_field_exactly(tmp_path, dim):
+    """mode=fenics takes P1 to P3, and nothing else ran the P3 velocity or the
+    P2 pressure spaces. A cubic velocity and a quadratic pressure are held
+    exactly by P3-P2, so the probed values must match them to round-off; a
+    wrong dof order or a wrong basis would not."""
+    df = pytest.importorskip("dolfin", reason="writing the case needs dolfin")
+    h5py = pytest.importorskip("h5py")
+    if not os.path.exists(INTERPOL):
+        pytest.skip("interpol is not built")
+    d = tmp_path / "p3"
+    d.mkdir()
+    mesh = df.UnitSquareMesh(3, 3) if dim == 2 else df.UnitCubeMesh(2, 2, 2)
+    V = df.VectorFunctionSpace(mesh, "CG", 3)
+    P = df.FunctionSpace(mesh, "CG", 2)
+    u_expr = ["x[1]*x[1]*x[1] + 0.5*x[0]", "x[0]*x[0] - x[1]"] + (["0.25*x[2]*x[0]"] if dim == 3 else [])
+    u = df.interpolate(df.Expression(u_expr, degree=3), V)
+    p = df.interpolate(df.Expression("x[0]*x[1] + 1.0", degree=2), P)
+    with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as f:
+        f.write(mesh, "mesh")
+    with df.HDF5File(mesh.mpi_comm(), str(d / "up_0.h5"), "w") as f:
+        f.write(u, "u")
+        f.write(p, "p")
+    (d / "timestamps.dat").write_text("0.0\tup_0.h5\n")
+    (d / "dolfin_params.dat").write_text(
+        "velocity_space=P3\npressure_space=P2\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
+        "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
+    r = subprocess.run([INTERPOL, str(d / "dolfin_params.dat")] +
+                       "mode=fenics Nrw=400 int_order=2 t0=0 random=false seed=1".split(),
+                       capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout[-600:] + r.stderr
+    out = list(d.rglob("interpolation.h5part"))
+    assert len(out) == 1
+    with h5py.File(out[0], "r") as h:
+        v = {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    x, y = v["x"], v["y"]
+    z = v["z"] if dim == 3 else np.zeros_like(x)
+    assert len(x) > 100
+    assert np.abs(v["ux"] - (y**3 + 0.5 * x)).max() < 1e-10
+    assert np.abs(v["uy"] - (x**2 - y)).max() < 1e-10
+    if dim == 3:
+        assert np.abs(v["uz"] - 0.25 * z * x).max() < 1e-10
+    assert np.abs(v["p"] - (x * y + 1.0)).max() < 1e-10
+    # the gradient of a cubic is held too: du_x/dy = 3 y^2
+    assert np.abs(v["uxy"] - 3 * y**2).max() < 1e-9
