@@ -42,6 +42,20 @@ import pytest
 from dumps import dump_at
 from paths import app, built_with_dolfin
 
+
+def need_gmsh():
+    """gmsh, or a skip: its wheel loads shared libraries (libGLU) a container
+    need not have, and that failure is an OSError, which importorskip lets
+    through."""
+    gmsh = pytest.importorskip("gmsh", reason="the periodic mesh needs gmsh")
+    try:
+        gmsh.initialize()
+        gmsh.finalize()
+    except OSError as e:
+        pytest.skip("gmsh cannot run here: %s" % e)
+    return gmsh
+
+
 TRACERS = app("tracers")
 
 pytestmark = [
@@ -215,7 +229,7 @@ def write_case(df, base, fields, periodic, wall, seed_point, stamps=None):
 def cylinder(tmp_path_factory):
     """The single-cylinder case, as write_case returns it."""
     df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
-    gmsh = pytest.importorskip("gmsh", reason="the periodic mesh needs gmsh")
+    gmsh = need_gmsh()
     centres, radius = [(0.5, 0.5)], 0.25
     X, cells = periodic_mesh(gmsh, centres, radius)
     fields = stokes_past_cylinders(df, X, cells, centres, radius, np.array([1.0, 0.0]))
@@ -227,7 +241,7 @@ def cylinder(tmp_path_factory):
 def obstacles(tmp_path_factory):
     """The four-cylinder case, as write_case returns it."""
     df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
-    gmsh = pytest.importorskip("gmsh", reason="the periodic mesh needs gmsh")
+    gmsh = need_gmsh()
     X, cells = periodic_mesh(gmsh, OBSTACLES, OBSTACLE_R)
     fields = stokes_past_cylinders(df, X, cells, OBSTACLES, OBSTACLE_R, OBSTACLE_FORCE)
     return write_case(df, tmp_path_factory.mktemp("obstacles"), fields,
@@ -347,7 +361,7 @@ def sphere(tmp_path_factory):
     t = 110) with the weights of crossflow(t), and scaled to unit mean u_x
     under a unit force along x."""
     df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
-    gmsh = pytest.importorskip("gmsh", reason="the periodic mesh needs gmsh")
+    gmsh = need_gmsh()
     X, cells = periodic_sphere_mesh(gmsh)
     mesh = dolfin_mesh(df, X, cells)
 
