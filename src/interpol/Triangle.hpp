@@ -52,7 +52,6 @@ public:
                 , double *Ny
                 ) const;
 
-  double dot_grad_gi(const double vx, const double vy, const int index) const;
 
 private:
 

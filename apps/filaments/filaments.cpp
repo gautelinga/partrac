@@ -5,6 +5,7 @@
 #include <set>
 #include <string>
 
+#include "Error.hpp"
 #include "RunLoop.hpp"
 #include "TimeScheme.hpp"
 
@@ -42,7 +43,7 @@ inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std:
   }
 }
 
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
 
     std::cout << "Initialized FILAMENTS." << std::endl;
@@ -109,4 +110,9 @@ int main(int argc, char* argv[])
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
 
   return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

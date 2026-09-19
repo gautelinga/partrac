@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include "Error.hpp"
 #include "Topology.hpp"
 #include "mesh.hpp"
 #include "Initializer.hpp"
@@ -21,8 +22,7 @@ Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
 // Stop on an empty set or a changed dimension
 void Topology::check_topology(){
   if (ps.N() == 0){
-    std::cerr << "Error: no particles left. Stopping." << std::endl;
-    exit(1);
+    partrac::fail("no particles left");
   }
   check_dim();
 }
@@ -46,10 +46,8 @@ void Topology::check_dim(){
     dim0 = d;
     return;
   }
-  std::cerr << "Error: the mesh changed dimension, from " << dim0 << " to " << d
-            << ", with " << ps.N() << " nodes and " << edges.size()
-            << " edges left. Stopping." << std::endl;
-  exit(1);
+  partrac::fail("the mesh changed dimension, from ", dim0, " to ", d, ", with ", ps.N(),
+                " nodes and ", edges.size(), " edges left");
 }
 
 // Dimension the run settles into, including injection
@@ -377,9 +375,7 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partr
   if (init_state->inject){
     // A sheet inlet would sweep a volume
     if (faces.size() > 0){
-      std::cerr << "Error: an inlet with faces would sweep a volume. Stopping."
-                << std::endl;
-      exit(1);
+      partrac::fail("an inlet with faces would sweep a volume");
     }
     pos_inj = init_state->nodes;
     edges_inj = edges;

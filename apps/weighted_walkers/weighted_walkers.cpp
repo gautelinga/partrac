@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <omp.h>
+#include "Error.hpp"
 #include "files.hpp"
 #include "H5Cpp.h"
 
@@ -155,7 +156,7 @@ inline void write_separation_data(const std::string& folder, const double t, con
     sepdata_h5f.close();
 }
 
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
 
     {
@@ -245,4 +246,9 @@ int main(int argc, char* argv[])
     run_loop(run, ps, mesh, stepper, output_fields, dt, hooks);
 
     return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

@@ -1,6 +1,7 @@
 #ifndef __STRUCTUREDINTERPOL_HPP
 #define __STRUCTUREDINTERPOL_HPP
 
+#include "Error.hpp"
 #include "Interpol.hpp"
 #include "Params.hpp"
 #include "loader_params.hpp"
@@ -23,6 +24,24 @@ inline void compute_ind_pc(Uint* ind_pc, const Vector3d &x, const Vector3d& dx, 
   for (Uint i=0; i<3; ++i){
     ind_pc[i] = imodulo(round_to_int(x[i]/dx[i]), n[i]);
   }
+}
+
+// Unit normal toward the solid axis neighbours of x's nearest node; zero if none
+template<typename Solid>
+inline Vector3d lattice_wall_normal(const Vector3d& x, const Vector3d& dx, const Uint n[3], const Solid& solid){
+  int idx[3];
+  for (Uint i=0; i<3; ++i)
+    idx[i] = round_to_int(x[i]/dx[i]);
+  Vector3d nrm = Vector3d::Zero();
+  for (Uint a=0; a<3; ++a)
+    for (const int s : {-1, 1}){
+      int j[3] = {idx[0], idx[1], idx[2]};
+      j[a] += s;
+      if (solid(imodulo(j[0], n[0]), imodulo(j[1], n[1]), imodulo(j[2], n[2])))
+        nrm[a] += s;
+    }
+  const double len = nrm.norm();
+  return len > 0. ? Vector3d(nrm/len) : nrm;
 }
 
 // View of one GridBlock field; valid while the block is unresized
@@ -260,6 +279,8 @@ public:
   bool locate(const Vector3d &x, const double t, CellPos& pos);
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection() { can_reflect = true; };
+  // Outward unit normal toward the solid nodes next to x's node; zero away from walls
+  Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
   double hmin() const { return dx.minCoeff(); };
   bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
   void probe_space_bulk(const Vector3d &x, 
@@ -374,9 +395,8 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
     ignore_uz = true;
   }
   if (felbm_params.get<std::string>("interpolation") != interpolation){
-    std::cerr << "felbm_params.dat: interpolation=" << felbm_params.get<std::string>("interpolation")
-              << ", built as " << interpolation << std::endl;
-    exit(1);
+    partrac::fail("felbm_params.dat: interpolation=", felbm_params.get<std::string>("interpolation"),
+                  ", built as ", interpolation);
   }
 
   std::size_t botDirPos = infilename.find_last_of("/");
@@ -439,10 +459,17 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   }
 }
 
+inline Vector3d StructuredLattice::get_boundary_normal(const Vector3d &x, int&){
+  return lattice_wall_normal(x, dx, n, [this](const Uint i, const Uint j, const Uint k){
+    return isSolid(i, j, k) != 0;
+  });
+}
+
 inline void StructuredLattice::update(const double t){
   StampPair sp = ts.get(t);
 
-  if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
+  // Always load once; keep last bracket past t_max
+  if (!is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max())){
     if (is_initialized && t_next == sp.prev.t){
       std::swap(ux_prev, ux_next);
       std::swap(uy_prev, uy_next);
@@ -545,9 +572,8 @@ inline void StructuredConstInterpol::evaluate(const Vector3d &x, const double t,
 
 inline void StructuredConstInterpol::check_gradient() const {
   if (wants_gradient()){
-    std::cerr << "felbm_params.dat: interpolation=constant has no velocity gradient, "
-              << "which int_order=2, vectors and tensors need" << std::endl;
-    exit(2);
+    partrac::fail("felbm_params.dat: interpolation=constant has no velocity gradient, ",
+                  "which int_order=2, vectors and tensors need");
   }
 }
 

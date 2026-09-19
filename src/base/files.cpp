@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include "Error.hpp"
 #include "files.hpp"
 
 std::string create_folder(const std::string& folder){
@@ -12,7 +13,6 @@ std::string create_folder(const std::string& folder){
 
 void verify_file_exists(const std::string& infilename){
   if (!std::filesystem::exists(infilename)){
-    std::cout << "No such file: " << infilename << std::endl;
-    exit(1);
+    partrac::fail("no such file: ", infilename);
   }
 }

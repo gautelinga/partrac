@@ -3,6 +3,7 @@
 #include <iostream>
 #include <random>
 #include <set>
+#include "Error.hpp"
 #include "Initializer.hpp"
 #include "mesh.hpp"
 #include "files.hpp"
@@ -48,8 +49,7 @@ public:
       x_b[2] = x_max[2];
     }
     else {
-      std::cout << "Unrecognized initialization..." << std::endl;
-      exit(1);
+      partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": unknown direction ", key[1]);
     }
     Vector3d Dx = (x_b - x_a) / (prm.get<Uint>("Nrw")-1);
     for (Uint irw=0; irw < prm.get<Uint>("Nrw"); ++irw){
@@ -110,8 +110,7 @@ public:
       prev_inside = this_inside;
     }
     if (irw == 0) {
-      std::cout << "Strip not inside domain" << std::endl;
-      exit(1);
+      partrac::fail("strip not inside domain");
     }
   };
 };
@@ -367,11 +366,7 @@ public:
       std::cout << "Ellipsoid inside domain." << std::endl;
     }
     else {
-      std::cout << "Ellipsoid not inside domain" << std::endl;
-      
-      
-
-      exit(1);
+      partrac::fail("ellipsoid not inside domain");
     }
 
     std::vector<Vector3d> nodes_loc;
@@ -454,8 +449,7 @@ public:
     // Only this shape redraws the centre
     const bool centre_moves = (key[0] == "pairs" && key.size() == 3);
     if (!centre_moves && !intp->locate(x0_)){
-      std::cout << "Pair centre is not inside the domain" << std::endl;
-      exit(1);
+      partrac::fail("pair centre is not inside the domain");
     }
     Uint ipair=0;
     Uint failed_attempts = 0;
@@ -508,8 +502,7 @@ public:
         failed_attempts = 0;
       }
       else if (key[0] == "pair"){
-        std::cout << "Pair not inside domain" << std::endl;
-        exit(1);
+        partrac::fail("pair not inside domain");
       }
       else {
         ++failed_attempts;
@@ -517,8 +510,7 @@ public:
       //std::cout << x_a << " " << x_b << std::endl;
     }
     if (ipair < Npairs){
-      std::cout << "Could not place all pairs inside the domain" << std::endl;
-      exit(1);
+      partrac::fail("could not place all pairs inside the domain");
     }
   };
 };
@@ -579,8 +571,7 @@ public:
       dx_est = Lz/N_est;
     }
     else {
-      std::cout << "Something is wrong with the domain!" << std::endl;
-      exit(1);
+      partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": the domain has no extent along its directions");
     }
     Uint Nx = 1;
     Uint Ny = 1;
@@ -727,8 +718,7 @@ public:
       }
     }
     if (irw == 0) {
-      std::cout << "No points inside domain" << std::endl;
-      exit(1);
+      partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": no points inside the domain");
     }
   };
 };
@@ -799,8 +789,7 @@ public:
       }
     }
     if (irw == 0) {
-      std::cout << "No points inside domain" << std::endl;
-      exit(1);
+      partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": no points inside the domain");
     }
   };
 };
@@ -846,8 +835,7 @@ public:
       prev_inside = this_inside;
     }
     if (irw == 0) {
-      std::cout << "No points inside domain" << std::endl;
-      exit(1);
+      partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": no points inside the domain");
     }
   };
 };
@@ -856,8 +844,7 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   const std::string init_mode = prm.get<std::string>("init_mode");
   std::vector<std::string> key = split_string(init_mode, "_");
   if (key.size() == 0){
-    std::cout << "init_mode not specified." << std::endl;
-    exit(1);
+    partrac::fail("init_mode is empty");
   }
   else if (key[0] == "point"){
     //init_state = new PointInitializer(key, intp, prm);
@@ -893,13 +880,11 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
       init_state = std::make_shared<FileInitializer>(key_col, intp, prm);
     }
     else {
-      std::cout << "Unknown init_mode ('from' type): " << init_mode << std::endl;
-      exit(1);
+      partrac::fail("unknown init_mode ('from' type): ", init_mode);
     }
   }
   else {
-    std::cout << "Unknown init_mode: " << init_mode << std::endl;
-    exit(1);
+    partrac::fail("unknown init_mode: ", init_mode);
   }
 }
 

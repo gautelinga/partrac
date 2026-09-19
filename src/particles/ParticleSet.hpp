@@ -2,6 +2,7 @@
 #define __PARTICLESET_HPP
 #include <memory>
 #include <utility>
+#include "Error.hpp"
 #include "geometry.hpp"
 #include "strings.hpp"
 #include "typedefs.hpp"
@@ -427,9 +428,7 @@ inline void ParticleSet::load_scalar(const std::string filename, const std::stri
   }
   else {
     // Unknown field
-    std::cerr << "ParticleSet::load_scalar: no field '" << fieldname << "'"
-              << "\n";
-    exit(1);
+    partrac::fail("ParticleSet::load_scalar: no field '", fieldname, "'");
   }
 }
 
@@ -451,9 +450,7 @@ inline void ParticleSet::dump_scalar(const std::string filename, const std::stri
   }
   else {
     // Unknown field
-    std::cerr << "ParticleSet::dump_scalar: no field '" << fieldname << "'"
-              << "\n";
-    exit(1);
+    partrac::fail("ParticleSet::dump_scalar: no field '", fieldname, "'");
   }
 }
 
@@ -508,14 +505,13 @@ inline void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname
 inline void ParticleSet::dump_as(const std::string& field, const std::string& name){
   if (field == "rhohat") rhohat_name = name;
   else if (field == "t_loc") t_loc_name = name;
-  else { std::cerr << "ParticleSet::dump_as: no field '" << field << "'\n"; exit(1); }
+  else { partrac::fail("ParticleSet::dump_as: no field '", field, "'"); }
 }
 
 inline void ParticleSet::record_generation(){
   // Both dumped as w
   if (element == TransportElement::Vector){
-    std::cerr << "ParticleSet: a line element's w and a walker's generation cannot share a dump\n";
-    exit(1);
+    partrac::fail("ParticleSet: a line element's w and a walker's generation cannot share a dump");
   }
   generation_rw.resize(Nrw_max);
   has_generation = true;
@@ -523,8 +519,7 @@ inline void ParticleSet::record_generation(){
 
 inline void ParticleSet::carry(const TransportElement e){
   if (e == TransportElement::Vector && has_generation){
-    std::cerr << "ParticleSet: a line element's w and a walker's generation cannot share a dump\n";
-    exit(1);
+    partrac::fail("ParticleSet: a line element's w and a walker's generation cannot share a dump");
   }
   element = e;
   if (e == TransportElement::Vector){
@@ -637,19 +632,19 @@ inline std::vector<Uint> ParticleSet::reorder(const std::vector<Uint>& order){
 
 inline void ParticleSet::load_vector(const std::string filename, const std::string fieldname){
   if (fieldname == "rhohat") load_vector_field(filename, rhohat_rw, N());
-  else { std::cerr << "ParticleSet::load_vector: no field '" << fieldname << "'\n"; exit(1); }
+  else { partrac::fail("ParticleSet::load_vector: no field '", fieldname, "'"); }
 }
 inline void ParticleSet::dump_vector(const std::string filename, const std::string fieldname) const {
   if (fieldname == "rhohat") dump_vector_field(filename, rhohat_rw, N());
-  else { std::cerr << "ParticleSet::dump_vector: no field '" << fieldname << "'\n"; exit(1); }
+  else { partrac::fail("ParticleSet::dump_vector: no field '", fieldname, "'"); }
 }
 inline void ParticleSet::load_tensor(const std::string filename, const std::string fieldname){
   if (fieldname == "F") load_tensor_field(filename, F_rw, N());
-  else { std::cerr << "ParticleSet::load_tensor: no field '" << fieldname << "'\n"; exit(1); }
+  else { partrac::fail("ParticleSet::load_tensor: no field '", fieldname, "'"); }
 }
 inline void ParticleSet::dump_tensor(const std::string filename, const std::string fieldname) const {
   if (fieldname == "F") dump_tensor_field(filename, F_rw, N());
-  else { std::cerr << "ParticleSet::dump_tensor: no field '" << fieldname << "'\n"; exit(1); }
+  else { partrac::fail("ParticleSet::dump_tensor: no field '", fieldname, "'"); }
 }
 // Missing ids: identity
 inline void ParticleSet::load_ids(const std::string filename){

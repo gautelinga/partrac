@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <typeinfo>
+#include "Error.hpp"
 #include "Interpol.hpp"
 #include "AnalyticInterpol.hpp"
 #include "StructuredInterpol.hpp"
@@ -32,9 +33,7 @@ inline auto with_concrete(Interpol& ip, F&& f){
   if (auto* p = dynamic_cast<DolfTriangleInterpol*>(&ip)) return f(*p);
   if (auto* p = dynamic_cast<DolfTetInterpol*>(&ip)) return f(*p);
 #endif
-  std::cerr << "with_concrete: interpolator type " << typeid(ip).name()
-            << " is not in the dispatch list" << std::endl;
-  exit(1);
+  partrac::fail("with_concrete: interpolator type ", typeid(ip).name(), " is not in the dispatch list");
   return decltype(f(ip))();   // for the return type only; not reached
 }
 

@@ -1,3 +1,4 @@
+#include "Error.hpp"
 #include "dolfin_helpers.hpp"
 #ifdef USE_DOLFIN
 #include <algorithm>
@@ -34,8 +35,7 @@ void build_facet_neighbours(std::vector<std::int32_t>& across,
 {
   // Cell ids must fit int
   if (mesh->num_cells() > std::size_t(std::numeric_limits<int>::max())){
-    std::cout << "Mesh has " << mesh->num_cells() << " cells, more than a cell id can hold" << std::endl;
-    exit(1);
+    partrac::fail("mesh has ", mesh->num_cells(), " cells, more than a cell id can hold");
   }
   const std::size_t nv = dim + 1;
   const std::size_t ncells = dolfin_cells_.size();

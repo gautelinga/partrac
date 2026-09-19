@@ -157,13 +157,15 @@ void SimplexInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t, con
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
   fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
-  if constexpr (Scalars) if (include_pressure){
-    std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
-    gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
-                  p_prev_block.data(), p_next_block.data());
-    const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
-    const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
-    fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
+  if constexpr (Scalars){
+    if (include_pressure){
+      std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
+      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
+                    p_prev_block.data(), p_next_block.data());
+      const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
+      const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
+      fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
+    }
   }
 
   if (wants_gradient()){

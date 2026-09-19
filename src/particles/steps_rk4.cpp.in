@@ -1,0 +1,5 @@
+// The RK4 step loop for @INTERP@ and one transport element, a unit of its own for build time
+#include "steps_impl.hpp"
+#include "@INTERP@.hpp"
+
+template std::vector<Uint> RK4Integrator::step<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);

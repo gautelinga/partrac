@@ -1,10 +1,7 @@
-// Step loops for @INTERP@; CMake writes one of these per interpolator
+// Explicit and spatial step loops and update_fields for @INTERP@; CMake writes one per interpolator
 #include "steps_impl.hpp"
 #include "@INTERP@.hpp"
 
-template std::vector<Uint> RK4Integrator::step<TransportElement::Point, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
-template std::vector<Uint> RK4Integrator::step<TransportElement::Vector, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
-template std::vector<Uint> RK4Integrator::step<TransportElement::Tensor, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
 template std::vector<Uint> ExplicitIntegrator::step<TransportElement::Point, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
 template std::vector<Uint> ExplicitIntegrator::step<TransportElement::Vector, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
 template std::vector<Uint> ExplicitIntegrator::step<TransportElement::Tensor, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);

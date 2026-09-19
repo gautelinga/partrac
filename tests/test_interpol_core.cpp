@@ -22,6 +22,7 @@
 #include "p12_eval.hpp"
 #include "PeriodicBC.hpp"
 #include "MeshInterpol.hpp"
+#include "StructuredInterpol.hpp"
 
 namespace {
 
@@ -502,6 +503,46 @@ TEST_CASE("The reflecting walk mirrors a move at the walls", "[interpol]") {
 TEST_CASE("The walk crosses a periodic boundary into the image cell", "[interpol]") {
   SECTION("triangle") { check_periodic_walk<Triangle>(); }
   SECTION("tet") { check_periodic_walk<Tet>(); }
+}
+
+TEST_CASE("A mesh or element the evaluation cannot take throws partrac::Error", "[interpol][errors]") {
+  // More dofs than the buffers hold
+  REQUIRE_THROWS_AS(check_dofs_fit(11, 4, Tet::n_dofs_max, "test"), partrac::Error);
+  REQUIRE_NOTHROW(check_dofs_fit(10, 4, Tet::n_dofs_max, "test"));
+  // A dof table narrower than evaluate reads
+  Cells<Tet> c(unit_mesh<Tet>(2, false));
+  std::shared_ptr<dolfin::FunctionSpace> u_space, p_space;
+  Uint ncoeffs_u = 0, ncoeffs_p = 0;
+  taylor_hood_spaces<Tet>("P1", "P1", false, c.mesh, nullptr, u_space, p_space, ncoeffs_u, ncoeffs_p);
+  CellDofs dofs;
+  dofs.build(*u_space->dofmap(), c.dolfin_cells, "test");
+  REQUIRE_THROWS_AS(dofs.check_stride(dofs.stride() + 1, "test"), partrac::Error);
+  // An unknown element name
+  REQUIRE_THROWS_AS(taylor_hood_spaces<Tet>("P7", "P1", false, c.mesh, nullptr, u_space, p_space,
+                                            ncoeffs_u, ncoeffs_p), partrac::Error);
+  // An unknown renumber_cells
+  std::vector<std::uint32_t> map;
+  REQUIRE_THROWS_WITH(cell_order(*u_space->dofmap(), c.cells.size(), "sometimes", map),
+                      Catch::Contains("renumber_cells must be auto, never or always"));
+}
+
+TEST_CASE("The felbm wall normal points into the solid nodes next to a point", "[interpol]") {
+  // 8^3 lattice, unit spacing, walls at x = 0 and x = 7, a solid node at (3, 3, 0) on the z = 0 face
+  const Uint n[3] = {8, 8, 8};
+  const Vector3d dx(1., 1., 1.);
+  const auto solid = [](const Uint i, const Uint j, const Uint k){
+    return i == 0 || i == 7 || (i == 3 && j == 3 && k == 0);
+  };
+  // Bulk: no solid neighbour
+  REQUIRE(lattice_wall_normal(Vector3d(4., 4., 4.), dx, n, solid).norm() == 0.);
+  // Next to x = 0 and next to x = 7, outward from the fluid
+  REQUIRE((lattice_wall_normal(Vector3d(1.2, 4., 4.), dx, n, solid) - Vector3d(-1., 0., 0.)).norm() < 1e-14);
+  REQUIRE((lattice_wall_normal(Vector3d(5.9, 4., 4.), dx, n, solid) - Vector3d(1., 0., 0.)).norm() < 1e-14);
+  // At an edge between x = 0 and the node below, periodic in z: the mean of the two
+  const Vector3d edge = lattice_wall_normal(Vector3d(1., 3., 7.), dx, n, [](const Uint i, const Uint, const Uint k){
+    return i == 0 || k == 0;
+  });
+  REQUIRE((edge - Vector3d(-1., 0., 1.).normalized()).norm() < 1e-14);
 }
 
 TEST_CASE("PeriodicBC identifies the boundary dofs of a periodic space", "[interpol]") {

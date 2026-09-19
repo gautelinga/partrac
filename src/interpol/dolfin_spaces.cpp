@@ -1,4 +1,5 @@
 #ifdef USE_DOLFIN
+#include "Error.hpp"
 #include "dolfin_spaces.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
@@ -35,8 +36,7 @@ std::shared_ptr<dolfin::FunctionSpace> space_of(const std::string& el,
     else if constexpr (Vector)       return std::make_shared<vP2_3::FunctionSpace>(mesh, constrained_domain);
     else                             return std::make_shared<P2_3::FunctionSpace>(mesh, constrained_domain);
   }
-  std::cout << "Unrecognized " << what << " element: " << el << std::endl;
-  exit(1);
+  partrac::fail("unrecognized ", what, " element: ", el);
 }
 
 }  // namespace

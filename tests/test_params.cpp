@@ -1,4 +1,5 @@
 #include <catch2/catch.hpp>
+#include "Error.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -600,3 +601,16 @@ TEST_CASE("peek_file reads one key before the schema is chosen", "[params]") {
   REQUIRE(partrac::peek_file(path, "B") == "");
 }
 
+TEST_CASE("fail throws partrac::Error with its arguments streamed into the message", "[errors]") {
+  try {
+    partrac::fail("cell ", 7, " has ", 2.5, " dofs");
+    FAIL("fail returned");
+  } catch (const partrac::Error& e) {
+    REQUIRE(std::string(e.what()) == "cell 7 has 2.5 dofs");
+  }
+}
+
+TEST_CASE("report_errors turns an Error into exit code 2 and passes a result through", "[errors]") {
+  REQUIRE(partrac::report_errors([]{ return 0; }) == 0);
+  REQUIRE(partrac::report_errors([]() -> int { partrac::fail("bad input"); }) == 2);
+}

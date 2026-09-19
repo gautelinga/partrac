@@ -12,6 +12,7 @@
 //#include "hdf5.h"
 #include <ctime>
 
+#include "Error.hpp"
 #include "io.hpp"
 #include "rng.hpp"
 #include "PointValues.hpp"
@@ -121,7 +122,7 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   // ofile.close();
 }
 
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
 
     std::cout << "Initialized Interpolator." << std::endl;
@@ -157,4 +158,9 @@ int main(int argc, char* argv[])
   test_interpolation(prm.get<Uint>("Nrw"), intp, newfolder, t0, gens);
 
   return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

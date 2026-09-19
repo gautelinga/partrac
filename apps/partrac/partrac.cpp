@@ -5,13 +5,14 @@
 #include <set>
 #include <string>
 
+#include "Error.hpp"
 #include "param_print.hpp"
 #include "RunLoop.hpp"
 #include "TimeScheme.hpp"
 
 #include "partrac_schema.hpp"
 
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
 
     std::cout << "Initialized Partrac." << std::endl;
@@ -153,4 +154,9 @@ int main(int argc, char* argv[])
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
 
   return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

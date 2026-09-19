@@ -1,3 +1,4 @@
+#include "Error.hpp"
 #include "xdmf_helpers.hpp"
 #include <filesystem>
 #include <iostream>
@@ -14,9 +15,7 @@ void read_dataset_scalar(std::string& h5filename, std::string& field, std::vecto
     // getSimpleExtentDims writes one entry per dimension
     const int ndims = dataspace.getSimpleExtentNdims();
     if (ndims != rank){
-      std::cout << "XDMF error: '" << field << "' in " << h5filename
-                << " has rank " << ndims << ", expected " << rank << "." << std::endl;
-      exit(1);
+      partrac::fail("XDMF: '", field, "' in ", h5filename, " has rank ", ndims, ", expected ", rank, ".");
     }
     std::vector<hsize_t> shape(rank);
     dataspace.getSimpleExtentDims( shape.data(), NULL);
@@ -63,9 +62,7 @@ void read_dataset_vector(std::string& h5filename_u, std::string& field, std::vec
     // getSimpleExtentDims writes one entry per dimension
     const int ndims = dataspace.getSimpleExtentNdims();
     if (ndims != rank){
-      std::cout << "XDMF error: '" << field << "' in " << h5filename_u
-                << " has rank " << ndims << ", expected " << rank << "." << std::endl;
-      exit(1);
+      partrac::fail("XDMF: '", field, "' in ", h5filename_u, " has rank ", ndims, ", expected ", rank, ".");
     }
     std::vector<hsize_t> shape(rank);
     dataspace.getSimpleExtentDims( shape.data(), NULL);
@@ -115,8 +112,7 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
   h5filename = topology_path.substr(0, topology_pos);
   topology_path.erase(0, topology_pos + 1);
   if (h5filename != geometry_path.substr(0, topology_pos)){
-    std::cout << "XDMF error: Not matching filenames." << std::endl;
-    exit(1);
+    partrac::fail("XDMF: the velocity and pressure files do not match");
   }
   geometry_path.erase(0, topology_pos + 1);
 
@@ -148,8 +144,7 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
       //std::cout << " " << time << " " << location << std::endl;
       //titems.push_back({time, {filename, location}});
       if (!has_time){
-        std::cout << "XDMF error: Grid without a Time." << std::endl;
-        exit(1);
+        partrac::fail("XDMF: a grid without a time");
       }
       std::vector<std::string> path = {dirname + filename, location};
       titems.push_back({time, path});

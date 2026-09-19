@@ -3,12 +3,13 @@
 #include <set>
 #include <string>
 
+#include "Error.hpp"
 #include "RunLoop.hpp"
 #include "SpatialIntegrator.hpp"
 
 #include "static_space_stepper_schema.hpp"
 
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
 
     std::cout << "Initialized spatial stepper." << std::endl;
@@ -139,4 +140,9 @@ int main(int argc, char* argv[])
   run_loop(run, ps, mesh, stepper, output_fields, dxn, hooks);
 
   return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

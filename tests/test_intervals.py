@@ -230,15 +230,15 @@ def test_a_tau_cull_the_injection_cannot_outrun_stops_the_run(tmp_path,
                                                               inject_intv):
     """With tau_max below one injection interval every face is culled before its
     replacement arrives and the sheet loses its dimension. The run stops with
-    exit code 1 and "changed dimension", without crashing and without writing
-    NaN into what it did output."""
+    exit code 2, as every error, and "changed dimension" on stderr, without
+    crashing and without writing NaN into what it did output."""
     # tau_max is half an injection interval
     r = run(tmp_path, REMESH + [
         "inject_intv=%g" % inject_intv, "refine_intv=0.03", "coarsen_intv=0.07",
         "integrate_tau=true", "tau_intv=%g" % DT,
         "tau_max=%g" % (0.5 * inject_intv), "T=0.4", "dump_intv=0.1"])
-    assert r.returncode == 1
-    assert "changed dimension" in r.stdout + r.stderr
+    assert r.returncode == 2
+    assert "changed dimension" in r.stderr
     no_nan(tmp_path)
 
 

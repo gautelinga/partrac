@@ -1,4 +1,5 @@
 #ifdef USE_DOLFIN
+#include "Error.hpp"
 #include "XDMFInterpol.hpp"
 #include "loader_params.hpp"
 #include "p12_eval.hpp"
@@ -138,8 +139,7 @@ XDMFInterpol<Cell>::XDMFInterpol(const std::string& infilename)
       j2i[it->second] = i;
   }
   if (std::find(j2i.begin(), j2i.end(), unset) != j2i.end()){
-    std::cout << "XDMFInterpol: a dof has no vertex in " << h5filename_u << std::endl;
-    exit(1);
+    partrac::fail("XDMFInterpol: a dof has no vertex in ", h5filename_u);
   }
 
   u_prev_data_.resize(xdof.size());
@@ -329,26 +329,27 @@ void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, cons
     fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 
-  if constexpr (Scalars) if (include_pressure){
-    std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
-    gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
-                  p_prev_block.data(), p_next_block.data());
-    const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
-    const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
-    fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
-  }
+  if constexpr (Scalars){
+    if (include_pressure){
+      std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
+      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
+                    p_prev_block.data(), p_next_block.data());
+      const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
+      const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
+      fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
+    }
 
-  if constexpr (Scalars) if (include_phi){
-    std::array<double, Cell::n_dofs_max> phi_prev_block, phi_next_block;
-    gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), phi_prev_data_, phi_next_data_,
-                  phi_prev_block.data(), phi_next_block.data());
-    const double Phi_prev = block_scalar(_Np_.data(), phi_prev_block.data(), ncoeffs_p);
-    const double Phi_next = block_scalar(_Np_.data(), phi_next_block.data(), ncoeffs_p);
-    fields.Phi = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
-  }
+    if (include_phi){
+      std::array<double, Cell::n_dofs_max> phi_prev_block, phi_next_block;
+      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), phi_prev_data_, phi_next_data_,
+                    phi_prev_block.data(), phi_next_block.data());
+      const double Phi_prev = block_scalar(_Np_.data(), phi_prev_block.data(), ncoeffs_p);
+      const double Phi_next = block_scalar(_Np_.data(), phi_next_block.data(), ncoeffs_p);
+      fields.Phi = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
+    }
 
-  if constexpr (Scalars)
     fields.cell_type = cell_type_[id];
+  }
 }
 
 template<>

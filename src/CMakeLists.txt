@@ -68,6 +68,10 @@ set(PARTRAC_STEP_SOURCES)
 foreach(INTERP ${PARTRAC_STEP_INTERPOLATORS})
   configure_file(particles/steps.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp @ONLY)
   list(APPEND PARTRAC_STEP_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp)
+  foreach(ELEMENT Point Vector Tensor)
+    configure_file(particles/steps_rk4.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_rk4_${ELEMENT}_${INTERP}.cpp @ONLY)
+    list(APPEND PARTRAC_STEP_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/steps_rk4_${ELEMENT}_${INTERP}.cpp)
+  endforeach()
 endforeach()
 
 # Particles, meshes, initializers, steps and the run loop

@@ -79,7 +79,8 @@ inline void cell_basis(const Cell& cell, const std::array<double, 4>& bary,
     else                              cell.quadbasis(bary[0], bary[1], bary[2], bary[3], N);
   }
   else {
-    std::cout << "Unrecognized ncoeffs_" << what << " = " << ncoeffs << std::endl;
+    // Inside the step loops, where a throw would terminate; the loaders check the counts first
+    std::cerr << "Unrecognized ncoeffs_" << what << " = " << ncoeffs << std::endl;
     exit(1);
   }
 }
@@ -97,7 +98,8 @@ inline void cell_deriv(const Cell& cell, const std::array<double, 4>& bary,
     else                              cell.quadderiv(bary[0], bary[1], bary[2], bary[3], dNx, dNy, dNz);
   }
   else {
-    std::cout << "Unrecognized ncoeffs_" << what << " = " << ncoeffs << std::endl;
+    // Inside the step loops, where a throw would terminate; the loaders check the counts first
+    std::cerr << "Unrecognized ncoeffs_" << what << " = " << ncoeffs << std::endl;
     exit(1);
   }
 }

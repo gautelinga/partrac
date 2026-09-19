@@ -1,4 +1,5 @@
 #ifdef USE_DOLFIN
+#include "Error.hpp"
 #include "DolfInterpol.hpp"
 #include "loader_params.hpp"
 #include "PeriodicBC.hpp"
@@ -46,8 +47,7 @@ std::shared_ptr<dolfin::FunctionSpace> lagrange_space(const std::string& el,
     if (el == "P2") return std::make_shared<P2_3::FunctionSpace>(mesh, cd);
     if (el == "P3") return std::make_shared<P3_3::FunctionSpace>(mesh, cd);
   }
-  std::cout << "Unrecognized " << what << " element: " << el << std::endl;
-  exit(1);
+  partrac::fail("unrecognized ", what, " element: ", el);
 }
 
 }  // namespace
@@ -137,10 +137,8 @@ DolfInterpol<Cell>::DolfInterpol(const std::string& infilename)
     p_value_size = p_element_->value_rank() == 0 ? 1 : p_element_->value_dimension(0);
   }
   if (u_value_size != dim || p_value_size != 1){
-    std::cout << "DolfInterpol: velocity has value size " << u_value_size
-              << " and pressure " << p_value_size
-              << ", against " << dim << " and 1" << std::endl;
-    exit(1);
+    partrac::fail("DolfInterpol: velocity has value size ", u_value_size, " and pressure ",
+                  p_value_size, ", against ", dim, " and 1");
   }
   u_dofs_.build(*u_space_->dofmap(), dolfin_cells_, "DolfInterpol");
   if (include_pressure)

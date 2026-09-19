@@ -1,3 +1,4 @@
+#include "Error.hpp"
 #include "Interpol.hpp"
 #include "Params.hpp"
 #include "files.hpp"
@@ -124,13 +125,11 @@ inline AnalyticInterpol::AnalyticInterpol(const std::string infilename) : Interp
   verify_file_exists(infilename);
   const std::string name = partrac::peek_file(infilename, "expression");
   if (name.empty()){
-    std::cout << "No expression= in " << infilename << std::endl;
-    exit(1);
+    partrac::fail("no expression= in ", infilename);
   }
   const ExprKind* kind = find_expr_kind(name);
   if (!kind){
-    std::cout << "Unknown expression " << name << " in " << infilename << std::endl;
-    exit(1);
+    partrac::fail("unknown expression ", name, " in ", infilename);
   }
   expr_params = partrac::parse_file_or_exit(expression_schema(*kind), infilename);
 

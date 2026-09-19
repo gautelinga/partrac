@@ -4,6 +4,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include "Error.hpp"
 #include "mesh.hpp"
 #include "geometry.hpp"
 #include "strings.hpp"
@@ -136,8 +137,7 @@ Uint get_common_entry(Uint kedge, Uint ledge,
       }
     }
   }
-  std::cout << "Error: No common entry!" << std::endl;
-  exit(1);
+  partrac::fail("internal: get_common_entry found no edge shared by the two faces");
   return -1;
 }
 
@@ -159,8 +159,7 @@ inline std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge
     mnedges = sort_edges(inode, jedge, kedge, edges);
   }
   else {
-    std::cout << "Error: Found no close entities." << std::endl;
-    exit(1);
+    partrac::fail("internal: get_close_entities found no close edges");
   }
   // std::cout << mnedges[0] << " " << mnedges[1] << std::endl;
   return {knode, mnedges[0], mnedges[1]};
@@ -418,8 +417,7 @@ inline Uint strip_refinement(FacesType &faces,
   }
   if (edges_to_remove.size() > 0){
     if (!cut_if_stuck){
-      std::cout << "Edge is stuck! Turn on 'cut_if_stuck' to continue in such cases." << std::endl;
-      exit(1);
+      partrac::fail("an edge is stuck; cut_if_stuck=true cuts it and goes on");
     }
     std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
     std::vector<bool> edge_isactive(edges.size(), true);
@@ -1370,8 +1368,7 @@ inline bool sheet_filtering(FacesType &faces,
                             NodesListType &nodes_inlet,
                             ParticleSet& ps,
                             const Uint filter_target){
-  std::cout << "SHEET FILTERING NOT TESTED" << std::endl;
-  exit(1);
+  partrac::fail("sheet_filtering has never been tested and is not supported");
   if (faces.size() <= filter_target)
     return false;
   std::vector<Uint> ids(faces.size());

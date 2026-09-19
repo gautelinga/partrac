@@ -11,6 +11,7 @@
 #include <numeric>
 #include <vector>
 #include <iostream>
+#include "Error.hpp"
 #include "typedefs.hpp"
 #include "PointValues.hpp"
 
@@ -18,9 +19,7 @@
 inline void check_dofs_fit(const Uint ncoeffs_u, const Uint ncoeffs_p,
                            const std::size_t n_dofs_max, const char* what){
   if (ncoeffs_u > n_dofs_max || ncoeffs_p > n_dofs_max){
-    std::cout << what << ": element has " << ncoeffs_u << " and " << ncoeffs_p
-              << " dofs, against a maximum of " << n_dofs_max << std::endl;
-    exit(1);
+    partrac::fail(what, ": element has ", ncoeffs_u, " and ", ncoeffs_p, " dofs, against a maximum of ", n_dofs_max);
   }
 }
 
@@ -34,14 +33,11 @@ public:
     for (std::size_t id = 0; id < cells.size(); ++id){
       const auto dofs = dofmap.cell_dofs(cells[id].index());
       if (std::size_t(dofs.size()) != stride_){
-        std::cout << what << ": cell " << id << " has " << dofs.size()
-                  << " dofs, the first cell " << stride_ << std::endl;
-        exit(1);
+        partrac::fail(what, ": cell ", id, " has ", dofs.size(), " dofs, the first cell ", stride_);
       }
       for (std::size_t i = 0; i < stride_; ++i){
         if (dofs[i] < 0 || std::uint64_t(dofs[i]) > std::numeric_limits<std::uint32_t>::max()){
-          std::cout << what << ": dof index " << dofs[i] << " does not fit 32 bits" << std::endl;
-          exit(1);
+          partrac::fail(what, ": dof index ", dofs[i], " does not fit 32 bits");
         }
         dofs_[id*stride_ + i] = std::uint32_t(dofs[i]);
       }
@@ -50,8 +46,7 @@ public:
   // At least n dofs per cell
   void check_stride(const std::size_t n, const char* what) const {
     if (stride_ < n){
-      std::cout << what << ": " << stride_ << " dofs per cell, evaluate reads " << n << std::endl;
-      exit(1);
+      partrac::fail(what, ": ", stride_, " dofs per cell, evaluate reads ", n);
     }
   }
   const std::uint32_t* operator[](const std::size_t id) const { return dofs_.data() + id*stride_; }
@@ -69,8 +64,7 @@ inline std::vector<int> sorted_dof_table(const dolfin::GenericDofMap& dofmap,
   for (std::size_t i = 0; i < ncells; ++i){
     const auto d = dofmap.cell_dofs(i);
     if (std::size_t(d.size()) != stride){
-      std::cout << "cell " << i << " has " << d.size() << " dofs, the first cell " << stride << std::endl;
-      exit(1);
+      partrac::fail("cell ", i, " has ", d.size(), " dofs, the first cell ", stride);
     }
     int* row = table.data() + i*stride;
     std::copy(d.data(), d.data() + stride, row);
@@ -123,8 +117,7 @@ inline std::vector<std::uint32_t> cell_order(const dolfin::GenericDofMap& dofmap
   std::iota(order.begin(), order.end(), 0);
   const std::string mode = mode_in.empty() ? "auto" : mode_in;
   if (mode != "auto" && mode != "never" && mode != "always"){
-    std::cout << "renumber_cells must be auto, never or always, not " << mode << std::endl;
-    exit(1);
+    partrac::fail("renumber_cells must be auto, never or always, not ", mode);
   }
   bool renumber = mode == "always";
   if (mode == "auto"){

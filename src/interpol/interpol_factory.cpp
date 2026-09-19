@@ -1,4 +1,5 @@
 #include <iostream>
+#include "Error.hpp"
 #include "interpol_factory.hpp"
 #include "AnalyticInterpol.hpp"
 #include "StructuredInterpol.hpp"
@@ -44,16 +45,13 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
         intp = std::make_shared<DolfTetInterpol>(infilename);
     }
     else if (mode == "xdmf"){
-      std::cout << "XDMF format is not implemented yet." << std::endl;
-      exit(1);
+      partrac::fail("XDMF format is not implemented yet.");
     }
     else {
-      std::cout << "Mode should be 'fenics', 'tet' or 'triangle'." << std::endl;
-      exit(1);
+      partrac::fail("mode should be 'fenics', 'tet' or 'triangle'.");
     }
 #else
-    std::cout << "You have to compile with PARTRAC_ENABLE_DOLFIN=ON." << std::endl;
-    exit(1);
+    partrac::fail("you have to compile with PARTRAC_ENABLE_DOLFIN=ON.");
 #endif
   }
   else if (mode == "structured" || mode == "lbm" || mode == "felbm"){
@@ -63,7 +61,6 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
       intp = std::make_shared<StructuredInterpol>(infilename);
   }
   else {
-    std::cout << "Mode not supported." << std::endl;
-    exit(1);
+    partrac::fail("mode not supported.");
   }
 }
