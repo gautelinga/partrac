@@ -44,14 +44,15 @@ from paths import app, built_with_dolfin
 
 
 def need_gmsh():
-    """gmsh, or a skip: its wheel loads shared libraries (libGLU) a container
-    need not have, and that failure is an OSError, which importorskip lets
-    through."""
-    gmsh = pytest.importorskip("gmsh", reason="the periodic mesh needs gmsh")
+    """gmsh, or a skip. Its wheel loads shared libraries (libGL, libGLU) a
+    container need not have; importing it then raises OSError, which
+    importorskip lets through, and a machine without them should skip these
+    tests rather than fail them."""
     try:
+        import gmsh
         gmsh.initialize()
         gmsh.finalize()
-    except OSError as e:
+    except (ImportError, OSError) as e:
         pytest.skip("gmsh cannot run here: %s" % e)
     return gmsh
 

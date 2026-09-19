@@ -140,11 +140,11 @@ jobs:
       - name: Tools the tests and the report need
         # xdist because instrumented apps are slower and ctest runs pytest
         # serially; curl because codecov-action downloads its uploader with it;
-        # gmsh (and libGLU, which its wheel loads) because test_wall_p2.py
+        # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_p2.py
         # builds its meshes with it and would otherwise skip, leaving the
         # near-wall code unmeasured
         run: |
-          apt-get update && apt-get install -y --no-install-recommends curl libglu1-mesa
+          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
           python3 -m pip install --no-cache-dir h5py gcovr pytest-xdist gmsh
       - name: Configure
         run: |

@@ -74,8 +74,10 @@ if( CMAKE_BUILD_TYPE MATCHES "Release")
   set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DNDEBUG -O3 ${PARTRAC_ARCH_FLAGS}")
 else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
   # # Debug build
+  # No -pg: its profiling timer killed apps with SIGPROF on the CI runners, and
+  # profiling here is perf and callgrind, not gprof.
   message(STATUS "Debug build")
-  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DDEBUG -O2 ${PARTRAC_ARCH_FLAGS} -ggdb3 -pedantic-errors -pg")
+  set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DDEBUG -O2 ${PARTRAC_ARCH_FLAGS} -ggdb3 -pedantic-errors")
 endif()
 
 # Line and branch counters for gcov/gcovr, in a build of its own (build-cov).
