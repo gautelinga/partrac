@@ -1,5 +1,10 @@
 name: CI
 
+# The runner image is pinned, as the FEniCS container is: ubuntu-latest
+# migrates to Ubuntu 26 in October 2026, and a distribution's apt packages
+# (hdf5, eigen, boost, python3-pytest) are what the jobs without dolfin build
+# against. Bump it deliberately, and fix what the new image breaks then.
+
 on:
   push:
   pull_request:
@@ -11,14 +16,14 @@ jobs:
   # so a change to the shared headers can break it without touching an app.
   build:
     name: dolfin OFF, ${{ matrix.build_type }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -61,12 +66,12 @@ jobs:
   # a new warning is a regression rather than something to be counted.
   warnings:
     name: no warnings (dolfin OFF)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         build_type: [Release, Debug]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -89,11 +94,11 @@ jobs:
   # "latest" tag, so an unpinned reference does not resolve.
   dolfin:
     name: dolfin ON (FEniCS container)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/scientificcomputing/fenics:2025-10-09
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tools the tests need
         # the image has pytest, numpy and dolfin; h5py is what reads the dumps
         run: python3 -m pip install --no-cache-dir h5py
@@ -132,11 +137,11 @@ jobs:
   # run, and never failing the workflow: the upload depends on a service.
   coverage:
     name: coverage (dolfin ON)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/scientificcomputing/fenics:2025-10-09
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Tools the tests and the report need
         # xdist because instrumented apps are slower and ctest runs pytest
         # serially; curl because codecov-action downloads its uploader with it;
@@ -168,7 +173,7 @@ jobs:
                 --html-details build-cov/report/index.html \
                 --txt build-cov/report/coverage.txt
           { echo '```'; tail -n 4 build-cov/report/coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
@@ -185,9 +190,9 @@ jobs:
   # SIGILL on an older machine. Check the option still reaches the compiler.
   options:
     name: option wiring
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
           sudo apt-get update

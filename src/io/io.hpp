@@ -4,7 +4,6 @@
 #include <iostream>
 #include <vector>
 #include <map>
-#include <filesystem>
 #include <fstream>
 
 #include "H5Cpp.h"
@@ -15,28 +14,6 @@ typedef std::shared_ptr<H5::H5File> H5FilePtr;
 //using namespace std;
 //using namespace H5;
 
-std::vector<std::string> get_files(const std::string& s);
-std::vector<std::vector<std::string>> load_grid(const std::string& infile);
-std::vector<std::vector<std::string>> load_fields(const std::string& infile);
-void print_grid(bool** grid, const int nx, const int ny);
-void copy_arr(double*** f,
-	      double*** f_prev,
-	      bool** grid,
-	      const int nx,
-	      const int ny,
-	      const int nc);
-void copy_arr(double** a_from,
-	      double** a_to,
-	      bool** grid,
-	      const int nx,
-	      const int ny);
-void dump2file(const std::string& filename,
-	       double** rho,
-	       double** m_x,
-	       double** m_y,
-	       bool** grid,
-	       const int nx,
-	       const int ny);
 
 // Recently moved here
 
@@ -83,16 +60,6 @@ void dump_tensor_field(const std::string& output_file, const std::vector<Matrix3
 void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_rw, const Uint Nrw);
 void load_vector_field(const std::string& input_file, std::vector<Vector3d>& a_rw, const Uint Nrw);
 void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
-                 const Uint Nrw);
-void print_mesh(const FacesType& faces, const EdgesType& edges,
-                const Edge2FacesType& edge2faces,
-                const std::vector<Vector3d>& x_rw, const Uint Nrw);
-void dump_mesh(const FacesType& faces, const EdgesType& edges,
-               const Edge2FacesType& edge2faces,
-               const std::vector<Vector3d>& x_rw, const Uint Nrw);
-void posdata2txt(std::ofstream &pos_out,
-                 std::vector<Vector3d>& x_rw,
-                 std::vector<Vector3d>& u_rw,
                  const Uint Nrw);
 
 
