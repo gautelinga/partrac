@@ -1,5 +1,6 @@
 # out-of-tree build; the executables land in build/bin
 build/
+build-cov/
 
 # artifacts from an in-source "cmake ."
 CMakeFiles/
