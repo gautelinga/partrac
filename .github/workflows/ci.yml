@@ -1,0 +1,208 @@
+name: CI
+
+# The runner image is pinned, as the FEniCS container is: ubuntu-latest
+# migrates to Ubuntu 26 in October 2026, and a distribution's apt packages
+# (hdf5, eigen, boost, python3-pytest) are what the jobs without dolfin build
+# against. Bump it deliberately, and fix what the new image breaks then.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Dolfin is a heavy dependency to provision, and the configuration that keeps
+  # breaking is the one without it: eight of the fourteen apps are skipped then,
+  # so a change to the shared headers can break it without touching an app.
+  build:
+    name: dolfin OFF, ${{ matrix.build_type }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
+            python3-pytest python3-numpy python3-h5py
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: make -C build -j$(nproc)
+
+      - name: Check every app was built
+        # Every app builds without dolfin since the restructuring: the retired
+        # names are shims that exec their target, and an app whose mode needs
+        # dolfin says so at run time. A missing one means a guard fired wrongly.
+        run: |
+          expected="filaments filaments_felbmRK4 filaments_triangleRK4 interpol partrac
+                    static_space_stepper tracers tracers_triangleRK4 tracertensors
+                    tracertensors_triangleRK4 tracervectors tracervectors_analyticRK4
+                    tracervectors_spatial tracervectors_trianglefreqRK4
+                    tracervectors_triangleRK4 tracervectors_triangle_spatial
+                    weighted_walkers"
+          for app in $expected; do
+            test -x "build/bin/$app" || { echo "missing build/bin/$app"; exit 1; }
+          done
+          built=$(find build/bin -maxdepth 1 -type f -executable | wc -l)
+          test "$built" -eq $(echo $expected | wc -w) || {
+            ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # Both build types carry the same warning flags, and the tree builds clean, so
+  # a new warning is a regression rather than something to be counted.
+  warnings:
+    name: no warnings (dolfin OFF)
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+      - name: Build, and fail on any warning
+        run: |
+          make -C build -j$(nproc) 2>&1 | tee build.log
+          n=$(grep -c "warning:" build.log || true)
+          grep "warning:" build.log | sort -u || true
+          test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
+
+  # The other jobs build with dolfin off, which skips eight of the fourteen apps
+  # and every mesh test. The image is pinned: this repository publishes no
+  # "latest" tag, so an unpinned reference does not resolve.
+  dolfin:
+    name: dolfin ON (FEniCS container)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools the tests need
+        # the image has pytest, numpy and dolfin; h5py is what reads the dumps
+        run: python3 -m pip install --no-cache-dir h5py
+      - name: Configure
+        # Ninja, not make: the image installs ninja-build and no make.
+        # HDF5_ROOT because the image has only the mpich build, under a prefix
+        # cmake does not search and with no h5c++ wrapper to point the way.
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+      - name: Check every app was built
+        # the same list as without dolfin; here every mode is available too
+        run: |
+          expected="filaments filaments_felbmRK4 filaments_triangleRK4 interpol partrac
+                    static_space_stepper tracers tracers_triangleRK4 tracertensors
+                    tracertensors_triangleRK4 tracervectors tracervectors_analyticRK4
+                    tracervectors_spatial tracervectors_trianglefreqRK4
+                    tracervectors_triangleRK4 tracervectors_triangle_spatial
+                    weighted_walkers"
+          for app in $expected; do
+            test -x "build/bin/$app" || { echo "missing build/bin/$app"; exit 1; }
+          done
+          built=$(find build/bin -maxdepth 1 -type f -executable | wc -l)
+          test "$built" -eq $(echo $expected | wc -w) || {
+            ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
+      - name: Test
+        # tests/test_mesh.py generates a mesh here rather than skipping
+        run: ctest --test-dir build --output-on-failure
+
+  # Which lines the tests run, reported to Codecov. A job of its own, in the
+  # dolfin container since only there every app is built and the mesh tests
+  # run, and never failing the workflow: the upload depends on a service.
+  coverage:
+    name: coverage (dolfin ON)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools the tests and the report need
+        # xdist because instrumented apps are slower and ctest runs pytest
+        # serially; curl because codecov-action downloads its uploader with it;
+        # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_p2.py
+        # builds its meshes with it and would otherwise skip, leaving the
+        # near-wall code unmeasured
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
+          python3 -m pip install --no-cache-dir h5py gcovr pytest-xdist gmsh
+      - name: Configure
+        run: |
+          cmake -S . -B build-cov -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=ON \
+            -DPARTRAC_COVERAGE=ON \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build-cov --parallel $(nproc)
+      - name: Unit tests
+        run: build-cov/tests/unittest
+      - name: Python tests
+        run: PARTRAC_BIN=$PWD/build-cov/bin python3 -m pytest -q -n $(nproc) tests/
+      - name: Report
+        # gcovr.cfg holds the filters; the summary goes to the run's page.
+        # always(): a failing suite is when the map is most worth having
+        if: always()
+        run: |
+          mkdir -p build-cov/report
+          gcovr --cobertura build-cov/report/coverage.xml \
+                --html-details build-cov/report/index.html \
+                --txt build-cov/report/coverage.txt
+          { echo '```'; tail -n 4 build-cov/report/coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage-report
+          path: build-cov/report
+      - uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: build-cov/report/coverage.xml
+          disable_search: true
+          fail_ci_if_error: false
+
+  # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
+  # SIGILL on an older machine. Check the option still reaches the compiler.
+  options:
+    name: option wiring
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+      - name: Native arch on
+        run: |
+          cmake -S . -B build-native -DPARTRAC_ENABLE_DOLFIN=OFF -DPARTRAC_NATIVE_ARCH=ON
+          grep -q -- "-march=native" build-native/src/CMakeFiles/partrac_params.dir/flags.make
+      - name: Native arch off by default
+        run: |
+          cmake -S . -B build-plain -DPARTRAC_ENABLE_DOLFIN=OFF
+          ! grep -q -- "-march=native" build-plain/src/CMakeFiles/partrac_params.dir/flags.make

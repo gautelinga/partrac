@@ -1,414 +1,148 @@
 #include <iostream>
-#include <vector>
-#include <filesystem>
-#include <boost/algorithm/string.hpp>
-#include <fstream>
-#include <sstream>
-#include <random>
-#include <cmath>
+#include <map>
 #include <set>
-#include <iterator>
-#include "H5Cpp.h"
-//#include "hdf5.h"
-#include <ctime>
+#include <string>
 
-#include "io.hpp"
-#include "utils.hpp"
-#include "Parameters.hpp"
+#include "Error.hpp"
+#include "RunLoop.hpp"
+#include "SpatialIntegrator.hpp"
 
-#include "ParticleSet.hpp"
-#include "Topology.hpp"
-#include "Integrator.hpp"
+#include "static_space_stepper_schema.hpp"
 
-//#include "Integrator.hpp"
-//#include "ExplicitIntegrator.hpp"
-//#include "RKIntegrator.hpp"
-#include "helpers.hpp"
-#include "MPIwrap.hpp"
-
-class Integrator_Spatial : public Integrator {
-public:
-  Integrator_Spatial(const int int_order, const double u_min, const double dl_max, const double T);
-  ~Integrator_Spatial() {};
-  template<typename InterpolType, typename T>
-  std::set<Uint> step(InterpolType&, T&, double t, double s);
-  std::set<Uint> step(ParticleSet&, double t, double s) { std::set<Uint> dummy; return dummy; };
-protected:
-  double   m_u_min;
-  double   m_dl_max;
-  int      m_int_order;
-  double   m_T;
-};
-
-
-class Integrator_Directional : public Integrator_Spatial {
-public:
-  Integrator_Directional(const Vector3d& direction, const int int_order, const double un_min, const double dl_max, const double T);
-  ~Integrator_Directional() {};
-  template<typename InterpolType, typename T>
-  std::set<Uint> step(InterpolType&, T&, double t, double s);
-protected:
-  Vector3d m_direction;
-};
-
-Integrator_Spatial::Integrator_Spatial(const int int_order, const double u_min, const double dl_max, const double T)
-  : Integrator(), m_int_order(int_order), m_u_min(u_min), m_dl_max(dl_max), m_T(T) {
-    std::cout << "Choosing a spatial integrator of order " << int_order << "." << std::endl;
-}
-
-template<typename InterpolType, typename T>
-std::set<Uint> Integrator_Spatial::step(InterpolType& intp, T& ps, const double t, const double ds) {
-    std::set<Uint> outside_nodes;
-    bool is_inside;
-    double uabs_est, dt;
-    Vector3d dx;
-
-    for (Uint i=0; i < ps.N(); ++i){
-        Vector3d x = ps.x(i);
-        int cell_id = ps.get_cell_id(i);
-
-        intp.probe(x, t, cell_id);
-
-        Vector3d u_1 = intp.get_u();
-
-        uabs_est = u_1.norm();
-
-        is_inside = false;
-        if (uabs_est > m_u_min && ps.t_loc(i) < m_T){
-            dt = ds / uabs_est;
-
-            dx = u_1 * dt;
-
-            // Second-order terms
-            if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
-            }
-
-            if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
-                is_inside = intp.inside_domain();
-            }
-            else {
-                std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
-            }
-        }
-        // count things
-        if (is_inside){
-            ++n_accepted;
-            ps.set_x(i, x + dx);
-            ps.set_t_loc(i, ps.t_loc(i) + dt);
-            ps.set_cell_id(i, cell_id);
-        }
-        else {
-            outside_nodes.insert(i);
-            ++n_declined;
-        }
-    }
-    return outside_nodes;
-}
-
-Integrator_Directional::Integrator_Directional(const Vector3d& direction, const int int_order, const double u_min, const double dl_max, const double T)
-  : Integrator_Spatial(int_order, u_min, dl_max, T), m_direction(direction) {
-    std::cout << "Choosing a directional integrator." << std::endl;
-}
-
-template<typename InterpolType, typename T>
-std::set<Uint> Integrator_Directional::step(InterpolType& intp, T& ps, const double t, const double s) {
-    std::set<Uint> outside_nodes;
-    bool is_inside;
-    double s_prev, un_est, dt;
-    Vector3d dx;
-
-    for (Uint i=0; i < ps.N(); ++i){
-        Vector3d x = ps.x(i);
-        int cell_id = ps.get_cell_id(i);
-
-        intp.probe(x, t, cell_id);
-
-        Vector3d u_1 = intp.get_u();
-
-        un_est = u_1.dot(m_direction);
-
-        is_inside = false;
-        if (un_est > m_u_min && ps.t_loc(i) < m_T){
-            s_prev = x.dot(m_direction);
-            dt = (s - s_prev) / un_est;
-            dx = u_1 * dt;
-
-            // Second-order terms
-            if (m_int_order >= 2){
-                dx += 0.5 * (intp.get_a() + intp.get_Ju()) * dt * dt;
-            }
-
-            if (dx.norm() < m_dl_max){
-                intp.probe(x + dx, t, cell_id);  // Frozen time, otherwise: intp.probe(x+dx, t+dt);
-                is_inside = intp.inside_domain();
-            }
-            else {
-                std::cout << "Step too long (dl=" << dx.norm() << "), consider doing something smart!" << std::endl;
-            }
-        }
-        // count things
-        if (is_inside){
-            ++n_accepted;
-            ps.set_x(i, x + dx);
-            ps.set_t_loc(i, ps.t_loc(i) + dt);
-            ps.set_cell_id(i, cell_id);
-        }
-        else {
-            outside_nodes.insert(i);
-            ++n_declined;
-        }
-    }
-    return outside_nodes;
-}
-
-int main(int argc, char* argv[])
+static int run(int argc, char* argv[])
 {
-  MPIwrap mpi(argc, argv);
 
-  if (mpi.rank() == 0)
-    std::cout << "Initialized spatial stepper with " << mpi.size() << " processes." << std::endl;
-  mpi.barrier();
-  std::cout << "This is process " << mpi.rank() << " out of " << mpi.size() << "." << std::endl;
-  mpi.barrier();
+    std::cout << "Initialized spatial stepper." << std::endl;
 
   // Input parameters
-  if (argc < 2 && mpi.rank() == 0) {
+  if (argc < 2) {
     std::cout << "Specify an input file." << std::endl;
-    return 0;
+    return 1;
   }
-  Parameters prm(argc, argv);
-  if (prm.restart_folder != ""){
-    prm.parse_file(prm.restart_folder + "/Checkpoints/params.dat");
-    prm.parse_cmd(argc, argv);
-  }
+  partrac::Params prm = partrac::parse_or_exit(spatial_schema(), argc, argv);
 
-  std::string infilename = std::string(argv[1]);
+  // March from xn0 to Ln, fields frozen at t0
+  Run run = start_run(prm, "StaticSpaceStepper", DefaultLayout, true);
+  SpatialIntegrator integrator(prm.get<int>("int_order"), prm.get<double>("u_eps"),
+                               prm.get<double>("dx_max"), prm.get<double>("T"));
 
-  std::cout << "Setting interpolator..." << std::endl;
+  ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  Topology mesh(ps, prm);
+  // Checkpoint t_loc
+  mesh.records_t_loc = true;
 
-  std::shared_ptr<Interpol> intp;
-  set_interpolate_mode(intp, prm.mode, infilename);
-  
-  intp->set_U0(prm.U0);
-  intp->set_int_order(prm.int_order);
+  load_or_initialize(run, mesh);
 
-  bool refine = prm.refine;
-  bool coarsen = prm.coarsen;
+  const bool refine = prm.get<bool>("refine");
+  const bool coarsen = prm.get<bool>("coarsen");
+  const bool verbose = prm.get<bool>("verbose");
 
-  std::cout << "Creating folders..." << std::endl;
-
-  std::string folder = intp->get_folder();
-  std::string rwfolder = folder + "/StaticSpaceStepper/"; 
-  if (mpi.rank() == 0)
-    create_folder(rwfolder);
-  std::string newfolder;
-  if (prm.restart_folder != ""){
-    newfolder = prm.folder;
-  }
-  else {
-    newfolder = get_newfoldername(rwfolder, prm);
-    mpi.barrier();
-    if (mpi.rank() == 0)
-      create_folder(newfolder);
-    mpi.barrier();
-  }
-  newfolder = newfolder + "" + std::to_string(mpi.rank()) + "/";
-  std::string posfolder = newfolder + "Positions/";
-  std::string checkpointsfolder = newfolder + "Checkpoints/";
-  //std::string histfolder = newfolder + "Histograms/";
-  //if (mpi.rank() == 0){ // Might change in the future!
-  {
-    create_folder(newfolder);
-    create_folder(posfolder);
-    create_folder(checkpointsfolder);
-    //create_folder(histfolder);
-  }
-  prm.folder = newfolder;
-
-  if (mpi.rank() == 0)
-    prm.print();
-
-  std::mt19937 gen;
-  if (prm.random) {
-    std::random_device rd;
-    gen.seed(rd());
-  }
-  else {
-    std::seed_seq rd{prm.seed + mpi.rank()};
-    gen.seed(rd);
-  }
-
-  // TODO: These should not be stored in particle tracker parameters.
-  prm.Lx = intp->get_Lx();
-  prm.Ly = intp->get_Ly();
-  prm.Lz = intp->get_Lz();
-
-  double t0 = std::max(intp->get_t_min(), prm.t0);
-  prm.t0 = t0;
-
-  // Higher-order time integration?
-  if (prm.int_order > 2){
-    if (mpi.rank() == 0)
-      std::cout << "No support for such high temporal integration order." << std::endl;
-    exit(0);
-  }
-
-  intp->update(t0);
-
-  //Vector3d direction = {1., 0., 0.};
-
-  //std::shared_ptr<Integrator> integrator;
-  //integrator = std::make_shared<DirectionalIntegrator>(direction, prm.int_order);
-  Integrator_Spatial integrator(prm.int_order, prm.u_eps, prm.dx_max, prm.T);
-
-  ParticleSet ps(intp, prm.Nrw_max, mpi);
-  Topology mesh(ps, prm, mpi);
-
-  if (prm.restart_folder != ""){
-    mesh.load_checkpoint(prm.restart_folder + "/Checkpoints", prm);
-  }
-  else {
-    std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, intp, mpi, prm, gen);
-    mesh.load_initial_state(init_state);
-  }
-
-  mesh.compute_maps();
-
-  // Initial refinement
-  if (refine && !prm.inject && mesh.dim() > 0){
+  // Initial refinement and coarsening
+  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
-
+    if (verbose)
+      std::cout << "Added " << n_add << " edges." << std::endl;
+  }
+  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
-    Uint n_rem = mesh.coarsen();
-
-    if (prm.verbose && mpi.rank() == 0)
-      std::cout << "Added " << n_add << " edges and removed " << n_rem << " edges." << std::endl;
+    Uint n_rem = mesh.coarsen(true);
+    if (verbose)
+      std::cout << "Removed " << n_rem << " edges." << std::endl;
   }
 
   mesh.compute_interior();
 
-  int it = 0;
-
-  double xn = prm.x0;
-  double dxn = prm.dxn;
-
-  //if (mpi.rank() == 0)
-  prm.dump(newfolder, xn);
-
-  // Should not be taken from parameters
-  //Uint n_accepted = prm.n_accepted;
-  //Uint n_declined = prm.n_declined;
-
-  std::string h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
-  H5::H5File h5f(h5fname.c_str(), H5F_ACC_TRUNC);
-  //h5f->openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-  //H5wrap h5file(mpi);
-  //h5file.open(h5fname, "w");
-
-  Uint int_stat_intv = int(prm.stat_intv/dxn);
-  Uint int_dump_intv = int(prm.dump_intv/dxn);
-  Uint int_checkpoint_intv = int(prm.checkpoint_intv/dxn);
-  Uint int_chunk_intv = int_dump_intv*prm.dump_chunk_size;
-  Uint int_refine_intv = int(prm.refine_intv/dxn);
-  Uint int_coarsen_intv = int(prm.coarsen_intv/dxn);
-
   std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.minimal_output;
+  output_fields["u"] = !prm.get<bool>("minimal_output");
   output_fields["c"] = true;
-  output_fields["p"] = !prm.minimal_output && prm.output_all_props;
-  output_fields["rho"] = !prm.minimal_output && prm.output_all_props;        
-  output_fields["H"] = !prm.minimal_output && mesh.dim() > 0;
-  output_fields["n"] = !prm.minimal_output && mesh.dim() > 1;
+  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
+  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
+  // H and n need the curvature
+  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
+  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
   output_fields["t_loc"] = true;
   output_fields["tau"] = true;
 
-  //std::string write_mode = prm.write_mode;
+  // Coarsen at refine_intv when coarsening is off
+  const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
+                                      : prm.get<double>("refine_intv");
 
-  std::ofstream statfile;
-  //if (mpi.rank() == 0){
-  {
-    statfile.open(newfolder + "/tdata_from_t" + std::to_string(xn) + ".dat");
-    write_stats_header(mpi, statfile, mesh.dim());
-  }
-  std::ofstream declinedfile(newfolder + "/declinedpos_from_t" + std::to_string(xn) + ".dat");
+  // Hook constants
+  const double refine_intv = prm.get<double>("refine_intv");
+  const double dump_intv = prm.get<double>("dump_intv");
+  const double dxn = prm.get<double>("dxn");
+  const double T_final = prm.get<double>("T");
+  const std::string outside = prm.get<std::string>("outside");
 
-  // Simulation start
-  std::clock_t clock_0 = std::clock();
-  while (xn <= prm.Ln){
-    // Statistics
-    if (it % int_stat_intv == 0){
-      std::cout << "Position = " << xn << std::endl;
-      mesh.write_statistics(statfile, xn, prm.ds_max, integrator);
-    }
-    // Checkpoint
-    if (it % int_checkpoint_intv == 0){
-      //std::cout << "Writing checkpoint..." << std::endl;
-      mesh.write_checkpoint(checkpointsfolder, xn, prm);
-      //std::cout << "Done." << std::endl;
-    }
+  RunHooks hooks;
+
+  // Reshaping
+  hooks.reshape = [&](const int it, const double){
     // Curvature computation
-    if ((refine && it % int_refine_intv == 0) || (coarsen && it % int_coarsen_intv == 0) || it % int_dump_intv == 0){
+    if ((refine && at_interval(it, refine_intv, dxn)) || at_interval(it, coarsen_intv, dxn) || at_interval(it, dump_intv, dxn)){
       mesh.compute_interior();
     }
-
     // Refinement
-    if (refine && it % int_refine_intv == 0 && it > 0){
+    if (refine && at_interval(it, refine_intv, dxn) && it > 0){
       Uint n_add = mesh.refine();
-      if (prm.verbose)
+      if (verbose)
         std::cout << "Added " << n_add << " edges." << std::endl;
     }
     // Coarsening
-    if (coarsen && it % int_coarsen_intv == 0){
-      Uint n_rem = mesh.coarsen();
-      if (prm.verbose)
+    if (at_interval(it, coarsen_intv, dxn)){
+      Uint n_rem = mesh.coarsen(coarsen);
+      if (verbose)
         std::cout << "Removed " << n_rem << " edges." << std::endl;
     }
+  };
 
-    // Dump detailed data
-    if (it % int_dump_intv == 0){
-      std::cout << "Dumping..." << std::endl;
-      ps.update_fields(t0, output_fields);
-
-      std::string groupname = std::to_string(xn);
-      // Clear file if it exists, otherwise create
-      if (int_chunk_intv > 0 && it % int_chunk_intv == 0 && it > 0){
-        h5fname = newfolder + "/data_from_t" + std::to_string(xn) + ".h5";
-        h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+  hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
+    // Finished and trapped nodes
+    if (verbose && nodes.size() > 0){
+      Vector3d x_trapped = {0., 0., 0.};
+      Uint n_done = 0, n_trapped = 0;
+      for (const Uint i : nodes){
+        if (ps.t_loc(i) >= T_final){
+          ++n_done;
+        }
+        else {
+          x_trapped += ps.x(i);
+          ++n_trapped;
+        }
       }
-      else {
-        h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+      std::cout << "At xn = " << xn << ": " << n_done
+                << " nodes finished their integration time";
+      if (n_trapped > 0){
+        x_trapped /= n_trapped;
+        std::cout << ", " << n_trapped << " could not move, centred on ("
+                  << x_trapped[0] << ", " << x_trapped[1] << ", "
+                  << x_trapped[2] << ")";
       }
-      h5f.createGroup(groupname + "/");
-      mesh.dump_hdf5(h5f, groupname, output_fields);
-      h5f.close();
+      std::cout << std::endl;
     }
+    handle_outside(run, mesh, ps, outside, nodes, xn, false);
+  };
 
-    xn += dxn;
+  // Stop when no node is left
+  hooks.keep_going = [&]{ return ps.N() > 0; };
 
-    auto nodes_to_remove = integrator.step(*intp, ps, t0, dxn);
-
-    if (nodes_to_remove.size() > 0){
-      std::vector<bool> node_isactive(ps.N(), true);
-      for (auto sit = nodes_to_remove.begin();
-            sit != nodes_to_remove.end(); ++sit){
-        node_isactive[*sit] = false;
-      }
-      mesh.remove_nodes_safe(node_isactive);
+  // Stepper
+  struct Stepper {
+    SpatialIntegrator& integrator;
+    double t_fields;
+    Integrator& counters(){ return integrator; }
+    std::vector<Uint> step(Interpol& intp, ParticleSet& ps, const double, const double ds){
+      return spatial_step<TransportElement::Point>(integrator, intp, ps, t_fields, ds);
     }
+  } stepper{integrator, run.t_fields};
 
-    it += 1;
-  }
-  std::clock_t clock_1 = std::clock();
-  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
-  std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
-
-  mesh.write_checkpoint(checkpointsfolder, xn, prm);
-  statfile.close();
-  declinedfile.close();
+  run_loop(run, ps, mesh, stepper, output_fields, dxn, hooks);
 
   return 0;
+}
+
+int main(int argc, char* argv[])
+{
+  return partrac::report_errors([&]{ return run(argc, argv); });
 }

@@ -1,0 +1,40 @@
+// Retired app name: runs @WRAPPER_TARGET@ with fixed arguments (apps/CMakeLists.txt)
+#include <iostream>
+#include <string>
+#include <vector>
+#include <cstring>
+#include <unistd.h>
+#include <utility>
+#include <libgen.h>
+
+int main(int argc, char* argv[]){
+  std::cerr << "@WRAPPER_NAME@ is retired: this is @WRAPPER_TARGET@ with "
+            << "@WRAPPER_ARGS_TEXT@" << std::endl;
+  if (argc < 2){
+    std::cerr << "Please specify an input file." << std::endl;
+    return 1;
+  }
+  // Target beside this binary
+  std::vector<char> self(argv[0], argv[0] + std::strlen(argv[0]) + 1);
+  std::string target = std::string(dirname(self.data())) + "/@WRAPPER_TARGET@";
+  std::vector<std::string> args = {target, argv[1], @WRAPPER_ARGS_CODE@};
+  // Renamed arguments
+  const std::vector<std::pair<std::string, std::string>> rename = {@WRAPPER_RENAME_CODE@};
+  const std::vector<std::pair<std::string, std::string>> copy = {@WRAPPER_COPY_CODE@};
+  const std::vector<std::string> drop = {@WRAPPER_DROP_CODE@};
+  for (int i = 2; i < argc; ++i){
+    std::string a = argv[i];
+    const std::string key = a.substr(0, a.find('='));
+    bool keep = true;
+    for (const auto& d : drop) if (d == key) keep = false;
+    for (const auto& r : rename) if (r.first == key){ a = r.second + a.substr(key.size()); }
+    for (const auto& c : copy) if (c.first == key) args.push_back(c.second + a.substr(key.size()));
+    if (keep) args.push_back(a);
+  }
+  std::vector<char*> cargs;
+  for (auto& a : args) cargs.push_back(&a[0]);
+  cargs.push_back(nullptr);
+  execv(target.c_str(), cargs.data());
+  std::cerr << "could not run " << target << std::endl;
+  return 1;
+}

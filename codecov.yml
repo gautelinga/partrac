@@ -1,0 +1,21 @@
+# Coverage is a map of where the tests do not reach, not a gate: both statuses
+# are informational. Patch is the share of a pull request's changed lines that
+# the tests ran.
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        informational: true
+    patch:
+      default:
+        informational: true
+
+# As gcovr.cfg: the FFC-generated headers and the tests themselves
+ignore:
+  - "src/interpol/dolfin_elements/*.h"
+  - "tests/**/*"
+
+comment:
+  layout: "condensed_header, diff, files"
+  require_changes: true
