@@ -60,7 +60,12 @@ The `data_example` folders for the mesh modes (`ppf_triangle_p2`,
 cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 ```
 It needs FEniCS/dolfin. `tests/test_mesh.py` does the same into a temporary
-folder, and skips itself when dolfin is not importable.
+folder, and skips itself when dolfin is not importable. Each generator builds
+its space with a `PBC` constrained domain over the directions its
+`dolfin_params.dat` calls periodic, so a node on a min face and its image on
+the max face share one dof in the file; the interpolators read the dofmap as
+stored, so a fixture written without the constraint would claim a periodicity
+its field does not hold.
 
 ## Visualization
 Plotting the position:

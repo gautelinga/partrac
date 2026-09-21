@@ -26,6 +26,9 @@ if "PYTEST_XDIST_WORKER_COUNT" in os.environ:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: left out of the quick run, pytest -m 'not slow'")
+    # mode=fenics is the only mode a build without dolfin does not have; a run
+    # against such a build names what it leaves out, pytest -m 'not fenics'
+    config.addinivalue_line("markers", "fenics: needs mode=fenics, so a build with dolfin")
 
 
 # kind -> (example folder, generator arguments)

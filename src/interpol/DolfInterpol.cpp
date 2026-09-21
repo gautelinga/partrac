@@ -2,55 +2,12 @@
 #include "Error.hpp"
 #include "DolfInterpol.hpp"
 #include "loader_params.hpp"
-#include "PeriodicBC.hpp"
+#include "dolfin_ref.hpp"
 #include "Params.hpp"
+#include "phase_timing.hpp"
 #include "H5Cpp.h"
-#include "dolfin_elements/vP1_2.h"
-#include "dolfin_elements/vP2_2.h"
-#include "dolfin_elements/vP3_2.h"
-#include "dolfin_elements/vP1_3.h"
-#include "dolfin_elements/vP2_3.h"
-#include "dolfin_elements/vP3_3.h"
-#include "dolfin_elements/P1_2.h"
-#include "dolfin_elements/P2_2.h"
-#include "dolfin_elements/P3_2.h"
-#include "dolfin_elements/P1_3.h"
-#include "dolfin_elements/P2_3.h"
-#include "dolfin_elements/P3_3.h"
 #include <cassert>
 
-namespace {
-
-// A Lagrange space P1-P3 by name, vector or scalar, of dimension D
-template<int D, bool Vector>
-std::shared_ptr<dolfin::FunctionSpace> lagrange_space(const std::string& el,
-                                                      std::shared_ptr<dolfin::Mesh> mesh,
-                                                      std::shared_ptr<const dolfin::SubDomain> cd,
-                                                      const char* what){
-  if constexpr (D == 2 && Vector){
-    if (el == "P1") return std::make_shared<vP1_2::FunctionSpace>(mesh, cd);
-    if (el == "P2") return std::make_shared<vP2_2::FunctionSpace>(mesh, cd);
-    if (el == "P3") return std::make_shared<vP3_2::FunctionSpace>(mesh, cd);
-  }
-  else if constexpr (D == 2){
-    if (el == "P1") return std::make_shared<P1_2::FunctionSpace>(mesh, cd);
-    if (el == "P2") return std::make_shared<P2_2::FunctionSpace>(mesh, cd);
-    if (el == "P3") return std::make_shared<P3_2::FunctionSpace>(mesh, cd);
-  }
-  else if constexpr (Vector){
-    if (el == "P1") return std::make_shared<vP1_3::FunctionSpace>(mesh, cd);
-    if (el == "P2") return std::make_shared<vP2_3::FunctionSpace>(mesh, cd);
-    if (el == "P3") return std::make_shared<vP3_3::FunctionSpace>(mesh, cd);
-  }
-  else {
-    if (el == "P1") return std::make_shared<P1_3::FunctionSpace>(mesh, cd);
-    if (el == "P2") return std::make_shared<P2_3::FunctionSpace>(mesh, cd);
-    if (el == "P3") return std::make_shared<P3_3::FunctionSpace>(mesh, cd);
-  }
-  partrac::fail("unrecognized ", what, " element: ", el);
-}
-
-}  // namespace
 
 Uint dolfin_mesh_dim(const std::string& infilename){
   const std::string mesh_key = partrac::peek_file(infilename, "mesh");
@@ -70,8 +27,68 @@ Uint dolfin_mesh_dim(const std::string& infilename){
 }
 
 template<typename Cell>
+void DolfInterpol<Cell>::init_mesh_geometry(){
+  dim = mesh->geometry().dim();
+  mesh->init();
+  partrac::phase("mesh init");
+  mesh->bounding_box_tree();
+  partrac::phase("tree");
+
+  std::vector<double> xx = mesh->coordinates();
+
+  for (Uint i=0; i<dim; ++i){
+    x_min[i] = xx[i];
+    x_max[i] = xx[i];
+  }
+
+  for (Uint i=0; i<xx.size(); ++i){
+    Uint i_loc = i % dim;
+    x_min[i_loc] = std::min(x_min[i_loc], xx[i]);
+    x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
+  }
+  hmin_ = mesh->hmin();
+  partrac::phase("bounds");
+}
+
+template<typename Cell>
+void DolfInterpol<Cell>::build_cells(const dolfin::GenericDofMap& dofmap){
+  const std::size_t ncells = mesh->num_cells();
+  cells_.resize(ncells);
+  dolfin_cells_.resize(ncells);
+
+  const std::vector<std::uint32_t> order =
+    cell_order(dofmap, ncells, dolfin_params.template get<std::string>("renumber_cells"), dolfin2local_);
+  partrac::phase("cell order");
+  for (std::size_t l = 0; l < ncells; ++l)
+  {
+    dolfin::Cell dolfin_cell(*mesh, order[l]);
+    cells_[l] = Cell(dolfin_cell);
+    dolfin_cells_[l] = dolfin_cell;
+  }
+  partrac::phase("build cells");
+  build_facet_table();
+  partrac::phase("facet table");
+}
+
+template<typename Cell>
+void DolfInterpol<Cell>::build_facet_table()
+{
+  build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
+                         dolfin2local_.empty() ? nullptr : &dolfin2local_,
+                         periodic, x_min, x_max, dim, periodic_tol);
+  set_period();
+}
+
+template<typename Cell>
+bool DolfInterpol<Cell>::locate_tree(const Vector3d& xx, CellPos& pos)
+{
+  return tree_to_cell(cells_, *mesh, dim, xx, pos,
+                      dolfin2local_.empty() ? nullptr : &dolfin2local_);
+}
+
+template<typename Cell>
 DolfInterpol<Cell>::DolfInterpol(const std::string& infilename)
-  : MeshInterpol<Cell>(infilename)
+  : MeshCore<Cell>(infilename)
 {
   dolfin_params = partrac::parse_file_or_exit(dolfin_h5_schema("fenics"), infilename);
 

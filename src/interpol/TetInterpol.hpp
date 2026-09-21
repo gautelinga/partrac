@@ -1,4 +1,3 @@
-#ifdef USE_DOLFIN
 #ifndef __TETINTERPOL_HPP
 #define __TETINTERPOL_HPP
 
@@ -6,5 +5,4 @@
 
 using TetInterpol = SimplexInterpol<Tet>;
 
-#endif
 #endif

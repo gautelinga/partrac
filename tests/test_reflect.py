@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 
 from dumps import dump_at
-from paths import REPO, app, built_with_dolfin
+from paths import REPO, app
 
 TRACERS = app("tracers")
 
@@ -83,7 +83,6 @@ def lattice(n, lo, hi):
     return lo + (np.arange(n) + 0.5) * (hi - lo) / n
 
 
-@pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin")
 def test_triangle_mesh_walls_reflect(mesh_dir, tmp_path):
     """Plane Poiseuille flow u_y = 6x(1-x) on a 10 x 10 mesh, sigma = 0.03,
     a third of a cell: over 400 steps every particle meets a wall many times

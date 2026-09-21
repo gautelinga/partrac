@@ -40,7 +40,7 @@ import numpy as np
 import pytest
 
 from dumps import dump_at
-from paths import app, built_with_dolfin
+from paths import app
 
 
 def need_gmsh():
@@ -61,7 +61,6 @@ TRACERS = app("tracers")
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin"),
     pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built"),
 ]
 
@@ -174,12 +173,14 @@ def stokes_past_cylinders(df, X, cells, centres, radius, force):
     scale = (df.assemble(df.Constant(1) * df.dx(domain=mesh))
              / df.assemble((u2[0] * force[0] + u2[1] * force[1]) * df.dx))
 
-    V1 = df.VectorFunctionSpace(mesh, "CG", 1)
+    # the P1 output is written from a constrained space too, so a vertex and
+    # its image hold one value, as the case's parameter file claims
+    V1 = df.VectorFunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
     u1 = df.interpolate(u2, V1)
     vals = scale * u1.vector().get_local()
     vals[wall(V1.tabulate_dof_coordinates())] = 0.
     u1.vector().set_local(vals)
-    p1 = df.interpolate(p1, df.FunctionSpace(mesh, "CG", 1))
+    p1 = df.interpolate(p1, df.FunctionSpace(mesh, "CG", 1, constrained_domain=Periodic()))
     p1.vector()[:] *= scale
     return {"u": u1, "p": p1}
 
@@ -389,8 +390,10 @@ def sphere(tmp_path_factory):
     bcs = [df.DirichletBC(W.sub(0), df.Constant((0, 0, 0)), Wall()),
            df.DirichletBC(W.sub(1), df.Constant(0), "near(x[0], 0) && near(x[1], 0) && near(x[2], 0)",
                           "pointwise")]
-    V1 = df.VectorFunctionSpace(mesh, "CG", 1)
-    Q1 = df.FunctionSpace(mesh, "CG", 1)
+    # the P1 output is written from a constrained space too, so a vertex and
+    # its image hold one value, as the case's parameter file claims
+    V1 = df.VectorFunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
+    Q1 = df.FunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
     wall = on_sphere(V1.tabulate_dof_coordinates())
     solver = None
     U, P = [], []

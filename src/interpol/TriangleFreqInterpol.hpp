@@ -1,15 +1,25 @@
-#ifdef USE_DOLFIN
 #ifndef __TRIANGLEFREQINTERPOL_HPP
 #define __TRIANGLEFREQINTERPOL_HPP
 
-#include "MeshInterpol.hpp"
-#include "strings.hpp"
+// A time series given as frequency components: one steady Taylor-Hood pair per
+// component, each a dolfin HDF5 checkpoint on the same triangle mesh, summed
+// with a cosine of the base frequency. The components are read the way
+// SimplexInterpol reads a stamp; an evaluation needs every component at one
+// cell, so each component's coefficients are held cell by cell.
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "MeshCore.hpp"
+#include "cell_tree.hpp"
 #include "FreqStamps.hpp"
+#include "strings.hpp"
 #include "Triangle.hpp"
-#include "cell_locate.hpp"
+#include <omp.h>
 
 class TriangleFreqInterpol final
-  : public MeshInterpol<Triangle>
+  : public MeshCore<Triangle>
 {
 public:
   TriangleFreqInterpol(const std::string& infilename);
@@ -18,40 +28,23 @@ public:
   double get_t_min() { return dolfin_params.get<double>("t_min"); };
   double get_t_max() { return dolfin_params.get<double>("t_max"); };
 protected:
+  // Out of the step loops: the cell tree, from nothing known
+  bool locate_tree(const Vector3d& xx, CellPos& pos) override;
+
   FreqStamps fs; // frequencies holder
-  double alpha_t;
 
-  //Vector3d x_min = {0., 0., 0.};
-  //Vector3d x_max = {0., 0., 0.};
-
-  Vector3d U = {0., 0., 0.};  // FIXME: 2d
-  //double Uy = 0.;
-  //double Uz = 0.;
-  Vector3d A = {0., 0., 0.};
-  double P = 0.;
-  Matrix3d gradU, gradA;
-
-  bool inside;
-
-  //std::vector<double> Nu_, Nux_, Nuy_;
-  //std::vector<double> Np_;
-
-  std::shared_ptr<dolfin::Function> u_;
-  std::shared_ptr<dolfin::Function> p_;
-
-  /*
-  std::vector<std::shared_ptr<dolfin::Function>> u__;
-  std::vector<std::shared_ptr<dolfin::Function>> p__;
-  std::vector<std::vector<double>> u_coefficients__;
-  std::vector<std::vector<double>> p_coefficients__;
-  */ 
- 
-  std::vector<std::vector<std::vector<double>>> u_coefficients_;
-  std::vector<std::vector<std::vector<double>>> p_coefficients_;
+  // Per component, the cells' coefficients in a row each: the velocity's D
+  // components blocked as the basis reads them
+  std::vector<std::vector<double>> u_coefficients_;
+  std::vector<std::vector<double>> p_coefficients_;
 
   double omega0 = 0.;
 
+  // The arrays the tree addresses; the cells hold the geometry
+  std::vector<std::uint32_t> topo_;
+  std::vector<double> coords_;
+  std::size_t ncells_ = 0, nverts_ = 0;
+  std::unique_ptr<partrac::CellTree> tree_;
 };
 
-#endif
 #endif

@@ -1,4 +1,3 @@
-#ifdef USE_DOLFIN
 #ifndef __P12_EVAL_HPP
 #define __P12_EVAL_HPP
 
@@ -33,11 +32,38 @@ inline void gather_stamps(const std::uint32_t* dofs, const std::size_t stride,
     gather_n<N2>(dofs, prev, next, block_prev, block_next);
 }
 
+// A node-numbered field: the Dim components of a node are consecutive, and the
+// gathered block keeps a component per contiguous run of N, as block_value reads it
+template<std::size_t N, int Dim>
+inline void gather_nodes_n(const std::uint32_t* nodes, const double* prev, const double* next,
+                           double* block_prev, double* block_next){
+  for (std::size_t i = 0; i < N; ++i){
+    const std::size_t o = std::size_t(nodes[i])*Dim;
+    for (int c = 0; c < Dim; ++c){
+      block_prev[std::size_t(c)*N + i] = prev[o + std::size_t(c)];
+      block_next[std::size_t(c)*N + i] = next[o + std::size_t(c)];
+    }
+  }
+}
+
+// The nodes of this cell at both stamps; P1 and P2 gather a fixed count
+template<std::size_t N1, std::size_t N2, int Dim>
+inline void gather_stamps_nodes(const std::uint32_t* nodes, const std::size_t stride,
+                                const double* prev, const double* next,
+                                double* block_prev, double* block_next){
+  if (stride == N1)
+    gather_nodes_n<N1, Dim>(nodes, prev, next, block_prev, block_next);
+  else
+    gather_nodes_n<N2, Dim>(nodes, prev, next, block_prev, block_next);
+}
+
 inline double block_scalar(const double* N, const double* block, const Uint ncoeffs){
   return std::inner_product(N, N + ncoeffs, block, 0.0);
 }
 
+// The velocity from one cell's coefficient block; inlined into an evaluation
 template<int Dim>
+__attribute__((always_inline))
 inline Vector3d block_value(const double* N, const double* block, const Uint ncoeffs){
   const double Ux = std::inner_product(N, N + ncoeffs, block, 0.0);
   const double Uy = std::inner_product(N, N + ncoeffs, block + ncoeffs, 0.0);
@@ -104,5 +130,4 @@ inline void cell_deriv(const Cell& cell, const std::array<double, 4>& bary,
   }
 }
 
-#endif
 #endif

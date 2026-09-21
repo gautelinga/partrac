@@ -25,6 +25,7 @@
 #include "RKIntegrator.hpp"
 #include "Initializer.hpp"
 #include "interpol_factory.hpp"
+#include "morton.hpp"
 #include "h5part.hpp"
 #include "run_folders.hpp"
 
@@ -59,14 +60,11 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
     "uzx", "uzy", "uzz"
   };
 
-  #pragma omp parallel 
+  // The points first, one generator a thread as before, so the set is the same
+  std::vector<double> xs(3 * std::size_t(num_points));
+  #pragma omp parallel
   {
-    #pragma omp single
-    ptdata_threads_.resize(omp_get_num_threads());
-
     std::mt19937 &gen = gens[omp_get_thread_num()];
-    auto& ptdata_loc_ = ptdata_threads_[omp_get_thread_num()];
-    ptdata_loc_.reserve(num_points * ptheader.size() / omp_get_num_threads());
 
     std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
     std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
@@ -74,10 +72,36 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
     #pragma omp for
     for (Uint i = 0; i < num_points; ++i){
-      CellPos pos;
-
+      // one expression, so the three draws keep the order they had
       Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-      
+      xs[3*std::size_t(i)]     = x[0];
+      xs[3*std::size_t(i) + 1] = x[1];
+      xs[3*std::size_t(i) + 2] = x[2];
+    }
+  }
+
+  // Probed in Morton order, a contiguous range a thread: consecutive queries
+  // descend the same subtree and gather the same dofs. The rows come out in
+  // that order, which no consumer of this file depends on.
+  const int qdim = (x_max[2] > x_min[2]) ? 3 : 2;
+  const partrac::MortonBox box(x_min, x_max, qdim);
+  const std::vector<std::uint32_t> order =
+    partrac::morton_order(xs.data(), std::size_t(num_points), 3, box);
+
+  #pragma omp parallel
+  {
+    #pragma omp single
+    ptdata_threads_.resize(omp_get_num_threads());
+
+    auto& ptdata_loc_ = ptdata_threads_[omp_get_thread_num()];
+    ptdata_loc_.reserve(num_points * ptheader.size() / omp_get_num_threads());
+
+    #pragma omp for schedule(static)
+    for (Uint q = 0; q < num_points; ++q){
+      CellPos pos;
+      const double* p = xs.data() + 3*std::size_t(order[q]);
+      Vector3d x(p[0], p[1], p[2]);
+
       bool inside = intp->locate(x, t0, pos);
       if (inside){
         PointValues ptvals(intp->get_U0());

@@ -20,8 +20,12 @@ inline Vector3d stamp_rate(const Vector3d& next, const Vector3d& prev, const dou
   return Vector3d::Zero();
 }
 inline Matrix3d stamp_rate(const Matrix3d& next, const Matrix3d& prev, const double t_prev, const double t_next){
-  if (t_next > t_prev) return (next - prev)/(t_next - t_prev);
-  return Matrix3d::Zero();
+  if (t_next <= t_prev) return Matrix3d::Zero();
+  // Elementwise, so an evaluation inlines it instead of calling Eigen's loop
+  Matrix3d rate;
+  for (int i = 0; i < 9; ++i)
+    rate.data()[i] = (next.data()[i] - prev.data()[i])/(t_next - t_prev);
+  return rate;
 }
 
 class Interpol {  // Abstract base class

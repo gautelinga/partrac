@@ -27,7 +27,7 @@ import subprocess
 import numpy as np
 import pytest
 
-from paths import REPO, app, built_with_dolfin
+from paths import REPO, app
 
 EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 
@@ -148,11 +148,10 @@ KEEP = ("expr_params.dat", "dolfin_params.dat", "felbm_params.dat", "mesh.h5",
 def case_dir(kind, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
     """(folder, parameter file) of a private copy of the input, since output lands beside it.
 
-    The mesh and XDMF kinds are skipped when the apps were built without
-    dolfin: they cannot read those inputs, whatever python has installed.
+    Every kind is read from the file's arrays, so none of them needs a build
+    with dolfin; writing the mesh and XDMF inputs needs python dolfin, which
+    their fixtures ask for.
     """
-    if kind not in ("analytic", "felbm") and not built_with_dolfin():
-        pytest.skip("the apps were built without dolfin")
     d = tmp_path / "case"
     d.mkdir()
     if kind == "analytic":

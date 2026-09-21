@@ -4,21 +4,22 @@
 
 // Velocity and pressure stamps as dolfin HDF5 checkpoints, in any of the
 // compiled Lagrange elements (P1-P3), evaluated by dolfin's own basis: the
-// reference the other loaders are compared with. The cells, locate and the
-// walk are MeshInterpol's.
+// reference the other loaders are compared with. The only loader left that
+// builds its tables from a dolfin mesh and a dofmap; what a step reads once
+// they exist is MeshCore's.
 
 #include <memory>
 #include <string>
 #include <vector>
 #include <dolfin.h>
-#include "MeshInterpol.hpp"
+#include "MeshCore.hpp"
 #include "Timestamps.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
 
 template<typename Cell>
 class DolfInterpol final
-  : public MeshInterpol<Cell>
+  : public MeshCore<Cell>
 {
 public:
   DolfInterpol(const std::string& infilename);
@@ -28,16 +29,32 @@ public:
   double get_t_max() { return ts.get_t_max(); };
 protected:
   static constexpr int D = Cell::n_verts - 1;
-  using Base = MeshInterpol<Cell>;
+  using Base = MeshCore<Cell>;
   // Names the base owns
-  using Base::dolfin_params; using Base::periodic; using Base::include_pressure;
-  using Base::mesh; using Base::dim; using Base::u_space_; using Base::p_space_;
-  using Base::dolfin_cells_; using Base::u_dofs_; using Base::p_dofs_;
+  using Base::dolfin_params; using Base::periodic; using Base::periodic_tol;
+  using Base::include_pressure; using Base::dim; using Base::hmin_;
+  using Base::cells_; using Base::facet_neigh_; using Base::period_;
+  using Base::u_dofs_; using Base::p_dofs_;
   using Base::t_prev; using Base::t_next; using Base::x_min; using Base::x_max;
   using Base::is_initialized; using Base::t_update;
   using Base::get_folder; using Base::set_folder; using Base::wants_gradient;
-  using Base::read_mesh_params; using Base::init_mesh_geometry; using Base::build_cells;
+  using Base::read_mesh_params; using Base::set_period;
   using Base::_modx;
+
+  // Dimension, mesh tables, bounding box tree and the domain bounds
+  void init_mesh_geometry();
+  // Cells in dof order, with their facet table
+  void build_cells(const dolfin::GenericDofMap& dofmap);
+  // The neighbour across each facet: a cell, a wall or a periodic image
+  void build_facet_table();
+  // Out of the step loops: the tree, when the walk does not find the cell
+  bool locate_tree(const Vector3d& xx, CellPos& pos) override;
+
+  std::shared_ptr<dolfin::Mesh> mesh;
+  std::shared_ptr<dolfin::FunctionSpace> u_space_;
+  std::shared_ptr<dolfin::FunctionSpace> p_space_;
+  std::vector<dolfin::Cell> dolfin_cells_;
+  std::vector<std::uint32_t> dolfin2local_;   // empty: dolfin's cell order
 
   Timestamps ts;
 

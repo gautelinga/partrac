@@ -1,4 +1,3 @@
-#ifdef USE_DOLFIN
 #ifndef __XDMFTETINTERPOL_HPP
 #define __XDMFTETINTERPOL_HPP
 
@@ -6,5 +5,4 @@
 
 using XDMFTetInterpol = XDMFInterpol<Tet>;
 
-#endif
 #endif

@@ -1,49 +1,27 @@
-#ifdef USE_DOLFIN
 #include "Error.hpp"
 #include "XDMFInterpol.hpp"
 #include "loader_params.hpp"
+#include "mesh_tables.hpp"
 #include "p12_eval.hpp"
-#include "geometry.hpp"
+#include "phase_timing.hpp"
+#include "simplex_load.hpp"
+#include "xdmf_helpers.hpp"
 #include <array>
 #include <algorithm>
-#include <limits>
-#include <map>
-#include <numeric>
 #include <cassert>
-#include "dolfin_elements/P1_2.h"
-#include "dolfin_elements/vP1_2.h"
-#include "dolfin_elements/P1_3.h"
-#include "dolfin_elements/vP1_3.h"
-#include "PeriodicBC.hpp"
-#include "dolfin_helpers.hpp"
-#include "xdmf_helpers.hpp"
-
-// The element spaces, per dimension
-template<>
-void XDMFInterpol<Triangle>::make_spaces(std::shared_ptr<const dolfin::SubDomain> constrained_domain){
-  u_space_ = std::make_shared<vP1_2::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_u = 3;
-  p_space_ = std::make_shared<P1_2::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_p = 3;
-}
-
-template<>
-void XDMFInterpol<Tet>::make_spaces(std::shared_ptr<const dolfin::SubDomain> constrained_domain){
-  u_space_ = std::make_shared<vP1_3::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_u = 4;
-  p_space_ = std::make_shared<P1_3::FunctionSpace>(mesh, constrained_domain);
-  ncoeffs_p = 4;
-}
 
 template<typename Cell>
 XDMFInterpol<Cell>::XDMFInterpol(const std::string& infilename)
-  : MeshInterpol<Cell>(infilename)
+  : MeshCore<Cell>(infilename)
 {
+  constexpr int nv = Cell::n_verts;
+  constexpr int ne = nv*(nv-1)/2;
+  partrac::phase_begin("load");
 
   // Input file (e.g. dolfin_params.dat)
   dolfin_params = partrac::parse_file_or_exit(xdmf_schema(D == 2 ? "xdmftriangle" : "xdmftet"), infilename);
 
-  std::size_t botDirPos = infilename.find_last_of("/");
+  const std::size_t botDirPos = infilename.find_last_of("/");
   set_folder(infilename.substr(0, botDirPos));
 
   // Set periodicity
@@ -51,121 +29,128 @@ XDMFInterpol<Cell>::XDMFInterpol(const std::string& infilename)
   if constexpr (D == 3)
     periodic_tol = 1e-4;   // the XDMF tet meshes need a looser match
   include_phi = dolfin_params.template get<bool>("include_phi");
-
-  // Make the mesh
-  dolfin::Mesh mesh_in;
-
-  // find velocity file
-  std::string xdmffilename_u = get_folder() + "/" + dolfin_params.template get<std::string>("u");
-  std::string xdmffilename_p = get_folder() + "/" + dolfin_params.template get<std::string>("p");
-  std::string xdmffilename_phi = get_folder() + "/" + (dolfin_params.has("phi") ? dolfin_params.template get<std::string>("phi") : "");
-  //if (include_phi)
-  //std::string xdmffilename_phi = get_folder() + "/" + dolfin_params["phi"];
-
-  std::vector<std::pair<double, std::vector<std::string>>> titems_u, titems_p, titems_phi;
-
-  std::string topology_path, geometry_path;
-  titems_u = parse_xdmf(xdmffilename_u, h5filename_u, topology_path, geometry_path);
-
-  std::cout << "mesh: " << h5filename_u << ": " << topology_path << " " << geometry_path << std::endl; 
-  
-  ts.initialize(titems_u);
-
-  if (include_pressure){
-    titems_p = parse_xdmf(xdmffilename_p);
-    // std::cout << "h5filename_p = " << h5filename_p << std::endl;
-    ts.add("p", titems_p);
-  }
-  if (include_phi){
-    titems_phi = parse_xdmf(xdmffilename_phi);
-    // std::cout << "h5filename_phi = " << h5filename_phi << std::endl;
-    ts.add("phi", titems_phi);
-  }
-
-  dolfin::HDF5File meshfile(MPI_COMM_WORLD, h5filename_u, "r");
-
-  std::string cell_type_str = XDMFCell<Cell>::name;
-  Uint gdim = D;
-
-  std::unique_ptr<dolfin::CellType> cell_type(dolfin::CellType::create(cell_type_str));
-
-  std::vector<std::int64_t> coords_shape = dolfin::HDF5Interface::get_dataset_shape(meshfile.h5_id(), geometry_path);
-
-  meshfile.read(mesh_in, topology_path, geometry_path, gdim, *cell_type, -1, coords_shape[0], false);
-
-  mesh = std::make_shared<dolfin::Mesh>(mesh_in);
-  init_mesh_geometry();
-  assert(gdim == dim);
-
-  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
-  std::cout << "Made periodic domain." << std::endl;
-  
-  make_spaces(constrained_domain);
-
-  // Precompute all cells
-  // FIXME compute on the fly and save
-
-  build_cells(*u_space_->dofmap());
-
-  // Identify edge cells
-  label_cell_type(cell_type_, facet_neigh_, Cell::n_verts);
-
   // P2 near walls: edge (default) or none
   wall_p2_ = dolfin_params.template get<std::string>("wall_p2") == "none" ? WallP2::None : WallP2::Edge;
 
-  std::cout << "Built neighbour list" << std::endl;
-  
-  // const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
-  auto xdof = p_space_->tabulate_dof_coordinates();
+  // One xdmf per field; the velocity's carries the mesh
+  const std::string xdmffilename_u = get_folder() + "/" + dolfin_params.template get<std::string>("u");
+  const std::string xdmffilename_p = get_folder() + "/"
+    + (dolfin_params.has("p") ? dolfin_params.template get<std::string>("p") : "");
+  const std::string xdmffilename_phi = get_folder() + "/"
+    + (dolfin_params.has("phi") ? dolfin_params.template get<std::string>("phi") : "");
 
-  std::map<std::array<double, D>, Uint> xmap;
-  for ( Uint j=0; j < xdof.size()/dim; ++j ){
-    std::array<double, D> key;
-    for (int c = 0; c < D; ++c) key[c] = xdof[dim*j + c];
-    xmap[key] = j;
-  }
+  std::string h5filename_u, topology_path, geometry_path;
+  ts.initialize(parse_xdmf(xdmffilename_u, h5filename_u, topology_path, geometry_path));
 
-  std::vector<double> xdata;
-  read_dataset_vector(h5filename_u, geometry_path, xdata, dim);
+  std::cout << "mesh: " << h5filename_u << ": " << topology_path << " " << geometry_path << std::endl;
 
-  // Periodic images of a dof's vertex are not in xmap
-  const Uint unset = std::numeric_limits<Uint>::max();
-  j2i.assign(xdof.size()/dim, unset);
-  for ( Uint i=0; i < xdata.size()/dim; ++i ){
-    std::array<double, D> key;
-    for (int c = 0; c < D; ++c) key[c] = xdata[dim*i + c];
-    const auto it = xmap.find(key);
-    if (it != xmap.end())
-      j2i[it->second] = i;
-  }
-  if (std::find(j2i.begin(), j2i.end(), unset) != j2i.end()){
-    partrac::fail("XDMFInterpol: a dof has no vertex in ", h5filename_u);
-  }
+  if (include_pressure)
+    ts.add("p", parse_xdmf(xdmffilename_p));
+  if (include_phi)
+    ts.add("phi", parse_xdmf(xdmffilename_phi));
+  partrac::phase("params");
 
-  u_prev_data_.resize(xdof.size());
-  u_next_data_.resize(xdof.size());
-  p_prev_data_.resize(xdof.size()/dim);
-  p_next_data_.resize(xdof.size()/dim);
-  phi_prev_data_.resize(xdof.size()/dim);
-  phi_next_data_.resize(xdof.size()/dim);
+  // The mesh the xdmf names, its cells along the Morton curve
+  simplex_load::MeshData m;
+  std::vector<std::uint32_t> cell_perm;
+  simplex_load::read_mesh_arrays(h5filename_u, topology_path, geometry_path, nv, m, cell_perm);
+  cell_perm.clear();
+  cell_perm.shrink_to_fit();
+  dim = m.gdim;
+  x_min = m.x_min;
+  x_max = m.x_max;
+  ncells_ = m.ncells;
+  nverts_ = m.nverts;
+  set_period();
 
+  // A periodic space gave a vertex and its images one dof, so they read one value
+  vclass_ = mesh_tables::match_periodic_vertices(m.coords, m.nverts, dim, periodic,
+                                                 x_min, x_max, periodic_tol);
+  partrac::phase("periodic vertices");
+
+  // The dofs are the vertices: no dofmap, and one node table for every field
+  ncoeffs_u = Uint(nv);
+  ncoeffs_p = Uint(nv);
   check_dofs_fit(ncoeffs_u, ncoeffs_p, Cell::n_dofs_max, "XDMFInterpol");
+  u_dofs_.fill(m.topo, std::vector<std::uint32_t>(), m.ncells, nv, ne, false, m.nverts,
+               vclass_.data());
+  u_dofs_.check_stride(ncoeffs_u, "XDMFInterpol");
+  partrac::phase("cell dofs");
+
+  mesh_tables::build_facet_neighbours<nv>(m.topo, m.ncells, m.coords, dim, periodic,
+                                          x_min, x_max, periodic_tol, facet_neigh_);
+  partrac::phase("facet table");
+
+  // Identify edge cells
+  near_wall::label_cell_type(cell_type_, facet_neigh_, nv);
+  std::cout << "Built neighbour list" << std::endl;
+
+  if (wall_p2_ == WallP2::Edge){
+    near_wall::build_wall_edges<Cell>(m.topo, m.coords, ncells_, nverts_, dim, facet_neigh_,
+                                      vclass_, wall_index_, wall_cells_, verbose);
+    partrac::phase("wall edges");
+  }
+
+  hmin_ = simplex_load::shortest_edge(m, nv);
+  topo_ = std::move(m.topo);
+  coords_ = std::move(m.coords);
+
+  // The per-cell geometry and the tree, from the topology
+  cells_.resize(ncells_);
+  {
+    const double* c = coords_.data();
+    const std::size_t g = dim;
+    const std::uint32_t* topo = topo_.data();
+#pragma omp parallel for schedule(static)
+    for (std::ptrdiff_t i = 0; i < std::ptrdiff_t(ncells_); ++i){
+      const std::uint32_t* row = topo + std::size_t(i)*nv;
+      if constexpr (nv == 4)
+        cells_[i] = Cell(c + std::size_t(row[0])*g, c + std::size_t(row[1])*g,
+                         c + std::size_t(row[2])*g, c + std::size_t(row[3])*g);
+      else
+        cells_[i] = Cell(c + std::size_t(row[0])*g, c + std::size_t(row[1])*g,
+                         c + std::size_t(row[2])*g);
+    }
+  }
+  partrac::phase("build cells");
+
+  tree_ = std::make_unique<partrac::CellTree>(topo_.data(), ncells_, nv, coords_.data(),
+                                              nverts_, dim, true);
+  partrac::phase("cell tree");
+  partrac::phase_total();
+
+  u_prev_data_.resize(nverts_*dim);
+  u_next_data_.resize(nverts_*dim);
+  p_prev_data_.resize(nverts_);
+  p_next_data_.resize(nverts_);
+  phi_prev_data_.resize(nverts_);
+  phi_next_data_.resize(nverts_);
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
+}
 
-  // Precomputing dofs
+template<typename Cell>
+bool XDMFInterpol<Cell>::locate_tree(const Vector3d& xx, CellPos& pos)
+{
+  const int id = tree_->locate(xx);
+  if (id < 0)
+    return false;
+  pos.id = id;
+  // The exact test decided the cell; the barycentrics are the cell's own, as
+  // every other path in this code computes them
+  cells_[id].contains(xx, pos.bary);
+  return true;
+}
 
-  const dolfin::GenericDofMap& u_dofmap = *u_space_->dofmap();
-  const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-  
-  u_dofs_.build(u_dofmap, dolfin_cells_, "XDMFInterpol");
-  u_dofs_.check_stride(D*ncoeffs_u, "XDMFInterpol");
-
-  p_dofs_.build(p_dofmap, dolfin_cells_, "XDMFInterpol");
-  p_dofs_.check_stride(ncoeffs_p, "XDMFInterpol");
-
-  if (wall_p2_ == WallP2::Edge)
-    build_wall_edges(periodic_tol);
+template<typename Cell>
+void XDMFInterpol<Cell>::read_stamp(const std::vector<std::string>& path, std::vector<double>& data,
+                                    const int ncols)
+{
+  read_dataset_columns(path[0], path[1], data, ncols);
+  if (data.size() != nverts_*std::size_t(ncols)){
+    partrac::fail(path[0], ": '", path[1], "' holds ", data.size()/std::size_t(ncols),
+                  " rows, the mesh has ", nverts_, " vertices");
+  }
 }
 
 template<typename Cell>
@@ -176,7 +161,7 @@ void XDMFInterpol<Cell>::update(const double t)
   // Always load once; keep last bracket past t_max
   if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) )
   {
-    std::vector<double> data_;
+    partrac::phase_begin("update");
     // Swap if possible
     if (is_initialized && t_next == sp.prev.t)
     {
@@ -188,47 +173,36 @@ void XDMFInterpol<Cell>::update(const double t)
       if (include_phi)
         phi_prev_data_.swap(phi_next_data_);
     }
-    else 
+    else
     {
       auto u_path_prev = ts.get_path("u", sp.prev.it);
       std::cout << "Prev: Timestep = " << sp.prev.t << ", file = " << u_path_prev[0] << ":" << u_path_prev[1] << std::endl;
-      read_dataset_vector(u_path_prev[0], u_path_prev[1], data_, dim);
-      reorder_indices(u_prev_data_, data_, j2i, dim);
+      read_stamp(u_path_prev, u_prev_data_, int(dim));
       if (wall_p2_ == WallP2::Edge)
         rest_tol_prev_ = rest_tol(u_prev_data_);
 
-      if (include_pressure){
-        auto p_path_prev = ts.get_path("p", sp.prev.it);
-        read_dataset_scalar(p_path_prev[0], p_path_prev[1], data_);
-        reorder_indices(p_prev_data_, data_, j2i, 1);
-      }
+      if (include_pressure)
+        read_stamp(ts.get_path("p", sp.prev.it), p_prev_data_, 1);
 
-      if (include_phi){
-        auto phi_path_prev = ts.get_path("phi", sp.prev.it);
-        read_dataset_scalar(phi_path_prev[0], phi_path_prev[1], data_);
-        reorder_indices(phi_prev_data_, data_, j2i, 1);
-      }
+      if (include_phi)
+        read_stamp(ts.get_path("phi", sp.prev.it), phi_prev_data_, 1);
     }
 
     auto u_path_next = ts.get_path("u", sp.next.it);
     std::cout << "Next: Timestep = " << sp.next.t << ", file = " << u_path_next[0] << ":" << u_path_next[1] << std::endl;
-    read_dataset_vector(u_path_next[0], u_path_next[1], data_, dim);
-    reorder_indices(u_next_data_, data_, j2i, dim);
+    read_stamp(u_path_next, u_next_data_, int(dim));
 
-    if (include_pressure){
-      auto p_path_next = ts.get_path("p", sp.next.it);
-      read_dataset_scalar(p_path_next[0], p_path_next[1], data_);
-      reorder_indices(p_next_data_, data_, j2i, 1);
-    }
+    if (include_pressure)
+      read_stamp(ts.get_path("p", sp.next.it), p_next_data_, 1);
 
-    if (include_phi){
-      auto phi_path_next = ts.get_path("phi", sp.next.it);
-      read_dataset_scalar(phi_path_next[0], phi_path_next[1], data_);
-      reorder_indices(phi_next_data_, data_, j2i, 1);
-    }
+    if (include_phi)
+      read_stamp(ts.get_path("phi", sp.next.it), phi_next_data_, 1);
 
     if (wall_p2_ == WallP2::Edge)
       rest_tol_next_ = rest_tol(u_next_data_);
+
+    partrac::phase("vector read");
+    partrac::phase_total();
 
     is_initialized = true;
     t_prev = sp.prev.t;
@@ -241,9 +215,13 @@ void XDMFInterpol<Cell>::update(const double t)
 template<typename Cell>
 double XDMFInterpol<Cell>::rest_tol(const std::vector<double>& u_data) const
 {
-  // Round-off of the largest velocity
+  // Round-off of the largest velocity a cell can read: an image vertex's own
+  // value is never gathered, its master's is
   double u_max = 0.;
-  for (const double u : u_data) u_max = std::max(u_max, std::abs(u));
+  for (std::size_t v = 0; v < nverts_; ++v){
+    if (vclass_[v] != v) continue;
+    for (Uint c = 0; c < dim; ++c) u_max = std::max(u_max, std::abs(u_data[v*dim + c]));
+  }
   return 1e-12*u_max;
 }
 
@@ -274,10 +252,11 @@ void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, cons
     if (include_pressure)
       cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
 
-  // Restrict solution to cell
+  // Restrict solution to cell: gathered by vertex, the D components consecutive
   std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
-  gather_stamps<D*Cell::n_verts, D*Cell::n_dofs_max>(u_dofs_[id], u_dofs_.stride(), u_prev_data_, u_next_data_,
-                u_prev_block.data(), u_next_block.data());
+  gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
+                      u_prev_data_.data(), u_next_data_.data(),
+                      u_prev_block.data(), u_next_block.data());
 
   // Evaluate
   Vector3d U_prev = block_value<D>(_Nu_.data(), u_prev_block.data(), ncoeffs_u);
@@ -332,8 +311,9 @@ void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, cons
   if constexpr (Scalars){
     if (include_pressure){
       std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
-      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
-                    p_prev_block.data(), p_next_block.data());
+      gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, 1>(u_dofs_[id], u_dofs_.stride(),
+                          p_prev_data_.data(), p_next_data_.data(),
+                          p_prev_block.data(), p_next_block.data());
       const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
       const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
       fields.P = _alpha_t * P_next + (1-_alpha_t) * P_prev;
@@ -341,8 +321,9 @@ void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, cons
 
     if (include_phi){
       std::array<double, Cell::n_dofs_max> phi_prev_block, phi_next_block;
-      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), phi_prev_data_, phi_next_data_,
-                    phi_prev_block.data(), phi_next_block.data());
+      gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, 1>(u_dofs_[id], u_dofs_.stride(),
+                          phi_prev_data_.data(), phi_next_data_.data(),
+                          phi_prev_block.data(), phi_next_block.data());
       const double Phi_prev = block_scalar(_Np_.data(), phi_prev_block.data(), ncoeffs_p);
       const double Phi_next = block_scalar(_Np_.data(), phi_next_block.data(), ncoeffs_p);
       fields.Phi = _alpha_t * Phi_next + (1-_alpha_t) * Phi_prev;
@@ -350,110 +331,6 @@ void XDMFInterpol<Cell>::evaluate_impl(const Vector3d &x, const double tin, cons
 
     fields.cell_type = cell_type_[id];
   }
-}
-
-template<>
-void XDMFInterpol<Triangle>::build_wall_edges(const double tol)
-{
-  // Periodic images of a vertex share its P1 dof
-  const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-  std::vector<std::size_t> vclass(mesh->num_vertices());
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    const auto dofs = p_dofmap.cell_dofs(dolfin_cells_[l].index());
-    for (int k = 0; k < 3; ++k) vclass[vi[k]] = dofs[k];
-  }
-  const std::size_t nv = p_dofmap.global_dimension();
-
-  // Wall normals at vertices, from non-periodic exterior facets
-  std::vector<Vector3d> n_sum(nv, Vector3d::Zero());
-  std::vector<Vector3d> n_first(nv, Vector3d::Zero());
-  std::vector<std::uint8_t> n_count(nv, 0);
-  std::vector<bool> corner(nv, false);
-  std::vector<Vector3d> facet_normal(mesh->num_facets(), Vector3d::Zero());
-  for (dolfin::FacetIterator f(*mesh); !f.end(); ++f){
-    if (!f->exterior()) continue;
-    const Vector3d pt(f->midpoint().coordinates());
-    bool periodic_facet = false;
-    for (Uint k = 0; k < dim; ++k)
-      if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
-        periodic_facet = true;
-    if (periodic_facet) continue;
-    const Vector3d n(f->normal().coordinates());
-    facet_normal[f->index()] = n;
-    for (dolfin::VertexIterator v(*f); !v.end(); ++v){
-      const std::size_t iv = vclass[v->index()];
-      if (n_count[iv] == 0) n_first[iv] = n;
-      else if (n_count[iv] > 1 || n_first[iv].dot(n) < 0.5) corner[iv] = true;   // over 60 degrees
-      n_sum[iv] += n;
-      ++n_count[iv];
-    }
-  }
-
-  // Side edges of wall cells: sum of facet normals, per fluid end and wall end
-  const std::array<std::array<int, 2>, 3> edge_ends = {{{0, 1}, {0, 2}, {1, 2}}};
-  const auto opposite_edges = [&](const dolfin::Cell& cell){
-    // ei[k]: the edge opposite vertex k
-    const auto* vi = cell.entities(0);
-    const auto* ce = cell.entities(1);
-    std::array<std::size_t, 3> ei{};
-    for (int j = 0; j < 3; ++j){
-      const auto* ev = dolfin::Edge(*mesh, ce[j]).entities(0);
-      for (int k = 0; k < 3; ++k)
-        if (ev[0] != vi[k] && ev[1] != vi[k]) ei[k] = ce[j];
-    }
-    return ei;
-  };
-  std::map<std::pair<std::size_t, std::size_t>, Vector3d> side_normal;
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    const auto ei = opposite_edges(dolfin_cells_[l]);
-    for (int k = 0; k < 3; ++k){
-      const Vector3d& n = facet_normal[ei[k]];
-      if (n.isZero()) continue;
-      for (int j = 0; j < 3; ++j){
-        if (j == k) continue;
-        side_normal.emplace(std::make_pair(vclass[vi[k]], vclass[vi[3 - j - k]]),
-                            Vector3d::Zero().eval()).first->second += n;
-      }
-    }
-  }
-
-  wall_index_.assign(mesh->num_cells(), -1);
-  wall_cells_.clear();
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    WallEdges w{};
-    for (int k = 0; k < 3; ++k)
-      if (n_count[vclass[vi[k]]] > 0) w.wall |= 1 << k;
-    if (w.wall == 0) continue;
-
-    for (int e = 0; e < 3; ++e){
-      for (int o = 0; o < 2; ++o){
-        WallEnd& we = w.ends[2*e + o];
-        const std::size_t iw = vi[edge_ends[e][o]];
-        const std::size_t iv = vi[edge_ends[e][1-o]];
-        const std::size_t cw = vclass[iw];
-        we = {0.5, 0., 0., 0.5};   // linear
-        if (n_count[cw] == 0 || corner[cw]) continue;
-        const Vector3d edge = Vector3d(dolfin::Vertex(*mesh, iv).point().coordinates())
-                            - Vector3d(dolfin::Vertex(*mesh, iw).point().coordinates());
-        // over two wall facets: their mean normal
-        const auto side = side_normal.find({vclass[iv], cw});
-        const Vector3d n = (side != side_normal.end() ? side->second : n_sum[cw]).normalized();
-        const double delta = edge.dot(n);
-        // v_n ~ delta^2, divergence-free wall cell
-        Vector3d q = -0.25*n;
-        if (std::abs(delta) > 0.1*edge.norm())
-          q += (edge - delta*n)/(2*delta);
-        // M = I/2 + q n^T
-        we = {0.5 + q[0]*n[0], q[0]*n[1], q[1]*n[0], 0.5 + q[1]*n[1]};
-      }
-    }
-    wall_index_[l] = wall_cells_.size();
-    wall_cells_.push_back(w);
-  }
-  std::cout << "Wall cells: " << wall_cells_.size() << std::endl;
 }
 
 template<>
@@ -467,7 +344,7 @@ bool XDMFInterpol<Triangle>::wall_block(const double* u, double* u2, const WallE
       rest |= 1u << k;
   if (rest == 0) return false;
 
-  const std::array<std::array<int, 2>, 3> edge_ends = {{{0, 1}, {0, 2}, {1, 2}}};
+  constexpr auto edge_ends = near_wall::WallRule<Triangle>::edge_ends;
   for (int k = 0; k < 3; ++k){
     const bool r = rest >> k & 1;
     u2[k] = r ? 0. : u[k];
@@ -477,7 +354,7 @@ bool XDMFInterpol<Triangle>::wall_block(const double* u, double* u2, const WallE
     const int a = edge_ends[e][0], c = edge_ends[e][1];
     const int m = Triangle::mid_[e];
     const bool wa = rest >> a & 1, wc = rest >> c & 1;
-    const WallEnd& we = w.ends[2*e + (wa ? 0 : 1)];
+    const near_wall::WallRule<Triangle>::End& we = w.ends[2*e + (wa ? 0 : 1)];
     if (wa != wc){
       const int v = wa ? c : a;
       const double ux = u[v], uy = u[ncoeffs_u + v];
@@ -493,100 +370,6 @@ bool XDMFInterpol<Triangle>::wall_block(const double* u, double* u2, const WallE
 }
 
 template<>
-void XDMFInterpol<Tet>::build_wall_edges(const double tol)
-{
-  // Periodic images of a vertex share its P1 dof
-  const dolfin::GenericDofMap& p_dofmap = *p_space_->dofmap();
-  std::vector<std::size_t> vclass(mesh->num_vertices());
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    const auto dofs = p_dofmap.cell_dofs(dolfin_cells_[l].index());
-    for (int k = 0; k < 4; ++k) vclass[vi[k]] = dofs[k];
-  }
-  const std::size_t nv = p_dofmap.global_dimension();
-
-  // Wall normals at vertices, from non-periodic exterior facets
-  std::vector<Vector3d> n_sum(nv, Vector3d::Zero());
-  std::vector<Vector3d> n_first(nv, Vector3d::Zero());
-  std::vector<std::uint8_t> n_count(nv, 0);
-  std::vector<bool> corner(nv, false);
-  std::vector<Vector3d> facet_normal(mesh->num_facets(), Vector3d::Zero());
-  for (dolfin::FacetIterator f(*mesh); !f.end(); ++f){
-    if (!f->exterior()) continue;
-    const Vector3d pt(f->midpoint().coordinates());
-    bool periodic_facet = false;
-    for (Uint k = 0; k < dim; ++k)
-      if (periodic[k] && (pt[k] < x_min[k] + tol || pt[k] > x_max[k] - tol))
-        periodic_facet = true;
-    if (periodic_facet) continue;
-    const Vector3d n(f->normal().coordinates());
-    facet_normal[f->index()] = n;
-    for (dolfin::VertexIterator v(*f); !v.end(); ++v){
-      const std::size_t iv = vclass[v->index()];
-      if (n_count[iv] == 0) n_first[iv] = n;
-      else if (n_first[iv].dot(n) < 0.5) corner[iv] = true;   // over 60 degrees
-      n_sum[iv] += n;
-      ++n_count[iv];
-    }
-  }
-
-  // Side edges of wall cells: sum of facet normals, per fluid end and wall end
-  std::map<std::pair<std::size_t, std::size_t>, Vector3d> side_normal;
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    const auto* fi = dolfin_cells_[l].entities(2);
-    for (int j = 0; j < 4; ++j){
-      const Vector3d& n = facet_normal[fi[j]];
-      if (n.isZero()) continue;
-      // the apex is the vertex off the facet
-      const auto* fv = dolfin::Facet(*mesh, fi[j]).entities(0);
-      for (int k = 0; k < 4; ++k){
-        if (vi[k] == fv[0] || vi[k] == fv[1] || vi[k] == fv[2]) continue;
-        for (int i = 0; i < 3; ++i)
-          side_normal.emplace(std::make_pair(vclass[vi[k]], vclass[fv[i]]),
-                              Vector3d::Zero().eval()).first->second += n;
-      }
-    }
-  }
-
-  const std::array<std::array<int, 2>, 6> edge_ends = {{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}}};
-  wall_index_.assign(mesh->num_cells(), -1);
-  wall_cells_.clear();
-  for (Uint l = 0; l < mesh->num_cells(); ++l){
-    const auto* vi = dolfin_cells_[l].entities(0);
-    WallEdges w{};
-    for (int k = 0; k < 4; ++k)
-      if (n_count[vclass[vi[k]]] > 0) w.wall |= 1 << k;
-    if (w.wall == 0) continue;
-
-    for (int e = 0; e < 6; ++e){
-      for (int o = 0; o < 2; ++o){
-        WallEnd& we = w.ends[2*e + o];
-        const std::size_t iw = vi[edge_ends[e][o]];
-        const std::size_t iv = vi[edge_ends[e][1-o]];
-        const std::size_t cw = vclass[iw];
-        we = {0., 0., 0., 0., 0., 0.};   // linear
-        if (n_count[cw] == 0 || corner[cw]) continue;
-        const Vector3d edge = Vector3d(dolfin::Vertex(*mesh, iv).point().coordinates())
-                            - Vector3d(dolfin::Vertex(*mesh, iw).point().coordinates());
-        // over several wall facets: their mean normal
-        const auto side = side_normal.find({vclass[iv], cw});
-        const Vector3d n = (side != side_normal.end() ? side->second : n_sum[cw]).normalized();
-        const double delta = edge.dot(n);
-        // v_n ~ delta^2, divergence-free wall cell
-        Vector3d q = -0.25*n;
-        if (std::abs(delta) > 0.1*edge.norm())
-          q += (edge - delta*n)/(4*delta);
-        we = {q[0], q[1], q[2], n[0], n[1], n[2]};
-      }
-    }
-    wall_index_[l] = wall_cells_.size();
-    wall_cells_.push_back(w);
-  }
-  std::cout << "Wall cells: " << wall_cells_.size() << std::endl;
-}
-
-template<>
 bool XDMFInterpol<Tet>::wall_block(const double* u, double* u2, const WallEdges& w,
                                  const double tol) const
 {
@@ -598,7 +381,7 @@ bool XDMFInterpol<Tet>::wall_block(const double* u, double* u2, const WallEdges&
       rest |= 1u << k;
   if (rest == 0) return false;
 
-  const std::array<std::array<int, 2>, 6> edge_ends = {{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}}};
+  constexpr auto edge_ends = near_wall::WallRule<Tet>::edge_ends;
   for (int k = 0; k < 4; ++k){
     const bool r = rest >> k & 1;
     for (int c = 0; c < 3; ++c)
@@ -608,7 +391,7 @@ bool XDMFInterpol<Tet>::wall_block(const double* u, double* u2, const WallEdges&
     const int a = edge_ends[e][0], b = edge_ends[e][1];
     const int m = Tet::mid_[e];
     const bool wa = rest >> a & 1, wb = rest >> b & 1;
-    const WallEnd& we = w.ends[2*e + (wa ? 0 : 1)];
+    const near_wall::WallRule<Tet>::End& we = w.ends[2*e + (wa ? 0 : 1)];
     if (wa != wb){
       const int v = wa ? b : a;
       const double ux = u[v], uy = u[ncoeffs_u + v], uz = u[2*ncoeffs_u + v];
@@ -627,5 +410,3 @@ bool XDMFInterpol<Tet>::wall_block(const double* u, double* u2, const WallEdges&
 
 template class XDMFInterpol<Triangle>;
 template class XDMFInterpol<Tet>;
-
-#endif

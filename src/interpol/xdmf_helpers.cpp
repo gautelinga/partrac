@@ -1,94 +1,21 @@
 #include "Error.hpp"
+#include "h5direct.hpp"
 #include "xdmf_helpers.hpp"
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/xml_parser.hpp>
 #include <filesystem>
 #include <iostream>
 
 namespace pt = boost::property_tree;
 
-void read_dataset_scalar(std::string& h5filename, std::string& field, std::vector<double>& data){
-    H5::H5File h5file(h5filename, H5F_ACC_RDONLY);
-    H5::DataSet dataset = h5file.openDataSet(field.c_str());
-    H5::DataSpace dataspace = dataset.getSpace();
-
-    // Move out, probably
-    const int rank = 2;
-    // getSimpleExtentDims writes one entry per dimension
-    const int ndims = dataspace.getSimpleExtentNdims();
-    if (ndims != rank){
-      partrac::fail("XDMF: '", field, "' in ", h5filename, " has rank ", ndims, ", expected ", rank, ".");
-    }
-    std::vector<hsize_t> shape(rank);
-    dataspace.getSimpleExtentDims( shape.data(), NULL);
-    shape[1] = 1;
-    std::pair<std::int64_t, std::int64_t> range = dolfin::MPI::local_range(MPI_COMM_WORLD, shape[0]);
-
-    // Hyperslab selection
-    std::vector<hsize_t> offset(rank, 0);
-    std::vector<hsize_t> count = shape;
-
-    offset[0] = range.first;
-    count[0] = range.second - range.first;
-
-    // Allocate data for shape
-    dataspace.selectHyperslab( H5S_SELECT_SET, count.data(), offset.data() );
-    H5::DataSpace memspace( rank, count.data() );
-    // memspace.selectHyperslab( H5S_SELECT_SET, count.data(), offset.data() );
-
-    std::size_t data_size = 1;
-    for (std::size_t i = 0; i < count.size(); ++i)
-    {
-      data_size *= count[i];
-    }
-    data.resize(data_size);
-
-    dataset.read( data.data(), H5::PredType::NATIVE_DOUBLE, memspace, dataspace );
-}
-
-void reorder_indices(std::vector<double>& data_, const std::vector<double>& xdata, const std::vector<Uint>& j2i, const int dim){
-  for ( Uint j=0; j < j2i.size(); ++j ){
-    Uint i = j2i[j];
-    for ( Uint k=0; k < static_cast<Uint>(dim); ++k)
-      data_[dim*j+k] = xdata[dim*i+k];
+void read_dataset_columns(const std::string& h5filename, const std::string& field,
+                          std::vector<double>& data, const int ncols){
+  const partrac::H5Id file = partrac::h5_open_read(h5filename);
+  const partrac::H5DatasetInfo info = partrac::h5_dataset_info(file, field);
+  if (info.rank() != 2){
+    partrac::fail("XDMF: '", field, "' in ", h5filename, " has rank ", info.rank(), ", expected 2.");
   }
-}
-
-void read_dataset_vector(std::string& h5filename_u, std::string& field, std::vector<double>& data, const int dim){
-    H5::H5File h5file_u(h5filename_u, H5F_ACC_RDONLY);
-    H5::DataSet dataset = h5file_u.openDataSet(field.c_str());
-    H5::DataSpace dataspace = dataset.getSpace();
-
-    // Move out, probably
-    const int rank = 2;
-    // getSimpleExtentDims writes one entry per dimension
-    const int ndims = dataspace.getSimpleExtentNdims();
-    if (ndims != rank){
-      partrac::fail("XDMF: '", field, "' in ", h5filename_u, " has rank ", ndims, ", expected ", rank, ".");
-    }
-    std::vector<hsize_t> shape(rank);
-    dataspace.getSimpleExtentDims( shape.data(), NULL);
-    shape[1] = dim;
-    std::pair<std::int64_t, std::int64_t> range = dolfin::MPI::local_range(MPI_COMM_WORLD, shape[0]);
-
-    // Hyperslab selection
-    std::vector<hsize_t> offset(rank, 0);
-    std::vector<hsize_t> count = shape;
-
-    offset[0] = range.first;
-    count[0] = range.second - range.first;
-
-    // Allocate data for shape
-    dataspace.selectHyperslab( H5S_SELECT_SET, count.data(), offset.data() );
-    H5::DataSpace memspace( rank, count.data() );
-    // memspace.selectHyperslab( H5S_SELECT_SET, count.data(), offset.data() );
-
-    std::size_t data_size = 1;
-    for (std::size_t i = 0; i < count.size(); ++i)
-    {
-      data_size *= count[i];
-    }
-    data.resize(data_size);
-
-    dataset.read( data.data(), H5::PredType::NATIVE_DOUBLE, memspace, dataspace );
+  partrac::h5_read(file, field, data, static_cast<std::size_t>(ncols));
 }
 
 std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename, 

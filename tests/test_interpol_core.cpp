@@ -16,17 +16,15 @@
 #include "typedefs.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
-#include "cell_locate.hpp"
-#include "dolfin_helpers.hpp"
-#include "dolfin_spaces.hpp"
+#include "dolfin_ref.hpp"
+#include "taylor_hood.hpp"
 #include "p12_eval.hpp"
-#include "PeriodicBC.hpp"
-#include "MeshInterpol.hpp"
+#include "MeshCore.hpp"
 #include "StructuredInterpol.hpp"
 
 namespace {
 
-// The walk, then the tree, as MeshInterpol::locate
+// The walk, then the tree, as MeshCore::locate
 template<typename Cell>
 bool locate_in_cells(const std::vector<Cell>& cells, const std::vector<std::int32_t>& across,
                      const dolfin::Mesh& mesh, const Uint dim, const Vector3d& xx, CellPos& pos,
@@ -333,7 +331,8 @@ struct Walk {
   explicit Walk(const bool periodic_x) : c(unit_mesh<Cell>(4, false)), periodic{periodic_x, false, false} {
     const Vector3d lo(0., 0., 0.), hi(1., 1., dim_of<Cell> == 3 ? 1. : 0.);
     build_facet_neighbours(across, c.mesh, c.dolfin_cells, nullptr, periodic, lo, hi, dim_of<Cell>, 1e-12);
-    period = periodic_lengths(periodic, lo, hi, dim_of<Cell>);
+    period = Vector3d::Zero();
+    if (periodic[0]) period[0] = hi[0] - lo[0];
   }
   // As the loaders' _modx
   Vector3d wrap(Vector3d x) const {
@@ -425,20 +424,36 @@ void check_periodic_walk(){
   REQUIRE(w.c.cells[pos.id].contains(Vector3d(0.95, 0.4, z), bary));
 }
 
-// MeshInterpol's cell tables on a unit mesh, without fields or files
+// The cell tables on a unit mesh, built from dolfin as DolfInterpol builds them,
+// without fields or files
 template<typename Cell>
-struct BareMesh : public MeshInterpol<Cell> {
-  using MeshInterpol<Cell>::dolfin_cells_;
+struct BareMesh : public MeshCore<Cell> {
+  std::shared_ptr<dolfin::Mesh> mesh;
+  std::vector<dolfin::Cell> dolfin_cells_;
   const Cell& cell(const int id) const { return this->cells_[id]; }
-  BareMesh(std::shared_ptr<dolfin::Mesh> m, const std::vector<bool>& periodic) : MeshInterpol<Cell>("") {
-    this->mesh = m;
+  BareMesh(std::shared_ptr<dolfin::Mesh> m, const std::vector<bool>& periodic) : MeshCore<Cell>("") {
+    mesh = m;
     this->periodic = periodic;
-    this->init_mesh_geometry();
+    this->dim = m->geometry().dim();
+    m->init();
+    const std::vector<double> xx = m->coordinates();
+    for (Uint i = 0; i < this->dim; ++i){ this->x_min[i] = xx[i]; this->x_max[i] = xx[i]; }
+    for (Uint i = 0; i < xx.size(); ++i){
+      const Uint d = i % this->dim;
+      this->x_min[d] = std::min(this->x_min[d], xx[i]);
+      this->x_max[d] = std::max(this->x_max[d], xx[i]);
+    }
+    this->hmin_ = m->hmin();
     for (dolfin::CellIterator c(*m); !c.end(); ++c){
-      this->dolfin_cells_.push_back(*c);
+      dolfin_cells_.push_back(*c);
       this->cells_.push_back(Cell(*c));
     }
-    this->build_facet_table();
+    build_facet_neighbours(this->facet_neigh_, mesh, dolfin_cells_, nullptr, this->periodic,
+                           this->x_min, this->x_max, this->dim, this->periodic_tol);
+    this->set_period();
+  }
+  bool locate_tree(const Vector3d& xx, CellPos& pos) override {
+    return tree_to_cell(this->cells_, *mesh, this->dim, xx, pos);
   }
   void update(const double) {}
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) {}
@@ -506,7 +521,7 @@ TEST_CASE("The walk crosses a periodic boundary into the image cell", "[interpol
   SECTION("tet") { check_periodic_walk<Tet>(); }
 }
 
-// MeshInterpol::locate, wrap included, on a box periodic in x and y
+// MeshCore::locate, wrap included, on a box periodic in x and y
 template<typename Cell>
 void check_periodic_locate(){
   const double z = dim_of<Cell> == 3 ? 0.45 : 0.;

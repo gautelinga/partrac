@@ -1,10 +1,12 @@
-#ifdef USE_DOLFIN
 #ifndef __TRIANGLE_HPP
 #define __TRIANGLE_HPP
 
-#include <dolfin.h>
 #include <array>
 #include "typedefs.hpp"
+
+#ifdef USE_DOLFIN
+namespace dolfin { class Cell; }
+#endif
 
 class alignas(64) Triangle
 {
@@ -15,7 +17,11 @@ public:
   static constexpr std::size_t n_dofs_max = 6;   // quadbasis writes this many
 
   Triangle() {}
+  // The three vertex coordinate pairs, in dolfin's local vertex order
+  Triangle(const double* x0, const double* x1, const double* x2);
+#ifdef USE_DOLFIN
   Triangle(const dolfin::Cell& cell);
+#endif
 
   void xy2bary(double x, double y,
                double &r, double &s, double &t) const;
@@ -71,6 +77,24 @@ public:
 };
 
 // Per-point functions
+
+inline Triangle::Triangle(const double* x0, const double* x1, const double* x2)
+{
+  x0_ = x0[0];
+  y0_ = x0[1];
+
+  double j11 = x1[0]-x0[0];
+  double j12 = x1[1]-x0[1];
+  double j21 = x2[0]-x0[0];
+  double j22 = x2[1]-x0[1];
+
+  const double det = j11 * j22 - j12*j21;
+
+  double d = 1.0/det;
+  g2x_ = j22*d;   g3x_ = -j12*d;
+  g2y_ = -j21*d;  g3y_ = j11*d;
+  g1x_ = -g2x_-g3x_;  g1y_ = -g2y_-g3y_;
+}
 
 inline void Triangle::xy2bary(double x, double y,
                               double &r, double &s, double &t) const
@@ -163,5 +187,4 @@ inline void Triangle::quadderiv( double r
   Ny[perm_[5]] = 4*(t*g1y_+r*g3y_);
 }
 
-#endif
 #endif

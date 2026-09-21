@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from paths import REPO, app, built_with_dolfin
+from paths import REPO, app
 
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -20,10 +20,6 @@ ARGS = ("mode=analytic dt=0.01 T=0.02 Nrw=10 Nrw_max=100 ds_max=0.1 ds_min=1e-9 
         "stat_intv=1e9 checkpoint_intv=1e9").split()
 
 needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
-# the mesh and XDMF loaders are not in a build without dolfin, which refuses
-# their modes before it reaches the error under test
-needs_dolfin = pytest.mark.skipif(not built_with_dolfin(),
-                                  reason="partrac was built without dolfin")
 
 
 SEED = ["init_mode=strip_x", "La=0.1", "x0=0", "y0=0", "z0=0"]
@@ -100,7 +96,6 @@ def mesh_case(src, tmp_path, edit):
 
 
 @needs_partrac
-@needs_dolfin
 def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
     f = mesh_case(mesh_dir("tet"), tmp_path,
                   lambda t: "".join("velocity_space=P7\n" if l.startswith("velocity_space") else l
@@ -111,7 +106,6 @@ def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
 
 
 @needs_partrac
-@needs_dolfin
 def test_an_xdmf_grid_without_a_time_is_reported(xdmf_dir, tmp_path):
     d = tmp_path / "case"
     shutil.copytree(xdmf_dir, d)

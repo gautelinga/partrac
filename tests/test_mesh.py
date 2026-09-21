@@ -2,8 +2,8 @@
 
 data_example ships generate_up.py but not the mesh.h5 it writes, so the meshes
 and fields are generated at test time by conftest (and, for XDMF, by the
-xdmf_steps fixture below). Generating them needs dolfin, so the whole module
-skips on a build without it. On both meshes |u| <= sqrt(3); the triangle case
+xdmf_steps fixture below). Generating them needs python dolfin; reading them
+does not, except in mode=fenics. On both meshes |u| <= sqrt(3); the triangle case
 is plane Poiseuille with u along y depending only on x, so x is conserved
 exactly along every trajectory.
 """
@@ -22,8 +22,12 @@ PARTRAC = app("partrac")
 INTERPOL = app("interpol")
 DATA = os.path.join(REPO, "data_example")
 
-pytestmark = pytest.mark.skipif(not built_with_dolfin(),
-                                reason="partrac was built without dolfin")
+# Every mode here but fenics is read from the file's arrays, so only the
+# fenics cases need a build with dolfin; writing the fixtures needs python
+# dolfin, which conftest's mesh_dir asks for.
+needs_fenics = [pytest.mark.fenics,
+                pytest.mark.skipif(not built_with_dolfin(),
+                                   reason="mode=fenics needs a build with dolfin")]
 
 # mode -> the mesh kind that conftest generates
 CASES = [("triangle", "triangle"), ("tet", "tet")]
@@ -134,10 +138,12 @@ def xdmf_steps(tmp_path_factory):
 # mode -> the mesh kind it runs on
 DEGENERATE = {"triangle": "triangle", "fenics": "triangle", "tet": "tet",
               "xdmftriangle": "triangle", "xdmftet": "tet"}
+DEGENERATE_PARAMS = [pytest.param(m, marks=needs_fenics) if m == "fenics" else m
+                     for m in DEGENERATE]
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
-@pytest.mark.parametrize("mode", list(DEGENERATE))
+@pytest.mark.parametrize("mode", DEGENERATE_PARAMS)
 @pytest.mark.parametrize("stamps", ["last", "single"])
 def test_fields_hold_on_a_degenerate_stamp_bracket(mesh_dir, xdmf_steps, tmp_path, mode, stamps):
     """On the last timestamp, or when there is only one, both ends of the time
@@ -199,6 +205,8 @@ def test_plane_poiseuille_on_a_mesh_conserves_x(mesh_case, tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.fenics
+@pytest.mark.skipif(not built_with_dolfin(), reason="mode=fenics needs a build with dolfin")
 def test_fenics_ignores_the_pressure_when_asked(mesh_dir, tmp_path):
     """ignore_pressure is a key of every mesh loader's file; mode=fenics read
     the pressure regardless until it came onto the shared mesh base. With the
@@ -230,6 +238,8 @@ def test_fenics_ignores_the_pressure_when_asked(mesh_dir, tmp_path):
 
 
 @pytest.mark.parametrize("dim", [2, 3])
+@pytest.mark.fenics
+@pytest.mark.skipif(not built_with_dolfin(), reason="mode=fenics needs a build with dolfin")
 def test_fenics_reads_a_p3_p2_field_exactly(tmp_path, dim):
     """mode=fenics takes P1 to P3, and nothing else ran the P3 velocity or the
     P2 pressure spaces. A cubic velocity and a quadratic pressure are held

@@ -59,7 +59,10 @@ jobs:
           test "$built" -eq $(echo $expected | wc -w) || {
             ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
 
-      - name: Test
+      - name: Test, without the cases that need dolfin
+        # unittest builds test_interpol_core, test_simplex_load, test_xdmf_load
+        # and test_freq_load only under USE_DOLFIN, so none of them runs here;
+        # the python mesh tests skip, having no dolfin to write a fixture with
         run: ctest --test-dir build --output-on-failure
 
   # Both build types carry the same warning flags, and the tree builds clean, so
@@ -128,9 +131,47 @@ jobs:
           built=$(find build/bin -maxdepth 1 -type f -executable | wc -l)
           test "$built" -eq $(echo $expected | wc -w) || {
             ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
-      - name: Test
-        # tests/test_mesh.py generates a mesh here rather than skipping
+      - name: Test, the whole suite
+        # here unittest also runs the cases behind USE_DOLFIN
+        # (test_interpol_core, test_simplex_load, test_xdmf_load,
+        # test_freq_load), and tests/test_mesh.py generates a mesh rather
+        # than skipping
         run: ctest --test-dir build --output-on-failure
+
+  # The build the mesh loaders are for since the direct loader: no dolfin in the
+  # binary, python dolfin in the image, so every mesh mode runs on fixtures
+  # dolfin writes. The one mode this build has not got is fenics; its tests are
+  # listed by name and deselected, so the gap in the run is in the log.
+  nodolfin_mesh:
+    name: dolfin OFF, mesh modes (FEniCS container)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools the tests need
+        # the image has pytest, numpy and dolfin; h5py reads the dumps and
+        # xdist runs the suite on every core
+        run: python3 -m pip install --no-cache-dir h5py pytest-xdist
+      - name: Configure
+        # as the dolfin job, but with the option off: Ninja, and HDF5_ROOT for
+        # the image's mpich build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+      - name: Unit tests, without the cases that need dolfin
+        # test_interpol_core, test_simplex_load, test_xdmf_load and
+        # test_freq_load are built only under USE_DOLFIN: the loaders are
+        # covered here by the python tests below instead
+        run: build/tests/unittest
+      - name: The tests this build cannot run
+        run: python3 -m pytest tests/ -m fenics --collect-only -q
+      - name: Python tests, the fenics cases deselected
+        run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q -n $(nproc) tests/ -m "not fenics" -rs
 
   # Which lines the tests run, reported to Codecov. A job of its own, in the
   # dolfin container since only there every app is built and the mesh tests

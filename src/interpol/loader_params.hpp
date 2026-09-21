@@ -11,8 +11,6 @@ inline void add_mesh_params(partrac::Schema& s, const bool three_d){
   s.opt<bool>("periodic_x", false, "periodic along x");
   s.opt<bool>("periodic_y", false, "periodic along y");
   s.opt<bool>("periodic_z", false, three_d ? "periodic along z" : "periodic along z; not read in 2D");
-  s.opt<std::string>("renumber_cells", "auto", "renumber cells by their dofs: auto (if poorly ordered), never, always");
-  s.choices("renumber_cells", {"auto", "never", "always"});
   s.optional<double>("rho", "density");
   s.opt<bool>("ignore_pressure", false, "do not read the pressure");
 }
@@ -31,6 +29,15 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   s.require<std::string>("mesh", "mesh file");
   s.require<std::string>("velocity_space", "velocity element, as P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
+  if (mode == "fenics"){
+    // Read by DolfInterpol only
+    s.opt<std::string>("renumber_cells", "auto", "renumber cells by their dofs: auto (if poorly ordered), never, always");
+    s.choices("renumber_cells", {"auto", "never", "always"});
+  }
+  else {
+    // Read by SimplexInterpol only
+    s.opt<bool>("mesh_cache", false, "keep the loaded tables beside the mesh and read them back");
+  }
   add_field_names(s);
   return s;
 }

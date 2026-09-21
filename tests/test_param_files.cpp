@@ -13,10 +13,11 @@
 // that reads it, so the key lists in loader_params.hpp and in the expressions'
 // add_params cover what the examples use; a key they miss would stop those
 // cases at startup. A plain dolfin file does not say which of tet, triangle
-// and fenics reads it, so it is checked against tet's keys, the widest; a
-// tet-only key in a file a triangle run reads is not caught here. Directories
-// in PARTRAC_PARAM_DIRS (colon separated) are scanned too, for case
-// collections kept outside the repository.
+// and fenics reads it, so it is checked against tet's keys; what a mode of its
+// own declares is not caught here, neither a tet-only key in a file a triangle
+// run reads nor renumber_cells, which only fenics takes. Directories in
+// PARTRAC_PARAM_DIRS (colon separated) are scanned too, for case collections
+// kept outside the repository.
 
 namespace {
 
@@ -39,7 +40,7 @@ partrac::Schema schema_for(const fs::path& file) {
   const std::string u = partrac::peek_file(path, "u");
   if (u.size() > 5 && u.substr(u.size() - 5) == ".xdmf")
     return xdmf_schema("xdmftet");
-  // tet declares every key the other dolfin modes do
+  // the mode is not in the file; tet is the one the examples are written for
   return dolfin_h5_schema("tet");
 }
 

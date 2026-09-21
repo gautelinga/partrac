@@ -12,13 +12,19 @@ FetchContent_MakeAvailable(catch)
 add_executable(unittest
   test_main.cpp
   test_io.cpp
+  test_h5direct.cpp
   test_params.cpp
   test_rng.cpp
   test_expressions.cpp
   test_schemas.cpp
   test_mesh_core.cpp
+  test_mesh_tables.cpp
   test_param_files.cpp
   test_interpol_core.cpp
+  test_cell_tree.cpp
+  test_simplex_load.cpp
+  test_xdmf_load.cpp
+  test_freq_load.cpp
 )
 
 target_link_libraries(unittest
