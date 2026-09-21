@@ -23,7 +23,9 @@ add_executable(unittest
   test_interpol_core.cpp
   test_cell_tree.cpp
   test_simplex_load.cpp
+  test_stamp_buffer.cpp
   test_xdmf_load.cpp
+  test_stamped_formats.cpp
   test_freq_load.cpp
 )
 

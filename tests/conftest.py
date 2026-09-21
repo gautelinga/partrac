@@ -36,6 +36,7 @@ MESH_KINDS = {
     "triangle": ("ppf_triangle_p2", ["-dim", "1"]),
     "tet": ("test_tet_p2", []),
     "trianglefreq": ("sine_trianglefreq_p2", []),
+    "tetfreq": ("sine_tetfreq_p2", []),
 }
 
 

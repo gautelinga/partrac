@@ -10,6 +10,7 @@
 #include "TriangleInterpol.hpp"
 #include "TetInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
+#include "TetFreqInterpol.hpp"
 #include "XDMFTriangleInterpol.hpp"
 #include "XDMFTetInterpol.hpp"
 #ifdef USE_DOLFIN
@@ -27,6 +28,7 @@ inline auto with_concrete(Interpol& ip, F&& f){
   if (auto* p = dynamic_cast<TriangleInterpol*>(&ip)) return f(*p);
   if (auto* p = dynamic_cast<TetInterpol*>(&ip)) return f(*p);
   if (auto* p = dynamic_cast<TriangleFreqInterpol*>(&ip)) return f(*p);
+  if (auto* p = dynamic_cast<TetFreqInterpol*>(&ip)) return f(*p);
   if (auto* p = dynamic_cast<XDMFTriangleInterpol*>(&ip)) return f(*p);
   if (auto* p = dynamic_cast<XDMFTetInterpol*>(&ip)) return f(*p);
 #ifdef USE_DOLFIN

@@ -61,7 +61,7 @@ inline partrac::Schema weighted_walkers_schema(){
   s.runtime<int>("filter_target", 0, "a cloud: no filtering");
 
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
   s.choices("exit_plane", {"none", "x", "y", "z"});
   // Strip or circle, two direction tokens
   s.check([](const partrac::Params& p){

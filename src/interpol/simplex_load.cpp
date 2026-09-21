@@ -414,14 +414,147 @@ double shortest_edge(const MeshData& m, const int nv){
   return m.ncells ? std::sqrt(h) : 0.;
 }
 
+int declared_degree(const std::string& space, const char* what){
+  if (space == "P1") return 1;
+  if (space == "P2") return 2;
+  partrac::fail("unrecognized ", what, " element: ", space);
+  return 0;
+}
+
+void build_tables(const Request& r, Tables& t){
+  const int nv = r.nv;
+  const int ne = nv*(nv-1)/2;
+  t.nv = nv;
+  MeshData& m = t.mesh;
+  {
+    std::vector<std::uint32_t> cell_perm;
+    read_mesh(r.mesh_file, nv, m, cell_perm);
+  }
+
+  // The element comes from the file; the parameter file must not claim another
+  t.el_u = read_element(r.field_file, r.u_field, nv);
+  if (r.include_pressure)
+    t.el_p = read_element(r.field_file, r.p_field, nv);
+  if (r.want_u != t.el_u.degree)
+    partrac::fail(r.infilename, ": velocity_space is P", r.want_u, ", but '", r.u_field,
+                  "' in ", r.field_file, " is of degree ", t.el_u.degree);
+  if (r.include_pressure && r.want_p != t.el_p.degree)
+    partrac::fail(r.infilename, ": pressure_space is P", r.want_p, ", but '", r.p_field,
+                  "' in ", r.field_file, " is of degree ", t.el_p.degree);
+  if (t.el_u.ncomp != std::size_t(nv - 1))
+    partrac::fail(r.field_file, ": '", r.u_field, "' has ", t.el_u.ncomp, " components, not ", nv - 1);
+  if (r.include_pressure && t.el_p.ncomp != 1)
+    partrac::fail(r.field_file, ": '", r.p_field, "' has ", t.el_p.ncomp, " components, not one");
+  if (r.include_phi){
+    t.el_phi = read_element(r.field_file, r.phi_field, nv);
+    if (t.el_phi.ncomp != 1)
+      partrac::fail(r.field_file, ": '", r.phi_field, "' has ", t.el_phi.ncomp, " components, not one");
+  }
+  t.ncoeffs_u = Uint(nodes_per_cell(nv, t.el_u.degree));
+  t.ncoeffs_p = r.include_pressure ? Uint(nodes_per_cell(nv, t.el_p.degree)) : 0;
+  t.ncoeffs_phi = r.include_phi ? Uint(nodes_per_cell(nv, t.el_phi.degree)) : 0;
+  check_dofs_fit(t.ncoeffs_u, std::max(t.ncoeffs_p, t.ncoeffs_phi), r.n_dofs_max, r.what);
+
+  // The edges, when any field carries midside nodes
+  const bool quadratic = t.el_u.degree == 2 || (r.include_pressure && t.el_p.degree == 2)
+                      || (r.include_phi && t.el_phi.degree == 2);
+  if (quadratic)
+    t.nedges = nv == 4 ? mesh_tables::build_edge_table<4>(m.topo, m.ncells, t.edges)
+                       : mesh_tables::build_edge_table<3>(m.topo, m.ncells, t.edges);
+  partrac::phase("edge table");
+
+  // The nodes along the cells' Morton curve, where the file numbers them without locality
+  const double span = node_span(m, nv);
+  std::cout << "Mean vertex-id span of a cell: " << span << " of the vertices" << std::endl;
+  if (span > node_span_max){
+    std::cout << "Node order: renumbering nodes along the cells' curve" << std::endl;
+    if (quadratic)
+      t.map_quad = morton_node_order(m, t.edges, t.nedges, nv);
+    if (t.el_u.degree == 1 || (r.include_pressure && t.el_p.degree == 1)
+        || (r.include_phi && t.el_phi.degree == 1))
+      t.map_lin = morton_node_order(m, std::vector<std::uint32_t>(), 0, nv);
+    partrac::phase("node order");
+  }
+
+  // A node and its periodic images are one node, the master's dof serving all
+  t.np.build(m, t.edges, t.nedges, nv, r.periodic, m.x_min, m.x_max, r.periodic_tol);
+
+  const std::size_t n_u = m.nverts + (t.el_u.degree == 2 ? t.nedges : 0);
+  const std::vector<std::uint32_t> nodes_u = t.np.masters(t.node_order(t.el_u), n_u);
+  t.u_dofs.fill(m.topo, t.edges, m.ncells, nv, ne, t.el_u.degree == 2, m.nverts,
+                nodes_u.empty() ? nullptr : nodes_u.data());
+  t.u_dofs.check_stride(t.ncoeffs_u, r.what);
+  if (r.include_pressure){
+    const std::size_t n_p = m.nverts + (t.el_p.degree == 2 ? t.nedges : 0);
+    const std::vector<std::uint32_t> nodes_p = t.np.masters(t.node_order(t.el_p), n_p);
+    t.p_dofs.fill(m.topo, t.edges, m.ncells, nv, ne, t.el_p.degree == 2, m.nverts,
+                  nodes_p.empty() ? nullptr : nodes_p.data());
+    t.p_dofs.check_stride(t.ncoeffs_p, r.what);
+  }
+  if (r.include_phi){
+    const std::size_t n_phi = m.nverts + (t.el_phi.degree == 2 ? t.nedges : 0);
+    const std::vector<std::uint32_t> nodes_phi = t.np.masters(t.node_order(t.el_phi), n_phi);
+    t.phi_dofs.fill(m.topo, t.edges, m.ncells, nv, ne, t.el_phi.degree == 2, m.nverts,
+                    nodes_phi.empty() ? nullptr : nodes_phi.data());
+    t.phi_dofs.check_stride(t.ncoeffs_phi, r.what);
+  }
+  partrac::phase("cell dofs");
+
+  if (nv == 4)
+    mesh_tables::build_facet_neighbours<4>(m.topo, m.ncells, m.coords, m.gdim, r.periodic,
+                                           m.x_min, m.x_max, r.periodic_tol, t.facets);
+  else
+    mesh_tables::build_facet_neighbours<3>(m.topo, m.ncells, m.coords, m.gdim, r.periodic,
+                                           m.x_min, m.x_max, r.periodic_tol, t.facets);
+  partrac::phase("facet table");
+
+  t.hmin = shortest_edge(m, nv);
+}
+
+void read_field_by_node(const std::string& path, const std::string& field, const Tables& t,
+                        const Element& el, const std::vector<std::uint32_t>& node_map,
+                        std::vector<double>& values, mesh_tables::DofNodes& map){
+  const MeshData& m = t.mesh;
+  const bool quadratic = el.degree == 2;
+  const std::vector<std::uint32_t> no_edges;
+  const std::vector<std::uint32_t>& edges = quadratic ? t.edges : no_edges;
+  const std::size_t nedges = quadratic ? t.nedges : 0;
+  std::vector<std::uint32_t> rows;
+  std::vector<double> vec;
+  read_field(path, field, m, el, t.nv, rows, vec);
+  if (t.nv == 4)
+    mesh_tables::scatter_dofs_to_nodes<4>(m.topo, edges, m.ncells, m.nverts, nedges, el.ncomp,
+                                          rows, vec, values, map);
+  else
+    mesh_tables::scatter_dofs_to_nodes<3>(m.topo, edges, m.ncells, m.nverts, nedges, el.ncomp,
+                                          rows, vec, values, map);
+  rows.clear();
+  rows.shrink_to_fit();
+  partrac::phase("scatter");
+  t.np.check(values, el.ncomp, path, field);
+  if (node_map.empty()) return;
+  const std::size_t ncomp = el.ncomp;
+  const std::size_t n_total = values.size()/ncomp;
+  std::vector<double> moved(values.size());
+#pragma omp parallel for schedule(static)
+  for (std::size_t n = 0; n < n_total; ++n)
+    for (std::size_t c = 0; c < ncomp; ++c)
+      moved[std::size_t(node_map[n])*ncomp + c] = values[n*ncomp + c];
+  values.swap(moved);
+#pragma omp parallel for schedule(static)
+  for (std::size_t q = 0; q < map.slot.size(); ++q)
+    map.slot[q] = std::uint32_t(std::size_t(node_map[map.slot[q]/ncomp])*ncomp + map.slot[q] % ncomp);
+  partrac::phase("node renumbering");
+}
+
 namespace {
 
 // The cache's own format; a change here invalidates every cache written before
-constexpr int cache_version = 2;
+constexpr int cache_version = 3;
 
 // Scalars, in the order cache_write puts them
 enum Scalar { S_NCELLS, S_NVERTS, S_GDIM, S_NCOEFFS_U, S_NCOEFFS_P, S_NCOMP_U, S_HMIN,
-              S_XMIN, S_XMAX = S_XMIN + 3, S_COUNT = S_XMAX + 3 };
+              S_XMIN, S_XMAX = S_XMIN + 3, S_NCOEFFS_PHI = S_XMAX + 3, S_COUNT };
 
 template<typename T>
 void cache_put(const hid_t file, const char* name, const std::vector<T>& v){
@@ -522,6 +655,7 @@ bool cache_read(const std::string& path, const std::string& key, CacheTables& c)
   c.gdim = Uint(sc[S_GDIM]);
   c.ncoeffs_u = Uint(sc[S_NCOEFFS_U]);
   c.ncoeffs_p = Uint(sc[S_NCOEFFS_P]);
+  c.ncoeffs_phi = Uint(sc[S_NCOEFFS_PHI]);
   c.ncomp_u = std::size_t(sc[S_NCOMP_U]);
   c.hmin = sc[S_HMIN];
   for (int d = 0; d < 3; ++d){ c.x_min[d] = sc[S_XMIN + d]; c.x_max[d] = sc[S_XMAX + d]; }
@@ -544,6 +678,13 @@ bool cache_read(const std::string& path, const std::string& key, CacheTables& c)
     partrac::h5_read(file, "p_values", c.p_values);
     if (!cache_get_map(file, "p", c.p_map) || !values_fit(c.p_values, c.p_nodes, c.p_map, 1))
       return cache_bad(path, "the pressure values");
+  }
+  if (c.ncoeffs_phi > 0){
+    if (!cache_get(file, "phi_nodes", c.phi_nodes, c.ncells*std::size_t(c.ncoeffs_phi)))
+      return cache_bad(path, "the phase field node table");
+    partrac::h5_read(file, "phi_values", c.phi_values);
+    if (!cache_get_map(file, "phi", c.phi_map) || !values_fit(c.phi_values, c.phi_nodes, c.phi_map, 1))
+      return cache_bad(path, "the phase field values");
   }
   return true;
 }
@@ -569,6 +710,7 @@ void cache_write(const std::string& path, const std::string& key, const CacheTab
   sc[S_GDIM] = double(c.gdim);
   sc[S_NCOEFFS_U] = double(c.ncoeffs_u);
   sc[S_NCOEFFS_P] = double(c.ncoeffs_p);
+  sc[S_NCOEFFS_PHI] = double(c.ncoeffs_phi);
   sc[S_NCOMP_U] = double(c.ncomp_u);
   sc[S_HMIN] = c.hmin;
   for (int d = 0; d < 3; ++d){ sc[S_XMIN + d] = c.x_min[d]; sc[S_XMAX + d] = c.x_max[d]; }
@@ -582,6 +724,9 @@ void cache_write(const std::string& path, const std::string& key, const CacheTab
   cache_put(file, "p_nodes", c.p_nodes);
   cache_put(file, "p_values", c.p_values);
   cache_put_map(file, "p", c.p_map);
+  cache_put(file, "phi_nodes", c.phi_nodes);
+  cache_put(file, "phi_values", c.phi_values);
+  cache_put_map(file, "phi", c.phi_map);
   cache_put_string(file, "key", key);
   cache_put_string(file, "stamp", c.stamp);
 }

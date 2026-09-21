@@ -80,7 +80,7 @@ public:
   MultiStampPair get(const double);
   double get_t_min() const { return t_min; };
   double get_t_max() const { return t_max; };
-  std::vector<std::string> get_path(const std::string& field, const Uint it){ return stamps[field][it]; }
+  std::vector<std::string> get_path(const std::string& field, const Uint it) const { return stamps.at(field)[it]; }
 private:
   std::vector<double> t_;
   std::map<std::string, std::vector<std::vector<std::string>>> stamps;

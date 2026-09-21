@@ -44,8 +44,10 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/cell_tree.cpp
   interpol/MeshCore.cpp
   interpol/SimplexInterpol.cpp
+  interpol/SimplexInterpol_eval.cpp
+  interpol/XDMFInterpol_eval.cpp
   interpol/simplex_load.cpp
-  interpol/TriangleFreqInterpol.cpp
+  interpol/SimplexFreqInterpol.cpp
   interpol/XDMFInterpol.cpp
   interpol/near_wall.cpp
   interpol/xdmf_helpers.cpp
@@ -80,7 +82,8 @@ endif()
 # The step loops, compiled once per interpolator; the same list as with_concrete
 # (interpol_dispatch.hpp) and set_interpolate_mode (interpol_factory.cpp)
 set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol StructuredConstInterpol
-  TetInterpol TriangleInterpol TriangleFreqInterpol XDMFTriangleInterpol XDMFTetInterpol)
+  TetInterpol TriangleInterpol TriangleFreqInterpol TetFreqInterpol
+  XDMFTriangleInterpol XDMFTetInterpol)
 set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
 if (PARTRAC_ENABLE_DOLFIN)
   set(PARTRAC_DOLFIN_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol)

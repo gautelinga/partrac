@@ -21,7 +21,7 @@ inline partrac::Schema interpol_schema(){
   s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
   return s;
 }
 

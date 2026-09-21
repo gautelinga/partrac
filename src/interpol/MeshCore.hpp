@@ -9,10 +9,12 @@
 
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include "Interpol.hpp"
 #include "Params.hpp"
+#include "cell_tree.hpp"
 #include "cell_walk.hpp"
 #include "geometry.hpp"
 
@@ -37,8 +39,8 @@ protected:
   void read_mesh_params();
   // The box lengths along the periodic axes, once x_min and x_max are final
   void set_period();
-  // Out of the step loops: from nothing known, whatever the loader's tree is
-  virtual bool locate_tree(const Vector3d& xx, CellPos& pos) = 0;
+  // Out of the step loops: the cell tree, from nothing known
+  bool locate_tree(const Vector3d& xx, CellPos& pos);
   // Into the box along the periodic axes
   Vector3d _modx(const Vector3d& x) const {
     Vector3d x_loc = x;
@@ -61,6 +63,8 @@ protected:
   Uint ncoeffs_p = 0;   // stays 0 when pressure is ignored
 
   std::vector<Cell> cells_;
+  // The cells from nothing known; it addresses the loader's own arrays
+  std::unique_ptr<partrac::CellTree> tree_;
   std::vector<std::int32_t> facet_neigh_;     // walk_to_cell, reflect_in_cells
   Vector3d period_ = Vector3d::Zero();
   CellDofs u_dofs_;

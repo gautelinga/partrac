@@ -35,8 +35,9 @@ partrac::Schema schema_for(const fs::path& file) {
       throw partrac::ParamError(path, {"unknown expression"});
     return expression_schema(*kind);
   }
+  // the mode is not in the file; the two freq modes declare the same keys
   if (!partrac::peek_file(path, "freqstamps").empty())
-    return triangle_freq_schema();
+    return simplex_freq_schema("trianglefreq");
   const std::string u = partrac::peek_file(path, "u");
   if (u.size() > 5 && u.substr(u.size() - 5) == ".xdmf")
     return xdmf_schema("xdmftet");

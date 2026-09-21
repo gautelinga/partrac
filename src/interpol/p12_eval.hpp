@@ -57,6 +57,25 @@ inline void gather_stamps_nodes(const std::uint32_t* nodes, const std::size_t st
     gather_nodes_n<N2, Dim>(nodes, prev, next, block_prev, block_next);
 }
 
+template<std::size_t N, int Dim>
+inline void gather_node_values_n(const std::uint32_t* nodes, const double* values, double* block){
+  for (std::size_t i = 0; i < N; ++i){
+    const std::size_t o = std::size_t(nodes[i])*Dim;
+    for (int c = 0; c < Dim; ++c)
+      block[std::size_t(c)*N + i] = values[o + std::size_t(c)];
+  }
+}
+
+// The nodes of this cell out of one field; P1 and P2 gather a fixed count
+template<std::size_t N1, std::size_t N2, int Dim>
+inline void gather_cell_nodes(const std::uint32_t* nodes, const std::size_t stride,
+                              const double* values, double* block){
+  if (stride == N1)
+    gather_node_values_n<N1, Dim>(nodes, values, block);
+  else
+    gather_node_values_n<N2, Dim>(nodes, values, block);
+}
+
 inline double block_scalar(const double* N, const double* block, const Uint ncoeffs){
   return std::inner_product(N, N + ncoeffs, block, 0.0);
 }

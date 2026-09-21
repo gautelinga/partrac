@@ -26,6 +26,21 @@ void MeshCore<Cell>::set_period(){
 }
 
 template<typename Cell>
+bool MeshCore<Cell>::locate_tree(const Vector3d& xx, CellPos& pos)
+{
+  if (!tree_)
+    return false;
+  const int id = tree_->locate(xx);
+  if (id < 0)
+    return false;
+  pos.id = id;
+  // The exact test decided the cell; the barycentrics are the cell's own, as
+  // every other path in this code computes them
+  cells_[id].contains(xx, pos.bary);
+  return true;
+}
+
+template<typename Cell>
 void MeshCore<Cell>::enable_reflection()
 {
   can_reflect = true;

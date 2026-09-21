@@ -53,7 +53,8 @@ and the choices it used to fix pinned (`apps/CMakeLists.txt`).
 
 ## Mesh examples
 The `data_example` folders for the mesh modes (`ppf_triangle_p2`,
-`test_triangle_p2`, `test_tet_p1`, `test_tet_p2`, `sine_trianglefreq_p2`) ship a
+`test_triangle_p2`, `test_tet_p1`, `test_tet_p2`, `sine_trianglefreq_p2`,
+`sine_tetfreq_p2`) ship a
 `generate_up.py` rather than the mesh itself. Run it inside the folder to write
 `mesh.h5` and `up_0.h5`:
 ```

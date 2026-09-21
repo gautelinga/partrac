@@ -68,7 +68,7 @@ inline void add_common(partrac::Schema& s, const TracerDefaults& d){
   s.runtime<int>("filter_target", 0, "a cloud: no filtering");
 
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
   s.token_choices("init_mode", "_", {"points"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");

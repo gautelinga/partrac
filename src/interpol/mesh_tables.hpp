@@ -8,13 +8,45 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
+#include "cell_tree.hpp"
 #include "cell_walk.hpp"
+#include "phase_timing.hpp"
 #include "typedefs.hpp"
 
 namespace mesh_tables {
+
+// The per-cell geometry and the tree over it, from the topology and the
+// coordinates; both keep pointing into the caller's arrays
+template<typename Cell>
+inline void build_cells_and_tree(const std::vector<std::uint32_t>& topo,
+                                 const std::vector<double>& coords,
+                                 const std::size_t ncells, const std::size_t nverts,
+                                 const Uint gdim, std::vector<Cell>& cells,
+                                 std::unique_ptr<partrac::CellTree>& tree){
+  constexpr int nv = Cell::n_verts;
+  cells.resize(ncells);
+  const double* c = coords.data();
+  const std::size_t g = gdim;
+  const std::uint32_t* rows = topo.data();
+#pragma omp parallel for schedule(static)
+  for (std::ptrdiff_t i = 0; i < std::ptrdiff_t(ncells); ++i){
+    const std::uint32_t* row = rows + std::size_t(i)*nv;
+    if constexpr (nv == 4)
+      cells[i] = Cell(c + std::size_t(row[0])*g, c + std::size_t(row[1])*g,
+                      c + std::size_t(row[2])*g, c + std::size_t(row[3])*g);
+    else
+      cells[i] = Cell(c + std::size_t(row[0])*g, c + std::size_t(row[1])*g,
+                      c + std::size_t(row[2])*g);
+  }
+  partrac::phase("build cells");
+  tree = std::make_unique<partrac::CellTree>(topo.data(), ncells, nv, coords.data(),
+                                             nverts, gdim, true);
+  partrac::phase("cell tree");
+}
 
 // Facet k of a cell faces vertex k; across it: a cell, a wall, or a periodic
 // image, encoded as the walk encodes it

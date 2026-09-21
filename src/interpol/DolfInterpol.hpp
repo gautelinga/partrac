@@ -24,9 +24,16 @@ class DolfInterpol final
 public:
   DolfInterpol(const std::string& infilename);
   void update(const double t);
+  // The walk first; the fallback is dolfin's tree, not MeshCore's
+  bool locate(const Vector3d &x, const double t, CellPos& pos){
+    assert(t <= t_next && t >= t_prev);
+    const Vector3d xx = _modx(x);
+    return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos);
+  }
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
+  using MeshCore<Cell>::locate;
 protected:
   static constexpr int D = Cell::n_verts - 1;
   using Base = MeshCore<Cell>;
@@ -47,8 +54,8 @@ protected:
   void build_cells(const dolfin::GenericDofMap& dofmap);
   // The neighbour across each facet: a cell, a wall or a periodic image
   void build_facet_table();
-  // Out of the step loops: the tree, when the walk does not find the cell
-  bool locate_tree(const Vector3d& xx, CellPos& pos) override;
+  // Out of the step loops: dolfin's bounding box tree, from nothing known
+  bool locate_tree(const Vector3d& xx, CellPos& pos);
 
   std::shared_ptr<dolfin::Mesh> mesh;
   std::shared_ptr<dolfin::FunctionSpace> u_space_;

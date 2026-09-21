@@ -37,21 +37,28 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   else {
     // Read by SimplexInterpol only
     s.opt<bool>("mesh_cache", false, "keep the loaded tables beside the mesh and read them back");
+    s.opt<bool>("include_phi", false, "read a phase field");
+    s.opt<std::string>("phase_field", "phi", "phase field dataset in the field files");
+    s.opt<std::string>("wall_p2", "none", "P1 velocity next to walls at rest: edge (quadratic) or none; "
+                                           "the XDMF modes default to edge");
+    s.choices("wall_p2", {"edge", "none"});
   }
   add_field_names(s);
   return s;
 }
 
-// A time series as frequency components: mode trianglefreq
-inline partrac::Schema triangle_freq_schema(){
-  partrac::Schema s("dolfin_params.dat, mode=trianglefreq", "");
-  add_mesh_params(s, false);
-  s.require<std::string>("freqstamps", "file listing each component's time shift, amplitude and field file");
+// A time series as frequency components: mode trianglefreq or tetfreq
+inline partrac::Schema simplex_freq_schema(const std::string& mode){
+  partrac::Schema s("dolfin_params.dat, mode=" + mode, "");
+  add_mesh_params(s, mode != "trianglefreq");
+  s.require<std::string>("freqstamps", "file of lines `t_k a_k file`, each component a_k cos(2 pi/tau (k t + t_k)) "
+                                       "times its field with k the line number, or `omega_k phi_k a_k file`, "
+                                       "a_k cos(omega_k t + phi_k)");
   s.require<std::string>("mesh", "mesh file");
   s.require<std::string>("velocity_space", "velocity element, as P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
   add_field_names(s);
-  s.require<double>("tau", "base period; 0 or less for none");
+  s.optional<double>("tau", "base period of `t_k a_k file` lines, 0 or less for none; not read with omega_k");
   s.require<double>("t_min", "start of the time interval");
   s.require<double>("t_max", "end of the time interval");
   return s;
@@ -68,7 +75,8 @@ inline partrac::Schema xdmf_schema(const std::string& mode){
   s.require_if<std::string>("phi", [](const partrac::Params& p){ return p.get<bool>("include_phi"); },
                             "include_phi is true", "phase field XDMF file");
   s.opt<bool>("include_pf", false, "not read");
-  s.opt<std::string>("wall_p2", "edge", "velocity next to walls at rest: edge (quadratic) or none (P1)");
+  s.opt<std::string>("wall_p2", "edge", "velocity next to walls at rest: edge (quadratic) or none (P1); "
+                                           "modes tet and triangle default to none");
   s.choices("wall_p2", {"edge", "none"});
   return s;
 }

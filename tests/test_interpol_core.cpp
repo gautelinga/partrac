@@ -452,9 +452,13 @@ struct BareMesh : public MeshCore<Cell> {
                            this->x_min, this->x_max, this->dim, this->periodic_tol);
     this->set_period();
   }
-  bool locate_tree(const Vector3d& xx, CellPos& pos) override {
-    return tree_to_cell(this->cells_, *mesh, this->dim, xx, pos);
+  // The walk first; the fallback is dolfin's tree, as DolfInterpol's is
+  bool locate(const Vector3d& x, const double, CellPos& pos){
+    const Vector3d xx = this->_modx(x);
+    return walk_to_cell(this->cells_, this->facet_neigh_, xx, pos)
+        || tree_to_cell(this->cells_, *mesh, this->dim, xx, pos);
   }
+  using MeshCore<Cell>::locate;
   void update(const double) {}
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) {}
   double get_t_min() { return 0.; }

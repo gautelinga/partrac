@@ -6,6 +6,7 @@
 #include "TetInterpol.hpp"
 #include "TriangleInterpol.hpp"
 #include "TriangleFreqInterpol.hpp"
+#include "TetFreqInterpol.hpp"
 #include "XDMFTriangleInterpol.hpp"
 #include "XDMFTetInterpol.hpp"
 #ifdef USE_DOLFIN
@@ -28,6 +29,9 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
   else if (mode == "trianglefreq"){
     intp = std::make_shared<TriangleFreqInterpol>(infilename);
   }
+  else if (mode == "tetfreq"){
+    intp = std::make_shared<TetFreqInterpol>(infilename);
+  }
   else if (mode == "xdmftet"){
     intp = std::make_shared<XDMFTetInterpol>(infilename);
   }
@@ -39,7 +43,7 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
       partrac::fail("XDMF format is not implemented yet.");
     if (mode == "unstructured")
       partrac::fail("mode unstructured does not name a loader; a mesh is read by 'fenics', "
-                    "'tet', 'triangle', 'trianglefreq', 'xdmftet' or 'xdmftriangle'.");
+                    "'tet', 'triangle', 'trianglefreq', 'tetfreq', 'xdmftet' or 'xdmftriangle'.");
 #ifdef USE_DOLFIN
     // The cell type is the mesh's; a file without one fails in the tet loader's checks
     if (dolfin_mesh_dim(infilename) == 2)

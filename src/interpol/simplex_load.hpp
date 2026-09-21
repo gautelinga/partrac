@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "cell_walk.hpp"
 #include "mesh_tables.hpp"
 #include "typedefs.hpp"
 
@@ -91,6 +92,58 @@ struct NodePairs {
                                      std::size_t n) const;
 };
 
+// The element a parameter file declares; the file's own signature decides the
+// element, but a name no loader knows is still a mistake
+int declared_degree(const std::string& space, const char* what);
+
+// What a parameter file says about the mesh and the spaces
+struct Request {
+  std::string infilename;       // the parameter file, named in the errors
+  std::string mesh_file;
+  std::string field_file;       // the stamp or component the elements come from
+  std::string u_field, p_field, phi_field;
+  const char* what = "";        // the loader, named in the errors
+  int nv = 3;
+  int want_u = 0, want_p = 0;   // the declared degrees
+  bool include_pressure = true;
+  bool include_phi = false;     // a phase field, in the element its file gives
+  std::size_t n_dofs_max = 0;   // what an evaluation's buffers hold
+  std::vector<bool> periodic = {false, false, false};
+  double periodic_tol = 1e-12;
+};
+
+// Everything a dolfin HDF5 loader builds before its own field values: the mesh
+// arrays, the fields' elements and node tables, the facet table and the
+// mesh scale. The values are the loader's own: a stamp, or a frequency component.
+struct Tables {
+  MeshData mesh;
+  int nv = 3;
+  Element el_u, el_p, el_phi;
+  Uint ncoeffs_u = 0, ncoeffs_p = 0, ncoeffs_phi = 0;
+  std::vector<std::uint32_t> edges;   // empty unless a field carries midside nodes
+  std::size_t nedges = 0;
+  NodePairs np;
+  // The nodes along the cells' curve, by degree; empty where the file's own order serves
+  std::vector<std::uint32_t> map_quad, map_lin;
+  const std::vector<std::uint32_t>& node_order(const Element& el) const {
+    return el.degree == 2 ? map_quad : map_lin;
+  }
+  CellDofs u_dofs, p_dofs, phi_dofs;
+  std::vector<std::int32_t> facets;
+  double hmin = 0.;
+};
+
+// read_mesh, the elements, the edge table, the node order, the periodic nodes,
+// the node tables, the facet table and the mesh scale, in that order
+void build_tables(const Request& r, Tables& t);
+
+// One field's values by node, and the mapping a later stamp or component is
+// read through; node_map, when given, is this field's node order and the
+// mapping comes back renumbered by it
+void read_field_by_node(const std::string& path, const std::string& field, const Tables& t,
+                        const Element& el, const std::vector<std::uint32_t>& node_map,
+                        std::vector<double>& values, mesh_tables::DofNodes& map);
+
 // Mean over the cells of (largest - smallest vertex id)/nverts: small where the
 // file numbers its vertices with locality, about 0.6 where it does not
 double node_span(const MeshData& m, int nv);
@@ -113,11 +166,11 @@ struct CacheTables {
   std::vector<std::uint32_t> topo;                 // ncells x nv
   std::vector<double> coords;                      // npoints x gdim
   std::vector<std::int32_t> facets;                // ncells x nv
-  std::vector<std::uint32_t> u_nodes, p_nodes;     // the per-cell node tables
-  std::vector<double> u_values, p_values;          // the first stamp, by node
-  mesh_tables::DofNodes u_map, p_map;              // stored dof -> the node slots it feeds
+  std::vector<std::uint32_t> u_nodes, p_nodes, phi_nodes;   // the per-cell node tables
+  std::vector<double> u_values, p_values, phi_values;       // the first stamp, by node
+  mesh_tables::DofNodes u_map, p_map, phi_map;              // stored dof -> the node slots it feeds
   std::size_t ncells = 0, nverts = 0;
-  Uint gdim = 3, ncoeffs_u = 0, ncoeffs_p = 0;
+  Uint gdim = 3, ncoeffs_u = 0, ncoeffs_p = 0, ncoeffs_phi = 0;
   std::size_t ncomp_u = 1;
   double hmin = 0.;
   Vector3d x_min = Vector3d::Zero(), x_max = Vector3d::Zero();
