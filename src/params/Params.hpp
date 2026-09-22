@@ -225,6 +225,11 @@ Params parse_or_exit(const Schema& s, int argc, char* argv[]);
 Params parse_file_or_exit(const Schema& s, const std::string& path);
 // The value of key in a key=value file, empty if absent; to choose a schema
 std::string peek_file(const std::string& path, const std::string& key);
+// The same value as a boolean, by the rule a declared bool is parsed with;
+// false where the key is absent or the value is not a boolean
+bool peek_bool(const std::string& path, const std::string& key);
+// true/True/TRUE/1/yes/on and their negatives; false for anything else
+bool try_parse_bool(const std::string& s, bool& out);
 void report(const ParamError& e, std::ostream& out);
 
 // Template definitions

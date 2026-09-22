@@ -12,6 +12,14 @@
 
 namespace partrac {
 
+bool try_parse_bool(const std::string& s, bool& out) {
+  if (s == "true"  || s == "True"  || s == "TRUE"  || s == "1" ||
+      s == "yes"   || s == "on")  { out = true;  return true; }
+  if (s == "false" || s == "False" || s == "FALSE" || s == "0" ||
+      s == "no"    || s == "off") { out = false; return true; }
+  return false;
+}
+
 // Small helpers
 
 namespace {
@@ -46,14 +54,6 @@ bool try_parse_int(const std::string& s, long long& out) {
   if (std::fabs(d) > 9007199254740992.0) return false;  // 2^53
   out = static_cast<long long>(d);
   return true;
-}
-
-bool try_parse_bool(const std::string& s, bool& out) {
-  if (s == "true"  || s == "True"  || s == "TRUE"  || s == "1" ||
-      s == "yes"   || s == "on")  { out = true;  return true; }
-  if (s == "false" || s == "False" || s == "FALSE" || s == "0" ||
-      s == "no"    || s == "off") { out = false; return true; }
-  return false;
 }
 
 // Damerau-Levenshtein, so a transposition such as Nwr for Nrw costs 1
@@ -708,6 +708,11 @@ std::string peek_file(const std::string& path, const std::string& key) {
     if (trim(t.substr(0, eq)) == key) return trim(t.substr(eq + 1));
   }
   return "";
+}
+
+bool peek_bool(const std::string& path, const std::string& key) {
+  bool b = false;
+  return try_parse_bool(peek_file(path, key), b) && b;
 }
 
 Params parse_or_exit(const Schema& s, int argc, char* argv[]) {

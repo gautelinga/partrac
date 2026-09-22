@@ -17,6 +17,7 @@
 #include "cell_tree.hpp"
 #include "cell_walk.hpp"
 #include "geometry.hpp"
+#include "simplex_load.hpp"
 
 template<typename Cell>
 class MeshCore : public Interpol {
@@ -37,6 +38,20 @@ public:
 protected:
   // Periodicity and the pressure flag from the parameter file
   void read_mesh_params();
+  // What build_tables produced, into the names the base owns; the phase field,
+  // the mesh arrays and the cell counts are the loader's own
+  void adopt_tables(simplex_load::Tables& t){
+    dim = t.mesh.gdim;
+    x_min = t.mesh.x_min;
+    x_max = t.mesh.x_max;
+    set_period();
+    ncoeffs_u = t.ncoeffs_u;
+    ncoeffs_p = t.ncoeffs_p;
+    u_dofs_ = std::move(t.u_dofs);
+    p_dofs_ = std::move(t.p_dofs);
+    facet_neigh_ = std::move(t.facets);
+    hmin_ = t.hmin;
+  }
   // The box lengths along the periodic axes, once x_min and x_max are final
   void set_period();
   // Out of the step loops: the cell tree, from nothing known

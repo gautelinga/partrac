@@ -45,6 +45,8 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/MeshCore.cpp
   interpol/SimplexInterpol.cpp
   interpol/SimplexInterpol_eval.cpp
+  interpol/SplitInterpol.cpp
+  interpol/SplitInterpol_eval.cpp
   interpol/XDMFInterpol_eval.cpp
   interpol/simplex_load.cpp
   interpol/SimplexFreqInterpol.cpp
@@ -83,7 +85,7 @@ endif()
 # (interpol_dispatch.hpp) and set_interpolate_mode (interpol_factory.cpp)
 set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol StructuredConstInterpol
   TetInterpol TriangleInterpol TriangleFreqInterpol TetFreqInterpol
-  XDMFTriangleInterpol XDMFTetInterpol)
+  XDMFTriangleInterpol XDMFTetInterpol SplitTriangleInterpol SplitTetInterpol)
 set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
 if (PARTRAC_ENABLE_DOLFIN)
   set(PARTRAC_DOLFIN_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol)

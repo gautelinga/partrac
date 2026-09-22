@@ -20,25 +20,37 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
   constexpr int nv = Cell::n_verts;
   const char* mode = nv == 3 ? "triangle" : "tet";
   auto& prm = intp.dolfin_params;
+  // The split field is a class of its own, which the factory picks; this loader
+  // would read the same file and evaluate it as plain P2
+  if (prm.template get<bool>("divfree"))
+    partrac::fail(infilename, ": divfree = true is read by SplitInterpol, which the factory "
+                  "picks from this key; reached here, the key was not seen as a boolean");
   const std::string folder = intp.get_folder();
   const bool include_pressure = intp.include_pressure;
   const bool include_phi = intp.include_phi;
 
   ts.initialize(folder + "/" + prm.template get<std::string>("timestamps"));
-  u_field = prm.template get<std::string>("velocity_field");
-  p_field = prm.template get<std::string>("pressure_field");
-  phi_field = prm.template get<std::string>("phase_field");
   partrac::phase("params");
 
-  const std::string mesh_file = folder + "/" + prm.template get<std::string>("mesh");
   // The first stamp, by the path update builds for every other one
   const std::string first = folder + "/" + ts.get(ts.get_t_min()).prev.filename;
-  // The file's signature decides the element; a name here it does not know is
-  // still refused, whether the tables are rebuilt or read from the cache
-  const int want_u = simplex_load::declared_degree(
-    prm.template get<std::string>("velocity_space"), "velocity");
-  const int want_p = include_pressure
-    ? simplex_load::declared_degree(prm.template get<std::string>("pressure_space"), "pressure") : 0;
+  simplex_load::Request req;
+  req.infilename = infilename;
+  req.field_file = first;
+  req.what = "SimplexInterpol";
+  req.nv = nv;
+  req.include_pressure = include_pressure;
+  req.include_phi = include_phi;
+  req.n_dofs_max = Cell::n_dofs_max;
+  req.periodic = intp.periodic;
+  req.periodic_tol = intp.periodic_tol;
+  // The declared elements are checked whether the tables are rebuilt or read
+  // from the cache
+  simplex_load::request_from_params(req, prm, folder);
+  u_field = req.u_field;
+  p_field = req.p_field;
+  phi_field = req.phi_field;
+  const std::string& mesh_file = req.mesh_file;
 
   // The native cache, opt-in: everything below is deterministic from the two
   // input files, so a later run reads the tables back instead of rebuilding
@@ -98,37 +110,12 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
     return;
   }
 
-  simplex_load::Request req;
-  req.infilename = infilename;
-  req.mesh_file = mesh_file;
-  req.field_file = first;
-  req.u_field = u_field;
-  req.p_field = p_field;
-  req.phi_field = phi_field;
-  req.what = "SimplexInterpol";
-  req.nv = nv;
-  req.want_u = want_u;
-  req.want_p = want_p;
-  req.include_pressure = include_pressure;
-  req.include_phi = include_phi;
-  req.n_dofs_max = Cell::n_dofs_max;
-  req.periodic = intp.periodic;
-  req.periodic_tol = intp.periodic_tol;
   simplex_load::Tables t;
   simplex_load::build_tables(req, t);
 
-  intp.dim = t.mesh.gdim;
-  intp.x_min = t.mesh.x_min;
-  intp.x_max = t.mesh.x_max;
-  intp.set_period();
-  intp.ncoeffs_u = t.ncoeffs_u;
-  intp.ncoeffs_p = t.ncoeffs_p;
+  intp.adopt_tables(t);
   intp.ncoeffs_phi = t.ncoeffs_phi;
-  intp.u_dofs_ = std::move(t.u_dofs);
-  intp.p_dofs_ = std::move(t.p_dofs);
   intp.phi_dofs_ = std::move(t.phi_dofs);
-  intp.facet_neigh_ = std::move(t.facets);
-  intp.hmin_ = t.hmin;
   intp.ncells_ = t.mesh.ncells;
   intp.nverts_ = t.mesh.nverts;
 
@@ -177,16 +164,9 @@ void DolfinH5Format::read(I& intp, const Key& file, typename I::Stamp& s)
 {
   // The node counts every stamp shares
   const auto& a = intp.stamps_.a();
-  s.u.assign(a.u.size(), 0.);
-  simplex_load::read_vector(file, u_field, u_map, s.u);
-  if (intp.include_pressure){
-    s.p.assign(a.p.size(), 0.);
-    simplex_load::read_vector(file, p_field, p_map, s.p);
-  }
-  if (intp.include_phi){
-    s.phi.assign(a.phi.size(), 0.);
-    simplex_load::read_vector(file, phi_field, phi_map, s.phi);
-  }
+  simplex_load::read_into(file, u_field, u_map, a.u, s.u);
+  if (intp.include_pressure) simplex_load::read_into(file, p_field, p_map, a.p, s.p);
+  if (intp.include_phi)      simplex_load::read_into(file, phi_field, phi_map, a.phi, s.phi);
 }
 
 template void DolfinH5Format::load(SimplexInterpol<Triangle>&, const std::string&);

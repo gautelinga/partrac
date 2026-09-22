@@ -27,6 +27,8 @@ add_executable(unittest
   test_xdmf_load.cpp
   test_stamped_formats.cpp
   test_freq_load.cpp
+  test_split_eval.cpp
+  test_split_interpol.cpp
 )
 
 target_link_libraries(unittest

@@ -61,41 +61,25 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   }
 
   read_mesh_params();
-  const std::string u_field = dolfin_params.template get<std::string>("velocity_field");
-  const std::string p_field = dolfin_params.template get<std::string>("pressure_field");
   partrac::phase("params");
 
   simplex_load::Request req;
   req.infilename = infilename;
-  req.mesh_file = get_folder() + "/" + dolfin_params.template get<std::string>("mesh");
   // The element comes from the first component
   req.field_file = get_folder() + "/" + fs.get(0).filename;
-  req.u_field = u_field;
-  req.p_field = p_field;
   req.what = "SimplexFreqInterpol";
   req.nv = nv;
-  req.want_u = simplex_load::declared_degree(
-    dolfin_params.template get<std::string>("velocity_space"), "velocity");
-  req.want_p = include_pressure
-    ? simplex_load::declared_degree(
-        dolfin_params.template get<std::string>("pressure_space"), "pressure") : 0;
   req.include_pressure = include_pressure;
   req.n_dofs_max = Cell::n_dofs_max;
   req.periodic = periodic;
   req.periodic_tol = periodic_tol;
+  simplex_load::request_from_params(req, dolfin_params, get_folder());
+  const std::string& u_field = req.u_field;
+  const std::string& p_field = req.p_field;
   simplex_load::Tables t;
   simplex_load::build_tables(req, t);
 
-  dim = t.mesh.gdim;
-  x_min = t.mesh.x_min;
-  x_max = t.mesh.x_max;
-  set_period();
-  ncoeffs_u = t.ncoeffs_u;
-  ncoeffs_p = t.ncoeffs_p;
-  u_dofs_ = std::move(t.u_dofs);
-  p_dofs_ = std::move(t.p_dofs);
-  facet_neigh_ = std::move(t.facets);
-  hmin_ = t.hmin;
+  this->adopt_tables(t);
   ncells_ = t.mesh.ncells;
   nverts_ = t.mesh.nverts;
 
@@ -117,12 +101,10 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
     }
     else {
       same_element(t.el_u, simplex_load::read_element(path, u_field, nv), path, u_field);
-      u_nodes_[iFreq].assign(u_nodes_[0].size(), 0.);
-      simplex_load::read_vector(path, u_field, u_map, u_nodes_[iFreq]);
+      simplex_load::read_into(path, u_field, u_map, u_nodes_[0], u_nodes_[iFreq]);
       if (include_pressure){
         same_element(t.el_p, simplex_load::read_element(path, p_field, nv), path, p_field);
-        p_nodes_[iFreq].assign(p_nodes_[0].size(), 0.);
-        simplex_load::read_vector(path, p_field, p_map, p_nodes_[iFreq]);
+        simplex_load::read_into(path, p_field, p_map, p_nodes_[0], p_nodes_[iFreq]);
       }
     }
   }

@@ -35,13 +35,17 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
     s.choices("renumber_cells", {"auto", "never", "always"});
   }
   else {
-    // Read by SimplexInterpol only
+    // Read by SimplexInterpol and, where divfree is true, by SplitInterpol
     s.opt<bool>("mesh_cache", false, "keep the loaded tables beside the mesh and read them back");
     s.opt<bool>("include_phi", false, "read a phase field");
     s.opt<std::string>("phase_field", "phi", "phase field dataset in the field files");
     s.opt<std::string>("wall_p2", "none", "P1 velocity next to walls at rest: edge (quadratic) or none; "
                                            "the XDMF modes default to edge");
     s.choices("wall_p2", {"edge", "none"});
+    s.opt<bool>("divfree", false, "evaluate a P2 velocity on each cell's barycentric split, where it is "
+                                  "pointwise divergence-free; every cell's net flux must already be zero, "
+                                  "which python/divfree_clean.py prepares; refuses wall_p2 = edge and "
+                                  "mesh_cache = true beside it");
   }
   add_field_names(s);
   return s;

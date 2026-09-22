@@ -421,6 +421,18 @@ int declared_degree(const std::string& space, const char* what){
   return 0;
 }
 
+void request_from_params(Request& r, const partrac::Params& prm, const std::string& folder){
+  r.mesh_file = folder + "/" + prm.get<std::string>("mesh");
+  r.u_field = prm.get<std::string>("velocity_field");
+  r.p_field = prm.get<std::string>("pressure_field");
+  // Only the schemas that read a phase field declare its dataset
+  if (r.include_phi) r.phi_field = prm.get<std::string>("phase_field");
+  // The file's own signature decides the element; a name here it does not know
+  // is still refused
+  r.want_u = declared_degree(prm.get<std::string>("velocity_space"), "velocity");
+  r.want_p = r.include_pressure ? declared_degree(prm.get<std::string>("pressure_space"), "pressure") : 0;
+}
+
 void build_tables(const Request& r, Tables& t){
   const int nv = r.nv;
   const int ne = nv*(nv-1)/2;
@@ -522,6 +534,8 @@ void read_field_by_node(const std::string& path, const std::string& field, const
   std::vector<std::uint32_t> rows;
   std::vector<double> vec;
   read_field(path, field, m, el, t.nv, rows, vec);
+  for (std::size_t i = 0; i < vec.size(); ++i)
+    if (!std::isfinite(vec[i])) partrac::fail(path, ": ", field, " holds a non-finite value at dof ", i);
   if (t.nv == 4)
     mesh_tables::scatter_dofs_to_nodes<4>(m.topo, edges, m.ncells, m.nverts, nedges, el.ncomp,
                                           rows, vec, values, map);

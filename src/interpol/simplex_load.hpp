@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Params.hpp"
 #include "cell_walk.hpp"
 #include "mesh_tables.hpp"
 #include "typedefs.hpp"
@@ -133,9 +134,24 @@ struct Tables {
   double hmin = 0.;
 };
 
+// What the parameter file of a dolfin HDF5 loader says: the mesh path, the
+// field names and the declared degrees. The caller has already set what its own
+// object knows -- the file names, the cell, the periodicity and which fields it
+// wants.
+void request_from_params(Request& r, const partrac::Params& prm, const std::string& folder);
+
 // read_mesh, the elements, the edge table, the node order, the periodic nodes,
 // the node tables, the facet table and the mesh scale, in that order
 void build_tables(const Request& r, Tables& t);
+
+// A later stamp or component into a buffer the size of the first one's, through
+// the mapping the first built
+inline void read_into(const std::string& path, const std::string& field,
+                      const mesh_tables::DofNodes& map,
+                      const std::vector<double>& first, std::vector<double>& values){
+  values.assign(first.size(), 0.);
+  read_vector(path, field, map, values);
+}
 
 // One field's values by node, and the mapping a later stamp or component is
 // read through; node_map, when given, is this field's node order and the

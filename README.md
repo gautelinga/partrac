@@ -68,6 +68,19 @@ the max face share one dof in the file; the interpolators read the dofmap as
 stored, so a fixture written without the constraint would claim a periodicity
 its field does not hold.
 
+## Divergence-free velocity fields
+`python/divfree_clean.py` prepares a dolfin HDF5 case so that the velocity is
+divergence-free in every cell, which keeps tracers from stopping at no-slip
+walls. The output is a case of its own whose parameter file carries
+`divfree=true`, the key the loaders read it back with.
+```
+python3 python/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
+mpirun -n 8 python3 python/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
+python3 python/divfree_clean.py CLEANED/dolfin_params.dat --check
+```
+It needs `h5py`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the
+options. How the field is built is in the module docstring.
+
 ## Visualization
 Plotting the position:
 `python3 plot_pos.py data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0..../`

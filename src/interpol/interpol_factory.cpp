@@ -9,6 +9,8 @@
 #include "TetFreqInterpol.hpp"
 #include "XDMFTriangleInterpol.hpp"
 #include "XDMFTetInterpol.hpp"
+#include "SplitTriangleInterpol.hpp"
+#include "SplitTetInterpol.hpp"
 #ifdef USE_DOLFIN
 #include "DolfTriangleInterpol.hpp"
 #include "DolfTetInterpol.hpp"
@@ -21,10 +23,16 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     intp = std::make_shared<AnalyticInterpol>(infilename);
   }
   else if (mode == "tet"){
-    intp = std::make_shared<TetInterpol>(infilename);
+    if (partrac::peek_bool(infilename, "divfree"))
+      intp = std::make_shared<SplitTetInterpol>(infilename);
+    else
+      intp = std::make_shared<TetInterpol>(infilename);
   }
   else if (mode == "triangle"){
-    intp = std::make_shared<TriangleInterpol>(infilename);
+    if (partrac::peek_bool(infilename, "divfree"))
+      intp = std::make_shared<SplitTriangleInterpol>(infilename);
+    else
+      intp = std::make_shared<TriangleInterpol>(infilename);
   }
   else if (mode == "trianglefreq"){
     intp = std::make_shared<TriangleFreqInterpol>(infilename);
