@@ -39,6 +39,7 @@ cleaned here and the interior values of the reconstruction reported against the
 boundary values.
 """
 
+import functools
 import itertools
 import os
 import shutil
@@ -1470,13 +1471,35 @@ def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
     assert np.abs(got - want).max() < 1e-12 * np.abs(U).max()
 
 
+@functools.lru_cache(maxsize=None)
+def mpi_launcher():
+    """The first launcher on the path that starts one job of two ranks for
+    mpi4py, or None. A launcher from another MPI than mpi4py's starts
+    independent one-rank processes instead, which each clean the whole case."""
+    probe = "from mpi4py import MPI; print(MPI.COMM_WORLD.size)"
+    for name in ("mpiexec", "mpirun", "mpiexec.mpich", "mpirun.mpich",
+                 "mpiexec.openmpi", "mpirun.openmpi"):
+        launcher = shutil.which(name)
+        if launcher is None:
+            continue
+        try:
+            r = subprocess.run([launcher, "-n", "2", sys.executable, "-c", probe],
+                               capture_output=True, text=True, timeout=60,
+                               env=dict(os.environ, OMP_NUM_THREADS="1"))
+        except subprocess.TimeoutExpired:
+            continue
+        if r.returncode == 0 and r.stdout.split() == ["2", "2"]:
+            return launcher
+    return None
+
+
 def mpi_clean(cfg, out, ranks, extra=(), ok=True, timeout=900):
     """The tool as its own job on that many ranks. One OpenMP thread a rank: the
     machine is shared out by rank here, and the solve is PETSc's, not OpenMP's.
     With ok=False the job is expected to fail and the caller reads the output."""
-    launcher = shutil.which("mpirun")
+    launcher = mpi_launcher()
     if launcher is None:
-        pytest.skip("no mpirun on this machine")
+        pytest.skip("no launcher here starts an MPI job for mpi4py")
     cmd = [launcher, "-n", str(ranks), sys.executable,
            os.path.join(REPO, "python", "divfree_clean.py"), str(cfg), "--out", str(out)]
     r = subprocess.run(cmd + list(extra), capture_output=True, text=True, timeout=timeout,
