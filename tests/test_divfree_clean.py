@@ -1,10 +1,10 @@
 """python/divfree_clean.py: the flux equilibration, the per-cell reconstruction
 and the checkpoint case the tool writes.
 
-The array-level tests need numpy, scipy and h5py only, so they run wherever the
-suite runs; dolfin is used in one test to compare the layout of an h5py-written
-checkpoint against a dolfin-written one, and the end-to-end test needs the built
-apps. What they check:
+The array-level tests need numpy, scipy, h5py, petsc4py and mpi4py, and the
+module is skipped where the last two are missing; dolfin is used in one test to
+compare the layout of an h5py-written checkpoint against a dolfin-written one,
+and the end-to-end test needs the built apps. What they check:
 
 - the construction: every cell's net flux is zero afterwards, no held or seam
   node moves and the flux through an all-held facet is the data's, a second
@@ -50,6 +50,9 @@ import pytest
 import scipy.sparse as sp
 
 from paths import REPO, app
+
+pytest.importorskip("petsc4py", reason="the cleaner solves with PETSc")
+pytest.importorskip("mpi4py", reason="the cleaner runs under MPI")
 
 sys.path.insert(0, os.path.join(REPO, "python"))
 

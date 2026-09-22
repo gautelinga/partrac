@@ -103,8 +103,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests need
-        # the image has pytest, numpy and dolfin; h5py is what reads the dumps
-        run: python3 -m pip install --no-cache-dir h5py scipy
+        # the image has pytest, numpy and dolfin; h5py is what reads the dumps,
+        # scipy the cleaner; numpy held at the image's, which dolfin and
+        # petsc4py are built against
+        run: python3 -m pip install --no-cache-dir h5py scipy "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
@@ -150,9 +152,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests need
-        # the image has pytest, numpy and dolfin; h5py reads the dumps and
-        # xdist runs the suite on every core
-        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist
+        # the image has pytest, numpy and dolfin; h5py reads the dumps, scipy
+        # the cleaner, and xdist runs the suite on every core; numpy held at
+        # the image's, which dolfin and petsc4py are built against
+        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # as the dolfin job, but with the option off: Ninja, and HDF5_ROOT for
         # the image's mpich build
@@ -188,10 +191,11 @@ jobs:
         # serially; curl because codecov-action downloads its uploader with it;
         # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_p2.py
         # builds its meshes with it and would otherwise skip, leaving the
-        # near-wall code unmeasured
+        # near-wall code unmeasured; numpy held at the image's, which dolfin
+        # and petsc4py are built against
         run: |
           apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py scipy gcovr pytest-xdist gmsh
+          python3 -m pip install --no-cache-dir h5py scipy gcovr pytest-xdist gmsh "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         run: |
           cmake -S . -B build-cov -G Ninja \

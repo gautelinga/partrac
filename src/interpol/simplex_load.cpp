@@ -340,18 +340,21 @@ void NodePairs::check(const std::vector<double>& values, const std::size_t ncomp
   const std::size_t n = values.size()/ncomp;
   double scale = 0.;
   for (const double v : values) scale = std::max(scale, std::abs(v));
+  const double tol = 1e-8*scale;
+  // A disagreeing pair is a periodic constraint the solver missed; the master serves both
   double worst = 0.;
-  std::size_t worst_node = 0;
+  std::size_t worst_node = 0, pairs = 0, off = 0;
   for (std::size_t i = 0; i < n; ++i){
     const std::size_t mst = master[i];
     if (mst == i) continue;
-    for (std::size_t c = 0; c < ncomp; ++c){
-      const double d = std::abs(values[i*ncomp + c] - values[mst*ncomp + c]);
-      if (d > worst){ worst = d; worst_node = i; }
-    }
+    ++pairs;
+    double d_i = 0.;
+    for (std::size_t c = 0; c < ncomp; ++c)
+      d_i = std::max(d_i, std::abs(values[i*ncomp + c] - values[mst*ncomp + c]));
+    if (d_i > tol) ++off;
+    if (d_i > worst){ worst = d_i; worst_node = i; }
   }
-  const double tol = 1e-8*scale;
-  if (worst <= tol) return;
+  if (off == 0) return;
   // The axis the worst pair crosses, the first of them at a corner
   const std::size_t mst = master[worst_node];
   char axis = '?';
@@ -359,8 +362,9 @@ void NodePairs::check(const std::vector<double>& values, const std::size_t ncomp
     if (period[d] > 0. && axis == '?'
         && std::abs((*x)[worst_node*gdim + d] - (*x)[mst*gdim + d]) > 0.5*period[d])
       axis = char('x' + d);
-  partrac::fail(path, ": '", field, "' is not periodic along ", std::string(1, axis),
-                ": a node and its image differ by ", worst, ", more than ", tol);
+  std::cout << path << ": '" << field << "': " << off << " of " << pairs
+            << " periodic node pairs disagree (worst " << worst << " along " << axis
+            << ", tolerance " << tol << "); masters used" << std::endl;
 }
 
 std::vector<std::uint32_t> NodePairs::masters(const std::vector<std::uint32_t>& node_map,

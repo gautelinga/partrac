@@ -616,8 +616,8 @@ TEST_CASE("A cache whose arrays do not fit its counts is rebuilt", "[simplex_loa
 TEST_CASE("A periodic field written from an unconstrained space is read through its masters",
           "[simplex_load]") {
   // Nothing in such a file pairs a node with its image, so the loader pairs
-  // them by position and a cell reads the master's value, not the image's own.
-  // The two sides then have to hold the same field, which is checked at load.
+  // them by position and a cell reads the master's value, not the image's own;
+  // where the two sides disagree the master still serves both and the load says so.
   SECTION("triangles, P2 velocity: the values of the constrained file"){
     CaseDir a("seam_constrained"), b("seam_free");
     write_seam_case<Triangle>(a, 12, "P2", true, 0.);
@@ -632,10 +632,20 @@ TEST_CASE("A periodic field written from an unconstrained space is read through 
     for (std::size_t i = 0; i < va.size(); ++i)
       REQUIRE(std::abs(va[i] - vb[i]) < 1e-12);
   }
-  SECTION("a field whose two sides disagree is refused"){
-    CaseDir c("seam_broken");
+  SECTION("a field whose two sides disagree loads, and reads the masters"){
+    CaseDir a("seam_ref"), c("seam_broken");
+    write_seam_case<Triangle>(a, 6, "P2", true, 0.);
     write_seam_case<Triangle>(c, 6, "P2", false, 1e-3);
-    REQUIRE_THROWS_AS(TriangleInterpol(c.params()), partrac::Error);
+    std::size_t touching = 0;
+    const std::vector<Vector3d> pts = centroids<3>(a, touching);
+    REQUIRE(touching > 0);
+    TriangleInterpol ia(a.params());
+    TriangleInterpol ic(c.params());   // reported, not refused
+    const std::vector<double> va = sample(ia, pts), vc = sample(ic, pts);
+    REQUIRE(va.size() == vc.size());
+    // the images are 1e-3 off and every cell reads the master side
+    for (std::size_t i = 0; i < va.size(); ++i)
+      REQUIRE(std::abs(va[i] - vc[i]) < 1e-12);
   }
 }
 
