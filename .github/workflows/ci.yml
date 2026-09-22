@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
-            python3-pytest python3-numpy python3-h5py
+            python3-pytest python3-numpy python3-h5py python3-scipy
 
       - name: Configure
         run: |
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Tools the tests need
         # the image has pytest, numpy and dolfin; h5py is what reads the dumps
-        run: python3 -m pip install --no-cache-dir h5py
+        run: python3 -m pip install --no-cache-dir h5py scipy
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
@@ -152,7 +152,7 @@ jobs:
       - name: Tools the tests need
         # the image has pytest, numpy and dolfin; h5py reads the dumps and
         # xdist runs the suite on every core
-        run: python3 -m pip install --no-cache-dir h5py pytest-xdist
+        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist
       - name: Configure
         # as the dolfin job, but with the option off: Ninja, and HDF5_ROOT for
         # the image's mpich build
@@ -191,7 +191,7 @@ jobs:
         # near-wall code unmeasured
         run: |
           apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py gcovr pytest-xdist gmsh
+          python3 -m pip install --no-cache-dir h5py scipy gcovr pytest-xdist gmsh
       - name: Configure
         run: |
           cmake -S . -B build-cov -G Ninja \
