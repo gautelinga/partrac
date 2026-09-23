@@ -21,22 +21,11 @@
 #include "Triangle.hpp"
 #include "SimplexInterpol.hpp"
 #include "XDMFInterpol.hpp"
+#include "case_dir.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
-
-struct CaseDir {
-  std::filesystem::path path;
-  explicit CaseDir(const std::string& tag)
-    : path(std::filesystem::temp_directory_path() / ("partrac_stamped_" + tag)) {
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
-  }
-  ~CaseDir(){ std::filesystem::remove_all(path); }
-  std::string h5_params() const { return (path / "h5_params.dat").string(); }
-  std::string xdmf_params() const { return (path / "xdmf_params.dat").string(); }
-};
 
 // Stamp k of a velocity at rest on the boundary of the unit box, so the
 // near-wall rule applies at every wall; the factors keep it off every symmetry
@@ -135,10 +124,10 @@ void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
   for (auto& f : xf) if (f) f->close();
 
   std::ofstream(c.path / "timestamps.dat") << "0\tup_0.h5\n1\tup_1.h5\n";
-  std::ofstream(c.h5_params())
+  std::ofstream(c.file("h5_params.dat"))
     << "velocity_space=" << u_el << "\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n";
   if (xdmf)
-    std::ofstream(c.xdmf_params()) << "u=u.xdmf\np=p.xdmf\nphi=phi.xdmf\n";
+    std::ofstream(c.file("xdmf_params.dat")) << "u=u.xdmf\np=p.xdmf\nphi=phi.xdmf\n";
 }
 
 void append(const std::string& params, const std::string& lines){
@@ -193,12 +182,12 @@ void check_formats_agree(const std::string& tag, const std::size_t n){
   constexpr Uint gdim = Cell::n_verts - 1;
   CaseDir c(tag);
   write_case<Cell>(c, n, "P1", "P1");
-  append(c.h5_params(), "include_phi=true\nwall_p2=edge\n");
-  append(c.xdmf_params(), "include_phi=true\nwall_p2=edge\n");
+  append(c.file("h5_params.dat"), "include_phi=true\nwall_p2=edge\n");
+  append(c.file("xdmf_params.dat"), "include_phi=true\nwall_p2=edge\n");
   const std::vector<Vector3d> pts = points(gdim, 200, 0.5/double(n));
 
-  SimplexInterpol<Cell> h5(c.h5_params());
-  XDMFInterpol<Cell> xdmf(c.xdmf_params());
+  SimplexInterpol<Cell> h5(c.file("h5_params.dat"));
+  XDMFInterpol<Cell> xdmf(c.file("xdmf_params.dat"));
   const Sample a = sample(h5, pts, gdim), b = sample(xdmf, pts, gdim);
   REQUIRE(a.u == b.u);
   REQUIRE(a.gradu == b.gradu);
@@ -209,8 +198,8 @@ void check_formats_agree(const std::string& tag, const std::size_t n){
   // the rule acted, and the cells next to the walls were labelled
   CaseDir d(tag + "_none");
   write_case<Cell>(d, n, "P1", "P1");
-  append(d.h5_params(), "include_phi=true\n");
-  SimplexInterpol<Cell> p1(d.h5_params());
+  append(d.file("h5_params.dat"), "include_phi=true\n");
+  SimplexInterpol<Cell> p1(d.file("h5_params.dat"));
   const Sample l = sample(p1, pts, gdim);
   REQUIRE(l.u != a.u);
   REQUIRE(l.p == a.p);
@@ -233,8 +222,8 @@ TEST_CASE("wall_p2 = edge on a P2 checkpoint is refused", "[stamped]") {
   // already, so the key would do nothing
   CaseDir c("p2_edge");
   write_case<Triangle>(c, 4, "P2", "P1");
-  append(c.h5_params(), "wall_p2=edge\n");
-  REQUIRE_THROWS_AS(SimplexInterpol<Triangle>(c.h5_params()), partrac::Error);
+  append(c.file("h5_params.dat"), "wall_p2=edge\n");
+  REQUIRE_THROWS_AS(SimplexInterpol<Triangle>(c.file("h5_params.dat")), partrac::Error);
 }
 
 TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") {
@@ -243,8 +232,8 @@ TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") 
   SECTION("P2 phase field, P1 pressure"){
     CaseDir c("phi_p2");
     write_case<Tet>(c, 3, "P2", "P2");
-    append(c.h5_params(), "include_phi=true\n");
-    SimplexInterpol<Tet> intp(c.h5_params());
+    append(c.file("h5_params.dat"), "include_phi=true\n");
+    SimplexInterpol<Tet> intp(c.file("h5_params.dat"));
     for (const double t : {0., 0.3, 1.}){
       intp.update(t);
       for (const Vector3d& x : points(3, 40, 0.1)){
@@ -260,11 +249,11 @@ TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") 
   SECTION("P1 phase field, pressure ignored"){
     CaseDir c("phi_nop");
     write_case<Triangle>(c, 6, "P1", "P1");
-    append(c.h5_params(), "include_phi=true\n");
-    SimplexInterpol<Triangle> with_p(c.h5_params());
+    append(c.file("h5_params.dat"), "include_phi=true\n");
+    SimplexInterpol<Triangle> with_p(c.file("h5_params.dat"));
     const Sample a = sample(with_p, points(2, 40, 0.1), 2);
-    append(c.h5_params(), "ignore_pressure=true\n");
-    SimplexInterpol<Triangle> without_p(c.h5_params());
+    append(c.file("h5_params.dat"), "ignore_pressure=true\n");
+    SimplexInterpol<Triangle> without_p(c.file("h5_params.dat"));
     const Sample b = sample(without_p, points(2, 40, 0.1), 2);
     REQUIRE(a.phi == b.phi);
     REQUIRE(a.u == b.u);
@@ -272,14 +261,14 @@ TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") 
 }
 
 TEST_CASE("An XDMF phase field is read with the pressure ignored", "[stamped]") {
-  // Its basis was the pressure's, which is not computed then
+  // The phase field has its own basis; the pressure's is not computed
   CaseDir c("xdmf_phi_nop");
   write_case<Triangle>(c, 6, "P1", "P1");
-  append(c.xdmf_params(), "include_phi=true\n");
-  XDMFInterpol<Triangle> with_p(c.xdmf_params());
+  append(c.file("xdmf_params.dat"), "include_phi=true\n");
+  XDMFInterpol<Triangle> with_p(c.file("xdmf_params.dat"));
   const Sample a = sample(with_p, points(2, 40, 0.1), 2);
-  append(c.xdmf_params(), "ignore_pressure=true\n");
-  XDMFInterpol<Triangle> without_p(c.xdmf_params());
+  append(c.file("xdmf_params.dat"), "ignore_pressure=true\n");
+  XDMFInterpol<Triangle> without_p(c.file("xdmf_params.dat"));
   const Sample b = sample(without_p, points(2, 40, 0.1), 2);
   REQUIRE(a.phi == b.phi);
 }
@@ -289,12 +278,12 @@ TEST_CASE("The mesh cache carries the phase field", "[stamped]") {
   // reads the later stamp's through the cached mapping
   CaseDir c("phi_cache");
   write_case<Tet>(c, 3, "P2", "P2");
-  append(c.h5_params(), "include_phi=true\nmesh_cache=true\n");
+  append(c.file("h5_params.dat"), "include_phi=true\nmesh_cache=true\n");
   const std::vector<Vector3d> pts = points(3, 40, 0.1);
   Sample fresh, cached;
-  { SimplexInterpol<Tet> intp(c.h5_params()); fresh = sample(intp, pts, 3); }
+  { SimplexInterpol<Tet> intp(c.file("h5_params.dat")); fresh = sample(intp, pts, 3); }
   REQUIRE(std::filesystem::exists(c.path / "mesh_partrac_tet.h5"));
-  { SimplexInterpol<Tet> intp(c.h5_params()); cached = sample(intp, pts, 3); }
+  { SimplexInterpol<Tet> intp(c.file("h5_params.dat")); cached = sample(intp, pts, 3); }
   REQUIRE(cached.phi == fresh.phi);
   REQUIRE(cached.u == fresh.u);
   REQUIRE(cached.p == fresh.p);

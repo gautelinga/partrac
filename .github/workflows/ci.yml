@@ -21,6 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
+    # Open MPI refuses more ranks than it counts cores, and the MPI tests take 3
+    env:
+      OMPI_MCA_rmaps_base_oversubscribe: 1
 
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +33,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
-            python3-pytest python3-numpy python3-h5py python3-scipy
+            python3-pytest python3-numpy python3-h5py python3-scipy \
+            python3-mpi4py python3-petsc4py-real
+          # Debian keeps petsc4py beside its PETSc build, off the default path
+          echo "PYTHONPATH=$(ls -d /usr/lib/petscdir/petsc*/x86_64-linux-gnu-real/lib/python3/dist-packages)" >> "$GITHUB_ENV"
+
+      - name: MPI starts a job of two ranks
+        # the cleaner's MPI tests run here and nowhere else in CI: the FEniCS
+        # image's MPICH is built for PMIx, which its launcher does not serve,
+        # so every rank there is a world of one
+        run: |
+          python3 -c "import petsc4py; petsc4py.init([]); from petsc4py import PETSc"
+          test "$(mpiexec -n 2 python3 -c 'from mpi4py import MPI; print(MPI.COMM_WORLD.size)' | tr -d '\n')" = 22
 
       - name: Configure
         run: |
@@ -62,7 +76,10 @@ jobs:
       - name: Test, without the cases that need dolfin
         # unittest builds test_interpol_core, test_simplex_load, test_xdmf_load
         # and test_freq_load only under USE_DOLFIN, so none of them runs here;
-        # the python mesh tests skip, having no dolfin to write a fixture with
+        # the python mesh tests skip, having no dolfin to write a fixture with;
+        # the MPI tests must run
+        env:
+          PARTRAC_REQUIRE_MPI: 1
         run: ctest --test-dir build --output-on-failure
 
   # Both build types carry the same warning flags, and the tree builds clean, so

@@ -22,14 +22,13 @@ Two things are pinned:
 
 import math
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps
 from paths import REPO, app
+from runs import copy_example, run_app
 
 SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
 APPS = ["tracers", "tracervectors", "tracertensors"]
@@ -59,32 +58,22 @@ def params():
 
 def run(name, case_dir, extra):
     """Run app `name` on the case's parameter file with BASE and extra; assert it succeeded."""
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + list(extra)
-    r = subprocess.run([app(name), str(case_dir / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(app(name), case_dir / "expr_params.dat", BASE, extra, timeout=600)
 
 
 def case(tmp_path, name):
     """A new case folder holding the sphere example."""
-    d = tmp_path / name
-    d.mkdir()
-    shutil.copy(SPHERE, d / "expr_params.dat")
-    return d
+    return copy_example(SPHERE, tmp_path / name).parent
 
 
 def dumps(case_dir):
-    """{t: {dataset: array in id order}} for every dump under case_dir."""
+    """{t: {dataset: array in id order}} for every dump under case_dir, where every id is there once."""
     out = {}
-    for f in sorted(case_dir.rglob("data_from_t*.h5")):
-        with h5py.File(f, "r") as h:
-            for key in h:
-                g = h[key]
-                ids = np.array(g["id"])[:, 0]
-                order = np.argsort(ids, kind="stable")
-                assert np.array_equal(ids[order], np.arange(len(ids)))
-                out[float(key)] = {k: np.array(g[k])[order] for k in g if k != "id"}
+    for t, g in all_dumps(case_dir, raw=True).items():
+        ids = g.pop("id")[:, 0]
+        order = np.argsort(ids, kind="stable")
+        assert np.array_equal(ids[order], np.arange(len(ids)))
+        out[t] = {k: a[order] for k, a in g.items()}
     return out
 
 

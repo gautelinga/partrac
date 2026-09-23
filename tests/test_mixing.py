@@ -21,12 +21,13 @@ the shear a step early. Hence dt = 0.0625.
 
 import os
 import re
-import subprocess
 
 import numpy as np
 import pytest
 
+from dumps import read_stats
 from paths import REPO, app
+from runs import run_app
 
 PARTRAC = app("partrac")
 SINE = os.path.join(REPO, "data_example", "sine_flow", "expr_params.dat")
@@ -69,10 +70,11 @@ VORTEX_BASE = ("mode=analytic y0=5.0 z0=5.0 Nrw=4000 Nrw_max=8000000 "
 def expr_params(path):
     """The key -> value strings of an expr_params.dat file."""
     d = {}
-    for line in open(path):
-        if "=" in line:
-            k, v = line.split("=", 1)
-            d[k.strip()] = v.strip()
+    with open(path) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.split("=", 1)
+                d[k.strip()] = v.strip()
     return d
 
 
@@ -81,24 +83,14 @@ def run(tmp_path, example, base, extra, expr=None):
     # `expr` overrides keys of the copied expr_params.dat: u0, R1 and the rest
     # belong to the expression, and partrac rejects them on its command line
     tmp_path.mkdir(parents=True, exist_ok=True)
-    text = open(example).read()
+    with open(example) as f:
+        text = f.read()
     for key, value in (expr or {}).items():
         text, n = re.subn(r"(?m)^%s=.*$" % key, "%s=%.12g" % (key, value), text)
         assert n == 1, "%s is not a key of %s" % (key, example)
     (tmp_path / "expr_params.dat").write_text(text)
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in base if a.split("=")[0] not in keys] + extra
-    r = subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stdout + r.stderr
-    f = list(tmp_path.rglob("tdata_from_t*.dat"))
-    assert len(f) == 1
-    rows = [l for l in f[0].read_text().splitlines() if l.strip()]
-    head = [h.strip() for h in rows[0].lstrip("# ").split("\t") if h.strip()]
-    data = np.array([[float(v) for v in l.split("\t") if v.strip()]
-                     for l in rows[1:]])
-    assert data.shape[1] == len(head), "tdata columns do not match its header"
-    return {h: data[:, i] for i, h in enumerate(head)}
+    run_app(PARTRAC, tmp_path / "expr_params.dat", base, extra)
+    return read_stats(tmp_path)
 
 
 def elongation(st):
@@ -189,29 +181,35 @@ def test_a_strip_follows_the_exact_sine_flow_map(tmp_path):
                                                rel=1e-4)
 
 
-@needs_partrac
-def test_a_refined_strip_survives_a_large_elongation(tmp_path):
+@pytest.fixture(scope="module")
+def refined_strip(tmp_path_factory):
+    """Statistics every 0.5 of a refined strip in the sine flow, to T = 6."""
+    if not os.path.exists(PARTRAC):
+        pytest.skip("partrac is not built")
+    return run(tmp_path_factory.mktemp("refined_strip"), SINE, SINE_BASE,
+               ["init_mode=strip_x", "La=0.2", "T=6.0", "stat_intv=0.5",
+                "ds_max=0.002", "refine=true", "refine_intv=0.0625"])
+
+
+def test_a_refined_strip_survives_a_large_elongation(refined_strip):
     """Refinement keeps the strip on the exact map through a large elongation
     (rho ~ 65 after five time units) while conserving s0 across every split.
     Without it the polyline cuts the corners off the folds and under-reads rho."""
-    st = run(tmp_path, SINE, SINE_BASE,
-             ["init_mode=strip_x", "La=0.2", "T=5.0", "stat_intv=5.0",
-              "ds_max=0.002", "refine=true", "refine_intv=0.0625"])
-    assert st["Nrw"][-1] > 5000                       # it really refined
-    assert st["s0"][-1] == pytest.approx(0.2, rel=1e-12)
-    assert elongation(st)[-1] == pytest.approx(sine_flow_map(400001, 0.2, 5.0) / 0.2,
-                                               rel=1e-3)
+    st = refined_strip
+    i = int(np.argmin(np.abs(st["t"] - 5.0)))
+    assert st["t"][i] == pytest.approx(5.0)
+    assert st["Nrw"][i] > 5000                       # it really refined
+    assert st["s0"][i] == pytest.approx(0.2, rel=1e-12)
+    assert elongation(st)[i] == pytest.approx(sine_flow_map(400001, 0.2, 5.0) / 0.2,
+                                              rel=1e-3)
 
 
-@needs_partrac
-def test_the_elongation_is_log_normal(tmp_path):
+def test_the_elongation_is_log_normal(refined_strip):
     """Stretching in the random sine flow is a multiplicative process, so the
     reported <log rho> and Var(log rho) both grow linearly in time, and the
     slope of the mean is a positive Lyapunov exponent of order one. These are
     the statistics the lamellar mixing theory is built on."""
-    st = run(tmp_path, SINE, SINE_BASE,
-             ["init_mode=strip_x", "La=0.2", "T=6.0", "stat_intv=0.5",
-              "ds_max=0.002", "refine=true", "refine_intv=0.0625"])
+    st = refined_strip
     # t > 1 skips the initial transient before the linear growth sets in
     late = st["t"] > 1.0
     for key, r2 in (("logelong_wmean", 0.99), ("logelong_wvar", 0.90)):
@@ -360,26 +358,32 @@ def test_only_the_radial_direction_stretches_in_the_cell(tmp_path):
         assert rho[d].min() > 0.5 and rho[d].max() < 2.0
 
 
+@pytest.fixture(scope="module")
+def radial_sheet(tmp_path_factory):
+    """Statistics of an x-y sheet, which carries the radial direction, in the cell."""
+    if not os.path.exists(PARTRAC):
+        pytest.skip("partrac is not built")
+    return run(tmp_path_factory.mktemp("radial_sheet"), TAYLOR_COUETTE, TC_BASE,
+               ["init_mode=sheet_xy", "ds_init=0.002"])
+
+
 @needs_partrac
-def test_a_sheet_tangent_to_the_stream_torus_does_not_grow(tmp_path):
+def test_a_sheet_tangent_to_the_stream_torus_does_not_grow(tmp_path, radial_sheet):
     """Section 3.5: a sheet spanned by the azimuthal and axial directions is
     tangent to the stream torus and only modulated periodically, while any sheet
     carrying the radial direction grows."""
     tangent = elongation(run(tmp_path / "yz", TAYLOR_COUETTE, TC_BASE,
                              ["init_mode=sheet_yz", "ds_init=0.002"]))
-    radial = elongation(run(tmp_path / "xy", TAYLOR_COUETTE, TC_BASE,
-                            ["init_mode=sheet_xy", "ds_init=0.002"]))
+    radial = elongation(radial_sheet)
     assert tangent.min() > 0.5 and tangent.max() < 1.5
     assert radial[-1] > 20
 
 
-@needs_partrac
-def test_the_sheet_grows_linearly_and_stays_narrowly_distributed(tmp_path):
+def test_the_sheet_grows_linearly_and_stays_narrowly_distributed(radial_sheet):
     """Figure 14: in the steady cell the sheet area grows linearly in time, not
     exponentially, and p(rho) keeps a narrow support, with Var(log rho) far below
     what the log-normal sine flow gives at the same elongation."""
-    st = run(tmp_path, TAYLOR_COUETTE, TC_BASE,
-             ["init_mode=sheet_xy", "ds_init=0.002"])
+    st = radial_sheet
     rho, t = elongation(st), st["t"]
     half = rho[np.argmin(abs(t - 30.0))]
     assert rho[-1] / half == pytest.approx(2.0, rel=0.1)   # linear: doubles from t = 30 to 60

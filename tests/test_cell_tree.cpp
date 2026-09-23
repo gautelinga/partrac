@@ -161,7 +161,7 @@ TEST_CASE("a random point lands in the same cell as a scan over every cell", "[c
     REQUIRE( id == lowest(containing(tets, x)) );
     REQUIRE( id >= 0 );                       // the box is filled by its tets
     REQUIRE( tree.contains(std::uint32_t(id), x) );
-    // the barycentrics the evaluation reads, in floating point as before
+    // the barycentrics the evaluation reads
     const std::array<double, 4> bary = barycentrics(tets, std::size_t(id), x);
     const double sum = bary[0] + bary[1] + bary[2] + bary[3];
     REQUIRE( sum == Approx(1.) );

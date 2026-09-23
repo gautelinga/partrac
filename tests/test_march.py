@@ -8,14 +8,13 @@ the first dump.
 """
 
 import os
-import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
-from dumps import by_id
+from dumps import all_dumps, by_id
 from paths import REPO, app
+from runs import continuous_and_resumed, copy_example, run_app
 
 SPATIAL = app("tracervectors_spatial")
 STEPPER = app("static_space_stepper")
@@ -34,28 +33,14 @@ BASE = {
 
 def run(binary, d, extra):
     """Run binary on plane Poiseuille in d, with BASE overridden by extra; returns d."""
-    d.mkdir(parents=True, exist_ok=True)
-    shutil.copy(POISEUILLE, d / "expr_params.dat")
-    argv = {}
-    for a in (BASE[binary] + " " + extra).split():
-        argv[a.split("=")[0]] = a
-    r = subprocess.run([binary, str(d / "expr_params.dat")] + list(argv.values()),
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(binary, copy_example(POISEUILLE, d), BASE[binary], extra, timeout=600)
     return d
 
 
 def groups(d):
     """Path length -> the dump's datasets in id order, with the sorted ids."""
-    import h5py
-    out = {}
-    for f in sorted(d.rglob("data_from_t*.h5")):
-        with h5py.File(f, "r") as h:
-            for g in h:
-                data = by_id(h[g])
-                data["id"] = np.sort(np.array(h[g]["id"])[:, 0])
-                out[round(float(g), 9)] = data
-    return out
+    return {xn: dict(by_id(g), id=np.sort(g["id"][:, 0]))
+            for xn, g in all_dumps(d, raw=True).items()}
 
 
 @pytest.mark.skipif(not os.path.exists(SPATIAL), reason="tracervectors_spatial is not built")
@@ -97,12 +82,10 @@ def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary):
     the wrong path lengths."""
     if not os.path.exists(binary):
         pytest.skip(os.path.basename(binary) + " is not built")
-    common = "dxn=0.01 dump_intv=0.1"
-    cont = run(binary, tmp_path / "cont", common + " Ln=0.4")
-    split = run(binary, tmp_path / "split", common + " Ln=0.19")
     # the final checkpoint is written one step past Ln: xn = 0.2, step 20
-    folder = os.path.dirname(os.path.dirname(next(split.rglob("Checkpoints/positions.pos"))))
-    run(binary, tmp_path / "split", common + " Ln=0.4 restart_folder=" + folder)
+    cont, split = continuous_and_resumed(binary, POISEUILLE, tmp_path,
+                                         [BASE[binary], "dxn=0.01 dump_intv=0.1"],
+                                         "Ln=0.19", "Ln=0.4")
     a, b = groups(cont), groups(split)
     for xn in (0.3, 0.4):
         assert xn in a, "the march never reached xn = %g: the loop end dropped its last steps" % xn

@@ -11,10 +11,8 @@
 #include "mesh.hpp"
 
 // This file exists partly for what it tests and partly for the fact that it
-// compiles at all: the core headers define their functions in the header, so
-// until they were marked inline a second translation unit including them was a
-// multiple-definition link error, and every app avoided it only by being one
-// TU. If that regresses, this file stops linking.
+// compiles at all: the core headers define functions in the header, and this
+// second translation unit must link.
 //
 // ParticleSet's constructor only stores the interpolator, so a null one is
 // enough for anything that reads positions.

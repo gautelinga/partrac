@@ -1,12 +1,12 @@
 #include <catch2/catch.hpp>
+#include <sstream>
 #include "param_print.hpp"
 #include "io.hpp"
 #include "Interpol.hpp"
 #include "Timestamps.hpp"
 
 TEST_CASE("Timestamps span every key, sorted or not", "[timestamps]") {
-  // t_max was tested only for a key that did not lower t_min, so the first key
-  // never counted: one stamp, or a file in descending order, left it at -1e14
+  // t_max counts every key: one stamp, or a file in descending order
   auto span = [](std::vector<std::pair<double, std::string>> items){
     Timestamps ts;
     ts.initialize(items);
@@ -44,34 +44,32 @@ TEST_CASE("A degenerate stamp bracket holds the field", "[timestamps]") {
   REQUIRE(stamp_rate(Matrix3d::Identity().eval(), Matrix3d::Identity().eval(), 2., 2.).isZero(0.));
 }
 
-TEST_CASE("Passing case", "[pass]") {
-  REQUIRE ( 1 < 2 );
-}
-
-TEST_CASE("print_param", "[print_param]") {
-  // not implemented
-  print_param("test", 2.0);
-
-  REQUIRE ( 1 == 1 );
+TEST_CASE("print_param writes a key and its value", "[print_param]") {
+  std::ostringstream buf;
+  std::streambuf* old = std::cout.rdbuf(buf.rdbuf());
+  print_param("dt", 0.5);
+  print_param("Nrw", 3);
+  print_param("mode", std::string("tet"));
+  std::cout.rdbuf(old);
+  REQUIRE(buf.str() == "dt = 0.5\nNrw = 3\nmode = tet\n");
 }
 
 // ---------------------------------------------------------------------------
 // The checkpoint fields and the HDF5 writers. A whole run writes and reads
-// these, but only for what its element carries, so the tensor and vector
-// writers were never exercised by a test.
+// only what its element carries, so every writer is exercised here.
 
 #include <cstdio>
 #include <filesystem>
 #include <H5Cpp.h>
 #include "ParticleSet.hpp"
+#include "case_dir.hpp"
 
 namespace {
 
 // A file name of its own per case, removed when it goes out of scope
 struct TempFile {
   std::string name;
-  explicit TempFile(const std::string& tag)
-    : name((std::filesystem::temp_directory_path() / ("partrac_test_" + tag)).string()) {}
+  explicit TempFile(const std::string& tag) : name(temp_path(tag).string()) {}
   ~TempFile(){ std::remove(name.c_str()); }
 };
 

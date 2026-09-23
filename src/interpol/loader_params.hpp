@@ -44,7 +44,7 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
     s.choices("wall_p2", {"edge", "none"});
     s.opt<bool>("divfree", false, "evaluate a P2 velocity on each cell's barycentric split, where it is "
                                   "pointwise divergence-free; every cell's net flux must already be zero, "
-                                  "which python/divfree_clean.py prepares; refuses wall_p2 = edge and "
+                                  "which python/divfree/divfree_clean.py prepares; refuses wall_p2 = edge and "
                                   "mesh_cache = true beside it");
   }
   add_field_names(s);

@@ -1,6 +1,6 @@
 """What partrac does at the edges of its domain of validity: meshes coarsened
 to almost nothing, point clouds without edges, exit planes that cut a mesh,
-edge injection that turns a line into a sheet, and runs with no particles.
+and runs with no particles.
 
 The flow is plane Poiseuille, u_z = 1.5 (1 - x^2), which only shears along z.
 Several cases set u_inf = 0 so nothing moves: then every face keeps
@@ -12,14 +12,13 @@ stopped with a message rather than left to write rows nobody can interpret.
 """
 
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps, read_stats
 from paths import REPO, app
+from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -35,23 +34,19 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
 
 def run(tmp_path, example, extra):
     """Run partrac on a copy of `example` with `extra` overriding BASE; return the process result."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(example, tmp_path / "expr_params.dat")
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
-    return subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                          capture_output=True, text=True, timeout=600)
+    return run_app(PARTRAC, copy_example(example, tmp_path), BASE, extra, check=False, timeout=600)
 
 
 def last_row(tmp_path):
-    """The last statistics row under tmp_path, as column name -> string value."""
-    f = list(tmp_path.rglob("tdata_from_t*.dat"))
-    assert len(f) == 1
-    rows = [l for l in f[0].read_text().splitlines() if l.strip()]
-    head = [h.strip() for h in rows[0].lstrip("# ").split("\t") if h.strip()]
-    values = [v for v in rows[-1].split("\t") if v.strip()]
-    assert len(head) == len(values), "tdata columns do not match its header"
-    return dict(zip(head, values))
+    """The last statistics row under tmp_path, as column name -> value."""
+    return {k: v[-1] for k, v in read_stats(tmp_path).items()}
+
+
+def dump(tmp_path, first=True):
+    """The first or the last group of the one dump file under tmp_path, as written."""
+    assert len(list(tmp_path.rglob("data_from_t*.h5"))) == 1
+    groups = all_dumps(tmp_path, raw=True)
+    return groups[min(groups) if first else max(groups)]
 
 
 @needs_partrac
@@ -96,31 +91,20 @@ def test_coarsening_a_flat_sheet_keeps_every_elongation(tmp_path, ds_init):
     # u_inf = 0: nothing moves
     d = tmp_path / ds_init
     d.mkdir(parents=True)
-    (d / "expr_params.dat").write_text(
-        open(POISEUILLE).read().replace("u_inf=1.0", "u_inf=0.0"))
+    with open(POISEUILLE) as f:
+        (d / "expr_params.dat").write_text(f.read().replace("u_inf=1.0", "u_inf=0.0"))
     ds = float(ds_init)
 
     def areas(ds_min):
         """dA and dA0 of every face in the first dump, coarsened with this ds_min."""
         case = d / ds_min
-        case.mkdir(parents=True)
-        (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
-        r = subprocess.run(
-            [PARTRAC, str(case / "expr_params.dat")]
-            + [a for a in BASE
-               if a.split("=")[0] not in {"ds_min", "dump_intv", "coarsen"}]
-            + ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=" + ds_init,
-               "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
-               "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=1e9",
-               "T=0.01", "dump_intv=0.01"],
-            capture_output=True, text=True, timeout=600)
-        assert r.returncode == 0, r.stdout + r.stderr
-        dump = list(case.rglob("data_from_t*.h5"))
-        assert len(dump) == 1
-        h = h5py.File(dump[0], "r")
-        key = sorted(h.keys(), key=float)[0]
-        return (np.array(h[key + "/dA"]).ravel(),
-                np.array(h[key + "/dA0"]).ravel())
+        run_app(PARTRAC, copy_example(d / "expr_params.dat", case), BASE,
+                ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=" + ds_init,
+                 "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
+                 "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=1e9",
+                 "T=0.01", "dump_intv=0.01"], timeout=600)
+        g = dump(case)
+        return g["dA"].ravel(), g["dA0"].ravel()
 
     dA_ref, _ = areas("1e-12")                      # nothing collapses
     # just above the initial edge length, so many edges collapse
@@ -140,31 +124,19 @@ def test_coarsening_a_sheet_of_uniform_tau_keeps_it_uniform(tmp_path):
     remeshing, not of the flow."""
     # u_inf = 0: nothing moves
     d = tmp_path
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "expr_params.dat").write_text(
-        open(POISEUILLE).read().replace("u_inf=1.0", "u_inf=0.0"))
+    with open(POISEUILLE) as f:
+        (d / "expr_params.dat").write_text(f.read().replace("u_inf=1.0", "u_inf=0.0"))
 
     def taus(ds_min):
         """tau of every face in the last dump, coarsened with this ds_min."""
         case = d / ds_min
-        case.mkdir(parents=True)
-        (case / "expr_params.dat").write_text((d / "expr_params.dat").read_text())
-        r = subprocess.run(
-            [PARTRAC, str(case / "expr_params.dat")]
-            + [a for a in BASE if a.split("=")[0]
-               not in {"ds_min", "dump_intv", "coarsen", "dt"}]
-            + ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=0.05",
-               "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
-               "integrate_tau=true", "tau_intv=0.001", "tau_max=0",
-               "dt=0.001", "T=0.01", "dump_intv=0.01",
-               "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=0.005"],
-            capture_output=True, text=True, timeout=600)
-        assert r.returncode == 0, r.stdout + r.stderr
-        dump = list(case.rglob("data_from_t*.h5"))
-        assert len(dump) == 1
-        h = h5py.File(dump[0], "r")
-        key = sorted(h.keys(), key=float)[-1]
-        return np.array(h[key + "/tau"]).ravel()
+        run_app(PARTRAC, copy_example(d / "expr_params.dat", case), BASE,
+                ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=0.05",
+                 "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000",
+                 "integrate_tau=true", "tau_intv=0.001", "tau_max=0",
+                 "dt=0.001", "T=0.01", "dump_intv=0.01",
+                 "ds_min=" + ds_min, "coarsen=true", "coarsen_intv=0.005"], timeout=600)
+        return dump(case, first=False)["tau"].ravel()
 
     tau_ref = taus("1e-12")                         # nothing collapses
     tau = taus("0.06")
@@ -226,11 +198,8 @@ def test_an_exit_plane_on_a_strip_removes_exactly_the_nodes_beyond(tmp_path):
                  "Nrw=51", "Nrw_max=2000", "T=0", "exit_plane=x",
                  "Ln=%g" % Ln, "filter_intv=0.01"])
         assert r.returncode == 0, r.stdout + r.stderr
-        dump = list((tmp_path / case).rglob("data_from_t*.h5"))
-        assert len(dump) == 1
-        h = h5py.File(dump[0], "r")
-        key = sorted(h.keys(), key=float)[0]
-        return np.array(h[key + "/points"]), np.array(h[key + "/edges"])
+        g = dump(tmp_path / case)
+        return g["points"], g["edges"]
 
     whole, _ = points("whole", 1e9)               # strip_x is centred on x0
     # between two nodes, which are 0.01 apart
@@ -253,11 +222,8 @@ def test_an_exit_plane_on_a_sheet_cuts_it(tmp_path):
                  "x0=0", "y0=0", "z0=0", "Nrw=100", "Nrw_max=200000", "T=0",
                  "exit_plane=x", "Ln=%g" % Ln, "filter_intv=0.01"])
         assert r.returncode == 0, r.stdout + r.stderr
-        dump = list((tmp_path / case).rglob("data_from_t*.h5"))
-        assert len(dump) == 1
-        h = h5py.File(dump[0], "r")
-        key = sorted(h.keys(), key=float)[0]
-        return tuple(np.array(h[key + "/" + n]) for n in ("points", "faces", "dA0"))
+        g = dump(tmp_path / case)
+        return tuple(g[n] for n in ("points", "faces", "dA0"))
 
     whole, faces_whole, dA0_whole = state("whole", 1e9)
     kept, faces, dA0 = state("cut", 0.1)
@@ -267,63 +233,6 @@ def test_an_exit_plane_on_a_sheet_cuts_it(tmp_path):
     assert faces.max() < len(kept) * 3                # no index left dangling
     assert dA0.min() > 0                              # no face lost its area
     assert dA0.sum() < dA0_whole.sum()
-
-
-INJECT = ["init_mode=uniform_x", "Nrw=20", "Nrw_max=200000", "inject=true",
-          "inject_edges=true", "inject_intv=0.05", "T=0.3"]
-
-
-@needs_partrac
-def test_edge_injection_sweeps_the_inlet_into_a_sheet(tmp_path):
-    """inject_edges advects a 1-D inlet and stitches each generation to the last,
-    so the mesh is 2-D from the first injection on and must be accepted as such.
-    Each injection adds the same strip of faces and the same swept area, with
-    no degenerate face."""
-    # The inlet ends sit on the no-slip walls and never leave them, so those two
-    # nodes are reused rather than injected again: 18 nodes and 36 faces per
-    # generation, not 20 and 38, and the same swept area either way.
-    r = run(tmp_path, POISEUILLE, INJECT + ["dump_intv=0.1", "stat_intv=1e9"])
-    assert r.returncode == 0, r.stdout + r.stderr
-    dump = list(tmp_path.rglob("data_from_t*.h5"))
-    assert len(dump) == 1
-    h = h5py.File(dump[0], "r")
-    keys = sorted(h.keys(), key=float)
-    faces = [len(np.array(h[k + "/faces"])) for k in keys if "faces" in h[k]]
-    mass = [np.array(h[k + "/dA0"]).sum() for k in keys if "dA0" in h[k]]
-    # dump_intv = 2 inject_intv, so each dump sees two more generations
-    assert len(faces) == 3
-    assert faces == [72, 144, 216]                    # 36 per injection
-    assert mass[1] == pytest.approx(2 * mass[0], rel=1e-9)   # a strip each time
-    assert mass[2] == pytest.approx(3 * mass[0], rel=1e-9)
-    dA0 = np.array(h[keys[-1] + "/dA0"]).ravel()
-    assert dA0.min() > 0                              # nothing collapsed to a line
-    tri = np.array(h[keys[-1] + "/faces"])
-    assert all(len(set(row.tolist())) == 3 for row in tri)   # no repeated node
-
-
-@needs_partrac
-def test_an_injected_sheet_carries_a_finite_compressed_time(tmp_path):
-    """An injected sheet under refinement, coarsening and tau integration keeps
-    dA, dA0 and tau finite and every dA0 positive. A zero-area face makes
-    rho = dA/dA0 a 0/0, which would spread NaN through tau and into every
-    statistics row after it."""
-    r = run(tmp_path, POISEUILLE,
-            INJECT + ["ds_max=0.1", "ds_min=0.02", "refine=true",
-                      "refine_intv=0.05", "coarsen=true", "coarsen_intv=0.05",
-                      "integrate_tau=true", "tau_intv=0.01", "tau_max=0",
-                      "dump_intv=0.3", "stat_intv=0.05"])
-    assert r.returncode == 0, r.stdout + r.stderr
-    dump = list(tmp_path.rglob("data_from_t*.h5"))
-    h = h5py.File(dump[0], "r")
-    key = sorted(h.keys(), key=float)[-1]
-    for name in ("dA", "dA0", "tau"):
-        a = np.array(h[key + "/" + name]).astype(float)
-        assert np.isfinite(a).all(), name
-    assert np.array(h[key + "/dA0"]).min() > 0
-    stats = list(tmp_path.rglob("tdata_from_t*.dat"))
-    assert len(stats) == 1
-    text = stats[0].read_text().lower()
-    assert "nan" not in text and "inf" not in text
 
 
 @needs_partrac

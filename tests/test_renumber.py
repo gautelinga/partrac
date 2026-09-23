@@ -16,7 +16,7 @@ and its message.
 
 What those loaders do renumber, by themselves, is the nodes: a mesh file whose
 vertex numbering carries no locality makes every gather a scatter over the
-whole field (9-11% of a tet step on 384000 cells), so when a cell's vertex ids
+whole field, so when a cell's vertex ids
 span more than a quarter of the vertices on average the nodes are put along
 the same Morton curve as the cells. Node ids are internal too, so the last test
 takes a P1 case, relabels its vertices at random, and requires the same dumps
@@ -30,9 +30,10 @@ import subprocess
 import numpy as np
 import pytest
 
+from cases import KINDS
 from dumps import dump_at
-from paths import app, built_with_dolfin
-from test_apps import KINDS
+from paths import REPO, app, built_with_dolfin
+from runs import run_app
 
 TRACERS = app("tracers")
 DT, T = 0.001, 0.01
@@ -53,10 +54,7 @@ def run(case, tmp_path, renumber):
     shutil.copytree(case, d)
     with open(d / "dolfin_params.dat", "a") as f:
         f.write("\nrenumber_cells=%s\n" % renumber)
-    args = (BASE + " mode=" + MODE + " " + KINDS[KIND][1]).split()
-    r = subprocess.run([TRACERS, str(d / "dolfin_params.dat")] + args,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stdout + r.stderr
+    r = run_app(TRACERS, d / "dolfin_params.dat", BASE, "mode=" + MODE, KINDS[KIND][1])
     # only `always` renumbers a mesh whose cells are already local
     assert ("renumbering cells by dofs" in r.stdout) == (renumber == "always"), r.stdout[-800:]
     return d
@@ -103,8 +101,7 @@ def test_a_loader_that_does_not_renumber_refuses_the_key(tmp_path, mode):
     def start(name, text):
         f = tmp_path / (name + ".dat")
         f.write_text(text)
-        return subprocess.run([TRACERS, str(f)] + args,
-                              capture_output=True, text=True, timeout=900)
+        return run_app(TRACERS, f, args, check=False)
 
     r = start("with_key", REQUIRED[mode] + "renumber_cells=always\n")
     assert r.returncode != 0
@@ -115,8 +112,7 @@ def test_a_loader_that_does_not_renumber_refuses_the_key(tmp_path, mode):
     assert "unknown parameter" not in r.stdout + r.stderr, r.stdout + r.stderr
 
 
-P1_TET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                      "data_example", "test_tet_p1")
+P1_TET = os.path.join(REPO, "data_example", "test_tet_p1")
 
 
 @pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
@@ -142,10 +138,7 @@ def test_a_mesh_numbered_without_locality_gives_identical_dumps(tmp_path):
 
     out = {}
     for d in (local, shuffled):
-        r = subprocess.run([TRACERS, str(d / "dolfin_params.dat")] + (BASE + " mode=tet").split(),
-                           capture_output=True, text=True, timeout=900)
-        assert r.returncode == 0, r.stdout + r.stderr
-        out[d] = r.stdout
+        out[d] = run_app(TRACERS, d / "dolfin_params.dat", BASE, "mode=tet").stdout
     assert "renumbering nodes" not in out[local], out[local][-600:]
     assert "renumbering nodes" in out[shuffled], out[shuffled][-600:]
     for k in range(int(round(T / DT)) + 1):

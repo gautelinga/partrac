@@ -16,14 +16,13 @@ and the rate S = rhohat . J rhohat at the current position.
 """
 
 import os
-import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
 from dumps import dump_at
 from paths import REPO, app
+from runs import continuous_and_resumed, copy_example, run_app
 
 VECTORS = app("tracervectors")
 TENSORS = app("tracertensors")
@@ -42,22 +41,15 @@ BASE = ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=50 Nrw_max=50 "
 SCHEMES = ["RK4", "explicit"]
 
 
-def run(tmp_path, example, extra, name="case", env=None):
-    """Run tracertensors if extra has transport=tensor, else tracervectors, on a copy of example; return the case folder."""
+def app_for(transport):
+    """The app that carries the element: tracertensors for a tensor, tracervectors for a vector."""
+    return TENSORS if transport == "tensor" else VECTORS
+
+
+def run(tmp_path, example, transport, extra, name="case"):
+    """Run the app for transport on a copy of example with extra overriding BASE; return the case folder."""
     d = tmp_path / name
-    d.mkdir(parents=True)
-    shutil.copy(example, d / "expr_params.dat")
-    if isinstance(extra, str):
-        extra = extra.split()
-    # transport= names the app: the element is what each one carries
-    binary = TENSORS if "transport=tensor" in extra else VECTORS
-    extra = [a for a in extra if not a.startswith("transport=")]
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + list(extra)
-    r = subprocess.run([binary, str(d / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=900,
-                       env=dict(os.environ, **(env or {})))
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(app_for(transport), copy_example(example, d), BASE, extra)
     return d
 
 
@@ -75,7 +67,7 @@ def test_a_line_element_in_plane_poiseuille(tmp_path, scheme):
     both schemes, so w, S and rhohat match their closed forms to round-off.
     These are the quantities the stretching statistics are built from."""
     T = 0.5
-    d = run(tmp_path, POISEUILLE, "transport=vector scheme=%s dt=0.01 T=%g dump_intv=%g" % (scheme, T, T))
+    d = run(tmp_path, POISEUILLE, "vector", "scheme=%s dt=0.01 T=%g dump_intv=%g" % (scheme, T, T))
     t0, tT = dump_at(d, 0.), dump_at(d, T)
     x = t0["points"][:, 0]
     assert np.abs(tT["points"][:, 0] - x).max() == 0          # x is invariant
@@ -96,7 +88,7 @@ def test_the_deformation_gradient_in_plane_poiseuille(tmp_path, scheme):
     schemes, with the shear in the (z, x) entry. A transposed or misindexed
     dF/dt = J F would put the shear in the wrong place."""
     T = 0.5
-    d = run(tmp_path, POISEUILLE, "transport=tensor scheme=%s dt=0.01 T=%g dump_intv=%g" % (scheme, T, T))
+    d = run(tmp_path, POISEUILLE, "tensor", "scheme=%s dt=0.01 T=%g dump_intv=%g" % (scheme, T, T))
     t0, tT = dump_at(d, 0.), dump_at(d, T)
     assert np.array_equal(t0["F"], np.tile(np.eye(3).ravel(), (len(t0["F"]), 1)))
     F = tT["F"].reshape(-1, 3, 3)
@@ -117,12 +109,12 @@ def linear(tmp_path, transport, scheme, A, T=1.0):
     """Run the linear flow u = A x with the given element and scheme to T; return (case folder, T)."""
     d = tmp_path / "flow"
     d.mkdir(parents=True)
-    lines = [l for l in open(LINEAR).read().splitlines()
-             if not l.startswith(("A", "#"))]
+    with open(LINEAR) as f:
+        lines = [l for l in f.read().splitlines() if not l.startswith(("A", "#"))]
     (d / "expr_params.dat").write_text("\n".join(lines) + "\n" + "".join(
         "A%s%s=%r\n" % ("xyz"[i], "xyz"[j], A[i][j]) for i in range(3) for j in range(3)))
-    return run(tmp_path, str(d / "expr_params.dat"),
-               "transport=%s scheme=%s dt=0.01 T=%g dump_intv=%g" % (transport, scheme, T, T)), T
+    return run(tmp_path, str(d / "expr_params.dat"), transport,
+               "scheme=%s dt=0.01 T=%g dump_intv=%g" % (scheme, T, T)), T
 
 
 STAGNATION = [[1., 0., 0.], [0., -1., 0.], [0., 0., 0.]]
@@ -174,7 +166,7 @@ def test_solid_rotation_turns_without_stretching(tmp_path):
     assert np.abs(np.linalg.det(F) - 1).max() < 1e-8
 
 
-# --- restart and threads -----------------------------------------------------
+# --- restart -------------------------------------------------------------------
 
 @needs_partrac
 @pytest.mark.parametrize("transport", ["vector", "tensor"])
@@ -184,29 +176,12 @@ def test_a_resumed_run_is_identical_to_one_never_stopped(tmp_path, transport):
     the element (rhohat, w, S or F) as well as the position, or a resumed run
     loses the deformation accumulated before the restart."""
     dt, stop, end = 0.01, 0.2, 0.4
-    common = "transport=%s scheme=RK4 dt=%g dump_intv=%g" % (transport, dt, stop)
-    cont = run(tmp_path, POISEUILLE, common + " T=%g" % end, "cont")
     # the final checkpoint is written one step past T, so T = stop - dt checkpoints at stop
-    split = run(tmp_path, POISEUILLE, common + " T=%g" % (stop - dt), "split")
-    folder = os.path.dirname(next(split.rglob("Checkpoints/positions.pos")))
-    run(tmp_path, POISEUILLE, common + " T=%g restart_folder=%s" % (end, os.path.dirname(folder)), "resume")
+    cont, split = continuous_and_resumed(
+        app_for(transport), POISEUILLE, tmp_path,
+        [BASE, "scheme=RK4 dt=%g dump_intv=%g" % (dt, stop)],
+        "T=%g" % (stop - dt), "T=%g" % end)
     a, b = dump_at(cont, end), dump_at(split, end)
     assert set(a) == set(b)
     for k in a:
         assert np.array_equal(a[k], b[k]), k + " differs after a restart"
-
-
-@needs_partrac
-@pytest.mark.parametrize("transport", ["vector", "tensor"])
-def test_the_result_does_not_depend_on_the_thread_count(tmp_path, transport):
-    """Runs on 1 and 4 threads write bit-identical dumps for both elements.
-    Each particle's element evolves independently, so the result must not
-    depend on how the particles are split across threads."""
-    out = {}
-    for n in (1, 4):
-        d = run(tmp_path, POISEUILLE, "transport=%s scheme=RK4 dt=0.01 T=0.2 dump_intv=0.2 Nrw=400 Nrw_max=400" % transport,
-                str(n), env={"OMP_NUM_THREADS": str(n)})
-        out[n] = dump_at(d, 0.2)
-    assert set(out[1]) == set(out[4])
-    for k in out[1]:
-        assert np.array_equal(out[1][k], out[4][k]), k + " differs between 1 and 4 threads"

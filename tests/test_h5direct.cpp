@@ -17,6 +17,7 @@
 
 #include "Error.hpp"
 #include "h5direct.hpp"
+#include "case_dir.hpp"
 
 namespace {
 
@@ -24,7 +25,7 @@ namespace {
 struct TempH5 {
   std::string name;
   explicit TempH5(const std::string& tag)
-    : name((std::filesystem::temp_directory_path() / ("partrac_h5direct_" + tag + ".h5")).string()) {}
+    : name(temp_path(tag + ".h5").string()) {}
   ~TempH5(){ std::remove(name.c_str()); }
 };
 

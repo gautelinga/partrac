@@ -22,13 +22,13 @@ dumped positions, which it would not if steps were lost.
 
 import os
 import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
-from dumps import dump_at
+from dumps import dump_at, read_stats
 from paths import REPO, app
+from runs import run_app
 
 TRACERS = app("tracers")
 
@@ -37,8 +37,7 @@ pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is 
 
 def run(params, args):
     """Run tracers on params with args; assert it succeeded."""
-    r = subprocess.run([TRACERS, str(params)] + args, capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(TRACERS, params, args, timeout=600)
 
 
 def restart_from(params, mode, points, args, dt):
@@ -64,8 +63,7 @@ def restart_from(params, mode, points, args, dt):
 def declined(folder):
     """The n_declined column of the run's statistics, one row per stat time."""
     [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
-    header = f.read_text().splitlines()[0].lstrip("#").split()
-    return np.loadtxt(f)[:, header.index("n_declined")]
+    return read_stats(f)["n_declined"]
 
 
 def assert_uniform(x, lo, hi, bins):

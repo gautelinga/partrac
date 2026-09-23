@@ -22,13 +22,13 @@ which is what makes coarsening merge edges whose compressed times differ.
 
 import os
 import re
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps
 from paths import REPO, app
+from runs import checkpoint_folder, run_app
 
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -43,44 +43,38 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
                                    reason="partrac is not built")
 
 
+def resumed_dumps(case):
+    """time -> datasets as written, of the one dump file the resumed run wrote under case."""
+    resumed = [f for f in sorted(case.rglob("data_from_t*.h5"))
+               if "t0.000000" not in f.name]
+    assert len(resumed) == 1
+    return all_dumps(resumed[0].parent, resumed[0].name, raw=True)
+
+
 def there_and_back(tmp_path, extra):
-    """Advect to T, reverse u_inf by restart, return to 2T; return the resumed run's dump file."""
+    """Advect to T, reverse u_inf by restart, return to 2T; return the resumed run's dumps."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     cfg = tmp_path / "expr_params.dat"
-    cfg.write_text(open(POISEUILLE).read())
-
-    def call(args):
-        argv = [a for a in BASE if a.split("=")[0]
-                not in {b.split("=")[0] for b in extra + args}] + extra + args
-        r = subprocess.run([PARTRAC, str(cfg)] + argv,
-                           capture_output=True, text=True, timeout=900)
-        assert r.returncode == 0, r.stdout + r.stderr
+    with open(POISEUILLE) as f:
+        cfg.write_text(f.read())
 
     # the checkpoint lands one step past the stop time, so stop a step short:
     # the closed forms hold only if the flow reverses exactly at T
-    call(["T=%g" % (T - DT), "dump_intv=1e9", "checkpoint_intv=%g" % T])
-    checkpoint = list(tmp_path.rglob("edges.edge"))
-    assert len(checkpoint) == 1
+    run_app(PARTRAC, cfg, BASE, extra, ["T=%g" % (T - DT), "dump_intv=1e9", "checkpoint_intv=%g" % T])
+    folder = checkpoint_folder(tmp_path)
     cfg.write_text(re.sub(r"(?m)^u_inf=.*$", "u_inf=%g" % -U_INF, cfg.read_text()))
-    call(["T=%g" % (2 * T + 0.002), "dump_intv=0.5", "checkpoint_intv=1e9",
-          "restart_folder=" + str(checkpoint[0].parent.parent)])
-
-    resumed = [f for f in sorted(tmp_path.rglob("data_from_t*.h5"))
-               if "t0.000000" not in f.name]
-    assert len(resumed) == 1
-    return h5py.File(resumed[0], "r")
+    run_app(PARTRAC, cfg, BASE, extra, ["T=%g" % (2 * T + 0.002), "dump_intv=0.5",
+                                        "checkpoint_intv=1e9", "restart_folder=%s" % folder])
+    return resumed_dumps(tmp_path)
 
 
 def errors(dump):
     """Per-edge relative errors in rho and tau against the closed forms, edge count, and sum of dl0."""
-    key = sorted(dump.keys(), key=float)[-1]
-    t = float(key)
+    t = max(dump)
     assert t > 2 * T - 0.01, "the return leg did not finish"
-    dl = np.array(dump[key + "/dl"]).ravel()
-    dl0 = np.array(dump[key + "/dl0"]).ravel()
-    tau = np.array(dump[key + "/tau"]).ravel()
-    e = np.array(dump[key + "/edges"])
-    p = np.array(dump[key + "/points"])
+    g = dump[t]
+    dl, dl0, tau = g["dl"].ravel(), g["dl0"].ravel(), g["tau"].ravel()
+    e, p = g["edges"], g["points"]
     a = 3 * U_INF * 0.5 * (p[e[:, 0], 0] + p[e[:, 1], 0]) / R ** 2
 
     back = t - T
@@ -91,29 +85,42 @@ def errors(dump):
             len(dl), dl0.sum())
 
 
-@needs_partrac
-def test_refinement_alone_is_reversible(tmp_path):
+@pytest.fixture(scope="module")
+def refined(tmp_path_factory):
+    """errors() of the round trip with refinement only."""
+    if not os.path.exists(PARTRAC):
+        pytest.skip("partrac is not built")
+    return errors(there_and_back(tmp_path_factory.mktemp("refined"),
+                                 ["coarsen=false", "ds_min=1e-12"]))
+
+
+@pytest.fixture(scope="module")
+def coarsened(tmp_path_factory):
+    """errors() of the round trip with refinement and coarsening."""
+    if not os.path.exists(PARTRAC):
+        pytest.skip("partrac is not built")
+    return errors(there_and_back(tmp_path_factory.mktemp("coarsened"),
+                                 ["coarsen=true", "coarsen_intv=0.01", "ds_min=0.008"]))
+
+
+def test_refinement_alone_is_reversible(refined):
     """With refinement only, the strip returns to rho = 1 and tau matches the
     closed form, while the total reference length stays 1. Failure means edge
     splits corrupt dl0 or tau, biasing every stretching and mixing statistic of
     a refined run."""
-    rho_err, tau_err, n, s0 = errors(
-        there_and_back(tmp_path, ["coarsen=false", "ds_min=1e-12"]))
+    rho_err, tau_err, n, s0 = refined
     assert n > 100                                   # it did refine
     assert s0 == pytest.approx(1.0, rel=1e-12)       # reference length conserved
     assert rho_err.max() < 1e-3
     assert tau_err.max() < 5e-2
 
 
-@needs_partrac
-def test_coarsening_is_reversible_too(tmp_path):
+def test_coarsening_is_reversible_too(coarsened):
     """Coarsening on the return leg merges the strip back down and still returns
     rho = 1, exactly for edges never collapsed. A collapse must place the
     surviving node where the reference lengths it hands out say it went, or the
     strip comes back the wrong length."""
-    rho_err, tau_err, n, s0 = errors(
-        there_and_back(tmp_path, ["coarsen=true", "coarsen_intv=0.01",
-                                  "ds_min=0.008"]))
+    rho_err, tau_err, n, s0 = coarsened
     assert n < 120                                   # it did merge back down
     assert s0 == pytest.approx(1.0, rel=1e-12)
     assert np.median(rho_err) < 1e-12                # exact for untouched edges
@@ -121,17 +128,11 @@ def test_coarsening_is_reversible_too(tmp_path):
     assert tau_err.max() < 5e-2
 
 
-@needs_partrac
-def test_coarsening_costs_no_more_than_refinement_alone(tmp_path):
+def test_coarsening_costs_no_more_than_refinement_alone(refined, coarsened):
     """The tau error with coarsening is within a factor 2 of refinement alone.
     Merging discards the collapsed edge's tau, which is only acceptable while
     neighbouring edges agree on it."""
-    plain = errors(there_and_back(tmp_path / "plain",
-                                  ["coarsen=false", "ds_min=1e-12"]))
-    merged = errors(there_and_back(tmp_path / "merged",
-                                   ["coarsen=true", "coarsen_intv=0.01",
-                                    "ds_min=0.008"]))
-    assert merged[1].max() < 2 * plain[1].max()
+    assert coarsened[1].max() < 2 * refined[1].max()
 
 
 # --- sine flow: reversed by negating u_inf and reversing the phases -------------
@@ -171,39 +172,26 @@ def sine_there_and_back(tmp_path, n_half, extra):
     chi = CHI[:n_half]
     u = 0.70710678118
 
-    def call(args):
-        argv = [a for a in SINE_BASE if a.split("=")[0]
-                not in {b.split("=")[0] for b in extra + args}] + extra + args
-        r = subprocess.run([PARTRAC, str(cfg)] + argv,
-                           capture_output=True, text=True, timeout=900)
-        assert r.returncode == 0, r.stdout + r.stderr
-
     # the checkpoint lands one step past the stop time, so stop a step short
     # of the half-period boundary
     forward = n_half * TAU - DT_S
     write_sine(cfg, chi, u, (1, 0), (0, 1))
-    call(["T=%g" % forward, "dump_intv=1e9",
-          "checkpoint_intv=%g" % forward])
-    checkpoint = list(tmp_path.rglob("edges.edge"))
-    assert len(checkpoint) == 1
+    run_app(PARTRAC, cfg, SINE_BASE, extra,
+            ["T=%g" % forward, "dump_intv=1e9", "checkpoint_intv=%g" % forward])
+    folder = checkpoint_folder(tmp_path)
 
     write_sine(cfg, list(reversed(chi)), -u, (0, 1), (1, 0))
-    call(["T=%g" % (2 * n_half * TAU + DT_S / 2),
-          "dump_intv=%g" % (n_half * TAU),
-          "checkpoint_intv=1e9",
-          "restart_folder=" + str(checkpoint[0].parent.parent)])
+    run_app(PARTRAC, cfg, SINE_BASE, extra,
+            ["T=%g" % (2 * n_half * TAU + DT_S / 2), "dump_intv=%g" % (n_half * TAU),
+             "checkpoint_intv=1e9", "restart_folder=%s" % folder])
 
-    resumed = [f for f in sorted(tmp_path.rglob("data_from_t*.h5"))
-               if "t0.000000" not in f.name]
-    assert len(resumed) == 1
-    d = h5py.File(resumed[0], "r")
-    keys = sorted(d.keys(), key=float)
-    assert float(keys[-1]) == pytest.approx(2 * n_half * TAU, abs=1e-9)
+    d = resumed_dumps(tmp_path)
+    keys = sorted(d)
+    assert keys[-1] == pytest.approx(2 * n_half * TAU, abs=1e-9)
     # a sheet reports areas where a strip reports lengths
     size = "dA" if "dA" in d[keys[0]] else "dl"
-    at = lambda k: {"w": np.array(d[k + "/" + size]).ravel(),
-                    "w0": np.array(d[k + "/" + size + "0"]).ravel(),
-                    "tau": np.array(d[k + "/tau"]).ravel()}
+    at = lambda k: {"w": d[k][size].ravel(), "w0": d[k][size + "0"].ravel(),
+                    "tau": d[k]["tau"].ravel()}
     return at(keys[0]), at(keys[-1])
 
 

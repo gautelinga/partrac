@@ -5,7 +5,7 @@
 // as SimplexInterpol reads them, but with the velocity evaluated on each cell's
 // barycentric (Alfeld) split, where it is pointwise divergence-free
 // (split_eval.hpp). The file's every cell must already have zero net flux,
-// which python/divfree_clean.py prepares; the interior values are recomputed
+// which python/divfree/divfree_clean.py prepares; the interior values are recomputed
 // from the P2 boundary data at every stamp and never read. Nothing here needs
 // dolfin.
 

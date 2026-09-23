@@ -3,15 +3,16 @@ a parameter error does: exit code 2 and a message on stderr, from the one
 place each app reports (partrac::report_errors), not an exit() where it was
 found. The schema knows the keys, not what they name: an initial state that
 misses the domain, a file that is not there, an expression or an element the
-loader does not know, an XDMF grid without a time."""
+loader does not know, an XDMF grid without a time. And a misspelt key in an
+expression file, which that expression's schema refuses by name."""
 
 import os
-import shutil
-import subprocess
+import re
 
 import pytest
 
 from paths import REPO, app
+from runs import copy_case, copy_example, run_app
 
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -28,12 +29,8 @@ SEED = ["init_mode=strip_x", "La=0.1", "x0=0", "y0=0", "z0=0"]
 def run(tmp_path, extra, params=None):
     """partrac on a copy of the Poiseuille example, or on the parameter file `params`."""
     if params is None:
-        shutil.copy(POISEUILLE, tmp_path / "expr_params.dat")
-        params = tmp_path / "expr_params.dat"
-    keys = {a.split("=")[0] for a in extra}   # the apps refuse a repeated key
-    argv = [a for a in ARGS if a.split("=")[0] not in keys] + extra
-    return subprocess.run([PARTRAC, str(params)] + argv,
-                          capture_output=True, text=True, timeout=120)
+        params = copy_example(POISEUILLE, tmp_path)
+    return run_app(PARTRAC, params, ARGS, extra, check=False, timeout=120)
 
 
 def reported(r, message):
@@ -82,15 +79,34 @@ def test_a_missing_positions_file_is_reported(tmp_path):
      "unknown expression nonsense"),
 ])
 def test_an_analytic_file_without_a_known_expression_is_reported(tmp_path, edit, message):
-    (tmp_path / "expr_params.dat").write_text(edit(open(POISEUILLE).read()))
+    with open(POISEUILLE) as f:
+        (tmp_path / "expr_params.dat").write_text(edit(f.read()))
     reported(run(tmp_path, SEED, params=tmp_path / "expr_params.dat"), message)
+
+
+@needs_partrac
+def test_a_misspelt_key_in_the_expression_file_stops_the_run(tmp_path):
+    """A key the expression does not read stops partrac before it runs, naming
+    the key and the one it resembles.
+
+    Read loosely, u_innf would be ignored and the flow would run with whatever
+    u_inf the file also sets, or stop later on a missing key without saying
+    which line was wrong.
+    """
+    with open(POISEUILLE) as f:
+        (tmp_path / "expr_params.dat").write_text(f.read().replace("u_inf=", "u_innf="))
+    r = run(tmp_path, SEED, params=tmp_path / "expr_params.dat")
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "unknown parameter 'u_innf'" in out, out
+    assert "did you mean 'u_inf'" in out, out
+    assert "missing required parameter 'u_inf'" in out, out
+    assert not list(tmp_path.rglob("tdata_from_t*.dat"))
 
 
 def mesh_case(src, tmp_path, edit):
     """A copy of the mesh case in src with dolfin_params.dat passed through edit."""
-    d = tmp_path / "case"
-    shutil.copytree(src, d)
-    f = d / "dolfin_params.dat"
+    f = copy_case(src, tmp_path / "case") / "dolfin_params.dat"
     f.write_text(edit(f.read_text()))
     return f
 
@@ -107,9 +123,7 @@ def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
 
 @needs_partrac
 def test_an_xdmf_grid_without_a_time_is_reported(xdmf_dir, tmp_path):
-    d = tmp_path / "case"
-    shutil.copytree(xdmf_dir, d)
-    import re
+    d = copy_case(xdmf_dir, tmp_path / "case")
     u = d / "u.xdmf"
     u.write_text(re.sub(r"<Time [^>]*/>", "", u.read_text(), count=1))
     reported(run(tmp_path, ["mode=xdmftriangle", "init_mode=points_xy", "init_weight=uniform",

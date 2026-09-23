@@ -24,25 +24,17 @@ is the second thing checked: RK4 runs and no particle leaves the box.
 """
 
 import os
-import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
-from paths import REPO, app, built_with_dolfin
+from cases import shared_dir
+from dumps import all_dumps
+from paths import app
+from runs import copy_case, run_app
 
 INTERPOL = app("interpol")
 TRACERS = app("tracers")
-
-# the shipped parameter file of each mode's example, used to ask the apps
-# whether they know the mode at all
-SHIPPED = {mode: os.path.join(REPO, "data_example", folder, "dolfin_params.dat")
-           for mode, folder in (("trianglefreq", "sine_trianglefreq_p2"),
-                                ("tetfreq", "sine_tetfreq_p2"))}
-
-pytestmark = pytest.mark.skipif(not built_with_dolfin(),
-                                reason="partrac was built without dolfin")
 
 # the base period both cases declare as tau
 TAU = 1.0
@@ -119,7 +111,6 @@ def triangle_freq_dir(tmp_path_factory):
     named in freqstamps.dat.
     """
     df = pytest.importorskip("dolfin", reason="writing the case needs dolfin")
-    d = tmp_path_factory.mktemp("trianglefreq_exact")
 
     class PBC(df.SubDomain):
         """x = 0 is the master face; x = 1 maps onto it."""
@@ -130,29 +121,31 @@ def triangle_freq_dir(tmp_path_factory):
             y[0] = x[0] - 1 if df.near(x[0], 1) else x[0]
             y[1] = x[1]
 
-    mesh = df.UnitSquareMesh(8, 8)
-    pbc = PBC()
-    V = df.VectorFunctionSpace(mesh, "CG", 2, constrained_domain=pbc)
-    P = df.FunctionSpace(mesh, "CG", 1, constrained_domain=pbc)
+    def build(d):
+        mesh = df.UnitSquareMesh(8, 8)
+        pbc = PBC()
+        V = df.VectorFunctionSpace(mesh, "CG", 2, constrained_domain=pbc)
+        P = df.FunctionSpace(mesh, "CG", 1, constrained_domain=pbc)
 
-    with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as f:
-        f.write(mesh, "mesh")
-    lines = []
-    for k, ((t_k, a_k), (u_expr, p_expr)) in enumerate(zip(STAMPS, TRIANGLE_MODES)):
-        with df.HDF5File(mesh.mpi_comm(), str(d / ("up_%d.h5" % k)), "w") as f:
-            f.write(df.interpolate(df.Expression(u_expr, degree=2), V), "u")
-            f.write(df.interpolate(df.Expression(p_expr, degree=1), P), "p")
-        lines.append("%r %r up_%d.h5" % (t_k, a_k, k))
-    (d / "freqstamps.dat").write_text("\n".join(lines) + "\n")
-    (d / "dolfin_params.dat").write_text(
-        "velocity_space=P2\npressure_space=P1\nfreqstamps=freqstamps.dat\n"
-        "mesh=mesh.h5\nperiodic_x=true\nperiodic_y=false\nperiodic_z=false\n"
-        "rho=1.0\ntau=%r\nt_min=0\nt_max=1e8\n" % TAU)
-    return d
+        with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as f:
+            f.write(mesh, "mesh")
+        lines = []
+        for k, ((t_k, a_k), (u_expr, p_expr)) in enumerate(zip(STAMPS, TRIANGLE_MODES)):
+            with df.HDF5File(mesh.mpi_comm(), str(d / ("up_%d.h5" % k)), "w") as f:
+                f.write(df.interpolate(df.Expression(u_expr, degree=2), V), "u")
+                f.write(df.interpolate(df.Expression(p_expr, degree=1), P), "p")
+            lines.append("%r %r up_%d.h5" % (t_k, a_k, k))
+        (d / "freqstamps.dat").write_text("\n".join(lines) + "\n")
+        (d / "dolfin_params.dat").write_text(
+            "velocity_space=P2\npressure_space=P1\nfreqstamps=freqstamps.dat\n"
+            "mesh=mesh.h5\nperiodic_x=true\nperiodic_y=false\nperiodic_z=false\n"
+            "rho=1.0\ntau=%r\nt_min=0\nt_max=1e8\n" % TAU)
+
+    return shared_dir(tmp_path_factory, "trianglefreq_exact", build)
 
 
-# mode -> (fixture giving the shipped or built case, closed form, the centre a
-# run starts from, the directions a particle must not leave)
+# mode -> (closed form, the centre a run starts from, the directions a particle
+# must not leave)
 CASES = {
     "trianglefreq": (triangle_exact, "x0=0.5 y0=0.5 z0=0", ["y"]),
     "tetfreq": (tet_exact, "x0=0.5 y0=0.5 z0=0.5", ["y", "z"]),
@@ -166,37 +159,23 @@ def freq_case(request, tmp_path, mesh_dir, triangle_freq_dir):
     The copy is private because the apps write their output beside the input.
     """
     mode = request.param
-    require_mode(mode)
+    if not os.path.exists(INTERPOL):
+        pytest.skip("interpol is not built")
     src = triangle_freq_dir if mode == "trianglefreq" else mesh_dir("tetfreq")
-    d = tmp_path / "case"
-    d.mkdir()
-    for f in os.listdir(src):
-        if f != "generate_up.py":
-            shutil.copy(os.path.join(src, f), d / f)
+    d = copy_case(src, tmp_path / "case")
     cfg = d / "dolfin_params.dat"
     exact, centre, bounded = CASES[mode]
     return mode, d, cfg, exact, centre, bounded
 
 
-# --- does this build know the mode? --------------------------------------------
-
-def require_mode(mode):
-    """Skip only if the apps are not built: a build that lost a mode must fail here."""
-    if not os.path.exists(INTERPOL):
-        pytest.skip("interpol is not built")
-
-
 # --- the tests -----------------------------------------------------------------
 
 
-def probe(cfg, mode, t0, npoints=400):
+def probe(cfg, mode, t0):
     """Run interpol on the case at time t0; returns its datasets as arrays."""
     h5py = pytest.importorskip("h5py")
-    r = subprocess.run([INTERPOL, str(cfg), "mode=" + mode, "Nrw=%d" % npoints,
-                        "int_order=2", "t0=%r" % t0, "random=false", "seed=1",
-                        "tag=t%r" % t0],
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout[-800:] + r.stderr
+    run_app(INTERPOL, cfg, ["mode=" + mode, "Nrw=400", "int_order=2",
+                            "t0=%r" % t0, "random=false", "seed=1", "tag=t%r" % t0], timeout=600)
     out = [p for p in cfg.parent.rglob("interpolation.h5part") if ("t%r" % t0) in str(p)]
     assert len(out) == 1, out
     with h5py.File(out[0], "r") as h:
@@ -225,20 +204,6 @@ def test_the_frequency_sum_matches_its_closed_form(freq_case, t0):
     assert np.abs(want["ux"]).max() > 0.1
 
 
-def test_the_weights_change_with_time(freq_case):
-    """The field probed at two times differs, so the mode really is unsteady.
-
-    A loader that ignored the time, or that summed the modes with the weights
-    of t = 0, would pass a single-time comparison at t = 0 and nothing else.
-    """
-    mode, _, cfg, _, _, _ = freq_case
-    a = probe(cfg, mode, TIMES[0], npoints=200)
-    b = probe(cfg, mode, TIMES[1], npoints=200)
-    # the same seed draws the same points, so the fields compare point by point
-    assert np.array_equal(a["x"], b["x"])
-    assert np.abs(a["ux"] - b["ux"]).max() > 1e-3
-
-
 def test_tracers_run_and_stay_in_the_box(freq_case):
     """tracers takes RK4 steps on the case and no particle leaves the domain.
 
@@ -246,22 +211,15 @@ def test_tracers_run_and_stay_in_the_box(freq_case):
     so a particle that starts inside cannot be carried out; one that appears
     outside means the field, the cell search or the periodic wrapping is wrong.
     """
-    h5py = pytest.importorskip("h5py")
+    pytest.importorskip("h5py")
     mode, d, cfg, _, centre, bounded = freq_case
     if not os.path.exists(TRACERS):
         pytest.skip("tracers is not built")
-    args = ("Dm=0 dt=0.005 T=0.05 Nrw=200 Nrw_max=2000 dump_intv=0.01 "
+    run_app(TRACERS, cfg, "mode=" + mode,
+            "Dm=0 dt=0.005 T=0.05 Nrw=200 Nrw_max=2000 dump_intv=0.01 "
             "stat_intv=1e9 checkpoint_intv=1e9 init_mode=points_xy int_order=2 "
-            "scheme=RK4 random=false seed=1").split() + centre.split()
-    r = subprocess.run([TRACERS, str(cfg), "mode=" + mode] + args,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stdout[-800:] + r.stderr
-
-    steps = {}
-    for f in d.rglob("data_from_t*.h5"):
-        with h5py.File(f, "r") as h:
-            for k in h:
-                steps[float(k)] = np.array(h[k]["points"])
+            "scheme=RK4 random=false seed=1", centre)
+    steps = {t: g["points"] for t, g in all_dumps(d, raw=True).items()}
     assert len(steps) > 2, "the run wrote too few dumps to say anything"
     first, last = steps[min(steps)], steps[max(steps)]
     assert np.isfinite(last).all()

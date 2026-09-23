@@ -5,8 +5,9 @@ refine_intv, each walker past the exit plane is replaced by a copy of a
 surviving walker j drawn with weight 2^-w_j; both copies take generation
 w_j + 1, so a walker of generation w stands for 2^-w of an original, a split
 conserves the weight sum of 2^-w, and only a walker that leaves loses weight.
-At every stat_intv the walkers within ds_max of the exit plane's axis are
-written as separation data.
+At every stat_intv the walkers within ds_max of the source, along the strip
+direction init_mode names when it lies in the exit plane, are written as
+separation data.
 
 The flow is plane Poiseuille, u = (0, 0, 1.5 (1 - x^2)): x never changes along
 a path, so z(t) = z0 + u_z(x0) t exactly and every crossing of a plane z = Ln
@@ -14,13 +15,13 @@ can be predicted from the positions.
 """
 
 import os
-import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
+from dumps import all_dumps, read_stats
 from paths import REPO, app
+from runs import continuous_and_resumed, copy_example, run_app
 
 WALKERS = app("weighted_walkers")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -40,29 +41,8 @@ BASE = ("init_mode=strip_x_y La=2.0 Lb=0.0 x0=0 y0=0 z0=0 Nrw=200 Nrw_max=2000 "
 
 def run(tmp_path, extra, name="case", env=None):
     """Run weighted_walkers on plane Poiseuille with extra overriding BASE; return the case folder."""
-    d = tmp_path / name
-    d.mkdir(parents=True)
-    shutil.copy(POISEUILLE, d / "expr_params.dat")
-    if isinstance(extra, str):
-        extra = extra.split()
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + list(extra)
-    r = subprocess.run([WALKERS, str(d / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=900,
-                       env=dict(os.environ, **(env or {})))
-    assert r.returncode == 0, r.stdout + r.stderr
-    return d
-
-
-def dumps(d, pattern="data_from_t*.h5"):
-    """Return time -> {dataset: array} over every file under d matching pattern."""
-    h5py = pytest.importorskip("h5py")
-    out = {}
-    for f in sorted(d.rglob(pattern)):
-        with h5py.File(f, "r") as h:
-            for g in h:
-                out[float(g)] = {k: np.array(h[g][k]) for k in h[g]}
-    return out
+    run_app(WALKERS, copy_example(POISEUILLE, tmp_path / name), BASE, extra, env=env)
+    return tmp_path / name
 
 
 def u_z(x):
@@ -80,7 +60,7 @@ def test_advection_alone_is_exact(tmp_path, int_order):
     it to round-off, and no walker gains a generation. Every other test here
     builds on this step."""
     d = run(tmp_path, "int_order=%d" % int_order)
-    ds = dumps(d)
+    ds = all_dumps(d, raw=True)
     t0 = min(ds)
     x0 = ds[t0]["points"]
     assert len(ds) >= 6
@@ -99,24 +79,11 @@ def test_the_same_seed_gives_the_same_run(tmp_path):
     out = []
     for name in ("a", "b"):
         d = run(tmp_path, extra, name, env={"OMP_NUM_THREADS": "4"})
-        out.append(dumps(d))
+        out.append(all_dumps(d, raw=True))
     assert out[0].keys() == out[1].keys()
     for t in out[0]:
         for k in out[0][t]:
             assert np.array_equal(out[0][t][k], out[1][t][k]), "%s at t = %g" % (k, t)
-
-
-@needs_walkers
-def test_without_noise_or_resampling_the_thread_count_does_not_matter(tmp_path):
-    """With no noise and no resampling each walker's step is independent and
-    deterministic, so 1 and 4 threads write bit-identical dumps."""
-    out = {}
-    for n in (1, 4):
-        d = run(tmp_path, [], str(n), env={"OMP_NUM_THREADS": str(n)})
-        out[n] = dumps(d)
-    for t in out[1]:
-        for k in out[1][t]:
-            assert np.array_equal(out[1][t][k], out[4][t][k]), "%s at t = %g" % (k, t)
 
 
 @needs_walkers
@@ -130,7 +97,7 @@ def test_resampling_does_not_depend_on_the_thread_count(tmp_path):
     out = {}
     for n in (1, 4):
         d = run(tmp_path, extra, str(n), env={"OMP_NUM_THREADS": str(n)})
-        out[n] = dumps(d)
+        out[n] = all_dumps(d, raw=True)
     for t in out[1]:
         for k in out[1][t]:
             assert np.array_equal(out[1][t][k], out[4][t][k]), "%s at t = %g" % (k, t)
@@ -138,8 +105,18 @@ def test_resampling_does_not_depend_on_the_thread_count(tmp_path):
 
 # --- resampling ---------------------------------------------------------------
 
-@needs_walkers
-def test_the_exit_plane_is_enforced_and_weight_is_only_lost_by_leaving(tmp_path):
+@pytest.fixture(scope="module")
+def resampled(tmp_path_factory):
+    """The dumps of a run with an exit plane at z = 0.3, resampled and dumped every step."""
+    if not os.path.exists(WALKERS):
+        pytest.skip("weighted_walkers is not built")
+    d = run(tmp_path_factory.mktemp("resampled"),
+            "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.01",
+            env={"OMP_NUM_THREADS": "4"})
+    return all_dumps(d, raw=True)
+
+
+def test_the_exit_plane_is_enforced_and_weight_is_only_lost_by_leaving(resampled):
     """With the check at every step no dumped walker is past the plane, the
     count never changes and w is a non-negative integer. The weight sum of
     2^-w equals Nrw until the first walker leaves and never grows, since a
@@ -147,9 +124,7 @@ def test_the_exit_plane_is_enforced_and_weight_is_only_lost_by_leaving(tmp_path)
     weight is lost; weight created or lost otherwise would bias every weighted
     statistic."""
     Ln = 0.3
-    d = run(tmp_path, "exit_plane=z Ln=%g refine_intv=0.01 dump_intv=0.01" % Ln,
-            env={"OMP_NUM_THREADS": "4"})
-    ds = dumps(d)
+    ds = resampled
     times = sorted(ds)
     N = len(ds[times[0]]["points"])
     total = []
@@ -168,19 +143,15 @@ def test_the_exit_plane_is_enforced_and_weight_is_only_lost_by_leaving(tmp_path)
     assert total[-1] < N
 
 
-@needs_walkers
-def test_a_copy_starts_where_its_parent_is(tmp_path):
+def test_a_copy_starts_where_its_parent_is(resampled):
     """With Dm = 0 and a dump every step, a walker that would have advected
     past the plane reappears exactly on a surviving walker, inside the domain
     and at least one generation up. Only coincidence and w >= 1 are exact: a
     parent drawn twice in one pass has moved a further generation by the second
     copy, so the weight-sum test above is the conservation check."""
     Ln = 0.3
-    d = run(tmp_path, "exit_plane=z Ln=%g refine_intv=0.01 dump_intv=0.01" % Ln,
-            env={"OMP_NUM_THREADS": "4"})
-    ds = dumps(d)
+    ds = resampled
     times = sorted(ds)
-    x0 = ds[times[0]]["points"]
     dt = times[1] - times[0]
     checked = 0
     for ta, tb in zip(times, times[1:]):
@@ -206,15 +177,10 @@ def test_a_run_stops_when_every_walker_has_left(tmp_path):
     from, so the run must say so and stop there rather than copy leavers onto
     leavers, collapsing to one position with generations growing every step."""
     d = tmp_path / "swept"
-    d.mkdir()
-    shutil.copy(POISEUILLE, d / "expr_params.dat")
-    argv = [a for a in BASE if a.split("=")[0] not in {"La", "T", "exit_plane", "Ln", "refine_intv", "dump_intv"}]
-    argv += "La=1.0 T=0.5 exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.01".split()
-    r = subprocess.run([WALKERS, str(d / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=900)
-    assert r.returncode == 0, r.stdout + r.stderr
+    r = run_app(WALKERS, copy_example(POISEUILLE, d), BASE,
+                "La=1.0 T=0.5 exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.01")
     assert "Every walker has crossed the exit plane" in r.stdout
-    ds = dumps(d)
+    ds = all_dumps(d, raw=True)
     t_last = max(ds)
     assert 0.26 <= t_last <= 0.28, t_last                     # stopped there, not at T
     for t, g in ds.items():
@@ -225,25 +191,31 @@ def test_a_run_stops_when_every_walker_has_left(tmp_path):
 # --- separation data --------------------------------------------------------
 
 @needs_walkers
-def test_separation_data_is_the_dump_filtered_to_the_axis(tmp_path):
+@pytest.mark.parametrize("init_mode,axis,extra", [
+    # a strip along x, which the exit plane z leaves as the axis
+    ("strip_x_y", 0, "exit_plane=z Ln=0.3 refine_intv=0.01"),
+    # a strip along y; nothing leaves, and the selection alone is checked
+    ("strip_y_x", 1, "exit_plane=z Ln=1e9"),
+])
+def test_separation_data_is_the_dump_filtered_to_the_axis(tmp_path, init_mode, axis, extra):
     """Separation data is written at stat_intv, before the step, from the same
-    state as the dump at that time: exactly the walkers with |x - x0| < ds_max
-    (the strip runs along x and the plane is z), in dump order, with their w.
-    Otherwise the separation analysis would see different walkers or weights
-    than the dump."""
-    d = run(tmp_path, "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.05 stat_intv=0.05 ds_max=0.2",
-            env={"OMP_NUM_THREADS": "4"})
-    ds, sep = dumps(d), dumps(d, "sepdata_from_t*.h5")
+    state as the dump at that time: exactly the walkers within ds_max of the
+    source along the strip direction init_mode names, for the exit plane set,
+    in dump order, with their w. Otherwise the separation analysis would see
+    different walkers or weights than the dump."""
+    d = run(tmp_path, "init_mode=%s dump_intv=0.05 stat_intv=0.05 ds_max=0.2 %s" % (init_mode, extra),
+               env={"OMP_NUM_THREADS": "4"})
+    ds, sep = all_dumps(d, raw=True), all_dumps(d, "sepdata_from_t*.h5", raw=True)
     assert sep and set(sep) <= set(ds)
     picked = 0
     for t, s in sep.items():
         g = ds[t]
-        pick = np.abs(g["points"][:, 0] - 0.0) < 0.2
+        pick = np.abs(g["points"][:, axis] - 0.0) < 0.2
         picked += pick.sum()
         assert np.array_equal(s["x"], g["points"][pick])
         assert np.array_equal(s["w"][:, 0] if s["w"].ndim == 2 else s["w"], g["w"][pick][:, 0])
-    # the axis walkers are the fast ones and leave early; the first dumps have them
-    assert picked > 0
+    # the selection is a part of the strip, not none of it or all of it
+    assert 0 < picked < sum(len(g["points"]) for t, g in ds.items() if t in sep)
 
 
 # --- restart, circle init, statistics -----------------------------------------
@@ -254,33 +226,17 @@ def test_a_resumed_run_keeps_every_walkers_generation(tmp_path):
     resumed run's first dump equals the uninterrupted run's dump at that time,
     after the same splits. Generator state is not checkpointed, so only the
     restart time is compared; a lost generation would reset walkers' weights."""
-    extra = "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.05 checkpoint_intv=1e9"
-    cont = run(tmp_path, extra + " T=0.4", "cont", env={"OMP_NUM_THREADS": "1"})
-    split = run(tmp_path, extra + " T=0.29", "split", env={"OMP_NUM_THREADS": "1"})
     # the final checkpoint is written one step past T: t = 0.3, step 30
-    folder = os.path.dirname(os.path.dirname(next(split.rglob("Checkpoints/positions.pos"))))
-    resumed = tmp_path / "split"
-    # the resumed run writes into a new folder of the same tree, so its own
-    # dumps are the ones that were not there before
-    before = set(split.rglob("data_from_t*.h5"))
-    argv = [a for a in BASE if a.split("=")[0] not in {a.split("=")[0] for a in extra.split()} | {"T"}]
-    argv += (extra + " T=0.4 restart_folder=" + folder).split()
-    r = subprocess.run([WALKERS, str(resumed / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=900, env=dict(os.environ, OMP_NUM_THREADS="1"))
-    assert r.returncode == 0, r.stdout + r.stderr
-    a = dumps(cont)
-    h5py = pytest.importorskip("h5py")
-    b = {}
-    for f in sorted(set(split.rglob("data_from_t*.h5")) - before):
-        with h5py.File(f, "r") as h:
-            for g in h:
-                b[float(g)] = {k: np.array(h[g][k]) for k in h[g]}
-    t = min(b)
-    assert abs(t - 0.3) < 1e-9, sorted(b)
-    t_cont = min(a, key=lambda s: abs(s - t))
-    assert a[t_cont]["w"].max() >= 1, "no split before the restart: the test would not see a lost generation"
+    cont, split = continuous_and_resumed(
+        WALKERS, POISEUILLE, tmp_path,
+        [BASE, "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.05 checkpoint_intv=1e9"],
+        "T=0.29", "T=0.4", env={"OMP_NUM_THREADS": "1"})
+    a, b = all_dumps(cont, raw=True), all_dumps(split, raw=True)
+    # the stopped run dumps up to 0.25, the resumed one from 0.3 on
+    assert sorted(b) == sorted(a), sorted(b)
+    assert a[0.3]["w"].max() >= 1, "no split before the restart: the test would not see a lost generation"
     for k in ("points", "w"):
-        assert np.array_equal(a[t_cont][k], b[t][k]), "%s differs at the restart" % k
+        assert np.array_equal(a[0.3][k], b[0.3][k]), "%s differs at the restart" % k
 
 
 @needs_walkers
@@ -292,7 +248,7 @@ def test_a_circle_spreads_only_in_the_directions_it_names(tmp_path):
     the intended source."""
     for mode, still in (("circle_x_yz", 0), ("circle_x_y", 2)):
         d = run(tmp_path, "init_mode=%s La=0.4 Lb=0.05 x0=0.1 y0=0.2 z0=0.3 T=0.01" % mode, mode)
-        p = dumps(d)[0.0]["points"]
+        p = all_dumps(d, raw=True)[0.0]["points"]
         spread = [np.ptp(p[:, j]) for j in range(3)]
         if still == 0:
             assert np.all(p[:, 0] == 0.1), "x spread under %s" % mode
@@ -308,10 +264,8 @@ def test_the_statistics_read_the_velocity(tmp_path):
     uz_mean at t = 0 is the mean of 1.5 (1 - x^2) over the walkers. Otherwise
     every velocity column of the statistics would be zero or stale."""
     d = run(tmp_path, "T=0.01")
-    p = dumps(d)[0.0]["points"]
-    lines = [l for l in next(d.rglob("tdata_from_t*.dat")).read_text().splitlines() if l.strip()]
-    head = [h for h in lines[0].lstrip("# ").split("\t") if h.strip()]
-    row = dict(zip(head, map(float, lines[1].split())))
+    p = all_dumps(d, raw=True)[0.0]["points"]
+    row = {k: v[0] for k, v in read_stats(d).items()}
     assert row["t"] == 0.0
     # the statistics file holds six significant digits
     assert np.isclose(row["uz_mean"], u_z(p[:, 0]).mean(), rtol=5e-6, atol=0), (row["uz_mean"], u_z(p[:, 0]).mean())

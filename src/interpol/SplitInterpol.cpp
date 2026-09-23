@@ -117,7 +117,7 @@ SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
 
   if (ncoeffs_u != Uint(Cell::n_dofs_max))
     partrac::fail(infilename, ": divfree = true needs a P2 velocity, and this one has ",
-                  ncoeffs_u, " dofs a cell; prepare the file with python/divfree_clean.py");
+                  ncoeffs_u, " dofs a cell; prepare the file with python/divfree/divfree_clean.py");
 
   auto& a = stamps_.a();
   simplex_load::read_field_by_node(req.field_file, u_field, t, t.el_u, t.node_order(t.el_u),
@@ -210,7 +210,7 @@ void SplitInterpol<Cell>::build_interior(const std::string& file, Stamp& s)
     }
     partrac::fail(file, ": cell ", bad, " has a net flux ", worst,
                   " of its scale, above ", flux_tol,
-                  "; divfree = true reads a file prepared by python/divfree_clean.py");
+                  "; divfree = true reads a file prepared by python/divfree/divfree_clean.py");
   }
   // One line a stamp: a sliver returns interior values in proportion to cond(J)
   if (loudest > sliver_warn){

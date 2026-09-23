@@ -27,24 +27,11 @@
 #include "Triangle.hpp"
 #include "TetInterpol.hpp"
 #include "TriangleInterpol.hpp"
+#include "case_dir.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
-
-// A case directory of its own per test, removed with its contents
-struct CaseDir {
-  std::filesystem::path path;
-  explicit CaseDir(const std::string& tag)
-    : path(std::filesystem::temp_directory_path() / ("partrac_simplex_" + tag)) {
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
-  }
-  ~CaseDir(){ std::filesystem::remove_all(path); }
-  std::string params() const { return (path / "dolfin_params.dat").string(); }
-  std::string field() const { return (path / "up_0.h5").string(); }
-  std::string mesh() const { return (path / "mesh.h5").string(); }
-};
 
 // A unit mesh with a P2 velocity and a P1 pressure, written the way the solvers
 // write them. The values are arbitrary but deterministic: the loader is judged
@@ -68,11 +55,11 @@ void write_case(const CaseDir& c, const std::size_t n){
   p.vector()->apply("insert");
 
   {
-    dolfin::HDF5File f(MPI_COMM_WORLD, c.mesh(), "w");
+    dolfin::HDF5File f(MPI_COMM_WORLD, c.file("mesh.h5"), "w");
     f.write(*mesh, "mesh");
   }
   {
-    dolfin::HDF5File f(MPI_COMM_WORLD, c.field(), "w");
+    dolfin::HDF5File f(MPI_COMM_WORLD, c.file("up_0.h5"), "w");
     f.write(u, "u");
     f.write(p, "p");
   }
@@ -86,10 +73,10 @@ void write_case(const CaseDir& c, const std::size_t n){
 std::vector<std::uint32_t> stored_rows(const CaseDir& c, const std::string& field,
                                        const std::size_t ncells, std::size_t& per_cell,
                                        std::vector<double>& vec){
-  const partrac::H5Id mesh = partrac::h5_open_read(c.mesh());
+  const partrac::H5Id mesh = partrac::h5_open_read(c.file("mesh.h5"));
   std::vector<std::uint64_t> gid;
   partrac::h5_read(mesh, "mesh/cell_indices", gid);
-  const partrac::H5Id file = partrac::h5_open_read(c.field());
+  const partrac::H5Id file = partrac::h5_open_read(c.file("up_0.h5"));
   std::vector<std::uint32_t> flat;
   std::vector<std::uint64_t> cells;
   partrac::h5_read(file, field + "/cell_dofs", flat);
@@ -150,7 +137,7 @@ template<typename Cell>
 void check_against_stored(SimplexInterpol<Cell>& intp, const CaseDir& c){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
-  const partrac::H5Id mesh = partrac::h5_open_read(c.mesh());
+  const partrac::H5Id mesh = partrac::h5_open_read(c.file("mesh.h5"));
   std::vector<std::uint32_t> topo;
   std::vector<double> coords;
   partrac::h5_read(mesh, "mesh/topology", topo);
@@ -265,7 +252,7 @@ void write_periodic_case(const CaseDir& c, const std::size_t n, const std::strin
   taylor_hood_spaces<Cell>(u_el, "P1", true, mesh, pbc, V, P, ncoeffs_u, ncoeffs_p);
 
   {
-    dolfin::HDF5File f(MPI_COMM_WORLD, c.mesh(), "w");
+    dolfin::HDF5File f(MPI_COMM_WORLD, c.file("mesh.h5"), "w");
     f.write(*mesh, "mesh");
   }
   for (int k = 0; k < 2; ++k){
@@ -323,7 +310,7 @@ void write_seam_case(const CaseDir& c, const std::size_t n, const std::string& u
   Uint ncoeffs_u = 0, ncoeffs_p = 0;
   taylor_hood_spaces<Cell>(u_el, "P1", true, mesh, pbc, V, P, ncoeffs_u, ncoeffs_p);
   {
-    dolfin::HDF5File f(MPI_COMM_WORLD, c.mesh(), "w");
+    dolfin::HDF5File f(MPI_COMM_WORLD, c.file("mesh.h5"), "w");
     f.write(*mesh, "mesh");
   }
   dolfin::Function u(V), p(P);
@@ -332,7 +319,7 @@ void write_seam_case(const CaseDir& c, const std::size_t n, const std::string& u
   u.interpolate(ue);
   p.interpolate(pe);
   {
-    dolfin::HDF5File f(MPI_COMM_WORLD, c.field(), "w");
+    dolfin::HDF5File f(MPI_COMM_WORLD, c.file("up_0.h5"), "w");
     f.write(u, "u");
     f.write(p, "p");
   }
@@ -346,7 +333,7 @@ void write_seam_case(const CaseDir& c, const std::size_t n, const std::string& u
 template<int NV>
 std::vector<Vector3d> centroids(const CaseDir& c, std::size_t& touching){
   constexpr Uint gdim = NV - 1;
-  const partrac::H5Id mesh = partrac::h5_open_read(c.mesh());
+  const partrac::H5Id mesh = partrac::h5_open_read(c.file("mesh.h5"));
   std::vector<std::uint32_t> topo;
   std::vector<double> coords;
   partrac::h5_read(mesh, "mesh/topology", topo);
@@ -464,31 +451,31 @@ TEST_CASE("The loader refuses a file it cannot read as dolfin wrote it", "[simpl
   SECTION("an element signature it does not know"){
     CaseDir c("bad_sig");
     write_case<Tet>(c, 2);
-    set_signature(c.field(), "u", "VectorElement(FiniteElement('Lagrange', tetrahedron, 3), dim=3)");
+    set_signature(c.file("up_0.h5"), "u", "VectorElement(FiniteElement('Lagrange', tetrahedron, 3), dim=3)");
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
   SECTION("an element on the wrong cell"){
     CaseDir c("bad_cell");
     write_case<Tet>(c, 2);
-    set_signature(c.field(), "u", "VectorElement(FiniteElement('Lagrange', triangle, 2), dim=3)");
+    set_signature(c.file("up_0.h5"), "u", "VectorElement(FiniteElement('Lagrange', triangle, 2), dim=3)");
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
   SECTION("a ragged x_cell_dofs, which cannot be reshaped"){
     CaseDir c("ragged");
     write_case<Tet>(c, 2);
-    poke<std::uint64_t>(c.field(), "u/x_cell_dofs", 7, H5T_NATIVE_UINT64, 1);
+    poke<std::uint64_t>(c.file("up_0.h5"), "u/x_cell_dofs", 7, H5T_NATIVE_UINT64, 1);
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
   SECTION("a cell the mesh file does not have"){
     CaseDir c("no_cell");
     write_case<Tet>(c, 2);
-    poke<std::uint64_t>(c.field(), "u/cells", 1000000, H5T_NATIVE_UINT64);
+    poke<std::uint64_t>(c.file("up_0.h5"), "u/cells", 1000000, H5T_NATIVE_UINT64);
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
   SECTION("a global cell id wider than the tables"){
     CaseDir c("wide_id");
     write_case<Tet>(c, 2);
-    poke<std::int64_t>(c.mesh(), "mesh/cell_indices", 5000000000LL, H5T_NATIVE_INT64);
+    poke<std::int64_t>(c.file("mesh.h5"), "mesh/cell_indices", 5000000000LL, H5T_NATIVE_INT64);
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
   SECTION("two cells that disagree about a node they share"){
@@ -498,14 +485,14 @@ TEST_CASE("The loader refuses a file it cannot read as dolfin wrote it", "[simpl
     // cell holding that vertex then reads a different value for it
     std::size_t per_cell = 0;
     std::vector<double> vec;
-    const partrac::H5Id mesh = partrac::h5_open_read(c.mesh());
+    const partrac::H5Id mesh = partrac::h5_open_read(c.file("mesh.h5"));
     std::vector<std::uint32_t> topo;
     partrac::h5_read(mesh, "mesh/topology", topo);
     const std::vector<std::uint32_t> rows = stored_rows(c, "u", topo.size()/4, per_cell, vec);
     std::uint32_t other = rows[0];
     for (std::uint32_t d = 0; d < std::uint32_t(vec.size()); ++d)
       if (vec[d] != vec[rows[0]]){ other = d; break; }
-    poke<std::int32_t>(c.field(), "u/cell_dofs", std::int32_t(other), H5T_NATIVE_INT32);
+    poke<std::int32_t>(c.file("up_0.h5"), "u/cell_dofs", std::int32_t(other), H5T_NATIVE_INT32);
     REQUIRE_THROWS_AS(TetInterpol(c.params()), partrac::Error);
   }
 }

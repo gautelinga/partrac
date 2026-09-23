@@ -26,14 +26,13 @@ inlet and moved by nothing afterwards.
 """
 
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps, read_stats
 from paths import REPO, app
+from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
@@ -58,40 +57,36 @@ def sweep_rate(n):
     return 8. / 3. * U_INF * R - 2. / 3. * U_INF * h ** 2
 
 
+def run(tmp_path, extra, example=HAGEN):
+    """Run partrac on a copy of example with extra overriding BASE; return time -> datasets as written."""
+    run_app(PARTRAC, copy_example(example, tmp_path), BASE, extra, timeout=600)
+    assert len(list(tmp_path.rglob("data_from_t*.h5"))) == 1
+    return all_dumps(tmp_path, raw=True)
+
+
+def faces_of(dumps):
+    """Every dump that has faces, as (t, dA, dA0); t = 0 comes before the first injection."""
+    return [(t, g["dA"].ravel(), g["dA0"].ravel())
+            for t, g in sorted(dumps.items()) if "dA0" in g]
+
+
 def series(tmp_path, extra, example=HAGEN):
     """Every dump of a run that has faces, as (t, dA, dA0)."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(example, tmp_path / "expr_params.dat")
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
-    r = subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
-    dump = list(tmp_path.rglob("data_from_t*.h5"))
-    assert len(dump) == 1
-    h = h5py.File(dump[0], "r")
-    out = []
-    for k in sorted(h.keys(), key=float):
-        if "dA0" not in h[k]:
-            continue                   # t = 0, before the first injection
-        out.append((float(k),
-                    np.array(h[k + "/dA"]).ravel(),
-                    np.array(h[k + "/dA0"]).ravel()))
-    return out
+    return faces_of(run(tmp_path, extra, example))
 
 
 def lines(tmp_path, extra):
-    """The last dump of a run that stays one-dimensional, as (t, group)."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HAGEN, tmp_path / "expr_params.dat")
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
-    r = subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
-    h = h5py.File(list(tmp_path.rglob("data_from_t*.h5"))[0], "r")
-    k = sorted(h.keys(), key=float)[-1]
-    return float(k), h[k]
+    """The last dump of a run that stays one-dimensional, as (t, datasets)."""
+    dumps = run(tmp_path, extra)
+    return max(dumps), dumps[max(dumps)]
+
+
+def module_run(tmp_path_factory, name, extra, example=HAGEN):
+    """(folder, run()) of a run in a folder of its own, for a run that several tests read."""
+    if not os.path.exists(PARTRAC):
+        pytest.skip("partrac is not built")
+    d = tmp_path_factory.mktemp(name)
+    return d, run(d, extra, example)
 
 
 def rake_rate(n):
@@ -100,29 +95,35 @@ def rake_rate(n):
     return (2 * U_INF * (1 - x ** 2 / R ** 2)).sum()
 
 
-@needs_partrac
-def test_the_swept_area_grows_at_the_rate_the_inlet_sweeps(tmp_path):
+@pytest.fixture(scope="module")
+def hagen(tmp_path_factory):
+    """A 41-node inlet across the pipe, injected and dumped every INTV to T = 0.3."""
+    return module_run(tmp_path_factory, "hagen", ["Nrw=41", "T=0.3", "dump_intv=%g" % INTV])[1]
+
+
+def test_the_swept_area_grows_at_the_rate_the_inlet_sweeps(hagen):
     """At every dump sum dA0 equals the discrete sweep rate times t to
-    round-off, every face has positive area, and each injection adds the same
-    number of faces. dA0 is the reference every A/A0 statistic divides by, so a
-    wrong rate would bias the elongation of the whole sheet."""
+    round-off, every face has positive area and three distinct nodes, and each
+    injection adds the same number of faces. dA0 is the reference every A/A0
+    statistic divides by, so a wrong rate would bias the elongation of the
+    whole sheet."""
     n = 41
-    s = series(tmp_path, ["Nrw=%d" % n, "T=0.3", "dump_intv=%g" % INTV])
+    s = faces_of(hagen)
     assert len(s) == 6                                  # one dump per injection
     for t, _, dA0 in s:
         assert dA0.sum() == pytest.approx(sweep_rate(n) * t, rel=1e-12)
         assert dA0.min() > 0
     # two faces per inlet edge, less the one each end loses to the no-slip wall
     assert [len(dA0) for _, _, dA0 in s] == [78 * k for k in range(1, 7)]
+    tri = hagen[max(hagen)]["faces"]
+    assert all(len(set(row.tolist())) == 3 for row in tri)   # no repeated node
 
 
-@needs_partrac
-def test_the_streak_surface_of_a_parallel_flow_does_not_stretch(tmp_path):
+def test_the_streak_surface_of_a_parallel_flow_does_not_stretch(hagen):
     """In a parallel flow the shear slides each face without changing its area,
     so dA/dA0 = 1 at every face to round-off. A departure means the current
     area is measured from the wrong vertices or the faces are stitched wrongly."""
-    s = series(tmp_path, ["Nrw=41", "T=0.3", "dump_intv=%g" % INTV])
-    for t, dA, dA0 in s:
+    for t, dA, dA0 in faces_of(hagen):
         assert np.max(np.abs(dA / dA0 - 1)) < 1e-12
         assert dA.sum() == pytest.approx(dA0.sum(), rel=1e-12)
 
@@ -184,19 +185,10 @@ def test_a_strip_across_the_whole_pipe_is_the_uniform_inlet(tmp_path):
 def test_a_point_inlet_traces_a_chain_not_a_sheet(tmp_path):
     """A point inlet has no edges to sweep, so each generation is joined to the
     last by one rung per particle and the mesh stays one-dimensional, with no faces."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HAGEN, tmp_path / "expr_params.dat")
-    extra = ["init_mode=point", "Nrw=20", "z0=-0.5", "T=0.2", "dump_intv=0.2"]
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
-    r = subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
-    h = h5py.File(list(tmp_path.rglob("data_from_t*.h5"))[0], "r")
-    key = sorted(h.keys(), key=float)[-1]
-    assert "faces" not in h[key]
-    assert len(np.array(h[key + "/points"])) == 20 * 5    # the inlet and four injections
-    assert len(np.array(h[key + "/edges"])) == 20 * 4     # a rung per particle per injection
+    _, g = lines(tmp_path, ["init_mode=point", "Nrw=20", "z0=-0.5", "T=0.2", "dump_intv=0.2"])
+    assert "faces" not in g
+    assert len(g["points"]) == 20 * 5    # the inlet and four injections
+    assert len(g["edges"]) == 20 * 4     # a rung per particle per injection
 
 
 @needs_partrac
@@ -208,13 +200,9 @@ def test_an_inlet_with_faces_is_refused(tmp_path, init_mode, extra):
     """An inlet that already has faces would sweep a volume, which the surface
     mesh cannot represent, so partrac must stop with a clear error instead of
     producing a meaningless mesh."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HAGEN, tmp_path / "expr_params.dat")
-    ex = ["init_mode=" + init_mode, "Nrw=41", "T=0.1", "dump_intv=0.1"] + extra
-    keys = {a.split("=")[0] for a in ex}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + ex
-    r = subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
+    r = run_app(PARTRAC, copy_example(HAGEN, tmp_path), BASE,
+                ["init_mode=" + init_mode, "Nrw=41", "T=0.1", "dump_intv=0.1"], extra,
+                check=False, timeout=600)
     assert r.returncode != 0
     assert "would sweep a volume" in r.stdout + r.stderr
 
@@ -229,12 +217,12 @@ def test_a_cleared_inlet_draws_streaklines(tmp_path):
     t, g = lines(tmp_path, ["init_mode=uniform_x", "Nrw=%d" % n, "T=0.2",
                             "dump_intv=0.2", "clear_initial_edges=true"])
     assert "faces" not in g
-    dl0 = np.array(g["dl0"]).ravel()
+    dl0 = g["dl0"].ravel()
     assert dl0.sum() == pytest.approx(rake_rate(n) * t, rel=1e-12)
     assert dl0.min() > 0            # the wall nodes are reused, not doubled
     # the two wall nodes never move, so they lay no rung
     assert len(dl0) == 4 * (n - 2)
-    assert len(np.array(g["points"])) == n + 4 * (n - 2)
+    assert len(g["points"]) == n + 4 * (n - 2)
 
 
 @needs_partrac
@@ -246,9 +234,9 @@ def test_an_unstitched_inlet_repeats_itself(tmp_path):
     t, g = lines(tmp_path, ["init_mode=uniform_x", "Nrw=%d" % n, "T=0.2",
                             "dump_intv=0.2", "inject_edges=false"])
     assert "faces" not in g
-    dl0 = np.array(g["dl0"]).ravel()
+    dl0 = g["dl0"].ravel()
     assert len(dl0) == 5 * (n - 1)                     # five copies of the inlet
-    assert len(np.array(g["points"])) == 5 * n
+    assert len(g["points"]) == 5 * n
     assert dl0.sum() == pytest.approx(5 * 2 * R, rel=1e-12)
 
 
@@ -261,7 +249,7 @@ def test_a_cleared_sheet_inlet_draws_lines_too(tmp_path):
                             "ds_init=0.1", "Nrw=41", "T=0.2", "dump_intv=0.2",
                             "clear_initial_edges=true"])
     assert "faces" not in g
-    assert np.array(g["dl0"]).min() > 0
+    assert g["dl0"].min() > 0
 
 
 @needs_partrac
@@ -341,13 +329,18 @@ ABC_REMESH = ["ds_max=0.4", "ds_min=0.1", "refine=true", "refine_intv=0.25",
               "coarsen=true", "coarsen_intv=0.25"]
 
 
-@needs_partrac
-def test_remeshing_a_sheet_in_an_unsteady_flow_moves_no_area(tmp_path):
+@pytest.fixture(scope="module")
+def abc_remeshed(tmp_path_factory):
+    """The injected sheet in the unsteady ABC flow, remeshed."""
+    return module_run(tmp_path_factory, "abc_remeshed", ABC_ARGS + ABC_REMESH, ABC)[1]
+
+
+def test_remeshing_a_sheet_in_an_unsteady_flow_moves_no_area(tmp_path, abc_remeshed):
     """In a folding sheet in an unsteady 3-D flow the swept-area law does not
     apply, but dA0 is laid down at the inlet and untouched afterwards, so a
     remeshed run must carry the same total reference area as an unremeshed one."""
     plain = series(tmp_path / "plain", ABC_ARGS, example=ABC)
-    remeshed = series(tmp_path / "remeshed", ABC_ARGS + ABC_REMESH, example=ABC)
+    remeshed = faces_of(abc_remeshed)
     assert len(plain) == len(remeshed) == 3
     assert len(remeshed[-1][2]) > 2 * len(plain[-1][2])      # it really remeshed
     for (t, _, a), (t2, _, b) in zip(plain, remeshed):
@@ -356,21 +349,17 @@ def test_remeshing_a_sheet_in_an_unsteady_flow_moves_no_area(tmp_path):
         assert a.min() > 0 and b.min() > 0
 
 
-@needs_partrac
-def test_an_unsteady_three_dimensional_flow_stretches_the_sheet(tmp_path):
+def test_an_unsteady_three_dimensional_flow_stretches_the_sheet(abc_remeshed):
     """The counterpart of the parallel-flow case, where dA/dA0 = 1: here faces
     are both stretched and compressed, with dA/dA0 spread over more than a
     factor five, and dA, dA0 and tau stay finite throughout."""
-    s = series(tmp_path, ABC_ARGS + ABC_REMESH, example=ABC)
-    t, dA, dA0 = s[-1]
+    t, dA, dA0 = faces_of(abc_remeshed)[-1]
     assert (dA / dA0).max() > 2                     # stretched
     assert (dA / dA0).min() < 0.6                   # and compressed
     assert (dA / dA0).max() / (dA / dA0).min() > 5
-    tmp = list(tmp_path.rglob("data_from_t*.h5"))
-    h = h5py.File(tmp[0], "r")
-    key = sorted(h.keys(), key=float)[-1]
+    last = abc_remeshed[max(abc_remeshed)]
     for name in ("dA", "dA0", "tau"):
-        assert np.isfinite(np.array(h[key + "/" + name]).astype(float)).all(), name
+        assert np.isfinite(last[name].astype(float)).all(), name
 
 
 @needs_partrac
@@ -385,18 +374,18 @@ def test_an_inlet_laid_along_the_flow_sweeps_nothing(tmp_path, remesh):
     something to stitch to, and removed once they leave the inlet, with or without
     remeshing: faces and nodes never pile up, and tau and the statistics stay
     free of NaN and inf despite the degenerate faces."""
-    s = series(tmp_path, ["init_mode=uniform_z", "Nrw=41", "T=0.3",
-                          "dump_intv=0.1", "stat_intv=0.05",
-                          "integrate_tau=true", "tau_intv=0.005",
-                          "tau_max=0"] + remesh)
+    dumps = run(tmp_path, ["init_mode=uniform_z", "Nrw=41", "T=0.3",
+                           "dump_intv=0.1", "stat_intv=0.05",
+                           "integrate_tau=true", "tau_intv=0.005",
+                           "tau_max=0"] + remesh)
+    s = faces_of(dumps)
     assert len(s) == 3
     for t, dA, dA0 in s:
         assert len(dA0) == 40              # one generation's worth, never more
         assert (dA0 == 0).all()            # because nothing was swept
-    h = h5py.File(list(tmp_path.rglob("data_from_t*.h5"))[0], "r")
-    key = sorted(h.keys(), key=float)[-1]
-    assert len(np.array(h[key + "/points"])) == 81
-    assert np.isfinite(np.array(h[key + "/tau"]).astype(float)).all()
+    last = dumps[max(dumps)]
+    assert len(last["points"]) == 81
+    assert np.isfinite(last["tau"].astype(float)).all()
     stats = list(tmp_path.rglob("tdata_from_t*.dat"))
     assert len(stats) == 1
     text = stats[0].read_text().lower()
@@ -423,13 +412,19 @@ SINE_REMESH = ["ds_max=0.05", "ds_min=0.01", "refine=true",
                "coarsen=true", "coarsen_intv=%.10f" % (1. / 15)]
 
 
-@needs_partrac
-def test_a_step_that_sweeps_nothing_neither_adds_nor_accumulates(tmp_path):
+@pytest.fixture(scope="module")
+def sine_plain(tmp_path_factory):
+    """(folder, dumps) of the injected sheet in the 3-D random sine flow, not remeshed."""
+    return module_run(tmp_path_factory, "sine_plain", SINE_ARGS, SINE3D)
+
+
+def test_a_step_that_sweeps_nothing_neither_adds_nor_accumulates(sine_plain):
     """During the steps whose flow is parallel to the inlet, injection lays
     down one generation of flat faces that adds essentially no area and does not
     accumulate; the total dA0 never decreases. The sheet still becomes fully
     three-dimensional, and dA, dA0, tau and the statistics stay finite."""
-    s = series(tmp_path, SINE_ARGS, example=SINE3D)
+    d, dumps = sine_plain
+    s = faces_of(dumps)
     assert len(s) == 6
     flat = [int((dA0 <= 0).sum()) for _, _, dA0 in s]
     assert set(flat) <= {0, 40}                  # a generation's worth, or none
@@ -439,23 +434,21 @@ def test_a_step_that_sweeps_nothing_neither_adds_nor_accumulates(tmp_path):
     gain = [b - a for a, b in zip([0.] + total, total)]
     assert min(g for g, f in zip(gain, flat) if f == 0) > 20 * max(
         g for g, f in zip(gain, flat) if f == 40)   # the parallel steps add ~nothing
-    h = h5py.File(list(tmp_path.rglob("data_from_t*.h5"))[0], "r")
-    key = sorted(h.keys(), key=float)[-1]
+    last = dumps[max(dumps)]
     for name in ("dA", "dA0", "tau"):
-        assert np.isfinite(np.array(h[key + "/" + name]).astype(float)).all(), name
-    p = np.array(h[key + "/points"])
-    assert min(p[:, i].ptp() for i in range(3)) > 0.1     # it really is 3-D
-    stats = list(tmp_path.rglob("tdata_from_t*.dat"))
+        assert np.isfinite(last[name].astype(float)).all(), name
+    p = last["points"]
+    assert min(np.ptp(p[:, i]) for i in range(3)) > 0.1     # it really is 3-D
+    stats = list(d.rglob("tdata_from_t*.dat"))
     text = stats[0].read_text().lower()
     assert "nan" not in text and "inf" not in text
 
 
-@needs_partrac
-def test_remeshing_moves_no_area_across_a_parallel_step(tmp_path):
+def test_remeshing_moves_no_area_across_a_parallel_step(tmp_path, sine_plain):
     """The same invariant as in the ABC flow, over a sheet that stops growing
     and starts again, with flat faces created and culled in between: remeshing
     leaves the total dA0 unchanged at every dump."""
-    plain = series(tmp_path / "plain", SINE_ARGS, example=SINE3D)
+    plain = faces_of(sine_plain[1])
     remeshed = series(tmp_path / "remeshed", SINE_ARGS + SINE_REMESH,
                       example=SINE3D)
     for (t, _, a), (t2, _, b) in zip(plain, remeshed):
@@ -473,32 +466,21 @@ def test_a_run_names_its_columns_for_the_dimension_it_settles_into(tmp_path):
     length label. A0 is 0 before the first injection and follows the sweep rate
     after it; without injection the same inlet stays a strip and reports s, s0."""
     def stats(case, extra):
-        case.mkdir(parents=True, exist_ok=True)
-        shutil.copy(HAGEN, case / "expr_params.dat")
-        keys = {a.split("=")[0] for a in extra}
-        argv = [a for a in BASE if a.split("=")[0] not in keys] + extra
-        r = subprocess.run([PARTRAC, str(case / "expr_params.dat")] + argv,
-                           capture_output=True, text=True, timeout=600)
-        assert r.returncode == 0, r.stdout + r.stderr
-        f = list(case.rglob("tdata_from_t*.dat"))
-        assert len(f) == 1
-        rows = [l for l in f[0].read_text().splitlines() if l.strip()]
-        names = [h for h in rows[0].lstrip("# ").rstrip().split("\t") if h.strip()]
-        return names, [dict(zip(names, [v for v in r_.rstrip().split("\t")
-                                        if v.strip()])) for r_ in rows[1:]]
+        run_app(PARTRAC, copy_example(HAGEN, case), BASE, extra, timeout=600)
+        return read_stats(case)
 
-    names, rows = stats(tmp_path / "injecting",
-                        ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9"])
-    assert "A" in names and "A0" in names
-    assert "s" not in names and "s0" not in names
+    st = stats(tmp_path / "injecting",
+               ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9"])
+    assert "A" in st and "A0" in st
+    assert "s" not in st and "s0" not in st
     # nothing has been swept before the first injection; the length of the
     # curve about to sweep is not an area
-    assert float(rows[0]["A0"]) == 0.0
-    assert float(rows[2]["A0"]) == pytest.approx(sweep_rate(41) * INTV, rel=1e-12)
+    assert st["A0"][0] == 0.0
+    assert st["A0"][2] == pytest.approx(sweep_rate(41) * INTV, rel=1e-12)
 
     # the same run without injection stays a strip, and says so
-    names, _ = stats(tmp_path / "strip",
-                     ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9",
-                      "inject=false"])
-    assert "s" in names and "s0" in names
-    assert "A" not in names and "A0" not in names
+    st = stats(tmp_path / "strip",
+               ["Nrw=41", "T=0.15", "stat_intv=0.025", "dump_intv=1e9",
+                "inject=false"])
+    assert "s" in st and "s0" in st
+    assert "A" not in st and "A0" not in st

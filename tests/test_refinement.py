@@ -24,14 +24,13 @@ resume from it.
 """
 
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps
 from paths import REPO, app
+from runs import checkpoint_folder, copy_example, run_app
 
 PARTRAC = app("partrac")
 SSS = app("static_space_stepper")
@@ -76,43 +75,20 @@ SHEET_SSS = ("mode=analytic init_mode=sheet_xy La=0.5 Lb=0.5 ds_init=0.1 "
 
 def run_sss(tmp_path, extra):
     """Run static_space_stepper on plane Poiseuille with SHEET_SSS plus overrides."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(PLANE, tmp_path / "expr_params.dat")
-    argv = {}
-    for a in SHEET_SSS + extra:
-        argv[a.split("=")[0]] = a
-    return subprocess.run([SSS, str(tmp_path / "expr_params.dat")]
-                          + list(argv.values()),
-                          capture_output=True, text=True, timeout=900)
+    return run_app(SSS, copy_example(PLANE, tmp_path), SHEET_SSS, extra, check=False)
 
 
 def run(tmp_path, extra, example=HAGEN, base=None):
     """Run partrac on `example` with `base` (default BASE) plus overrides."""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(example, tmp_path / "expr_params.dat")
-    argv = {}
-    for a in (BASE if base is None else base) + extra:
-        argv[a.split("=")[0]] = a
-    return subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")]
-                          + list(argv.values()),
-                          capture_output=True, text=True, timeout=900)
+    return run_app(PARTRAC, copy_example(example, tmp_path), BASE if base is None else base,
+                   extra, check=False)
 
 
 def dumps(tmp_path):
     """Every dump that has faces, as (t, points, faces, dA, dA0)."""
-    f = list(tmp_path.rglob("data_from_t*.h5"))
-    assert len(f) == 1
-    h = h5py.File(f[0], "r")
-    out = []
-    for k in sorted(h.keys(), key=float):
-        if "faces" not in h[k]:
-            continue
-        out.append((float(k),
-                    np.array(h[k + "/points"]),
-                    np.array(h[k + "/faces"])[:, :3],
-                    np.array(h[k + "/dA"]).ravel(),
-                    np.array(h[k + "/dA0"]).ravel()))
-    return out
+    assert len(list(tmp_path.rglob("data_from_t*.h5"))) == 1
+    return [(t, g["points"], g["faces"][:, :3], g["dA"].ravel(), g["dA0"].ravel())
+            for t, g in sorted(all_dumps(tmp_path, raw=True).items()) if "faces" in g]
 
 
 def edge_lengths(points, faces):
@@ -161,7 +137,7 @@ def test_the_mesh_does_not_depend_on_the_node_budget(tmp_path):
 
 
 @needs_partrac
-def test_the_node_count_grows_smoothly_across_the_old_threshold(tmp_path):
+def test_the_node_count_grows_smoothly_across_two_thirds_of_the_inlet_spacing(tmp_path):
     """Lowering ds_max across (2/3) a raises the node count monotonically and
     gradually. A jump at that threshold would mean the self-similar faces are
     still regenerating."""
@@ -242,10 +218,9 @@ def test_a_refined_template_survives_a_restart(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     grown = template_size(case)
     assert grown > 41
-    checkpoint = list(case.rglob("edges_inj.edge"))
-    assert len(checkpoint) == 1
+    assert len(list(case.rglob("edges_inj.edge"))) == 1
     r = run(case, ["Nrw=41", "ds_max=0.02", "T=0.3", "checkpoint_intv=0.3",
-                   "restart_folder=" + str(checkpoint[0].parent.parent)])
+                   "restart_folder=%s" % checkpoint_folder(case)])
     assert r.returncode == 0, r.stdout + r.stderr
     assert template_size(case) >= grown      # kept what it had, and may add
 

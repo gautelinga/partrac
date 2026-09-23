@@ -31,48 +31,12 @@
 #include "SplitInterpol.hpp"
 #include "Tet.hpp"
 #include "Triangle.hpp"
+#include "case_dir.hpp"
+#include "divfree_poly.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
-
-struct CaseDir {
-  std::filesystem::path path;
-  explicit CaseDir(const std::string& tag)
-    : path(std::filesystem::temp_directory_path() / ("partrac_split_" + tag)) {
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
-  }
-  ~CaseDir(){ std::filesystem::remove_all(path); }
-  std::string params() const { return (path / "dolfin_params.dat").string(); }
-};
-
-// A quadratic divergence-free velocity: the perpendicular gradient of a cubic
-// stream function in 2D, the curl of a cubic potential in 3D, off every symmetry
-Vector3d poly_u(const Vector3d& p, const Uint gdim){
-  const double x = p[0], y = p[1], z = p[2];
-  if (gdim == 2)
-    return {-0.7*x*x + 1.8*x*y + 0.75*y*y - 0.3*x + 1.0*y - 0.2,
-            -1.2*x*x + 1.4*x*y - 0.9*y*y - 1.2*x + 0.3*y - 0.8, 0.};
-  return {-0.8*x*x + 0.75*y*y - 1.8*z*z + 1.6*x*y + 1.8*x*z + 0.4*x + 0.4,
-           1.5*x*x - 1.5*y*y + 1.2*z*z + 1.2*x*y - 0.7*x + 0.4*y + 0.4*z,
-          -0.9*y*y - 0.9*z*z + 0.4*x*z + 1.4*y*z + 1.6*x - 0.8*z - 0.5};
-}
-
-// grad(i, j) is du_i/dx_j
-Matrix3d poly_grad(const Vector3d& p, const Uint gdim){
-  const double x = p[0], y = p[1], z = p[2];
-  Matrix3d g = Matrix3d::Zero();
-  if (gdim == 2){
-    g(0, 0) = -1.4*x + 1.8*y - 0.3;   g(0, 1) = 1.8*x + 1.5*y + 1.0;
-    g(1, 0) = -2.4*x + 1.4*y - 1.2;   g(1, 1) = 1.4*x - 1.8*y + 0.3;
-    return g;
-  }
-  g(0, 0) = -1.6*x + 1.6*y + 1.8*z + 0.4;  g(0, 1) = 1.6*x + 1.5*y;       g(0, 2) = 1.8*x - 3.6*z;
-  g(1, 0) = 3.0*x + 1.2*y - 0.7;           g(1, 1) = 1.2*x - 3.0*y + 0.4; g(1, 2) = 2.4*z + 0.4;
-  g(2, 0) = 0.4*z + 1.6;                   g(2, 1) = -1.8*y + 1.4*z;      g(2, 2) = 0.4*x + 1.4*y - 1.8*z - 0.8;
-  return g;
-}
 
 // The same field, independent of x, so a mesh periodic along x carries it: the
 // transverse components still balance, since only y and z enter the divergence
@@ -634,13 +598,22 @@ TEST_CASE("SplitInterpol warns about a squashed cell", "[split]"){
     REQUIRE(std::count(said.begin(), said.end(), '\n') == 1);
   }
   {
+    CaseDir c("sliver3d");
+    write_case<Tet>(c, 2, o);
+    const std::string said = captured_cerr([&]{ SplitInterpol<Tet> intp(c.params()); });
+    REQUIRE(said.find("Warning") != std::string::npos);
+    REQUIRE(said.find("cond(J)") != std::string::npos);
+    REQUIRE(std::count(said.begin(), said.end(), '\n') == 1);
+  }
+  {
     // The same field on a mesh of well-shaped cells says nothing
-    CaseDir c("nosliver2d");
     CaseOpts fine = o;
     fine.squash = 0.;
-    write_case<Triangle>(c, 4, fine);
-    const std::string said = captured_cerr([&]{ SplitInterpol<Triangle> intp(c.params()); });
-    REQUIRE(said.empty());
+    CaseDir c2("nosliver2d"), c3("nosliver3d");
+    write_case<Triangle>(c2, 4, fine);
+    write_case<Tet>(c3, 2, fine);
+    REQUIRE(captured_cerr([&]{ SplitInterpol<Triangle> intp(c2.params()); }).empty());
+    REQUIRE(captured_cerr([&]{ SplitInterpol<Tet> intp(c3.params()); }).empty());
   }
 }
 

@@ -175,7 +175,7 @@ std::size_t brute_edge_count(const Box<NV>& b){
 }  // namespace
 
 TEST_CASE("The local edge order is dolfin's, the one quadbasis expects", "[mesh_tables]") {
-  // The plan's order: the vertex pairs a < b, reverse lexicographic
+  // dolfin's order: the vertex pairs a < b, reverse lexicographic
   constexpr auto et = local_edges<4>();
   REQUIRE(et == std::array<std::array<int, 2>, 6>{{{2,3},{1,3},{1,2},{0,3},{0,2},{0,1}}});
   constexpr auto tr = local_edges<3>();

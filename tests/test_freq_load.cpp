@@ -25,22 +25,11 @@
 #include "h5direct.hpp"
 #include "TriangleFreqInterpol.hpp"
 #include "TetFreqInterpol.hpp"
+#include "case_dir.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
-
-// A case directory of its own per test, removed with its contents
-struct CaseDir {
-  std::filesystem::path path;
-  explicit CaseDir(const std::string& tag)
-    : path(std::filesystem::temp_directory_path() / ("partrac_freq_" + tag)) {
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
-  }
-  ~CaseDir(){ std::filesystem::remove_all(path); }
-  std::string params() const { return (path / "dolfin_params.dat").string(); }
-};
 
 // The amplitude and time shift of each component, as freqstamps.dat gives them
 constexpr int n_freq = 2;

@@ -13,14 +13,16 @@ nearest node's values, so u_y is k times the nearest node's x.
 """
 
 import os
-import subprocess
 
 import numpy as np
 import pytest
 
+from cases import write_felbm
+from dumps import all_dumps
 from paths import app
+from runs import run_app
 
-FELBM = app("filaments_felbmRK4")
+FILAMENTS = app("filaments")
 INTERPOL = app("interpol")
 
 
@@ -28,47 +30,36 @@ def three_stamp_felbm(d, shear=False, extra=""):
     """Write a felbm case in d where stamp k holds u_z = k, and with shear also u_y = k x.
 
     extra is appended to felbm_params.dat."""
-    h5py = pytest.importorskip("h5py")
+    pytest.importorskip("h5py")
     n = 16
     zero = np.zeros((n, n, n))
     x = np.arange(n, dtype=float)[:, None, None] * np.ones((n, n, n))
     solid = np.zeros((n, n, n), dtype=np.int32)
     solid[0, :, :] = 1
     solid[-1, :, :] = 1
-    with h5py.File(d / "output_is_solid.h5", "w") as f:
-        f.create_dataset("is_solid", data=solid)
-    for k in range(3):
-        fields = {"u_x": zero, "u_y": k * x if shear else zero,
-                  "u_z": np.full((n, n, n), float(k)),
-                  "density": np.ones((n, n, n)), "pressure": zero}
-        with h5py.File(d / ("output_%d.h5" % k), "w") as f:
-            for name, a in fields.items():
-                f.create_dataset(name, data=np.transpose(a, (2, 1, 0)).astype(float))
-    (d / "timestamps.dat").write_text("".join("%d\toutput_%d.h5\n" % (k, k) for k in range(3)))
-    (d / "felbm_params.dat").write_text(
-        "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n" + extra)
+    fields = [{"u_x": zero, "u_y": k * x if shear else zero,
+               "u_z": np.full((n, n, n), float(k)),
+               "density": np.ones((n, n, n)), "pressure": zero} for k in range(3)]
+    write_felbm(d, fields, solid, times=(0, 1, 2), extra=extra)
 
 
-@pytest.mark.skipif(not os.path.exists(FELBM), reason="filaments_felbmRK4 is not built")
+@pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
 def test_uz_advances_with_the_timestamp(tmp_path):
     """Past stamp 1 the field is blended between stamps 1 and 2, so particles
     move at u_z > 0.9 over [1, 1.5] and z(T) follows t^2/2. If a component
     kept an older stamp, or the field were held constant between stamps, every
     structured run would advect with a field that lags the data in time."""
-    h5py = pytest.importorskip("h5py")
+    pytest.importorskip("h5py")
     d = tmp_path / "felbm"
     d.mkdir()
     three_stamp_felbm(d)
-    r = subprocess.run([FELBM, str(d / "felbm_params.dat")] +
-                       ("Dm=0 dt=0.01 T=2.0 Nrw=2 Nrw_max=100 dump_intv=0.5 stat_intv=1e9 "
-                        "checkpoint_intv=1e9 init_mode=pairs_xy int_order=1 ds_init=0.5 "
-                        "x0=8 y0=8 z0=8 random=false seed=1").split(),
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
-    f = list(d.rglob("data_from_t*.h5"))
-    assert len(f) == 1
-    with h5py.File(f[0], "r") as h:
-        z = {float(k): np.array(h[k + "/points"])[:, 2].mean() for k in h.keys()}
+    run_app(FILAMENTS, d / "felbm_params.dat",
+            "mode=felbm scheme=RK4 resize=doublings resize_target=ds_init outside=reinject "
+            "Dm=0 dt=0.01 T=2.0 Nrw=2 Nrw_max=100 dump_intv=0.5 stat_intv=1e9 "
+            "checkpoint_intv=1e9 init_mode=pairs_xy int_order=1 ds_init=0.5 "
+            "x0=8 y0=8 z0=8 random=false seed=1", timeout=600)
+    assert len(list(d.rglob("data_from_t*.h5"))) == 1
+    z = {t: g["points"][:, 2].mean() for t, g in all_dumps(d, raw=True).items()}
     assert 1.0 in z and 1.5 in z, sorted(z)
     u_z_after = (z[1.5] - z[1.0]) / 0.5
     assert u_z_after > 0.9, "u_z over [1, 1.5] is %.3f: stamp 1 did not become prev" % u_z_after
@@ -77,18 +68,17 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
 
 
-def run_probe(d, t0, int_order):
-    return subprocess.run([INTERPOL, str(d / "felbm_params.dat")] +
-                          ("mode=felbm Nrw=5000 int_order=%d t0=%g random=false seed=1"
-                           % (int_order, t0)).split(),
-                          capture_output=True, text=True, timeout=600)
+def run_probe(d, t0, int_order, check=True):
+    """Run interpol on the case in d at time t0; return the process."""
+    return run_app(INTERPOL, d / "felbm_params.dat",
+                   "mode=felbm Nrw=5000 int_order=%d t0=%g random=false seed=1" % (int_order, t0),
+                   check=check, timeout=600)
 
 
 def probe(d, t0, int_order=2):
     """Run interpol on the case in d at time t0; return the probed datasets by name."""
     h5py = pytest.importorskip("h5py")
-    r = run_probe(d, t0, int_order)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_probe(d, t0, int_order)
     f = list(d.rglob("interpolation.h5part"))
     assert len(f) == 1
     with h5py.File(f[0], "r") as h:
@@ -144,7 +134,7 @@ def test_constant_refuses_a_gradient(tmp_path):
     d = tmp_path / "constant"
     d.mkdir()
     three_stamp_felbm(d, shear=True, extra="interpolation=constant\n")
-    r = run_probe(d, 0.5, int_order=2)
+    r = run_probe(d, 0.5, int_order=2, check=False)
     assert r.returncode == 2, r.stdout + r.stderr
     assert "interpolation=constant" in r.stderr
 
