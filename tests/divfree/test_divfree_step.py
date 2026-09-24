@@ -500,7 +500,7 @@ def test_the_matrix_handed_to_petsc_is_sorted_and_within_its_index_range():
     A = sp.random(20, 20, density=0.8, format="csr", random_state=1)
     small = types.SimpleNamespace(IntType=np.int8)
     with pytest.raises(ValueError, match="past the 127 that this PETSc's 8-bit"):
-        D._petsc_csr(small, A)
+        D._petsc_csr(small, A, D.MPI.COMM_SELF)
     # every row's columns reversed, as a product can leave them
     order = np.concatenate([np.arange(A.indptr[i + 1] - 1, A.indptr[i] - 1, -1)
                             for i in range(A.shape[0])])
@@ -509,7 +509,7 @@ def test_the_matrix_handed_to_petsc_is_sorted_and_within_its_index_range():
                                 for i in range(M.shape[0]))
     assert not sorted_rows(U)
     wide = types.SimpleNamespace(IntType=np.int64)
-    indptr, indices, data = D._petsc_csr(wide, U)
+    indptr, indices, data = D._petsc_csr(wide, U, D.MPI.COMM_SELF)
     assert sorted_rows(U)
     assert np.array_equal(indptr, A.indptr) and np.array_equal(indices, A.indices)
 
@@ -551,6 +551,28 @@ def test_a_refinement_pass_that_runs_out_of_iterations_keeps_the_step():
     assert info["stepped"] and info["refinements"] == 0
     assert "did not converge" in info["refine_stop"]
     assert info["balance_after"] <= D.FLUX_TOL
+
+
+def test_a_petsc_failure_in_a_refinement_pass_is_not_taken_for_one_that_does_not_pay():
+    """Only a pass that stops short of its tolerance is a pass that does not
+    pay. PETSc's own errors -- memory, a broken preconditioner -- are
+    RuntimeErrors too, and on several ranks one raised on a single rank and
+    taken there as the end of the refinement would send that rank on while the
+    others solve: it is raised as it is."""
+    from petsc4py import PETSc
+    t, U = walled(*channel3d(3), 3, field=smooth_noslip)
+    eq = D.Equil(t, minres_rtol=1e-4)
+    real, calls = eq._minres, []
+
+    def minres(*args, **kw):
+        calls.append(1)
+        if len(calls) > 1:
+            raise PETSc.Error(55)
+        return real(*args, **kw)
+    eq._minres = minres
+    with pytest.raises(PETSc.Error):
+        eq.apply(U, "up_0000.h5")
+    assert len(calls) == 2, "no refinement pass was taken"
 
 
 def test_the_refinement_reaches_its_target_and_not_the_first_right_hand_side():

@@ -8,6 +8,7 @@ import functools
 import glob
 import itertools
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -218,6 +219,36 @@ def all_held_facets(t):
 CASES = [(2, channel2d()), (3, channel3d())]
 IDS = ["2d", "3d"]
 
+
+def shuffled(X, cells, seed=5):
+    """The same mesh with its vertices and cells numbered in random order and
+    each cell's vertices rotated, so nothing may lean on a structured
+    numbering."""
+    rng = np.random.default_rng(seed)
+    p = rng.permutation(len(X))
+    new = np.empty_like(p)
+    new[p] = np.arange(len(X))
+    c = new[cells][rng.permutation(len(cells))]
+    return X[p], np.roll(c, 1, axis=1)
+
+
+def topo_cases():
+    """The meshes the distributed tables are checked against the serial ones on,
+    by name: (X, cells, periodic). Periodic in one to three directions, so the
+    corners of the doubly and triply periodic ones reach their master through a
+    chain of links; squashed, so a layer of slivers lies against a wall; and
+    numbered at random."""
+    return {
+        "2d": channel2d() + ([True, False],),
+        "3d": channel3d() + ([True, True, False],),
+        "2d_xy": channel2d() + ([True, True],),
+        "3d_x": channel3d(4) + ([True, False, False],),
+        "3d_xyz": channel3d() + ([True, True, True],),
+        "2d_squash": channel2d(6, 20) + ([True, False],),
+        "3d_squash": channel3d(3, 20) + ([True, True, False],),
+        "3d_xyz_shuffled": shuffled(*channel3d(4)) + ([True, True, True],),
+    }
+
 PATHS = [None, 0.0]
 PATH_IDS = ["penalised", "smallest"]
 
@@ -289,6 +320,124 @@ def relabel_by_global_id(folder, seed=3):
     return gid
 
 
+def two_cells(folder):
+    """channel2d(1): two cells, walls at rest, periodic in x, the diagonal's
+    midpoint moved so that there is a step to take. Its two unknowns, the
+    diagonal and the periodic pair of vertical edges, both lie in the first
+    cell, so on two ranks the second cell's rank owns neither of them under
+    the first-cell rule, and on three a rank has no cell at all."""
+    X, cells = channel2d(1)
+    t = D.Topo(X, cells, [True, False])
+    U = smooth_noslip(t.node_x)
+    mid = t.node_x[t.nverts:]
+    U[t.nverts + np.nonzero(np.abs(mid[:, 0] - mid[:, 1]) < 1e-12)[0]] += [0.3, -0.1]
+    return write_case(folder, X, cells, [U], [True, False])
+
+
+def pocket_case(folder, dim, kind):
+    """The 2D or 3D channel with a near-stagnant pocket across it: the field
+    scaled by 1e-8 at 0.3 < x < 0.7, so the pocket's cells' own fluxes are far
+    below FLUX_FLOOR of the stamp's largest and are measured against the floor.
+    On three ranks under blocks the middle rank holds the pocket's cells and no
+    others, so its own largest facet flux is 1e-8 of the stamp's.
+
+    kind 'closed': walls at rest, so every boundary midpoint is held and the
+    closed domain's flux rows leave the net flux untouched. In 2D the data's
+    periodic seam carries a net flux of 1e-11 of the cells' scales summed,
+    which is shared out over the cells and left in every one of them, below
+    what a loader refuses. The 3D channel's rows are dependent beyond the
+    constant (rank 159 of 162), so a net flux shared out by scale leaves the
+    solve a part it cannot reach, and there the net is the data's round-off.
+    kind 'moving wall': the top wall moves along x, so its midpoints are free,
+    at the boundary weight. Two stamps, the second half the first."""
+    X, cells = channel2d(6) if dim == 2 else channel3d(3)
+    per = [True] * (dim - 1) + [False]
+    t = D.Topo(X, cells, per)
+    x = t.node_x
+    U = smooth_noslip(x)
+    if kind == "moving wall":
+        U[:, 0] += x[:, -1] ** 2
+    U[(x[:, 0] > 0.3) & (x[:, 0] < 0.7)] *= 1e-8
+    if kind == "closed" and dim == 2:
+        r, big = D.cell_flux(t, U)
+        total = np.maximum(big, D.FLUX_FLOOR * big.max()).sum()
+        seam = np.zeros_like(U)
+        on = np.abs(x[:, 0] - 1.0) < 1e-12
+        seam[on, 0] = U[on, 0]
+        U = U + (1e-11 * total - r.sum()) / D.cell_flux(t, seam)[0].sum() * seam
+    return write_case(folder, X, cells, [U, 0.5 * U], per, stamps=["0", "1"])
+
+
+NUMBER = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+# what legitimately differs with the rank count: the rank count, times, the
+# iteration path of the solve, the route and the output folder
+RUN_ONLY = [(re.compile(r", \d+ ranks"), ""),
+            (re.compile(r"\b\d+\.\d s\b"), "T s"),
+            (re.compile(r"\d+ iterations, \d+ refinements"), "iterations, refinements"),
+            (re.compile(r"(wrote \d+ stamps) to .*"), r"\1"),
+            (re.compile(r"(refinement stopped): .*"), r"\1")]
+
+
+def same_log(a, b, rtol=1e-10, atol=1e-11):
+    """Two runs' printed reports, line for line: the same words, every integer
+    the same and every other number within rtol of it or atol, what can differ
+    with the rank count aside (RUN_ONLY). A number reduced over some ranks only
+    moves by far more than round-off. atol is a decade below what the
+    refinement asks of a cell's balance, which is what the solve's own
+    round-off reaches; the fixtures' velocities and fluxes are of order one."""
+    la = [l for l in a.split("\n") if l.strip()]
+    lb = [l for l in b.split("\n") if l.strip()]
+    assert len(la) == len(lb), (la, lb)
+    for x, y in zip(la, lb):
+        for pat, rep in RUN_ONLY:
+            x, y = pat.sub(rep, x), pat.sub(rep, y)
+        assert NUMBER.sub("#", x) == NUMBER.sub("#", y), (x, y)
+        for p, q in zip(NUMBER.findall(x), NUMBER.findall(y)):
+            if not any(c in p + q for c in ".eE"):
+                assert p == q, (x, y)
+                continue
+            p, q = float(p), float(q)
+            assert abs(p - q) <= rtol * max(abs(p), abs(q)) + atol, (x, y)
+
+
+def read_back(out, names, field="u"):
+    """The field of each named file of a cleaned case by node, read through the
+    tool's own reader on the whole mesh: a file whose values sit at the wrong
+    rows reads back as another field, or is refused, whatever wrote it."""
+    case = D.read_case(out / "dolfin_params.dat")
+    t = D.Topo(case["X"], case["cells"], case["periodic"])
+    dof = D.DofTable(out / names[0], field, t, case["cell_indices"])
+    return [dof.values(out / name) for name in names]
+
+
+def same_output(a, b, scale, bound=1e-12):
+    """Two cleaned cases' files against each other: the same datasets in every
+    file, integers identical and floats within bound of scale, the same
+    attributes, and the text files equal. The files are not compared as bytes,
+    since HDF5 stores times in them."""
+    h5py = pytest.importorskip("h5py")
+    names = sorted(os.listdir(a))
+    assert names == sorted(os.listdir(b))
+    for name in names:
+        if not name.endswith(".h5"):
+            assert (a / name).read_text() == (b / name).read_text(), name
+            continue
+        with h5py.File(a / name, "r") as f, h5py.File(b / name, "r") as g:
+            got = []
+            f.visititems(lambda n, o: got.append(n) if isinstance(o, h5py.Dataset) else None)
+            want = []
+            g.visititems(lambda n, o: want.append(n) if isinstance(o, h5py.Dataset) else None)
+            assert got == want, name
+            for n in got:
+                x, y = f[n][()], g[n][()]
+                assert x.dtype == y.dtype and x.shape == y.shape, (name, n)
+                if x.dtype.kind == "f":
+                    assert np.abs(x - y).max(initial=0.0) <= bound * scale, (name, n)
+                else:
+                    assert np.array_equal(x, y), (name, n)
+                assert sorted(f[n].attrs) == sorted(g[n].attrs), (name, n)
+
+
 # ------------------------------------------------------------ the apps and MPI
 
 
@@ -314,19 +463,46 @@ def mpi_launcher():
     return None
 
 
-def mpi_clean(cfg, out, ranks, extra=(), ok=True, timeout=900):
-    """The tool as its own job on that many ranks. One OpenMP thread a rank: the
-    machine is shared out by rank here, and the solve is PETSc's, not OpenMP's.
-    With ok=False the job is expected to fail and the caller reads the output."""
+def launcher_or_skip():
+    """mpi_launcher(), or the test skipped where there is none, and failed there
+    with PARTRAC_REQUIRE_MPI set."""
     launcher = mpi_launcher()
     if launcher is None:
         if os.environ.get("PARTRAC_REQUIRE_MPI"):
             pytest.fail("no launcher here starts an MPI job for mpi4py")
         pytest.skip("no launcher here starts an MPI job for mpi4py")
-    cmd = [launcher, "-n", str(ranks), sys.executable,
-           os.path.join(REPO, "python", "divfree", "divfree_clean.py"), str(cfg), "--out", str(out)]
-    r = subprocess.run(cmd + list(extra), capture_output=True, text=True, timeout=timeout,
-                       env=dict(os.environ, OMP_NUM_THREADS="1"))
+    return launcher
+
+
+def mpi_run(ranks, args, timeout=900, env=None):
+    """python3 args as a job of that many ranks, one OpenMP thread a rank: the
+    machine is shared out by rank here, and the solve is PETSc's, not
+    OpenMP's. A job that has not ended by timeout fails the test: a rank that
+    raised alone leaves the others waiting forever, and that is what it
+    reports. The launcher is stopped with SIGTERM, which it passes on to the
+    ranks; killed outright it would leave them running."""
+    cmd = [launcher_or_skip(), "-n", str(ranks), sys.executable] + [str(a) for a in args]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         env=dict(env or os.environ, OMP_NUM_THREADS="1"))
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            out, err = p.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out, err = p.communicate()
+        pytest.fail("the job of %d ranks did not end in %d s:\n%s"
+                    % (ranks, timeout, (out + err)[-3000:]))
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
+
+
+def mpi_clean(cfg, out, ranks, extra=(), ok=True, timeout=900):
+    """The tool as its own job on that many ranks. With ok=False the job is
+    expected to fail and the caller reads the output."""
+    tool = os.path.join(REPO, "python", "divfree", "divfree_clean.py")
+    r = mpi_run(ranks, [tool, cfg, "--out", out] + list(extra), timeout)
     if ok:
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     return r

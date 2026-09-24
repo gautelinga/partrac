@@ -79,7 +79,11 @@ mpirun -n 8 python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out
 python3 python/divfree/divfree_clean.py CLEANED/dolfin_params.dat --check
 ```
 It needs `h5py`, `scipy`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the
-options. How the field is built is in the module docstring.
+options. How the field is built is in the module docstring. Under `mpirun` each
+rank holds its part of the mesh, so the size of a case is bounded by the ranks,
+not by one process, and the output is the same at any rank count; run it with
+`OMP_NUM_THREADS=1`. The output is written in parallel where h5py has MPI,
+otherwise through the first rank.
 
 ## Visualization
 Plotting the position:

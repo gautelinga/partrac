@@ -417,6 +417,27 @@ def poke_checkpoint(folder, kind, ncells):
             cd[0], cd[1] = cd[1], cd[0]
         elif kind == "no degree":
             g.attrs["signature"] = np.bytes_("FiniteElement('Real', interval)")
+        elif kind == "a row past the mesh":
+            # a whole row more, labelled with a cell the mesh does not have
+            per = len(g["cell_dofs"]) // ncells
+            grown = dict(cell_dofs=np.append(g["cell_dofs"][()], g["cell_dofs"][:per]),
+                         x_cell_dofs=np.append(g["x_cell_dofs"][()],
+                                               np.uint64((ncells + 1) * per)),
+                         cells=np.append(g["cells"][()], np.uint64(10 ** 6)))
+            for name, a in grown.items():
+                del g[name]
+                g[name] = a
+        elif kind == "short cells":
+            a = g["cells"][:-1]
+            del g["cells"]
+            g["cells"] = a
+        elif kind == "a cell named twice":
+            # the second row takes the first row's label, and the second cell has none
+            g["cells"][1] = g["cells"][0]
+        elif kind == "a dof past the values":
+            a = g["vector_0"][:-1]
+            del g["vector_0"]
+            g["vector_0"] = a
     if kind == "node without a value":
         with h5py.File(folder / "mesh.h5", "r+") as m:
             X = np.array(m["mesh/coordinates"])
@@ -430,6 +451,11 @@ MALFORMED = {
     "node without a value": r"up_0\.h5: 'u' leaves a node without a value",
     "cells disagree": r"up_0\.h5: cells disagree on a node of 'u'",
     "no degree": r"'u' is FiniteElement\('Real', interval\), which names no degree",
+    "a row past the mesh": r"'u/cells' names a cell the mesh does not",
+    "short cells": r"'u/x_cell_dofs' is ragged",
+    "a cell named twice": r"'u/cells' leaves a cell of the mesh without a row",
+    "a dof past the values":
+        r"up_0\.h5: 'u' holds \d+ values, fewer than its dof table names",
     "components": r"'u' has 1 components, not 2",
 }
 
@@ -437,10 +463,11 @@ MALFORMED = {
 @pytest.mark.parametrize("kind", sorted(MALFORMED))
 def test_a_malformed_checkpoint_is_refused_by_name(tmp_path, kind):
     """The dof table is read as the loaders read it, so a file they would refuse
-    or misread -- a ragged or unknown row, a node no cell gives a value or two
-    cells give two, an element with no degree or the wrong number of components
-    -- is refused before anything is cleaned, naming the file and what is wrong
-    in it."""
+    or misread -- a ragged or unknown row, a table longer than the mesh or with
+    fewer labels than rows, a cell no row names, a dof past the values, a node
+    no cell gives a value or two cells give two, an element with no degree or
+    the wrong number of components -- is refused before anything is cleaned,
+    naming the file and what is wrong in it."""
     pytest.importorskip("h5py")
     X, cells = channel2d(3)
     t = D.Topo(X, cells, [False, False])

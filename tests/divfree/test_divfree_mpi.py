@@ -1,15 +1,15 @@
 """python/divfree/divfree_clean.py as a program: a cleaned case read back by the apps,
 and the tool run on several ranks.
 
-A case cleaned on three ranks meets the criterion the one-rank run meets and
-gives the same field, read through the loader too; more ranks than the mesh has
-cells is refused rather than hung in the assembly, and a write only the first
-rank can fail takes the job down rather than leaving the others at the barrier.
-The MPI tests skip where no launcher starts a job of several ranks for mpi4py,
-and fail there with PARTRAC_REQUIRE_MPI set.
+A case cleaned on three ranks meets the criterion the one-rank run meets, gives
+the same field, read through the loader too, and reports the same numbers; a
+write only the first rank can fail takes the job down rather than leaving the
+others waiting for it. The MPI tests skip where no launcher starts a job of
+several ranks for mpi4py, and fail there with PARTRAC_REQUIRE_MPI set.
 """
 
 import os
+import re
 import subprocess
 import sys
 
@@ -17,7 +17,8 @@ import numpy as np
 import pytest
 
 from divfree_cases import (CASES, D, IDS, INTERPOL, channel2d, channel3d,
-                           interpol_probe, mpi_clean, smooth_noslip, write_case)
+                           interpol_probe, mpi_clean, mpi_run, pocket_case, same_log,
+                           same_output, smooth_noslip, write_case)
 from paths import REPO
 
 
@@ -61,27 +62,12 @@ def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
 
 
 @pytest.mark.slow
-def test_more_ranks_than_cells_is_refused_and_names_the_rank_count(tmp_path):
-    """PETSc does not assemble a block with no rows: every rank waits in the
-    assembly and the job hangs with nothing said. The shares are even, so a rank
-    is empty exactly when there are more ranks than cells or than free
-    midpoints, which is the same test on every rank and so a collective
-    refusal."""
-    pytest.importorskip("h5py")
-    X, cells = channel2d(1)
-    t = D.Topo(X, cells, [True, False])
-    cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
-    r = mpi_clean(cfg, tmp_path / "out", 3, ok=False, timeout=120)
-    assert r.returncode != 0
-    assert "3 ranks is more than this mesh's 2 cells" in r.stdout + r.stderr
-
-
-@pytest.mark.slow
 def test_a_failed_write_of_the_first_rank_takes_the_job_down(tmp_path):
-    """Every file is the first rank's and the run ends on a barrier, so a full
+    """The mesh is linked into the output by the first rank alone, so a full
     disk or a permission there is a failure the other ranks cannot have: they
-    would wait at the barrier forever and the job would look like one that is
-    still running. It stops instead, naming what could not be written."""
+    would wait for it in the next collective forever and the job would look
+    like one that is still running. It stops instead, naming what could not be
+    written."""
     pytest.importorskip("h5py")
     X, cells = channel2d(6)
     t = D.Topo(X, cells, [True, False])
@@ -104,11 +90,11 @@ def test_a_failed_write_of_the_first_rank_takes_the_job_down(tmp_path):
 @pytest.mark.parametrize("dim,mesh", CASES, ids=IDS)
 @pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
 def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
-    """Only the solve is shared out. A case cleaned on three ranks balances to
-    what a loader accepts, leaves every held node at the data's value, and
+    """Every rank holds, solves and writes its share. A case cleaned on three
+    ranks balances to what a loader accepts, leaves every held node at the data's value, and
     reports each stamp once -- every printed line is the first rank's -- and the
     field is the one-rank run's, as the tool reads it and as the divergence-free
-    loader does.
+    loader does. Every number it prints is the one-rank run's too.
 
     Bit-for-bit agreement is not asked for and is not there: the ranks add their
     cell blocks in another order, so GAMG aggregates differently and the
@@ -122,6 +108,7 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
     cfg = write_case(tmp_path / "in", X, cells, fields, per, stamps=["0", "1"])
     runs = {n: mpi_clean(cfg, tmp_path / ("out%d" % n), n) for n in (1, 3)}
 
+    same_log(runs[1].stdout, runs[3].stdout)
     got = {}
     for n, r in runs.items():
         lines = [l for l in r.stdout.split("\n") if l.strip()]
@@ -142,7 +129,7 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
         # a held midpoint has no unknown, so no rank can write one
         for u in (a, b):
             assert np.abs(u[held.held_node] - fields[k][held.held_node]).max() == 0.0
-        assert np.abs(a - b).max() < 1e-8 * scale
+        assert np.abs(a - b).max() < 1e-12 * scale
     # the loader reads what the first rank wrote under MPI
     mode = "triangle" if dim == 2 else "tet"
     assert "divfree=true" in (tmp_path / "out3" / "dolfin_params.dat").read_text()
@@ -151,3 +138,38 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
     for c in "xyz"[:dim]:
         assert np.array_equal(a[c], b[c]), c
         assert np.abs(a["u" + c] - b["u" + c]).max() < 1e-8 * scale, c
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("partition", ["blocks", "ptscotch"])
+@pytest.mark.parametrize("kind", ["closed", "moving wall"])
+@pytest.mark.parametrize("dim", [2, 3])
+def test_three_ranks_report_every_number_one_rank_reports(tmp_path, dim, kind, partition):
+    """What the tool prints -- the counts of cells, edges, held nodes, free and
+    boundary-free midpoints and changed edges, the fluxes, the volume means,
+    the drift, the divergence left, and under --check the Taylor-Hood moments
+    -- is the whole mesh's, each a reduction over the ranks, and a reduction
+    over some of them moves a number by far more than round-off. So every line
+    of the three-rank run is the one-rank run's, the numbers to round-off.
+
+    The fixtures reach what the smooth channel does not: a pocket whose cells
+    are measured against the floor of the stamp's largest facet flux, which on
+    blocks one rank holds alone, so that rank's own largest is not the
+    stamp's; a closed domain whose data leaves a net flux the step has to
+    share out over every cell; a moving wall with free midpoints on it."""
+    pytest.importorskip("h5py")
+    cfg = pocket_case(tmp_path / "in", dim, kind)
+    tool = os.path.join(REPO, "python", "divfree", "divfree_clean.py")
+    runs, checks = {}, {}
+    for n in (1, 3):
+        runs[n] = mpi_clean(cfg, tmp_path / ("out%d" % n), n, extra=["--partition", partition],
+                            timeout=120).stdout
+        r = mpi_run(n, [tool, cfg, "--check", "--partition", partition], timeout=120)
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+        checks[n] = r.stdout
+    free_on_wall = int(re.search(r"(\d+) of them on the boundary", runs[1]).group(1))
+    assert (free_on_wall > 0) == (kind == "moving wall")
+    assert ("singular" in runs[1]) == (kind == "closed")
+    same_log(runs[1], runs[3])
+    same_log(checks[1], checks[3])
+    same_output(tmp_path / "out1", tmp_path / "out3", 1.25)

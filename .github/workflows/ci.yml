@@ -33,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
-            python3-pytest python3-numpy python3-h5py python3-scipy \
+            python3-pytest python3-numpy python3-h5py python3-h5py-mpi python3-scipy \
             python3-mpi4py python3-petsc4py-real
           # Debian keeps petsc4py beside its PETSc build, off the default path
           echo "PYTHONPATH=$(ls -d /usr/lib/petscdir/petsc*/x86_64-linux-gnu-real/lib/python3/dist-packages)" >> "$GITHUB_ENV"
