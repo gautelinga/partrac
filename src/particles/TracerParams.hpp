@@ -68,7 +68,7 @@ inline void add_common(partrac::Schema& s, const TracerDefaults& d){
   s.runtime<int>("filter_target", 0, "a cloud: no filtering");
 
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
   s.token_choices("init_mode", "_", {"points"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");
@@ -98,6 +98,8 @@ inline void add_tracer_params(partrac::Schema& s, const TracerDefaults& d){
   s.require<double>("Dm", "molecular diffusivity");
   s.require<double>("dt", "timestep");
   s.require<double>("T", "final time");
+  s.opt<bool>("frozen_fields", false, "freeze the velocity field");
+  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
   s.opt<std::string>("scheme", "RK4", "ODE integration scheme; explicit is the diffusive step");
   s.opt<std::string>("outside", d.outside, "a particle that cannot take its step: ignore (it stays), reinject at a random offset, or mark (c = 2)");
   s.choices("scheme", {"explicit", "RK4"});

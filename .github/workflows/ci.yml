@@ -248,6 +248,45 @@ jobs:
           disable_search: true
           fail_ci_if_error: false
 
+  # mode=openfoam reads cases through OpenFOAM's own libraries, a plugin built
+  # against OpenFOAM.org 14 from its apt repository, a large install; the split
+  # and the node values are OpenFOAM-free and tested in every job, the reader
+  # here. The tests on solved cases too large to check in skip.
+  openfoam:
+    name: OpenFOAM reader (dolfin OFF)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install OpenFOAM and the dependencies
+        # three tries, the mirror fails now and then
+        run: |
+          sudo sh -c "wget -qO - https://dl.openfoam.org/gpg.key > /etc/apt/trusted.gpg.d/openfoam.asc"
+          sudo add-apt-repository -n -y http://dl.openfoam.org/ubuntu
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update &&
+            sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends openfoam14 \
+              cmake g++ libhdf5-dev libeigen3-dev libboost-dev zlib1g-dev \
+              python3-pytest python3-numpy python3-h5py python3-scipy && break
+            [ $i = 3 ] && exit 1
+            sleep 30
+          done
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DPARTRAC_ENABLE_OPENFOAM=ON \
+            -DOPENFOAM_DIR=/opt/openfoam14 \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: make -C build -j$(nproc)
+      - name: Unit tests of the split and the node values
+        run: build/tests/unittest "[openfoam]"
+      - name: The reader through the apps
+        # fails rather than skips if the build has no reader
+        env:
+          PARTRAC_REQUIRE_OPENFOAM: 1
+        run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q tests/test_openfoam.py -m "not slow" -rs
+
   # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
   # SIGILL on an older machine. Check the option still reaches the compiler.
   options:

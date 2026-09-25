@@ -80,7 +80,7 @@ template<bool Scalars>
 void StampedInterpol<Cell, Format>::evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
   // Assuming inside fluid
-  assert(t <= t_next && t >= t_prev);
+  assert(t_next == t_prev || (t <= t_next && t >= t_prev));
   const double alpha_t = stamp_weight(t, t_prev, t_next);
 
   // Quadratic near walls, else P1
@@ -147,12 +147,32 @@ void StampedInterpol<Cell, Format>::evaluate_impl(const Vector3d &x, const doubl
   }
 }
 
+template<typename Cell, typename Format>
+void StampedInterpol<Cell, Format>::evaluate_phase_gradient(const Vector3d&, const double t, const CellPos& pos,
+                                                            Vector3d& g)
+{
+  g.setZero();
+  if constexpr (!Format::vertex_fields) return;
+  if (!phase_gradient_) return;
+  // P1 on the velocity's vertex table, D a vertex
+  const int id = pos.id;
+  const double alpha_t = stamp_weight(t, t_prev, t_next);
+  std::array<double, Cell::n_dofs_max> N;
+  cell_basis(cells_[id], pos.bary, Uint(Cell::n_verts), N.data(), "phi");
+  std::array<double, Cell::n_dofs_max*3> prev, next;
+  gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(), phi_prev_ + nverts_,
+                                                          phi_next_ + nverts_, prev.data(), next.data());
+  g = alpha_t*block_value<D>(N.data(), next.data(), Uint(Cell::n_verts))
+    + (1 - alpha_t)*block_value<D>(N.data(), prev.data(), Uint(Cell::n_verts));
+}
 
 // The evaluation of one format's two cells
 #define STAMPED_EVAL_INSTANCES(Format) \
   template void StampedInterpol<Triangle, Format>::evaluate(const Vector3d&, double, const CellPos&, PointValues&); \
   template void StampedInterpol<Triangle, Format>::evaluate_motion(const Vector3d&, double, const CellPos&, PointValues&); \
   template void StampedInterpol<Tet, Format>::evaluate(const Vector3d&, double, const CellPos&, PointValues&); \
-  template void StampedInterpol<Tet, Format>::evaluate_motion(const Vector3d&, double, const CellPos&, PointValues&);
+  template void StampedInterpol<Tet, Format>::evaluate_motion(const Vector3d&, double, const CellPos&, PointValues&); \
+  template void StampedInterpol<Triangle, Format>::evaluate_phase_gradient(const Vector3d&, double, const CellPos&, Vector3d&); \
+  template void StampedInterpol<Tet, Format>::evaluate_phase_gradient(const Vector3d&, double, const CellPos&, Vector3d&);
 
 #endif

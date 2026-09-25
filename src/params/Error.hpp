@@ -9,6 +9,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 namespace partrac {
 
@@ -29,6 +32,12 @@ template<typename... Args>
 // error; any other exception, from dolfin or the standard library, with 1
 template<typename Body>
 int report_errors(Body&& body){
+#ifdef __GLIBC__
+  // glibc's dynamic thresholds at their ceiling: libsuperlu_dist (via dolfin) turns off mmap and trimming
+  mallopt(M_MMAP_MAX, 65536);
+  mallopt(M_MMAP_THRESHOLD, 32*1024*1024);
+  mallopt(M_TRIM_THRESHOLD, 64*1024*1024);
+#endif
   try {
     return body();
   } catch (const Error& e) {

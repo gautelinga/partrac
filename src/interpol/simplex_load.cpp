@@ -81,6 +81,10 @@ void read_mesh_arrays(const std::string& path, const std::string& topology,
   if (out_of_range)
     partrac::fail(path, ": ", topology, " names a vertex outside the ", m.nverts, " coordinates");
 
+  morton_cells(m, nv, perm);
+}
+
+void morton_cells(MeshData& m, const int nv, std::vector<std::uint32_t>& perm){
   // Bounds, then the cells along the Morton curve of their centroids
   for (Uint d = 0; d < 3; ++d){ m.x_min[d] = 0.; m.x_max[d] = 0.; }
   for (Uint d = 0; d < m.gdim; ++d){
@@ -400,6 +404,19 @@ std::vector<std::uint32_t> morton_node_order(const MeshData& m, const std::vecto
   return node_map;
 }
 
+void renumber_vertices(MeshData& m, const int nv, const std::vector<std::uint32_t>& node_map){
+  std::vector<double> coords(m.coords.size());
+#pragma omp parallel for schedule(static)
+  for (std::size_t i = 0; i < m.nverts; ++i)
+    for (Uint d = 0; d < m.gdim; ++d)
+      coords[std::size_t(node_map[i])*m.gdim + d] = m.coords[i*m.gdim + d];
+  m.coords.swap(coords);
+#pragma omp parallel for schedule(static)
+  for (std::size_t i = 0; i < m.ncells*std::size_t(nv); ++i)
+    m.topo[i] = node_map[m.topo[i]];
+  partrac::phase("vertices into Morton order");
+}
+
 double shortest_edge(const MeshData& m, const int nv){
   double h = std::numeric_limits<double>::max();
 #pragma omp parallel for schedule(static) reduction(min: h)
@@ -439,7 +456,6 @@ void request_from_params(Request& r, const partrac::Params& prm, const std::stri
 
 void build_tables(const Request& r, Tables& t){
   const int nv = r.nv;
-  const int ne = nv*(nv-1)/2;
   t.nv = nv;
   MeshData& m = t.mesh;
   {
@@ -470,6 +486,14 @@ void build_tables(const Request& r, Tables& t){
   t.ncoeffs_p = r.include_pressure ? Uint(nodes_per_cell(nv, t.el_p.degree)) : 0;
   t.ncoeffs_phi = r.include_phi ? Uint(nodes_per_cell(nv, t.el_phi.degree)) : 0;
   check_dofs_fit(t.ncoeffs_u, std::max(t.ncoeffs_p, t.ncoeffs_phi), r.n_dofs_max, r.what);
+
+  tables_from_mesh(r, t);
+}
+
+void tables_from_mesh(const Request& r, Tables& t){
+  const int nv = r.nv;
+  const int ne = nv*(nv-1)/2;
+  MeshData& m = t.mesh;
 
   // The edges, when any field carries midside nodes
   const bool quadratic = t.el_u.degree == 2 || (r.include_pressure && t.el_p.degree == 2)

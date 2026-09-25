@@ -70,6 +70,9 @@ public:
   virtual double get_t_max() = 0;
   //
   virtual void update(const double t) = 0;
+  // The fields at t for every later time; the default only brackets t, so a
+  // loader without its own still evaluates at each step's time
+  virtual void freeze(const double t) { update(t); }
   // After locate, pos describes x in pos.id, inside or not; on failure id is unchanged
   virtual bool locate(const Vector3d &x, const double t, CellPos& pos) = 0;
   // Only after a successful locate: outside the fluid the velocity is zero
@@ -82,6 +85,9 @@ public:
   virtual void enable_reflection() {};
   bool can_reflect = false;
   virtual double hmin() const { return 0.; };   // 0: no mesh scale
+  virtual bool has_phase_field() const { return false; };      // evaluate fills Phi
+  virtual bool has_phase_gradient() const { return false; };   // evaluate_phase_gradient fills g
+  virtual void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) { g.setZero(); };
 protected:
   std::string infilename;
   std::string folder;

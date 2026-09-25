@@ -4,7 +4,6 @@
 // Shared run loop: setup and per-step cadence
 
 #include <algorithm>
-#include <ctime>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -89,7 +88,10 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
     T = prm.get<double>("T");
   prm.set<double>("T", T);
 
-  intp->update(frozen_fields ? prm.get<double>("t_frozen") : t0);
+  if (frozen_fields)
+    intp->freeze(prm.get<double>("t_frozen"));
+  else
+    intp->update(t0);
 
   // Walls for the explicit diffusive step
   const bool diffuses = prm.has("Dm") && prm.get<double>("Dm") > 0.;
@@ -218,7 +220,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // Counted from the second step: the first refreshes and checkpoints
   PerfWindow counters;
   const int it_counted = it + 1;
-  std::clock_t clock_0 = std::clock();
+  const double wall_0 = omp_get_wtime();   // wall clock, not the threads' summed CPU time
   while (t < run.T + dt/2 && hooks.keep_going()){
     if (it == it_counted)
       counters.enable();
@@ -277,9 +279,8 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     t += dt;
     it += 1;
   }
-  std::clock_t clock_1 = std::clock();
+  const double duration = omp_get_wtime() - wall_0;
   counters.disable();
-  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
   std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 
   if (refresh_S){

@@ -71,7 +71,7 @@ inline partrac::Schema partrac_schema(){
   s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
   s.choices("scheme", {"explicit", "RK4"});
   s.choices("outside", {"ignore", "reinject", "mark"});
   s.choices("exit_plane", {"none", "x", "y", "z"});

@@ -44,6 +44,7 @@ template<typename Cell>
 struct WallEdges {
   std::array<typename WallRule<Cell>::End, WallRule<Cell>::n_ends> ends;
   std::uint8_t wall;   // bit k: vertex k lies on a wall
+  WallEdges() {}       // unset: build_wall_edges fills the table in parallel
 };
 
 // The near-wall rule, per dimension: the P2 block of a P1 one whose wall

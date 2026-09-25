@@ -182,12 +182,19 @@ void check_formats_agree(const std::string& tag, const std::size_t n){
   constexpr Uint gdim = Cell::n_verts - 1;
   CaseDir c(tag);
   write_case<Cell>(c, n, "P1", "P1");
+  // has_phase_field decides interpol's phi column: include_phi's, whatever the file holds
+  REQUIRE_FALSE(SimplexInterpol<Cell>(c.file("h5_params.dat")).has_phase_field());
+  REQUIRE_FALSE(XDMFInterpol<Cell>(c.file("xdmf_params.dat")).has_phase_field());
   append(c.file("h5_params.dat"), "include_phi=true\nwall_p2=edge\n");
   append(c.file("xdmf_params.dat"), "include_phi=true\nwall_p2=edge\n");
   const std::vector<Vector3d> pts = points(gdim, 200, 0.5/double(n));
 
   SimplexInterpol<Cell> h5(c.file("h5_params.dat"));
   XDMFInterpol<Cell> xdmf(c.file("xdmf_params.dat"));
+  REQUIRE(h5.has_phase_field());
+  REQUIRE(xdmf.has_phase_field());
+  REQUIRE_FALSE(h5.has_phase_gradient());
+  REQUIRE_FALSE(xdmf.has_phase_gradient());
   const Sample a = sample(h5, pts, gdim), b = sample(xdmf, pts, gdim);
   REQUIRE(a.u == b.u);
   REQUIRE(a.gradu == b.gradu);

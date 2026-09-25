@@ -357,6 +357,8 @@ void check_motion_and_scalars(const std::string& tag, const std::size_t n){
   write_case<Cell>(c, n, o);
   append(c.params(), "include_phi=true\n");
   SplitInterpol<Cell> intp(c.params());
+  REQUIRE(intp.has_phase_field());   // interpol writes its phi column
+  REQUIRE_FALSE(intp.has_phase_gradient());
   intp.set_int_order(2);
   const std::vector<Vector3d> pts = points(gdim, 120, 0.5/double(n));
   const double t = 0.3;

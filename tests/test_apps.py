@@ -15,12 +15,14 @@ Beyond the smoke tests: the initial refine and coarsen passes follow their own
 flags; the statistics rows agree with the velocities dumped at the same time
 and do not depend on what the dump holds; the tracer apps shuffle their
 particle slots; the deterministic integrators give bit-identical output on 1
-and 4 threads, and partrac's statistics agree to their printed precision; and
-a diffusive run is reproducible for a given seed and thread count.
+and 4 threads, and partrac's statistics agree to their printed precision; a
+diffusive run is reproducible for a given seed and thread count; and a bare
+parameter file name reads the case in the working directory.
 """
 
 import os
 import re
+import subprocess
 
 import numpy as np
 import pytest
@@ -419,3 +421,15 @@ def test_a_diffusive_run_is_reproducible(tmp_path):
     run_app(app("partrac"), copy_example(EXAMPLE, a), *args)
     run_app(app("partrac"), copy_example(EXAMPLE, b), *args)
     assert np.array_equal(final_positions(a), final_positions(b))
+
+
+@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+def test_a_bare_parameter_file_name_reads_the_case_in_the_working_directory(tmp_path, mesh_dir):
+    """The loaders find the mesh and the stamps beside the parameter file, cut at
+    its last slash; a bare name has none, so the working directory is taken."""
+    d = tmp_path / "case"
+    copy_case(mesh_dir("tet"), d)
+    r = subprocess.run([app("interpol"), "dolfin_params.dat", "mode=tet", "Nrw=10", "int_order=1",
+                        "random=false", "seed=1", "t0=0"],
+                       cwd=d, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]

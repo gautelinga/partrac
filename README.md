@@ -1,26 +1,27 @@
 # partrac
-**partrac** is a **par**ticle **trac**ker that can advect passive (possibly diffusive) particles in time-dependent velocity fields. On top of this, stretching of lines and sheets with automatic refinement/coarsening is possible. We plan to fully implement the diffusive strip/method on top of this. It is written in C++.
+**partrac** is a **par**ticle **trac**ker that can advect passive (possibly diffusive) particles in time-dependent velocity fields. On top of this, stretching of lines and sheets with automatic refinement/coarsening is possible, which implements the diffusive strip/sheet method (post-processing in the sibling repository `partractools`). It is written in C++.
 
 ## Input modes
-* `structured/lbm`: Uses trilinear interpolation of cubically ordered velocity data. The typical input for **partrac** is the output of the Lattice Boltzmann code FELBM, but any other data can be used as input by a suitable conversion.
-* `fenics`: Uses unstructured meshes, in the form of Fenics/Dolfin HDF5 files.
-* `triangle/tet`: Better and faster implementation of `fenics`.
+* `structured/lbm/felbm`: Uses trilinear interpolation of cubically ordered velocity data. The typical input for **partrac** is the output of the Lattice Boltzmann code FELBM, but any other data can be used as input by a suitable conversion.
+* `fenics`: Uses unstructured meshes, in the form of Fenics/Dolfin HDF5 files. Needs dolfin.
+* `triangle/tet`: Better and faster implementation of `fenics`, without dolfin.
+* `trianglefreq/tetfreq`: As `triangle/tet`, a time series given as frequency components.
+* `xdmftriangle/xdmftet`: P1 fields in XDMF files.
+* `openfoam`: OpenFOAM cases, read in place, with `partrac_params.dat` beside `constant/`.
 * `analytic`: Analytic input
 
 ## Conversion from FELBM output
-`parse_xdmf.py` translates from FELBM output XDMF file to **partrac** input. This is run by:
-`python3 parse_xdmf.py data_example/L64x256_a1/felbm_output/output.xdmf`
+`python/parse_xdmf.py` translates from FELBM output XDMF file to **partrac** input. This is run by:
+`python3 python/parse_xdmf.py FELBM_OUTPUT/output.xdmf`
 This creates a file `timestamps.dat` in the same folder as `output.xdmf` that is used as input for **partrac**.
 
 ## Compilation
-Build out of tree, so the source folder stays clean:
 ```
 cmake -S . -B build
 make -C build -j
 ```
-The executables end up in `build/bin/`, inside the build tree, so a second
-build (Debug, or with dolfin off) does not overwrite the first. To run the
-tests:
+The executables end up in `build/bin/`. `-DPARTRAC_ENABLE_OPENFOAM=ON` adds
+`mode=openfoam`, built against an installed OpenFOAM. To run the tests:
 ```
 ctest --test-dir build --output-on-failure
 ```
@@ -60,13 +61,7 @@ The `data_example` folders for the mesh modes (`ppf_triangle_p2`,
 ```
 cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 ```
-It needs FEniCS/dolfin. `tests/test_mesh.py` does the same into a temporary
-folder, and skips itself when dolfin is not importable. Each generator builds
-its space with a `PBC` constrained domain over the directions its
-`dolfin_params.dat` calls periodic, so a node on a min face and its image on
-the max face share one dof in the file; the interpolators read the dofmap as
-stored, so a fixture written without the constraint would claim a periodicity
-its field does not hold.
+It needs FEniCS/dolfin.
 
 ## Divergence-free velocity fields
 `python/divfree/divfree_clean.py` prepares a dolfin HDF5 case so that the
@@ -79,15 +74,12 @@ mpirun -n 8 python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out
 python3 python/divfree/divfree_clean.py CLEANED/dolfin_params.dat --check
 ```
 It needs `h5py`, `scipy`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the
-options. How the field is built is in the module docstring. Under `mpirun` each
-rank holds its part of the mesh, so the size of a case is bounded by the ranks,
-not by one process, and the output is the same at any rank count; run it with
-`OMP_NUM_THREADS=1`. The output is written in parallel where h5py has MPI,
-otherwise through the first rank.
+options. Under `mpirun` each rank holds its part of the mesh; run it with
+`OMP_NUM_THREADS=1`.
 
 ## Visualization
 Plotting the position:
-`python3 plot_pos.py data_example/L64x256_a1/felbm_output/RandomWalkers/Dm0..../`
+`python3 python/plot_pos.py FOLDER/RandomWalkers/Dm0..../`
 
 ## Parameters
 Each app declares the parameters it accepts, so the set differs between them and

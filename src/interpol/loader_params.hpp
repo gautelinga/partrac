@@ -85,6 +85,32 @@ inline partrac::Schema xdmf_schema(const std::string& mode){
   return s;
 }
 
+// An OpenFOAM case read in place: mode openfoam. The mesh, the times and the
+// periodicity are the case's own.
+inline partrac::Schema openfoam_schema(){
+  partrac::Schema s("partrac_params.dat, mode=openfoam", "");
+  add_mesh_params(s, true);
+  s.opt<std::string>("velocity_field", "U", "velocity field in the time directories");
+  s.opt<std::string>("pressure_field", "p", "pressure field in the time directories");
+  s.opt<std::string>("split", "12", "tets a hex: 12, the fan from the cell centre (cellPoint's own), or 6, "
+                                    "Dompierre's where the faces allow it; a 2D case 4 or 2 triangles a quad");
+  s.choices("split", {"12", "6"});
+  s.opt<std::string>("nodes", "least_squares", "values of U and p at the mesh points: least_squares (exact for "
+                                               "linear fields) or inverse_distance (cellPoint's)");
+  s.choices("nodes", {"least_squares", "inverse_distance"});
+  s.opt<std::string>("wall_p2", "edge", "velocity next to walls at rest: edge (quadratic) or none (P1)");
+  s.choices("wall_p2", {"edge", "none"});
+  s.optional<std::string>("phase_field", "phase field in the time directories, a volScalarField such as "
+                                          "alpha.water; none read without it");
+  s.opt<bool>("include_phi", false, "not read: phase_field names the phase field");
+  s.check([](const partrac::Params& p){ return !p.get<bool>("include_phi"); },
+          "include_phi = true: mode openfoam reads the phase field phase_field names, as phase_field=alpha.water");
+  s.check([](const partrac::Params& p){
+            return !p.was_set("periodic_x") && !p.was_set("periodic_y") && !p.was_set("periodic_z"); },
+          "periodic_x, periodic_y and periodic_z are the case's: its cyclic patches say which axes are periodic");
+  return s;
+}
+
 // Lattice Boltzmann fields: mode felbm (structured, lbm)
 inline partrac::Schema felbm_schema(){
   partrac::Schema s("felbm_params.dat", "");

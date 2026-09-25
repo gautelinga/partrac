@@ -48,6 +48,10 @@ void read_mesh_arrays(const std::string& path, const std::string& topology,
                       const std::string& geometry, int nv, MeshData& m,
                       std::vector<std::uint32_t>& perm);
 
+// The bounds of the coordinates, then the cells renumbered into Morton order
+// of their centroids; perm[new] = old is written for the caller
+void morton_cells(MeshData& m, int nv, std::vector<std::uint32_t>& perm);
+
 // mesh/topology, mesh/coordinates and mesh/cell_indices, then the cells
 // renumbered into Morton order; perm[new] = old is written for the caller
 void read_mesh(const std::string& path, int nv, MeshData& m,
@@ -140,9 +144,15 @@ struct Tables {
 // wants.
 void request_from_params(Request& r, const partrac::Params& prm, const std::string& folder);
 
-// read_mesh, the elements, the edge table, the node order, the periodic nodes,
-// the node tables, the facet table and the mesh scale, in that order
+// read_mesh, the elements, then tables_from_mesh
 void build_tables(const Request& r, Tables& t);
+
+// The edge table, the node order, the periodic nodes, the node tables, the
+// facet table and the mesh scale, in that order, of the mesh in t.mesh and the
+// elements in t. A caller that knows the periodic images sets t.np.master and
+// leaves r.periodic false: the node tables then read the masters it gave, and
+// the facets on a periodic side stay walls for it to pair.
+void tables_from_mesh(const Request& r, Tables& t);
 
 // A later stamp or component into a buffer the size of the first one's, through
 // the mapping the first built
@@ -171,6 +181,10 @@ constexpr double node_span_max = 0.25;
 // vertices numbered first and edges after them
 std::vector<std::uint32_t> morton_node_order(const MeshData& m, const std::vector<std::uint32_t>& edges,
                                              std::size_t nedges, int nv);
+
+// The vertices themselves renumbered, node_map[old] = new: the coordinates
+// moved and the topology rewritten
+void renumber_vertices(MeshData& m, int nv, const std::vector<std::uint32_t>& node_map);
 
 // The shortest edge of the mesh, a parallel reduction over the cells
 double shortest_edge(const MeshData& m, int nv);

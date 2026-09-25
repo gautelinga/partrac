@@ -29,6 +29,7 @@ add_executable(unittest
   test_freq_load.cpp
   test_split_eval.cpp
   test_split_interpol.cpp
+  test_wall_edges.cpp
 )
 
 target_link_libraries(unittest
@@ -36,7 +37,8 @@ target_link_libraries(unittest
 	Catch2::Catch2
 	partrac_base
 	partrac_io
-	partrac_particles)
+	partrac_particles
+	z)
 target_include_directories(unittest PRIVATE ../apps/)
 target_compile_features(unittest PRIVATE cxx_std_17)
 target_compile_definitions(unittest PRIVATE PARTRAC_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

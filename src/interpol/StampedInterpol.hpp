@@ -4,9 +4,10 @@
 // Velocity, pressure and phase fields as stamps in time on triangles or tets,
 // blended between the two stamps around t. Format reads the files -- the mesh,
 // its node tables and one stamp into a buffer (DolfinH5Format in
-// SimplexInterpol.hpp, XDMFFormat in XDMFInterpol.hpp); the evaluation, the
-// near-wall rule (near_wall.hpp) and the stamp buffer are the same for every
-// format. Nothing here needs dolfin.
+// SimplexInterpol.hpp, XDMFFormat in XDMFInterpol.hpp, OpenFoamFormat in
+// OpenFoamInterpol.hpp); the evaluation, the near-wall rule (near_wall.hpp)
+// and the stamp buffer are the same for every format. Nothing here needs
+// dolfin.
 //
 // A Format is a friend that fills the interpolator's tables: it gives Key (what
 // names a stamp), vertex_fields (every field on the velocity's vertex table),
@@ -32,6 +33,8 @@ class StampedInterpol final
 public:
   StampedInterpol(const std::string& infilename);
   void update(const double t);
+  // One stamp for every t: the blend at t
+  void freeze(const double t);
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
@@ -39,6 +42,9 @@ public:
   double get_t_max() { return fmt_.ts.get_t_max(); };
   // The two stamps are the same values, not a copy of them
   bool stamps_aliased() const { return stamps_.aliased(); }
+  bool has_phase_field() const override { return include_phi; }
+  bool has_phase_gradient() const override { return phase_gradient_; }
+  void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) override;
 protected:
   friend Format;
   template<bool Scalars>
@@ -58,7 +64,7 @@ protected:
 
   // A stamp's fields by node, and the near-wall rule's tolerance computed from its velocity
   struct Stamp {
-    std::vector<double> u, p, phi;
+    std::vector<double> u, p, phi;   // phi: nverts_ values, then with phase_gradient_ D a vertex
     double rest_tol = 0.;   // |u| at rest on a wall
   };
 
@@ -109,6 +115,11 @@ protected:
   std::size_t ncells_ = 0, nverts_ = 0;
   // A vertex's master across the periodic faces, its own id where there is none
   std::vector<std::uint32_t> vclass_;
+
+  Stamp frozen_;   // a blend frozen between two stamps
+
+  // The phase field's own gradient after its values, on the velocity's vertex table
+  bool phase_gradient_ = false;
 };
 
 #endif

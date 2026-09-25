@@ -50,6 +50,39 @@ if(PARTRAC_ENABLE_DOLFIN)
   include(${DOLFIN_USE_FILE})
 endif()
 
+# OpenFOAM cases (mode openfoam), read through OpenFOAM's own libraries in one
+# unit: from the sourced environment (FOAM_SRC, FOAM_LIBBIN, WM_LABEL_SIZE,
+# WM_PRECISION_OPTION) or from OPENFOAM_DIR, whose etc/bashrc is sourced here.
+# The reader is a plugin the apps open only in that mode.
+option(PARTRAC_ENABLE_OPENFOAM "Compile the OpenFOAM reader (mode openfoam)." OFF)
+add_feature_info(PARTRAC_ENABLE_OPENFOAM PARTRAC_ENABLE_OPENFOAM "Compile the OpenFOAM reader (mode openfoam).")
+if(PARTRAC_ENABLE_OPENFOAM)
+  set(OPENFOAM_DIR "" CACHE PATH "OpenFOAM installation, if its environment is not sourced")
+  if (OPENFOAM_DIR)
+    execute_process(COMMAND bash -c "source '${OPENFOAM_DIR}/etc/bashrc' > /dev/null 2>&1; echo \"$FOAM_SRC;$FOAM_LIBBIN;$WM_LABEL_SIZE;$WM_PRECISION_OPTION;$WM_PROJECT_DIR;$WM_ARCH;$WM_ARCH_OPTION;$WM_PROJECT_VERSION\""
+      OUTPUT_VARIABLE PARTRAC_FOAM_ENV OUTPUT_STRIP_TRAILING_WHITESPACE)
+  else()
+    set(PARTRAC_FOAM_ENV "$ENV{FOAM_SRC};$ENV{FOAM_LIBBIN};$ENV{WM_LABEL_SIZE};$ENV{WM_PRECISION_OPTION};$ENV{WM_PROJECT_DIR};$ENV{WM_ARCH};$ENV{WM_ARCH_OPTION};$ENV{WM_PROJECT_VERSION}")
+  endif()
+  list(GET PARTRAC_FOAM_ENV 0 FOAM_SRC)
+  list(GET PARTRAC_FOAM_ENV 1 FOAM_LIBBIN)
+  list(GET PARTRAC_FOAM_ENV 2 FOAM_LABEL_SIZE)
+  list(GET PARTRAC_FOAM_ENV 3 FOAM_PRECISION)
+  list(GET PARTRAC_FOAM_ENV 4 FOAM_PROJECT_DIR)
+  list(GET PARTRAC_FOAM_ENV 5 FOAM_ARCH)
+  list(GET PARTRAC_FOAM_ENV 6 FOAM_ARCH_OPTION)
+  list(GET PARTRAC_FOAM_ENV 7 FOAM_VERSION)
+  if (FOAM_VERSION MATCHES "^v")
+    message(FATAL_ERROR "PARTRAC_ENABLE_OPENFOAM: OpenFOAM ${FOAM_VERSION} is ESI's, which the reader does "
+      "not support; build against OpenFOAM.org's (such as OPENFOAM_DIR=/opt/openfoam14)")
+  endif()
+  if (NOT EXISTS "${FOAM_SRC}/OpenFOAM/lnInclude/Time.H" OR NOT EXISTS "${FOAM_LIBBIN}/libOpenFOAM.so")
+    message(FATAL_ERROR "PARTRAC_ENABLE_OPENFOAM: no OpenFOAM found; source its etc/bashrc or set "
+      "OPENFOAM_DIR (found FOAM_SRC='${FOAM_SRC}', FOAM_LIBBIN='${FOAM_LIBBIN}')")
+  endif()
+  message(STATUS "*** with OpenFOAM: ${FOAM_PROJECT_DIR}, labels ${FOAM_LABEL_SIZE}, ${FOAM_PRECISION} ***")
+endif()
+
 message(STATUS "****** ${CMAKE_BUILD_TYPE}")
 message(STATUS "dolfin cxx flags: ${DOLFIN_CXX_FLAGS}")
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
@@ -122,6 +155,11 @@ if(PARTRAC_ENABLE_DOLFIN)
   file(WRITE "${PROJECT_BINARY_DIR}/bin/build_features.txt" "dolfin=on\n")
 else()
   file(WRITE "${PROJECT_BINARY_DIR}/bin/build_features.txt" "dolfin=off\n")
+endif()
+if(PARTRAC_ENABLE_OPENFOAM)
+  file(APPEND "${PROJECT_BINARY_DIR}/bin/build_features.txt" "openfoam=on\n")
+else()
+  file(APPEND "${PROJECT_BINARY_DIR}/bin/build_features.txt" "openfoam=off\n")
 endif()
 
 # FetchContent added in CMake 3.11, downloads during the configure step

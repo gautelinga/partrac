@@ -54,8 +54,41 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/near_wall.cpp
   interpol/xdmf_helpers.cpp
   interpol/phase_timing.cpp
+  interpol/openfoam_host.cpp
+  interpol/openfoam_split.cpp
+  interpol/openfoam_nodes.cpp
+  interpol/openfoam_phase.cpp
+  interpol/OpenFoamInterpol.cpp
+  interpol/OpenFoamInterpol_eval.cpp
   $<TARGET_OBJECTS:${PROJECT_NAME}_predicates>
   )
+
+# The OpenFOAM reader, the only unit that includes an OpenFOAM header: its
+# include tree as system headers and its flags, linked with DT_RPATH to the
+# dummy Pstream, since OpenFOAM's libraries carry no RUNPATH of their own
+if (PARTRAC_ENABLE_OPENFOAM)
+  add_library(${PROJECT_NAME}_openfoam SHARED interpol/openfoam_load.cpp)
+  target_include_directories(${PROJECT_NAME}_openfoam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/interpol)
+  target_include_directories(${PROJECT_NAME}_openfoam SYSTEM PRIVATE
+    ${FOAM_SRC}/OpenFOAM/lnInclude ${FOAM_SRC}/OSspecific/POSIX/lnInclude
+    ${FOAM_SRC}/finiteVolume/lnInclude ${FOAM_SRC}/meshTools/lnInclude)
+  target_compile_definitions(${PROJECT_NAME}_openfoam PRIVATE ${FOAM_ARCH}
+    WM_ARCH_OPTION=${FOAM_ARCH_OPTION} WM_${FOAM_PRECISION} WM_LABEL_SIZE=${FOAM_LABEL_SIZE} NoRepository)
+  target_compile_features(${PROJECT_NAME}_openfoam PRIVATE cxx_std_17)
+  target_compile_options(${PROJECT_NAME}_openfoam PRIVATE -ftemplate-depth-100)
+  target_link_libraries(${PROJECT_NAME}_openfoam PRIVATE ${FOAM_LIBBIN}/libfiniteVolume.so
+    ${FOAM_LIBBIN}/libOpenFOAM.so ${FOAM_LIBBIN}/dummy/libPstream.so)
+  target_link_options(${PROJECT_NAME}_openfoam PRIVATE -Wl,--disable-new-dtags -Wl,--no-as-needed)
+  set_target_properties(${PROJECT_NAME}_openfoam PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib
+    BUILD_RPATH "${FOAM_LIBBIN}/dummy;${FOAM_LIBBIN}"
+    INSTALL_RPATH "${FOAM_LIBBIN}/dummy;${FOAM_LIBBIN}")
+  install(TARGETS ${PROJECT_NAME}_openfoam LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  # The build tree's plugin, and the installed one's place from an installed app
+  file(RELATIVE_PATH PARTRAC_OPENFOAM_LIBDIR_REL ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_LIBDIR})
+  set_source_files_properties(interpol/openfoam_host.cpp PROPERTIES
+    COMPILE_DEFINITIONS "PARTRAC_OPENFOAM_PLUGIN=\"$<TARGET_FILE:${PROJECT_NAME}_openfoam>\";PARTRAC_OPENFOAM_LIBDIR_REL=\"${PARTRAC_OPENFOAM_LIBDIR_REL}\";PARTRAC_WM_PROJECT_DIR=\"${FOAM_PROJECT_DIR}\"")
+endif()
 
 # The reference loader (mode fenics) and the dolfin::Cell constructors it
 # builds its cells with: an object library of its own, the only one that
@@ -80,12 +113,17 @@ target_link_libraries(${PROJECT_NAME}_interpol PUBLIC ${PROJECT_NAME}_io ${PROJE
 if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${PROJECT_NAME}_interpol PUBLIC dolfin)
 endif()
+if (PARTRAC_ENABLE_OPENFOAM)
+  target_link_libraries(${PROJECT_NAME}_interpol PUBLIC ${CMAKE_DL_LIBS})
+  add_dependencies(${PROJECT_NAME}_interpol ${PROJECT_NAME}_openfoam)
+endif()
 
 # The step loops, compiled once per interpolator; the same list as with_concrete
 # (interpol_dispatch.hpp) and set_interpolate_mode (interpol_factory.cpp)
 set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol StructuredConstInterpol
   TetInterpol TriangleInterpol TriangleFreqInterpol TetFreqInterpol
-  XDMFTriangleInterpol XDMFTetInterpol SplitTriangleInterpol SplitTetInterpol)
+  XDMFTriangleInterpol XDMFTetInterpol SplitTriangleInterpol SplitTetInterpol
+  OpenFoamTriangleInterpol OpenFoamTetInterpol)
 set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
 if (PARTRAC_ENABLE_DOLFIN)
   set(PARTRAC_DOLFIN_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol)

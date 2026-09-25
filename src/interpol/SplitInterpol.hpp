@@ -35,6 +35,7 @@ public:
   double get_t_max() { return ts_.get_t_max(); };
   // The two stamps are the same values, not a copy of them
   bool stamps_aliased() const { return stamps_.aliased(); }
+  bool has_phase_field() const override { return include_phi; }
 protected:
   template<bool Scalars>
   void evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);

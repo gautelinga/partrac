@@ -98,6 +98,47 @@ void StampedInterpol<Cell, Format>::update(const double t)
 }
 
 template<typename Cell, typename Format>
+void StampedInterpol<Cell, Format>::freeze(const double t)
+{
+  const double t_min = fmt_.ts.get_t_min(), t_max = fmt_.ts.get_t_max();
+  if (t < t_min || t > t_max)
+    partrac::fail(this->infilename, ": the fields cannot be frozen at t = ", t, ", outside the stamps' ",
+                  t_min, " to ", t_max);
+  update(t);
+  const double a = stamp_weight(t, t_prev, t_next);
+  if (a == 1.){
+    u_prev_ = u_next_;
+    p_prev_ = p_next_;
+    phi_prev_ = phi_next_;
+    rest_tol_prev_ = rest_tol_next_;
+  }
+  else if (a != 0.){
+    // Blend the two stamps into one
+    const auto blend = [a](const std::vector<double>& prev, const std::vector<double>& next,
+                           std::vector<double>& out){
+      out.resize(prev.size());
+      for (std::size_t i = 0; i < prev.size(); ++i) out[i] = a*next[i] + (1 - a)*prev[i];
+    };
+    blend(stamps_.prev().u, stamps_.next().u, frozen_.u);
+    blend(stamps_.prev().p, stamps_.next().p, frozen_.p);
+    blend(stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
+    frozen_.rest_tol = wall_p2_ == WallP2::Edge ? rest_tol(frozen_.u) : 0.;
+    u_prev_ = frozen_.u.data();
+    p_prev_ = frozen_.p.data();
+    phi_prev_ = frozen_.phi.data();
+    rest_tol_prev_ = frozen_.rest_tol;
+  }
+  u_next_ = u_prev_;
+  p_next_ = p_prev_;
+  phi_next_ = phi_prev_;
+  rest_tol_next_ = rest_tol_prev_;
+  // A single stamp: the weight is zero and the rate too at every t
+  t_prev = t;
+  t_next = t;
+  std::cout << "Fields frozen at t = " << t << std::endl;
+}
+
+template<typename Cell, typename Format>
 double StampedInterpol<Cell, Format>::rest_tol(const std::vector<double>& u_data) const
 {
   // Round-off of the largest velocity a cell can read: an image vertex's own

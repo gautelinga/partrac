@@ -27,6 +27,8 @@ inline partrac::Schema weighted_walkers_schema(){
   s.opt<double>("refine_intv", 100.0, "resampling interval");
   s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
   s.opt<double>("t0", 0.0, "start time");
+  s.opt<bool>("frozen_fields", false, "freeze the velocity field");
+  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
   s.opt<double>("U", 1.0, "velocity scale");
   s.opt<double>("x0", 0.0, "initial position");
   s.opt<double>("y0", 0.0, "initial position");
@@ -61,7 +63,7 @@ inline partrac::Schema weighted_walkers_schema(){
   s.runtime<int>("filter_target", 0, "a cloud: no filtering");
 
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet"});
+                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
   s.choices("exit_plane", {"none", "x", "y", "z"});
   // Strip or circle, two direction tokens
   s.check([](const partrac::Params& p){

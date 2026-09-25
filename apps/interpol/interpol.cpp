@@ -59,6 +59,10 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
     "uyx", "uyy", "uyz",
     "uzx", "uzy", "uzz"
   };
+  const bool phase = intp->has_phase_field();
+  if (phase) ptheader.push_back("phi");
+  const bool phase_gradient = intp->has_phase_gradient();
+  if (phase_gradient) ptheader.insert(ptheader.end(), {"dphi_dx", "dphi_dy", "dphi_dz"});
 
   // The points first, one generator a thread as before, so the set is the same
   std::vector<double> xs(3 * std::size_t(num_points));
@@ -120,6 +124,12 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
           gradu(1,0), gradu(1,1), gradu(1,2),
           gradu(2,0), gradu(2,1), gradu(2,2)
         });
+        if (phase) ptdata_loc_.push_back(ptvals.get_phi());
+        if (phase_gradient){
+          Vector3d g;
+          intp->evaluate_phase_gradient(x, t0, pos, g);
+          ptdata_loc_.insert(ptdata_loc_.end(), {g[0], g[1], g[2]});
+        }
       }
     }
   }
