@@ -83,3 +83,16 @@ def read_stats(path):
             % (path.name, len(row), len(names), names[len(row):] or row[len(names):]))
     data = np.array(rows, dtype=float).reshape(len(rows), len(names))
     return {name: data[:, j] for j, name in enumerate(names)}
+
+
+def deformation_gradient(g):
+    """F = Q diag(exp(logstretch)) U from a dump's factors (tracertensors), shape (N, 3, 3).
+
+    U is unit upper triangular with its entries 01, 02, 12 dumped as a vector.
+    """
+    Q = g["Q"].reshape(-1, 3, 3)
+    s = g["logstretch"].reshape(-1, 3)
+    u = g["U"].reshape(-1, 3)
+    U = np.tile(np.eye(3), (len(Q), 1, 1))
+    U[:, 0, 1], U[:, 0, 2], U[:, 1, 2] = u[:, 0], u[:, 1], u[:, 2]
+    return Q @ (np.exp(s)[:, :, None] * U)

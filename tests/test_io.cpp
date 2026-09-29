@@ -81,6 +81,16 @@ ParticleSet three_particles(const TransportElement e = TransportElement::Point){
   return ps;
 }
 
+// A line element's w and a walker's generation are both dumped as w: no app
+// asks for both, so the set refuses it whichever comes first
+TEST_CASE("a line element and a walker generation cannot share a set", "[io]"){
+  ParticleSet vec = three_particles(TransportElement::Vector);
+  REQUIRE_THROWS_AS(vec.record_generation(), partrac::Error);
+  ParticleSet walker = three_particles();
+  walker.record_generation();
+  REQUIRE_THROWS_AS(walker.carry(TransportElement::Vector), partrac::Error);
+}
+
 // One dataset of a written file, as doubles
 std::vector<double> read_dataset(const std::string& file, const std::string& name, const std::size_t n){
   H5::H5File h5(file, H5F_ACC_RDONLY);

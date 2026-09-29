@@ -60,16 +60,16 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   intp->set_U0(prm.get<double>("U"));
   intp->set_int_order(prm.get<int>("int_order"));
 
+  // Parallel generators; before the folders, which name the seed
+  std::vector<std::mt19937> gens = make_generators(prm);
+
   std::cout << "Creating folders..." << std::endl;
   RunFolders out = make_run_folders(intp->get_folder(), name, prm, folder_opts);
 
   if (prm.get<bool>("verbose"))
     prm.print();
 
-  // Parallel generators
-  std::vector<std::mt19937> gens = make_generators(prm);
-
-  // TODO: These should not be stored in particle tracker parameters.
+  // Domain size for the dumped parameters: runtime entries, refused as input
   prm.set<double>("Lx", intp->get_Lx());
   prm.set<double>("Ly", intp->get_Ly());
   prm.set<double>("Lz", intp->get_Lz());
@@ -128,8 +128,10 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
   if (nodes.empty())
     return;
   if (outside == "reinject"){
-    const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
-    const std::string dirs = key.size() > 1 ? key[1] : "xyz";
+    // Along init_mode's directions; positions from a file have none: all three
+    const std::string init_mode = run.prm.get<std::string>("init_mode");
+    const auto key = split_string(init_mode, "_");
+    const std::string dirs = init_mode_is_file(init_mode) || key.size() < 2 ? "xyz" : key[1];
     const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
     std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
     const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
@@ -161,6 +163,31 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
       node_isactive[i] = false;
     mesh.remove_nodes_safe(node_isactive);
   }
+}
+
+// A step over several cells, once, from the fields just updated: it cuts across
+// streamlines and the walls' layers
+inline void note_step_size(Run& run, const ParticleSet& ps, const double t_fields, const double dt){
+  double worst = 0.;
+  Uint over = 0, counted = 0;
+  #pragma omp parallel for reduction(max:worst) reduction(+:over,counted)
+  for (Uint i = 0; i < ps.N(); ++i){
+    CellPos pos;
+    pos.id = ps.get_cell_id(i);
+    if (!run.intp->locate(ps.x(i), t_fields, pos))
+      continue;
+    const double h = run.intp->cell_size(pos.id);
+    if (!(h > 0.))
+      continue;
+    // A march steps in path length
+    const double cells = (run.marches ? 1. : ps.u(i).norm())*dt/h;
+    worst = std::max(worst, cells);
+    ++counted;
+    if (cells > 1.) ++over;
+  }
+  if (worst > 1.)
+    std::cout << "Note: a step crosses up to " << worst << " cells, more than one for "
+              << over << " of " << counted << " particles (dt = " << dt << ")" << std::endl;
 }
 
 // App hooks
@@ -217,6 +244,8 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
                                                   : mesh.stats_header_columns(ds_max));
   }
 
+  bool step_noted = false;
+
   // Counted from the second step: the first refreshes and checkpoints
   PerfWindow counters;
   const int it_counted = it + 1;
@@ -238,6 +267,10 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
         || (refresh_S && at_interval(it, checkpoint_intv, dt))){
       const double t_fields = run.marches ? run.t_fields : t;
       update_fields(ps, *run.intp, t_fields, output_fields);
+      if (!step_noted){
+        note_step_size(run, ps, t_fields, dt);
+        step_noted = true;
+      }
     }
 
     // Statistics

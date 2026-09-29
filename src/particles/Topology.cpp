@@ -284,8 +284,11 @@ void Topology::write_checkpoint(const std::string& checkpointsfolder, const doub
     ps.dump_scalar(checkpointsfolder + "/w.dat", "w");
     ps.dump_scalar(checkpointsfolder + "/S.dat", "S");
   }
-  if (ps.carries() == TransportElement::Tensor)
-    ps.dump_tensor(checkpointsfolder + "/F.ten", "F");
+  if (ps.carries() == TransportElement::Tensor){
+    ps.dump_tensor(checkpointsfolder + "/Q.ten", "Q");
+    ps.dump_vector(checkpointsfolder + "/logstretch.vec", "logstretch");
+    ps.dump_vector(checkpointsfolder + "/U.vec", "U");
+  }
   if (ps.records_generation())
     ps.dump_scalar(checkpointsfolder + "/generation.dat", "generation");
   ps.dump_ids(checkpointsfolder + "/id.list");
@@ -324,8 +327,16 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
     ps.load_scalar(checkpointsfolder + "/w.dat", "w");
     ps.load_scalar(checkpointsfolder + "/S.dat", "S");
   }
-  if (ps.carries() == TransportElement::Tensor)
-    ps.load_tensor(checkpointsfolder + "/F.ten", "F");
+  // F factored, or whole in a checkpoint from before the factors
+  if (ps.carries() == TransportElement::Tensor){
+    if (std::ifstream(checkpointsfolder + "/Q.ten")){
+      ps.load_tensor(checkpointsfolder + "/Q.ten", "Q");
+      ps.load_vector(checkpointsfolder + "/logstretch.vec", "logstretch");
+      ps.load_vector(checkpointsfolder + "/U.vec", "U");
+    }
+    else
+      ps.load_tensor(checkpointsfolder + "/F.ten", "F");
+  }
   if (ps.records_generation())
     ps.load_scalar(checkpointsfolder + "/generation.dat", "generation");
   ps.load_ids(checkpointsfolder + "/id.list");

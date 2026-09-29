@@ -85,6 +85,7 @@ public:
   virtual void enable_reflection() {};
   bool can_reflect = false;
   virtual double hmin() const { return 0.; };   // 0: no mesh scale
+  virtual double cell_size(const int cell_id) const { return hmin(); };   // of a located cell
   virtual bool has_phase_field() const { return false; };      // evaluate fills Phi
   virtual bool has_phase_gradient() const { return false; };   // evaluate_phase_gradient fills g
   virtual void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) { g.setZero(); };

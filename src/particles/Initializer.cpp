@@ -543,7 +543,6 @@ public:
     double Ly = L[1];
     double Lz = L[2];
 
-    std::cout << "FML: " << Lx << " " << Ly << " " << Lz << std::endl;
 
     bool hasLx = Lx > tol and init_rand_x;
     bool hasLy = Ly > tol and init_rand_y;
@@ -796,17 +795,20 @@ public:
 
 class FileInitializer : public Initializer {
 public:
-  FileInitializer(const std::vector<std::string>& key_col, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
-
-    std::string h5filename = key_col[1];
+  FileInitializer(const std::string& h5filename, std::shared_ptr<Interpol> intp, partrac::Params& prm) : Initializer(intp, prm) {
 
     verify_file_exists(h5filename);
 
     H5::H5File h5file(h5filename, H5F_ACC_RDONLY);
     H5::DataSet dset_nodes = h5file.openDataSet("nodes");
     H5::DataSpace dspace_nodes = dset_nodes.getSpace();
+    // One row a point, one to three coordinates
+    if (dspace_nodes.getSimpleExtentNdims() != 2)
+      partrac::fail(h5filename, ": nodes is not a two-dimensional array, one row a point");
     hsize_t dims_nodes[2];
     dspace_nodes.getSimpleExtentDims(dims_nodes, NULL);
+    if (dims_nodes[1] < 1 || dims_nodes[1] > 3)
+      partrac::fail(h5filename, ": nodes has ", dims_nodes[1], " columns, not one to three coordinates");
     
     std::vector<double> nodes_buf(dims_nodes[0]*dims_nodes[1]);
     dset_nodes.read(nodes_buf.data(), H5::PredType::NATIVE_DOUBLE, dspace_nodes, dspace_nodes);
@@ -842,11 +844,13 @@ public:
 
 void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr<Interpol> intp, partrac::Params& prm, std::mt19937& gen){
   const std::string init_mode = prm.get<std::string>("init_mode");
-  std::vector<std::string> key = split_string(init_mode, "_");
-  if (key.size() == 0){
-    partrac::fail("init_mode is empty");
+  // file:<path>, whose path may hold anything
+  if (init_mode_is_file(init_mode)){
+    init_state = std::make_shared<FileInitializer>(init_mode.substr(5), intp, prm);
+    return;
   }
-  else if (key[0] == "point"){
+  std::vector<std::string> key = split_string(init_mode, "_");
+  if (key[0] == "point"){
     //init_state = new PointInitializer(key, intp, prm);
     init_state = std::make_shared<PointInitializer>(key, intp, prm);
   }
@@ -873,15 +877,6 @@ void set_initial_state(std::shared_ptr<Initializer>& init_state, std::shared_ptr
   }
   else if (key[0] == "randomgaussiancircle"){
     init_state = std::make_shared<RandomGaussianCircleInitializer>(key, intp, prm, gen);
-  }
-  else if (key[0] == "from"){
-    std::vector<std::string> key_col = split_string(init_mode, ":");
-    if (key_col[0] == "from_file"){
-      init_state = std::make_shared<FileInitializer>(key_col, intp, prm);
-    }
-    else {
-      partrac::fail("unknown init_mode ('from' type): ", init_mode);
-    }
   }
   else {
     partrac::fail("unknown init_mode: ", init_mode);

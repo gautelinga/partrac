@@ -114,8 +114,9 @@ def voxel_channel(d):
     return fluid
 
 
-# at dt = 2 a step covers more of the channel than the lattice resolves, so nodes stick
-CHANNEL = ("mode=felbm scheme=RK4 int_order=1 Dm=0 dt=2 T=100 Nrw=2000 Nrw_max=4000 "
+# at dt = 20 even the eighth of a step that RK4 retries a failed step in covers
+# more of the channel than the lattice resolves, so nodes stick (at dt = 10 none do)
+CHANNEL = ("mode=felbm scheme=RK4 int_order=1 Dm=0 dt=20 T=100 Nrw=2000 Nrw_max=4000 "
            "init_mode=pairs_xy_xy ds_init=0.5 x0=16 y0=16 z0=16 dump_intv=10 stat_intv=10 "
            "checkpoint_intv=1e9 resize=doublings resize_target=ds_init random=false seed=1")
 

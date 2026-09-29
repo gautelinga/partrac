@@ -8,6 +8,7 @@
 // from the file's own arrays.
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -33,6 +34,13 @@ public:
   // Outward unit normal of the cell's wall facets, their mean at an edge; zero off the wall
   Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
   double hmin() const { return hmin_; }
+  // (d! volume)^(1/d): the barycentric gradients' determinant is its inverse
+  double cell_size(const int cell_id) const {
+    const Cell& c = cells_[std::size_t(cell_id)];
+    const Vector3d g1 = c.bary_grad(1), g2 = c.bary_grad(2);
+    const double det = dim == 2 ? g1[0]*g2[1] - g1[1]*g2[0] : g1.dot(g2.cross(c.bary_grad(3)));
+    return std::pow(std::abs(det), -1./dim);
+  }
   using Interpol::locate;
   using Interpol::evaluate;
 protected:

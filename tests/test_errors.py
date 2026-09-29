@@ -67,7 +67,7 @@ def test_a_missing_parameter_file_is_reported(tmp_path):
 
 @needs_partrac
 def test_a_missing_positions_file_is_reported(tmp_path):
-    reported(run(tmp_path, ["init_mode=from_file:%s" % (tmp_path / "none.h5")]), "no such file")
+    reported(run(tmp_path, ["init_mode=file:%s" % (tmp_path / "none.h5")]), "no such file")
 
 
 @needs_partrac
@@ -129,3 +129,48 @@ def test_an_xdmf_grid_without_a_time_is_reported(xdmf_dir, tmp_path):
     reported(run(tmp_path, ["mode=xdmftriangle", "init_mode=points_xy", "init_weight=uniform",
                             "x0=0.5", "y0=0.5", "z0=0"], params=d / "dolfin_params.dat"),
              "XDMF: a grid without a time")
+
+
+# The Stokes flow around the sphere of radius 1 at (0, 0, 1): its interior is
+# outside the fluid and an analytic flow has no wall normal to steer a point by
+SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
+
+
+@needs_partrac
+@pytest.mark.parametrize("cut", ["false", "true"])
+def test_an_edge_across_the_sphere_is_stuck_and_cut_only_if_asked(tmp_path, cut):
+    """A line from z = 2.5 through the sphere to -0.5, then on to -1.2: the
+    first edge is longer than ds_max and its midpoint is in the sphere, so it
+    cannot be refined. With cut_if_stuck=false the run stops and says how to
+    go on; with true it cuts that edge and finishes on the other."""
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(tmp_path / "edge.h5", "w") as f:
+        f["nodes"] = [[0., 0., 2.5], [0., 0., -0.5], [0., 0., -1.2]]
+    params = copy_example(SPHERE, tmp_path)
+    r = run(tmp_path, ["init_mode=file:%s" % (tmp_path / "edge.h5"), "refine=true", "ds_max=1",
+                       "cut_if_stuck=" + cut], params=params)
+    if cut == "false":
+        reported(r, "an edge is stuck; cut_if_stuck=true cuts it and goes on")
+    else:
+        assert r.returncode == 0, r.stdout[-1000:] + r.stderr[-1000:]
+
+
+@needs_partrac
+def test_pairs_that_cannot_fit_beside_the_sphere_are_reported(tmp_path):
+    """Pairs along x of length 1 centred just off the sphere at (1.001, 0, 1):
+    one end always falls in it, so after its attempts the initializer stops."""
+    params = copy_example(SPHERE, tmp_path)
+    reported(run(tmp_path, ["init_mode=pairs_x", "x0=1.001", "y0=0", "z0=1", "ds_init=1", "Nrw=2"],
+                 params=params),
+             "could not place all pairs inside the domain")
+
+
+@needs_partrac
+def test_points_along_a_direction_the_domain_is_flat_in_are_reported(tmp_path):
+    """A box of zero height in z: points_z has nowhere to spread."""
+    params = copy_example(os.path.join(REPO, "data_example", "linear_flow", "expr_params.dat"), tmp_path)
+    text = re.sub(r"^z_min=.*$", "z_min=0.0", params.read_text(), flags=re.M)
+    text = re.sub(r"^z_max=.*$", "z_max=0.0", text, flags=re.M)
+    params.write_text(re.sub(r"^Lz=.*$", "Lz=0.0", text, flags=re.M))
+    reported(run(tmp_path, ["init_mode=points_z", "ds_init=0.1", "init_weight=none"], params=params),
+             "the domain has no extent along its directions")

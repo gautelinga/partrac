@@ -11,10 +11,12 @@ still returns a velocity that is not the flow's.
 
 Two things are pinned:
 
-- an RK4 stage whose point is outside contributes zero velocity, and a step
-  that ends outside is declined; positions after one step match the reference
-  for every transport element, since the position update does not depend on
-  what else a particle carries;
+- an RK4 step with a stage point or its end outside is taken again in 2, 4,
+  then 8 substeps whose every stage is inside, and declined if none is; a
+  failed stage used to contribute zero velocity, which froze a tracer whose
+  second stage left the fluid on the start point for good. Positions after
+  one step match the reference for every transport element, since the
+  position update does not depend on what else a particle carries;
 - a particle placed outside the fluid (by editing a checkpoint) reports zero
   velocity, pressure and density in the dumps and does not move, under both
   schemes.
@@ -97,29 +99,41 @@ class Axis:
         f_theta = -1.0 + 1. / 4. * eta3 + 3. / 4. * eta
         return rz * rz / r2 * (f_r + f_theta) * self.u_inf - f_theta * self.u_inf
 
-    def rk4(self, z, dt, gated=True):
-        """One RK4 step from z; a stage outside contributes zero unless gated is
-        False; a step ending outside is declined. Returns (z, an outside stage)."""
-        def k(zz):
-            return self.u(zz) if (self.inside(zz) or not gated) else 0.0
-        k1 = k(z)
-        k2 = k(z + k1 * dt / 2)
-        k3 = k(z + k2 * dt / 2)
-        k4 = k(z + k3 * dt)
-        crossed = not all(self.inside(zz) for zz in
-                          (z, z + k1 * dt / 2, z + k2 * dt / 2, z + k3 * dt))
+    def rk4_once(self, z, dt):
+        """One RK4 step from z with the formula everywhere: (end, every stage and the end inside)."""
+        k1 = self.u(z)
+        k2 = self.u(z + k1 * dt / 2)
+        k3 = self.u(z + k2 * dt / 2)
+        k4 = self.u(z + k3 * dt)
         dz = (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
-        return (z + dz if self.inside(z + dz) else z), crossed
+        inside = all(self.inside(zz) for zz in (z, z + k1 * dt / 2, z + k2 * dt / 2, z + k3 * dt, z + dz))
+        return z + dz, inside
+
+    def rk4(self, z, dt):
+        """One step from z as the apps take it: whole, else in 2, 4, then 8
+        substeps that stay inside, else declined. Returns (z, substeps used)."""
+        end, ok = self.rk4_once(z, dt)
+        if ok:
+            return end, 1
+        for m in (2, 4, 8):
+            zz, ok = z, True
+            for _ in range(m):
+                zz, ok = self.rk4_once(zz, dt / m)
+                if not ok:
+                    break
+            if ok:
+                return zz, m
+        return z, 0
 
 
 @needs_apps
 @pytest.mark.parametrize("name", APPS)
-def test_an_rk4_stage_outside_the_fluid_contributes_zero_velocity(tmp_path, name):
-    """After one long RK4 step every particle is where a step that zeroes the
-    velocity at its outside stage points puts it. Some particles must cross
-    into the sphere at a stage and still end in the fluid, and their positions
-    must differ from those of a step that uses the formula inside the sphere;
-    otherwise the flow would not test the rule."""
+def test_an_rk4_step_with_a_stage_outside_the_fluid_is_taken_in_substeps(tmp_path, name):
+    """After one long RK4 step every particle is where the reference puts it:
+    the whole step where every stage is in the fluid, else the first of 2, 4
+    or 8 substeps that stays in it, else its start. Some particles must need
+    substeps and move, and some must need more than two; otherwise the flow
+    would not test the rule."""
     d = case(tmp_path, name)
     run(name, d, ["scheme=RK4", "dt=%g" % DT, "T=%g" % DT, "dump_intv=%g" % DT,
                   "checkpoint_intv=1e9"])
@@ -128,14 +142,13 @@ def test_an_rk4_stage_outside_the_fluid_contributes_zero_velocity(tmp_path, name
     assert np.abs(p0[:, :2]).max() == 0 and np.abs(p1[:, :2]).max() == 0
 
     axis = Axis(params())
-    expected, discriminating = [], 0
+    expected, used = [], []
     for z in p0[:, 2]:
-        zg, crossed = axis.rk4(z, DT)
-        zu, _ = axis.rk4(z, DT, gated=False)
-        expected.append(zg)
-        if crossed and axis.inside(zg) and abs(zg - zu) > 1e-6:
-            discriminating += 1
-    assert discriminating > 0, "no particle crossed the sphere at a stage"
+        zz, m = axis.rk4(z, DT)
+        expected.append(zz)
+        used.append(m)
+    used = np.array(used)
+    assert np.sum(used > 1) > 0 and np.sum(used > 2) > 0, np.bincount(used)
     assert np.allclose(p1[:, 2], expected, rtol=0, atol=1e-12)
 
 

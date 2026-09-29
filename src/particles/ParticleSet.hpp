@@ -84,8 +84,17 @@ public:
     void set_w(const Uint i, const double v) { w_rw[i] = v; };
     double S(const Uint i) const { return S_rw[i]; };
     void set_S(const Uint i, const double v) { S_rw[i] = v; };
-    Matrix3d F(const Uint i) const { return F_rw[i]; };
-    void set_F(const Uint i, const Matrix3d& F) { F_rw[i] = F; };
+    // Deformation gradient F = Q diag(exp(logstretch)) U, U unit upper triangular:
+    // the stretches as logs, the frame orthonormal
+    Matrix3d F(const Uint i) const;
+    void set_F(const Uint i, const Matrix3d& F) { factor_F(i, F, 0.); };
+    Matrix3d frame(const Uint i) const { return Q_rw[i]; };
+    // The frame after a step, M = (propagator) Q: kept while well conditioned,
+    // else factored into F's factors
+    void advance_frame(const Uint i, const Matrix3d& M);
+    // The factors with the frame's growth folded in, as dumped
+    void settled(const Uint i, Matrix3d& Q, Vector3d& s, Vector3d& u) const;
+    Vector3d logstretch(const Uint i) const { Matrix3d Q; Vector3d s, u; settled(i, Q, s, u); return s; };
     double phi(const Uint i) const { return phi_rw[i]; };
     // Particle id
     Uint id(const Uint i) const { return id_rw[i]; };
@@ -126,7 +135,11 @@ public:
     std::vector<Vector3d> rhohat_rw;   // material line element, unit
     std::vector<double> w_rw;          // its log stretching
     std::vector<double> S_rw;          // its stretching rate rhohat^T J rhohat
-    std::vector<Matrix3d> F_rw;        // deformation gradient
+    std::vector<Matrix3d> Q_rw;        // deformation gradient: its frame, orthonormal once settled,
+    std::vector<Vector3d> logstretch_rw;   // the log of its triangular factor's diagonal
+    std::vector<Vector3d> U_rw;        // and the unit triangular factor's entries 01, 02, 12
+    // F = exp(s) G, factored into the fields of slot i
+    void factor_F(const Uint i, const Matrix3d& G, const double s);
     // Recorded fields, sized by record_*()
     bool has_J = false, has_phi = false, has_cell_type = false, has_generation = false;
     std::vector<Matrix3d> J_rw;
@@ -489,8 +502,14 @@ inline void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname
         scalar2hdf5(h5f, groupname + "/w", w_rw, N());
         scalar2hdf5(h5f, groupname + "/S", S_rw, N());
     }
-    if (element == TransportElement::Tensor)
-        tensor2hdf5(h5f, groupname + "/F", F_rw, N());
+    if (element == TransportElement::Tensor){
+        std::vector<Matrix3d> Q(N());
+        std::vector<Vector3d> ls(N()), U(N());
+        for (Uint i = 0; i < N(); ++i) settled(i, Q[i], ls[i], U[i]);
+        tensor2hdf5(h5f, groupname + "/Q", Q, N());
+        vector2hdf5(h5f, groupname + "/logstretch", ls, N());
+        vector2hdf5(h5f, groupname + "/U", U, N());
+    }
     if (has_J && output_fields["J"])
         tensor2hdf5(h5f, groupname + "/J", J_rw, N());
     if (has_phi && output_fields["phi"])
@@ -527,8 +546,11 @@ inline void ParticleSet::carry(const TransportElement e){
     w_rw.resize(Nrw_max);
     S_rw.resize(Nrw_max);
   }
-  if (e == TransportElement::Tensor)
-    F_rw.resize(Nrw_max);
+  if (e == TransportElement::Tensor){
+    Q_rw.resize(Nrw_max);
+    logstretch_rw.resize(Nrw_max);
+    U_rw.resize(Nrw_max);
+  }
   for (Uint i = 0; i < Nrw; ++i) init_carried_fields(i);
 }
 
@@ -539,7 +561,7 @@ inline void ParticleSet::for_each_array(Fn&& fn){
   fn(c_rw); fn(H_rw); fn(rho_rw); fn(p_rw); fn(t_loc_rw);
   fn(cell_id_rw); fn(id_rw);
   if (!rhohat_rw.empty()){ fn(rhohat_rw); fn(w_rw); fn(S_rw); }
-  if (!F_rw.empty()) fn(F_rw);
+  if (!Q_rw.empty()){ fn(Q_rw); fn(logstretch_rw); fn(U_rw); }
   if (has_J) fn(J_rw);
   if (has_phi) fn(phi_rw);
   if (has_cell_type) fn(cell_type_rw);
@@ -557,8 +579,11 @@ inline void ParticleSet::init_carried_fields(const Uint irw){
     w_rw[irw] = 0.;
     S_rw[irw] = 0.;
   }
-  if (element == TransportElement::Tensor)
-    F_rw[irw] = Matrix3d::Identity();
+  if (element == TransportElement::Tensor){
+    Q_rw[irw] = Matrix3d::Identity();
+    logstretch_rw[irw] = Vector3d::Zero();
+    U_rw[irw] = Vector3d::Zero();
+  }
   if (has_J) J_rw[irw] = Matrix3d::Zero();
   if (has_phi) phi_rw[irw] = 0.;
   if (has_cell_type) cell_type_rw[irw] = 0;
@@ -574,8 +599,16 @@ inline void ParticleSet::interpolate_carried(const Uint k, const Uint inode, con
     w_rw[k] = 0.5*(w_rw[inode] + w_rw[jnode]);
     S_rw[k] = 0.5*(S_rw[inode] + S_rw[jnode]);
   }
-  if (element == TransportElement::Tensor)
-    F_rw[k] = 0.5*(F_rw[inode] + F_rw[jnode]);
+  if (element == TransportElement::Tensor){
+    // The mean of the two F, on the larger's scale
+    const double s = std::max(logstretch_rw[inode].maxCoeff(), logstretch_rw[jnode].maxCoeff());
+    auto scaled = [&](const Uint n){
+      Matrix3d Uf = Matrix3d::Identity();
+      Uf(0, 1) = U_rw[n][0]; Uf(0, 2) = U_rw[n][1]; Uf(1, 2) = U_rw[n][2];
+      return Matrix3d(Q_rw[n] * (logstretch_rw[n].array() - s).exp().matrix().asDiagonal() * Uf);
+    };
+    factor_F(k, 0.5*(scaled(inode) + scaled(jnode)), s);
+  }
   if (has_J) J_rw[k] = 0.5*(J_rw[inode] + J_rw[jnode]);
   if (has_phi) phi_rw[k] = 0.5*(phi_rw[inode] + phi_rw[jnode]);
   if (has_cell_type) cell_type_rw[k] = cell_type_rw[inode];   // label
@@ -632,20 +665,105 @@ inline std::vector<Uint> ParticleSet::reorder(const std::vector<Uint>& order){
 
 inline void ParticleSet::load_vector(const std::string filename, const std::string fieldname){
   if (fieldname == "rhohat") load_vector_field(filename, rhohat_rw, N());
+  else if (fieldname == "logstretch") load_vector_field(filename, logstretch_rw, N());
+  else if (fieldname == "U") load_vector_field(filename, U_rw, N());
   else { partrac::fail("ParticleSet::load_vector: no field '", fieldname, "'"); }
 }
 inline void ParticleSet::dump_vector(const std::string filename, const std::string fieldname) const {
   if (fieldname == "rhohat") dump_vector_field(filename, rhohat_rw, N());
+  else if (fieldname == "logstretch") dump_vector_field(filename, logstretch_rw, N());
+  else if (fieldname == "U") dump_vector_field(filename, U_rw, N());
   else { partrac::fail("ParticleSet::dump_vector: no field '", fieldname, "'"); }
 }
+// F whole, as a checkpoint from before the factors has it: factored on load
 inline void ParticleSet::load_tensor(const std::string filename, const std::string fieldname){
-  if (fieldname == "F") load_tensor_field(filename, F_rw, N());
+  if (fieldname == "Q") load_tensor_field(filename, Q_rw, N());
+  else if (fieldname == "F"){
+    std::vector<Matrix3d> F_whole(N());
+    load_tensor_field(filename, F_whole, N());
+    for (Uint i = 0; i < N(); ++i) factor_F(i, F_whole[i], 0.);
+  }
   else { partrac::fail("ParticleSet::load_tensor: no field '", fieldname, "'"); }
 }
 inline void ParticleSet::dump_tensor(const std::string filename, const std::string fieldname) const {
-  if (fieldname == "F") dump_tensor_field(filename, F_rw, N());
+  if (fieldname == "Q") dump_tensor_field(filename, Q_rw, N());
+  else if (fieldname == "F"){
+    std::vector<Matrix3d> F_whole(N());
+    for (Uint i = 0; i < N(); ++i) F_whole[i] = F(i);
+    dump_tensor_field(filename, F_whole, N());
+  }
   else { partrac::fail("ParticleSet::dump_tensor: no field '", fieldname, "'"); }
 }
+
+inline Matrix3d ParticleSet::F(const Uint i) const {
+  Matrix3d Uf = Matrix3d::Identity();
+  Uf(0, 1) = U_rw[i][0]; Uf(0, 2) = U_rw[i][1]; Uf(1, 2) = U_rw[i][2];
+  return Q_rw[i] * logstretch_rw[i].array().exp().matrix().asDiagonal() * Uf;
+}
+
+// Gram-Schmidt: G = Q R, R's diagonal positive
+inline void ParticleSet::factor_F(const Uint i, const Matrix3d& G, const double s){
+  Vector3d q0 = G.col(0), q1 = G.col(1), q2 = G.col(2);
+  const double r00 = q0.norm();
+  q0 /= r00;
+  const double r01 = q0.dot(q1);
+  q1 -= r01*q0;
+  const double r11 = q1.norm();
+  q1 /= r11;
+  const double r02 = q0.dot(q2);
+  q2 -= r02*q0;
+  const double r12 = q1.dot(q2);
+  q2 -= r12*q1;
+  const double r22 = q2.norm();
+  q2 /= r22;
+  Q_rw[i] << q0, q1, q2;
+  logstretch_rw[i] = {s + log(r00), s + log(r11), s + log(r22)};
+  U_rw[i] = {r01/r00, r02/r00, r12/r11};
+}
+
+// F = M D U = Q' R' D U for any frame M, and R' D U = D' U' with
+// D' = diag(r'_ii d_i), U'_ij = sum_k r'_ik d_k U_kj / (r'_ii d_i): the old
+// stretches enter only as exp(s_k - s_i), k > i
+inline void fold_frame(const Matrix3d& M, const Vector3d& s, const Vector3d& u,
+                       Matrix3d& Q, Vector3d& s_out, Vector3d& u_out){
+  Vector3d q0 = M.col(0), q1 = M.col(1), q2 = M.col(2);
+  const double r00 = q0.norm();
+  q0 /= r00;
+  const double r01 = q0.dot(q1);
+  q1 -= r01*q0;
+  const double r11 = q1.norm();
+  q1 /= r11;
+  const double r02 = q0.dot(q2);
+  q2 -= r02*q0;
+  const double r12 = q1.dot(q2);
+  q2 -= r12*q1;
+  const double r22 = q2.norm();
+  q2 /= r22;
+  // Zero stays zero: no 0*inf
+  auto term = [](const double a, const double ds){ return a == 0. ? 0. : a*exp(ds); };
+  const double t01 = term(r01/r00, s[1] - s[0]), t02 = term(r02/r00, s[2] - s[0]), t12 = term(r12/r11, s[2] - s[1]);
+  Q << q0, q1, q2;
+  u_out = {u[0] + t01, u[1] + t01*u[2] + t02, u[2] + t12};
+  s_out = {s[0] + log(r00), s[1] + log(r11), s[2] + log(r22)};
+}
+
+inline void ParticleSet::settled(const Uint i, Matrix3d& Q, Vector3d& s, Vector3d& u) const {
+  fold_frame(Q_rw[i], logstretch_rw[i], U_rw[i], Q, s, u);
+}
+
+// Folded only when a column's squared length leaves [1/16, 16] or two columns
+// come within 60 degrees: a well-conditioned frame carries F as it is
+inline void ParticleSet::advance_frame(const Uint i, const Matrix3d& M){
+  const Vector3d n = M.colwise().squaredNorm();
+  const double c01 = M.col(0).dot(M.col(1)), c02 = M.col(0).dot(M.col(2)), c12 = M.col(1).dot(M.col(2));
+  if (n.minCoeff() > 1./16 && n.maxCoeff() < 16.
+      && 4*c01*c01 < n[0]*n[1] && 4*c02*c02 < n[0]*n[2] && 4*c12*c12 < n[1]*n[2]){
+    Q_rw[i] = M;
+    return;
+  }
+  fold_frame(M, logstretch_rw[i], U_rw[i], Q_rw[i], logstretch_rw[i], U_rw[i]);
+}
+
 // Missing ids: identity
 inline void ParticleSet::load_ids(const std::string filename){
   std::vector<Uint> ids;

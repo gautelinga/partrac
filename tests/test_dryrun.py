@@ -54,7 +54,9 @@ BAD_CASES = [
     (["init_mode=uniform"], "init_mode"),                       # key[1] out of bounds
     (["init_mode=randomgaussianstrip_x", "La=1", "Lb=0.1"], "init_mode"),  # needs key[2]
     (["init_mode=nowhere_x"], "unknown init_mode"),             # well formed, no such mode
-    (["init_mode=from_file"], "init_mode"),                     # no path
+    (["init_mode=file:"], "init_mode"),                         # no path
+    (["init_mode="], "init_mode is empty"),                     # its own check, before the shape check
+    (["init_mode=from_file:positions.h5"], "was from_file"),    # the old form, named in the refusal
 ]
 
 

@@ -86,9 +86,13 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
 
   RunHooks hooks;
   hooks.statistics = [&](const double t, Integrator& counters){
-    return E == TransportElement::Vector
+    std::vector<StatsColumn> cols = E == TransportElement::Vector
          ? vector_stats_columns(t, ps, true, counters.get_declined())
          : cloud_stats_columns(t, ps, counters.get_declined());
+    if (E == TransportElement::Tensor)
+      push_logdetF_columns(cols, ps);
+    cols.push_back(at_rest_column(ps));
+    return cols;
   };
   hooks.after_step = [&](const int, const double t, const std::vector<Uint>& outside_nodes){
     handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
@@ -132,7 +136,9 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
 
   RunHooks hooks;
   hooks.statistics = [&](const double xn, Integrator& counters){
-    return cloud_stats_columns(xn, ps, counters.get_declined());
+    std::vector<StatsColumn> cols = cloud_stats_columns(xn, ps, counters.get_declined());
+    cols.push_back(at_rest_column(ps));
+    return cols;
   };
   hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
     handle_outside(run, mesh, ps, outside, nodes, xn, verbose);

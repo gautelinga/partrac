@@ -180,12 +180,12 @@ static int run(int argc, char* argv[])
   intp->set_U0(prm.get<double>("U"));
   intp->set_int_order(prm.get<int>("int_order"));
 
+  // Parallel generators; before the folders, which name the seed
+  std::vector<std::mt19937> gens = make_generators(prm);
+
   std::string folder = intp->get_folder();
   const std::string newfolder = make_run_folders(folder, "Interpolation", prm,
                                                 NoSubfolders | NoRunIndex).run;
-
-  // Parallel generators
-  std::vector<std::mt19937> gens = make_generators(prm);
 
   double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
   std::cout << "Testing interpolation..." << std::endl;

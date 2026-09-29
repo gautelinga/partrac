@@ -17,10 +17,18 @@ inline bool init_mode_is(const partrac::Params& prm, const std::vector<std::stri
   return std::find(kinds.begin(), kinds.end(), kind) != kinds.end();
 }
 
-// The initializers index the init_mode tokens without bounds checks
+// Positions read from a file: file:<path>, the path anything
+inline bool init_mode_is_file(const std::string& init_mode){
+  return init_mode.rfind("file:", 0) == 0;
+}
+
+// The initializers index the init_mode tokens without bounds checks; empty
+// is refused by its own check
 inline bool init_mode_shape_ok(const std::string& init_mode){
-  if (init_mode.rfind("from", 0) == 0)
-    return init_mode.rfind("from_file:", 0) == 0 && init_mode.size() > 10;
+  if (init_mode.empty())
+    return true;
+  if (init_mode_is_file(init_mode))
+    return init_mode.size() > 5;
   const std::vector<std::string> key = split_string(init_mode, "_");
   if (!init_mode_dirs_ok(key)) return false;
   if (key[0] == "point") return key.size() == 1;
@@ -87,6 +95,8 @@ inline void add_initializer_params(partrac::Schema& s){
   s.opt<double>("z0", 0.0, "initial position");
   s.opt<bool>("inject", false, "inject new particles");
   s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
+  s.check([](const partrac::Params& p){ return !p.get<std::string>("init_mode").empty(); },
+          "init_mode is empty");
   s.check([](const partrac::Params& p){
             return init_mode_shape_ok(p.get<std::string>("init_mode"));
           },
@@ -94,7 +104,7 @@ inline void add_initializer_params(partrac::Schema& s){
             " as in uniform_x; point takes none; pairs takes one or two;"
             " randomgaussianstrip takes two, as in randomgaussianstrip_x_y;"
             " randomgaussiancircle one or two, the second the spread's directions;"
-            " from_file takes a path, as in from_file:positions.h5");
+            " file takes a path, as in file:positions.h5 (was from_file:positions.h5)");
 }
 
 class Initializer {

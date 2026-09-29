@@ -268,6 +268,58 @@ inline std::vector<StatsColumn> cloud_stats_columns(
           {"Nrw", double(Nrw), true}, {"n_declined", double(n_declined), true}};
 }
 
+// At rest: at most this fraction of the mean speed
+constexpr double rest_fraction = 1e-3;
+
+// Tracers at rest, a trap's signature: wall layers and stagnation points
+inline StatsColumn at_rest_column(const ParticleSet& ps){
+  const Uint Nrw = ps.N();
+  double speed = 0.;
+  #pragma omp parallel for reduction(+:speed)
+  for (Uint i = 0; i < Nrw; ++i)
+    speed += ps.u(i).norm();
+  const double slow = Nrw > 0 ? rest_fraction*speed/Nrw : 0.;
+  Uint n = 0;
+  #pragma omp parallel for reduction(+:n)
+  for (Uint i = 0; i < Nrw; ++i)
+    if (ps.u(i).norm() <= slow) ++n;
+  return {"n_at_rest", double(n), true};
+}
+
+// log det F, the stretches' sum, zero in an incompressible flow: its drift is
+// the field's divergence; and each stretch, whose mean over t estimates a
+// Lyapunov exponent
+inline void push_logdetF_columns(std::vector<StatsColumn>& cols, const ParticleSet& ps){
+  const Uint Nrw = ps.N();
+  double m = 0., m0 = 0., m1 = 0., m2 = 0.;
+  #pragma omp parallel for reduction(+:m,m0,m1,m2)
+  for (Uint i = 0; i < Nrw; ++i){
+    const Vector3d s = ps.logstretch(i);
+    m += s.sum(); m0 += s[0]; m1 += s[1]; m2 += s[2];
+  }
+  if (Nrw > 0){
+    for (double* a : {&m, &m0, &m1, &m2}) *a /= Nrw;
+  }
+  double v = 0., v0 = 0., v1 = 0., v2 = 0.;
+  #pragma omp parallel for reduction(+:v,v0,v1,v2)
+  for (Uint i = 0; i < Nrw; ++i){
+    const Vector3d s = ps.logstretch(i);
+    v += pow(s.sum() - m, 2); v0 += pow(s[0] - m0, 2); v1 += pow(s[1] - m1, 2); v2 += pow(s[2] - m2, 2);
+  }
+  if (Nrw > 1){
+    for (double* a : {&v, &v0, &v1, &v2}) *a /= (Nrw-1);
+  }
+  else v = v0 = v1 = v2 = 0.;
+  cols.push_back({"logdetF_mean", m});
+  cols.push_back({"logdetF_var", v});
+  cols.push_back({"logstretch1_mean", m0});
+  cols.push_back({"logstretch1_var", v0});
+  cols.push_back({"logstretch2_mean", m1});
+  cols.push_back({"logstretch2_var", v1});
+  cols.push_back({"logstretch3_mean", m2});
+  cols.push_back({"logstretch3_var", v2});
+}
+
 // Cloud statistics plus edge elongation with doublings
 inline std::vector<StatsColumn> pair_stats_columns(
                  const double t,
