@@ -12,7 +12,7 @@
 #include "ParticleSet.hpp"
 #include "stats.hpp"
 
-class Initializer;
+struct InitialState;
 
 class Topology {
 public:
@@ -62,7 +62,7 @@ public:
   void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
   void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
-  void load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm);
+  void load_initial_state(const InitialState& init_state, partrac::Params& prm);
   // Mesh statistics
   std::vector<StatsColumn> stats_header_columns(const double ds_max){
     return mesh_stats_columns(0., ps, faces, edges, ds_max, 0, 0, dim_settled());

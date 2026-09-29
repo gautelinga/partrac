@@ -34,17 +34,17 @@ This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` a
 ## Apps
 One app per kind of thing followed, all on the same run loop. Every app reads its field through any interpolator (`mode=`); the ones that step in time take `scheme=explicit` (with noise when `Dm > 0`) or `scheme=RK4`.
 
-| App                     | What it follows |
-|-------------------------|-------------------------------------------------------------------------------------------|
-| `partrac`               | Points, strips and sheets, with refinement, coarsening and injection                      |
-| `tracers`               | A cloud of points                                                                         |
-| `tracervectors`         | Points carrying a material line element                                                   |
-| `tracertensors`         | Points carrying the deformation gradient                                                  |
-| `static_space_stepper`  | Points, strips and sheets marched in path length along the streamlines, the fields frozen |
-| `tracervectors_spatial` | Line elements marched in path length                                                      |
-| `weighted_walkers`      | Diffusive walkers past an exit plane, resampled by weight                                 |
-| `filaments`             | Pairs of points and their stretching                                                      |
-| `interpol`              | Probes the fields at random points                                                        |
+| App                     | What it follows                                                           |
+|-------------------------|---------------------------------------------------------------------------|
+| `partrac`               | Points, strips and sheets, with refinement, coarsening and injection      |
+| `tracers`               | A cloud of points                                                         |
+| `tracervectors`         | Points carrying a material line element                                   |
+| `tracertensors`         | Points carrying the deformation gradient                                  |
+| `static_space_stepper`  | Points, strips and sheets marched in path length along steady streamlines |
+| `tracervectors_spatial` | Line elements marched in path length                                      |
+| `weighted_walkers`      | Diffusive walkers past an exit plane, resampled by weight                 |
+| `filaments`             | Pairs of points and their stretching                                      |
+| `interpol`              | Probes the fields at random points                                        |
 
 The older per-interpolator names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still run: each is its app with the interpolator and the choices it used to fix pinned (`apps/CMakeLists.txt`).
 
@@ -78,18 +78,20 @@ Parameters are given as `key=value` after the input file. A parameter is either 
 ### Initialization modes
 Set with `init_mode`. The trailing axes select the direction(s) involved.
 
-| Mode                         | Description                                              | Also reads              |
-|------------------------------|----------------------------------------------------------|-------------------------|
-| `point`                      | Nrw particles at a single point                          | x0, y0, z0              |
-| `uniform_[xyz]`              | Nrw particles spread uniformly along an axis             |                         |
-| `strip_[xyz]`                | Nrw particles along a strip of length La                 | La                      |
-| `sheet_[xy,xz,yz]`           | A refined sheet spanning La by Lb                        | La, Lb, ds_init         |
-| `ellipsoid_[xy,xz,yz]`       | A refined ellipsoid with semi-axes La and Lb             | La, Lb, x0, y0, z0      |
-| `pair_[xyz]`                 | Two particles separated by ds_init, randomly oriented    | ds_init, x0, y0, z0     |
-| `pairs_[xyz]_[xyz]`          | Nrw/2 pairs separated by ds_init, randomly oriented      | ds_init                 |
-| `points_[xyz]`               | Nrw particles at random positions                        | init_weight, ds_init    |
-| `randomgaussianstrip_[xyz]_[xyz]` | A strip of length La with gaussian spread Lb        | La, Lb                  |
-| `randomgaussiancircle_[xyz]` | A circle of diameter La with gaussian spread Lb          | La, Lb                  |
-| `file:<file.h5>`             | Positions read from a file                               | x0, y0, z0, t0          |
+| Mode                              | Description                                              | Also reads              |
+|-----------------------------------|----------------------------------------------------------|-------------------------|
+| `point`                           | Nrw particles at a single point                          | x0, y0, z0              |
+| `uniform_[xyz]`                   | Nrw particles spread uniformly along an axis             |                         |
+| `strip_[xyz]`                     | Nrw particles along a strip of length La                 | La                      |
+| `sheet_[xy,xz,yz]`                | A refined sheet spanning La by Lb                        | La, Lb, ds_init         |
+| `ellipsoid_[xy,xz,yz]`            | A refined ellipsoid with semi-axes La and Lb             | La, Lb, x0, y0, z0      |
+| `pair_[xyz]`                      | Two particles separated by ds_init, randomly oriented    | ds_init, x0, y0, z0     |
+| `pairs_[xyz]_[xyz]`               | Nrw/2 pairs separated by ds_init, randomly oriented      | ds_init                 |
+| `points_[xyz]`                    | Nrw particles at random positions (joined or cloud)      | init_weight; ds_init    |
+| `randomgaussianstrip_[xyz]_[xyz]` | A strip of length La with gaussian spread Lb             | La, Lb                  |
+| `randomgaussiancircle_[xyz]`      | A circle of diameter La with gaussian spread Lb          | La, Lb                  |
+| `file:<file.h5>`                  | Positions read from a file                               | x0, y0, z0, t0          |
+
+`filaments` starts from `pair_*` or `pairs_*` only.
 
 `init_weight` selects how `points_*` samples positions: `none` (uniform), `u`, or one velocity component `ux`, `uy`, `uz`.

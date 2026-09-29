@@ -26,7 +26,7 @@ BASE = {
     # the stepper floors its intervals to multiples of dt, so dt is set to a
     # value that divides every interval used here
     STEPPER: ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=400 Nrw_max=400 "
-              "ds_init=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 dt=0.005 "
+              "ds_init=0 ds_max=1 ds_min=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 dt=0.005 "
               "stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"),
 }
 

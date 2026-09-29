@@ -25,13 +25,6 @@ inline partrac::Schema filaments_schema(){
                        "resize_target is ds_max", "max edge length");
   s.opt<double>("ds_min", 0.0, "min edge length");
   s.require<double>("ds_init", "initial edge length");
-  // Sampling weight for points
-  s.require_if<std::string>("init_weight",
-                            [](const partrac::Params& p){
-                              return p.get<std::string>("init_mode").rfind("points", 0) == 0;
-                            },
-                            "init_mode is a points distribution",
-                            "sampling weight");
   s.opt<double>("t0", 0.0, "start time");
   s.opt<double>("U", 1.0, "velocity scale");
   s.opt<double>("x0", 0.0, "initial position");
@@ -79,12 +72,12 @@ inline partrac::Schema filaments_schema(){
   s.choices("outside", {"ignore", "reinject"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
           "int_order must be 1 or 2");
-  // Pairs or points only
+  // Pairs only
   s.check([](const partrac::Params& p){
             const auto key = split_string(p.get<std::string>("init_mode"), "_");
-            return !key.empty() && (key[0] == "pair" || key[0] == "pairs" || key[0] == "points");
+            return !key.empty() && (key[0] == "pair" || key[0] == "pairs");
           },
-          "init_mode must be pair_*, pairs_* or points_*");
+          "init_mode must be pair_* or pairs_*");
   // No injection
   s.check([](const partrac::Params& p){ return !p.get<bool>("inject"); },
           "filaments does not inject");
@@ -92,7 +85,7 @@ inline partrac::Schema filaments_schema(){
   s.check([](const partrac::Params& p){
             return split_string(p.get<std::string>("init_mode"), "_").size() >= 2;
           },
-          "init_mode is missing a direction, as in pairs_xyz or points_xy");
+          "init_mode is missing a direction, as in pairs_xyz");
   // RK4 ignores Dm
   s.warn([](const partrac::Params& p){
            return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;

@@ -42,10 +42,12 @@ def reported(r, message):
 
 @needs_partrac
 @pytest.mark.parametrize("extra,message", [
-    (["init_mode=strip_x", "x0=100", "y0=100", "z0=100", "La=0.1"], "strip not inside domain"),
+    (["init_mode=strip_x", "x0=100", "y0=100", "z0=100", "La=0.1"],
+     "init_mode strip_x: no point of the strip inside the domain"),
     (["init_mode=ellipsoid_z", "x0=100", "y0=100", "z0=100", "La=0.1", "Lb=0.1"],
-     "ellipsoid not inside domain"),
-    (["init_mode=pairs_xy", "x0=100", "y0=100", "z0=100"], "pair centre is not inside the domain"),
+     "init_mode ellipsoid_z: the ellipsoid is not inside the domain"),
+    (["init_mode=pairs_xy", "x0=100", "y0=100", "z0=100"],
+     "init_mode pairs_xy: the pair centre is not inside the domain"),
     (["init_mode=randomgaussiancircle_x", "La=0.1", "Lb=0.01", "x0=100", "y0=100", "z0=100"],
      "no points inside the domain"),
 ])
@@ -162,7 +164,7 @@ def test_pairs_that_cannot_fit_beside_the_sphere_are_reported(tmp_path):
     params = copy_example(SPHERE, tmp_path)
     reported(run(tmp_path, ["init_mode=pairs_x", "x0=1.001", "y0=0", "z0=1", "ds_init=1", "Nrw=2"],
                  params=params),
-             "could not place all pairs inside the domain")
+             "init_mode pairs_x: could not place all pairs inside the domain")
 
 
 @needs_partrac

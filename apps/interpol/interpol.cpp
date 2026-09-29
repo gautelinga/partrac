@@ -23,7 +23,6 @@
 #include "Integrator.hpp"
 #include "ExplicitIntegrator.hpp"
 #include "RKIntegrator.hpp"
-#include "Initializer.hpp"
 #include "interpol_factory.hpp"
 #include "morton.hpp"
 #include "h5part.hpp"

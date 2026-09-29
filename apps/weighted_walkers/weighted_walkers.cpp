@@ -189,9 +189,11 @@ static int run(int argc, char* argv[])
     if (prm.get<std::string>("restart_folder") != ""){
         mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
     }
+    else if (dim == 2){
+        mesh.load_initial_state(init_gaussian_strip(key, run.intp, prm, run.gens[0]), prm);
+    }
     else {
-        std::shared_ptr<Initializer> init_state = make_gaussian_initializer(dim, key, run.intp, prm, run.gens[0]);
-        mesh.load_initial_state(init_state, prm);
+        mesh.load_initial_state(init_gaussian_circle(key, run.intp, prm, run.gens[0]), prm);
     }
     mesh.compute_maps();
 

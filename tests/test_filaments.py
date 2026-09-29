@@ -166,3 +166,15 @@ def test_reinjection_is_refused_with_diffusion(tmp_path):
                 "scheme=explicit Dm=0.01 outside=reinject", check=False)
     assert r.returncode != 0
     assert "not for diffusion" in r.stdout + r.stderr
+
+
+@needs_filaments
+@pytest.mark.parametrize("init_mode", ["points_xy", "uniform_x", "sheet_xy"])
+def test_an_init_mode_other_than_pairs_is_refused(tmp_path, init_mode):
+    """filaments follows pairs of points and their stretching, so it starts
+    from pair_* or pairs_* only; any other init_mode is refused before the run
+    starts rather than run as edges the app was not written for."""
+    r = run_app(FILAMENTS, copy_example(POISEUILLE, tmp_path / "c"), BASE,
+                "init_mode=" + init_mode, "T=0", check=False)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
+    assert "init_mode must be pair_* or pairs_*" in r.stderr, r.stderr

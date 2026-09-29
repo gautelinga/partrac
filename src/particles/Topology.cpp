@@ -373,22 +373,22 @@ void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map
   ps.dump_hdf5(h5f, groupname, output_fields);
 }
 
-void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partrac::Params& prm){
+void Topology::load_initial_state(const InitialState& init_state, partrac::Params& prm){
   clear();
 
-  edges = init_state->edges;
-  faces = init_state->faces;
+  edges = init_state.edges;
+  faces = init_state.faces;
 
-  if (init_state->clear_initial_edges){
+  if (prm.get<bool>("clear_initial_edges")){
     std::cout << "Clearing initial edges!" << std::endl;
     clear();
   }
-  if (init_state->inject){
+  if (prm.get<bool>("inject")){
     // A sheet inlet would sweep a volume
     if (faces.size() > 0){
       partrac::fail("an inlet with faces would sweep a volume");
     }
-    pos_inj = init_state->nodes;
+    pos_inj = init_state.nodes;
     edges_inj = edges;
     for (Uint i=0; i<pos_inj.size(); ++i){
       nodes_inlet.push_back(i);
@@ -407,7 +407,7 @@ void Topology::load_initial_state(std::shared_ptr<Initializer> init_state, partr
                 << "will be refined to match, so the injected curve gets finer "
                 << "as the run goes on." << std::endl;
   }
-  ps.add(init_state->nodes, 0);
+  ps.add(init_state.nodes, 0);
   // Actual counts; Nrw is the request
   prm.set<Uint>("Nrw_init", ps.N());
   prm.set<Uint>("Nrw_current", ps.N());

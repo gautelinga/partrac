@@ -114,9 +114,7 @@ inline bool load_or_initialize(Run& run, Topology& mesh){
     mesh.load_checkpoint(run.prm.get<std::string>("restart_folder") + "/Checkpoints", run.prm);
   }
   else {
-    std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, run.intp, run.prm, run.gens[0]);
-    mesh.load_initial_state(init_state, run.prm);
+    mesh.load_initial_state(set_initial_state(run.intp, run.prm, run.gens[0]), run.prm);
   }
   mesh.compute_maps();
   return restarting;

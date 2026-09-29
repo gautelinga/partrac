@@ -37,7 +37,8 @@ INIT_MODES = [
     ("ellipsoid_xy", ["La=0.5", "Lb=0.5"]),
     ("pair_xyz", ["ds_init=0.1"]),
     ("pairs_xyz", ["ds_init=0.1"]),
-    ("points_xy", ["init_weight=none", "ds_init=0.1"]),
+    ("points_x", ["init_weight=none", "ds_init=0.1"]),
+    ("points_xy", ["init_weight=none"]),
     ("randomgaussianstrip_x_y", ["La=0.5", "Lb=0.1"]),
     ("randomgaussiancircle_xy", ["La=0.5", "Lb=0.1"]),
 ]

@@ -239,9 +239,9 @@ def test_an_exit_plane_on_a_sheet_cuts_it(tmp_path):
 def test_an_initializer_that_places_nothing_stops(tmp_path):
     """An initializer that places no particle stops the run with "no particles
     left" and a non-zero exit, rather than running an empty simulation."""
-    # the axis is inside the solid inner cylinder, so every particle is rejected
+    # the axis is inside the solid inner cylinder, so every point along it is dropped
     r = run(tmp_path, TAYLOR_COUETTE,
-            ["init_mode=point", "x0=0", "y0=0", "z0=0", "Nrw=1", "Nrw_max=1",
+            ["init_mode=uniform_z", "x0=0", "y0=0", "z0=0", "Nrw=2", "Nrw_max=2",
              "T=0.02"])
     assert r.returncode != 0
     assert "no particles left" in r.stdout + r.stderr
