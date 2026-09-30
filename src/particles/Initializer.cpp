@@ -551,6 +551,6 @@ InitialState set_initial_state(std::shared_ptr<Interpol> intp, const partrac::Pa
   const std::vector<std::string> key = split_string(init_mode, "_");
   const InitMode* mode = find_init_mode(key[0]);
   if (!mode)
-    partrac::fail("unknown init_mode: ", init_mode);
+    partrac::fail("init_mode ", init_mode, ": no such mode");
   return mode->build(key, intp, prm, gen);
 }

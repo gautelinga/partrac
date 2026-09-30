@@ -30,7 +30,7 @@ import pytest
 
 from dumps import all_dumps
 from paths import REPO, app
-from runs import checkpoint_folder, copy_example, run_app
+from runs import checkpoint_folder, copy_example, read_checkpoint, run_app, write_checkpoint
 
 PARTRAC = app("partrac")
 SSS = app("static_space_stepper")
@@ -171,9 +171,7 @@ def test_refinement_leaves_no_edge_longer_than_ds_max(tmp_path):
 
 def template_size(tmp_path):
     """Number of nodes in the checkpointed injection template."""
-    f = list(tmp_path.rglob("positions_inj.pos"))
-    assert len(f) == 1
-    return len([l for l in f[0].read_text().splitlines() if l.strip()])
+    return len(read_checkpoint(tmp_path)["positions_inj"])
 
 
 @needs_partrac
@@ -218,7 +216,7 @@ def test_a_refined_template_survives_a_restart(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     grown = template_size(case)
     assert grown > 41
-    assert len(list(case.rglob("edges_inj.edge"))) == 1
+    assert len(read_checkpoint(case)["edges_inj"]) > 40
     r = run(case, ["Nrw=41", "ds_max=0.02", "T=0.3", "checkpoint_intv=0.3",
                    "restart_folder=%s" % checkpoint_folder(case)])
     assert r.returncode == 0, r.stdout + r.stderr
@@ -227,15 +225,13 @@ def test_a_refined_template_survives_a_restart(tmp_path):
 
 # --- zero-length edges ----------------------------------------------------------
 
-def weld_two_nodes(checkpoint):
-    """Move one end of the checkpoint's first edge onto the other; return (i, j)."""
-    pos, edges = checkpoint / "positions.pos", checkpoint / "edges.edge"
-    x = [[float(v) for v in line.split()]
-         for line in pos.read_text().splitlines() if line.strip()]
-    first = edges.read_text().splitlines()[0].split()
-    i, j = int(first[0]), int(first[1])
+def weld_two_nodes(case):
+    """Move one end of the first edge of the checkpoint under case onto the other; return (i, j)."""
+    ck = read_checkpoint(case)
+    i, j = (int(v) for v in ck["edges"][0])
+    x = ck["points"]
     x[j] = x[i]
-    pos.write_text("".join("%.17g %.17g %.17g\n" % tuple(row) for row in x))
+    write_checkpoint(case, points=x)
     return i, j
 
 
@@ -263,12 +259,10 @@ def test_an_edge_of_no_length_is_collapsed_with_coarsening_off(tmp_path):
         r = run(case, ["refine_intv=0.1", "T=0.2", "checkpoint_intv=0.2",
                        "dump_intv=0"], example=ABC, base=SHEET)
         assert r.returncode == 0, r.stdout + r.stderr
-        checkpoint = list(case.rglob("edges.edge"))
-        assert len(checkpoint) == 1
-        weld_two_nodes(checkpoint[0].parent)
+        weld_two_nodes(case)
         r = run(case, ["refine_intv=" + refine_intv, "T=0.4",
                        "checkpoint_intv=1e9", "dump_intv=0.4",
-                       "restart_folder=" + str(checkpoint[0].parent.parent)],
+                       "restart_folder=" + str(checkpoint_folder(case))],
                 example=ABC, base=SHEET)
         assert r.returncode == 0, r.stdout + r.stderr
         out[label] = degeneracies(case)
@@ -288,12 +282,10 @@ def test_an_edge_of_no_length_is_collapsed_in_the_space_stepper(tmp_path):
         r = run_sss(case, ["refine_intv=0.1", "Ln=0.1", "checkpoint_intv=0.1",
                            "dump_intv=0"])
         assert r.returncode == 0, r.stdout + r.stderr
-        checkpoint = list(case.rglob("edges.edge"))
-        assert len(checkpoint) == 1
-        weld_two_nodes(checkpoint[0].parent)
+        weld_two_nodes(case)
         r = run_sss(case, ["refine_intv=" + refine_intv, "Ln=0.3",
                            "checkpoint_intv=1e9", "dump_intv=0.3",
-                           "restart_folder=" + str(checkpoint[0].parent.parent)])
+                           "restart_folder=" + str(checkpoint_folder(case))])
         assert r.returncode == 0, r.stdout + r.stderr
         out[label] = degeneracies(case)
 

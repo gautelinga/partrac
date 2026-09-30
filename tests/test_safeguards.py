@@ -23,7 +23,7 @@ import pytest
 from cases import args_for
 from dumps import dump_at, read_stats
 from paths import REPO, app
-from runs import checkpoint_folder, copy_case, copy_example, run_app
+from runs import checkpoint_folder, copy_case, copy_example, read_checkpoint, run_app
 
 TRACERS = app("tracers")
 TENSORS = app("tracertensors")
@@ -114,7 +114,7 @@ def test_a_random_run_prints_its_seed_and_the_seed_repeats_it(tmp_path):
     again = linear_flow(tmp_path / "again", {"Axx": 1.0, "Ayy": -1.0})
     r2 = run_app(TRACERS, again, BASE, run_args, "random=false seed=%s" % seed)
     assert "drawn" not in r2.stdout
-    a = np.loadtxt(run_dir / "Checkpoints" / "positions.pos")
-    b = np.loadtxt(checkpoint_folder(tmp_path / "again") / "Checkpoints" / "positions.pos")
+    a = read_checkpoint(run_dir)["points"]
+    b = read_checkpoint(tmp_path / "again")["points"]
     assert np.array_equal(a, b)
     assert not np.array_equal(a[:, 1], np.zeros(len(a)))   # the noise moved them off the axis

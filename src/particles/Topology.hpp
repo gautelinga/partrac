@@ -61,6 +61,8 @@ public:
   std::vector<Uint>& edge_doublings(){ doublings.resize(edges.size(), 0); return doublings; }
   void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
   void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
+  void load_text_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
+  bool has_t_loc(const partrac::Params& prm) const;   // t_loc in a checkpoint
   void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields);
   void load_initial_state(const InitialState& init_state, partrac::Params& prm);
   // Mesh statistics

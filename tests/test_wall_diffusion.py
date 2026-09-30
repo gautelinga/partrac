@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, dump_at, read_stats
+from runs import checkpoint_folder, put_points
 from test_wall_p2 import (DT, OBSTACLE_R, OBSTACLES, SPHERE_C, SPHERE_R, TRACERS, H,  # noqa: F401
                           ball, inside, obstacles, sphere_mesh)
 
@@ -41,11 +42,11 @@ def diffusive_run(case, mode, points, T, dt=DT, Dm=DM, extra=()):
         assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
 
     go(["T=%g" % dt, "dump_intv=1000", "stat_intv=1000", "checkpoint_intv=%g" % dt])
-    [pos] = list(folder.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, np.c_[points, np.zeros((len(points), 3 - dim))], fmt="%.17g")
-    go(["T=%g" % T, "checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent)]
+    put_points(folder, points)
+    ck = checkpoint_folder(folder)
+    go(["T=%g" % T, "checkpoint_intv=1e9", "restart_folder=" + str(ck)]
        + list(extra or ["dump_intv=%g" % T, "stat_intv=1000"]))
-    return pos.parent.parent
+    return ck
 
 
 def near_wall(points, delta):

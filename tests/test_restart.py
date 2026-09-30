@@ -36,28 +36,33 @@ needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
                                    reason="partrac is not built")
 
 
-def continuous_and_resumed_at_end(tmp_path, extra, stop=STOP - DT):
-    """Every dataset at END, as written, of an uninterrupted run and of one checkpointed at stop and resumed."""
+def continuous_and_resumed_at_end(tmp_path, extra, stop=STOP - DT, text=False):
+    """Every dataset at END, as written, of an uninterrupted run and of one checkpointed at stop and resumed.
+
+    With text the checkpoint is rewritten in the old text format before the resume.
+    """
     # T is half a step past END so the last step lands on END despite rounding
     cont, split = continuous_and_resumed(
         PARTRAC, SINE, tmp_path, [BASE, extra],
         ["T=%g" % stop, "checkpoint_intv=%g" % stop],
-        ["T=%g" % (END + DT / 2), "checkpoint_intv=1e9"])
+        ["T=%g" % (END + DT / 2), "checkpoint_intv=1e9"], text=text)
     a, b = dump_at(cont, END, raw=True), dump_at(split, END, raw=True)
     assert set(a) == set(b)
     return a, b
 
 
 @needs_partrac
-def test_a_resumed_strip_is_identical_to_one_never_stopped(tmp_path):
+@pytest.mark.parametrize("fmt", ["hdf5", "text"])
+def test_a_resumed_strip_is_identical_to_one_never_stopped(tmp_path, fmt):
     """A refining and coarsening strip with tau integration resumes bit for bit.
     If any edge state (dl0, tau, rho_prev) were missing from the checkpoint, a
     restarted diffusive-strip run would silently continue from a wrong, e.g.
-    unmixed, strip."""
+    unmixed, strip. A text checkpoint, as older runs wrote them, resumes the
+    same way."""
     a, b = continuous_and_resumed_at_end(
         tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
                    "refine=true", "refine_intv=%g" % DT,
-                   "coarsen=true", "coarsen_intv=%g" % DT])
+                   "coarsen=true", "coarsen_intv=%g" % DT], text=fmt == "text")
     assert len(a["edges"]) > 200        # refined past the initial 199 edges
     assert set(FIELDS) <= set(a)
     for name in sorted(a):
@@ -116,22 +121,23 @@ ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
 
 
 @pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
-@pytest.mark.parametrize("resize", ["rescale", "doublings"])
-def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path, resize):
+@pytest.mark.parametrize("resize,fmt", [("rescale", "hdf5"), ("doublings", "hdf5"), ("doublings", "text")])
+def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path, resize, fmt):
     """filaments resumes its step count from the checkpoint, so intervals keep
     their phase and the resumed run is bitwise identical to a continuous one.
     Here the resize runs every 3 steps and the run stops at step 20, which 3 does
     not divide, so a step count reset to zero would resize on the wrong steps.
     With resize=doublings the checkpoint also carries each edge's halvings;
     without them a resumed run's logelong would lose the stretch halved away
-    before the stop."""
+    before the stop. An old text checkpoint carries them too."""
     pi = "3.14159265358979"
     base = ("mode=analytic init_mode=pairs_xyz Nrw=50 Nrw_max=500 int_order=1 "
             "ds_max=0.1 ds_min=0.01 ds_init=0.1 x0=%s y0=%s z0=%s Dm=0 scheme=RK4 "
             "dt=0.01 dump_intv=0.1 stat_intv=1e9 checkpoint_intv=1e9 resize_intv=0.03 "
             "random=false seed=1 resize=%s" % (pi, pi, pi, resize))
     # the final checkpoint is written one step past T: t = 0.2, step 20
-    cont, split = continuous_and_resumed(FILAMENTS, ABC, tmp_path, base, "T=0.19", "T=0.4")
+    cont, split = continuous_and_resumed(FILAMENTS, ABC, tmp_path, base, "T=0.19", "T=0.4",
+                                         text=fmt == "text")
     for t in (0.3, 0.4):
         a, b = dump_at(cont, t), dump_at(split, t)
         assert set(a) == set(b)

@@ -25,7 +25,7 @@ import pytest
 from cases import write_felbm
 from dumps import all_dumps, read_stats
 from paths import REPO, app
-from runs import copy_example, run_app
+from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 FILAMENTS = app("filaments")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -166,6 +166,26 @@ def test_reinjection_is_refused_with_diffusion(tmp_path):
                 "scheme=explicit Dm=0.01 outside=reinject", check=False)
     assert r.returncode != 0
     assert "not for diffusion" in r.stdout + r.stderr
+
+
+@needs_filaments
+def test_an_edge_reinjection_cannot_reach_is_refused(tmp_path):
+    """Plane Poiseuille flow, fluid where |x| <= 1: an edge moved to x = 1.5,
+    in the wall, with init_mode=pairs_xz_z. Reinjection offsets it along z
+    only, so no draw puts it inside; the resumed run stops with exit code 2
+    and a message naming the directions instead of drawing for ever. The
+    timeout catches the hang."""
+    d = run(tmp_path / "reinject", "init_mode=pairs_xz_z T=0.02 checkpoint_intv=0.02")
+    ck = read_checkpoint(d)
+    x = ck["points"]
+    x[ck["edges"][0], 0] = 1.5
+    put_points(d, x)
+    r = run_app(FILAMENTS, d / "expr_params.dat", BASE,
+                ["init_mode=pairs_xz_z", "T=0.05", "checkpoint_intv=1e9", "outside=reinject",
+                 "restart_folder=" + str(checkpoint_folder(d))],
+                check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
+    assert "outside=reinject: no position inside the domain along z in 1000000 draws" in r.stderr, r.stderr
 
 
 @needs_filaments

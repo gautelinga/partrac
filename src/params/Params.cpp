@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -316,10 +317,27 @@ void Params::write_to(const std::string& filename) const {
       f << e.key << "=" << value_to_string(it->second) << "\n";
     }
   }
+  f.close();
+  if (f.fail())
+    throw ParamError(m_schema ? m_schema->app : "params",
+                     {"could not write '" + filename + "'"});
 }
 
+void Params::dump_tmp(const std::string& folder) const {
+  write_to(folder + "/params.dat.tmp");
+}
+
+void Params::commit_dump(const std::string& folder) const {
+  const std::string path = folder + "/params.dat";
+  if (std::rename((path + ".tmp").c_str(), path.c_str()) != 0)
+    throw ParamError(m_schema ? m_schema->app : "params",
+                     {"could not move '" + path + ".tmp' to '" + path + "'"});
+}
+
+// Written beside, then moved over the last one
 void Params::dump(const std::string& folder) const {
-  write_to(folder + "/params.dat");
+  dump_tmp(folder);
+  commit_dump(folder);
 }
 
 void Params::dump(const std::string& folder, const double t) const {

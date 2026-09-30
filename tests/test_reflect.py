@@ -28,7 +28,7 @@ import pytest
 
 from dumps import dump_at, read_stats
 from paths import REPO, app
-from runs import run_app
+from runs import checkpoint_folder, put_points, run_app
 
 TRACERS = app("tracers")
 
@@ -54,10 +54,10 @@ def restart_from(params, mode, points, args, dt):
             "random=false", "seed=1", "scheme=explicit"]
     run(params, base + ["Dm=0", "T=%g" % dt, "dump_intv=1000", "stat_intv=1000",
                         "checkpoint_intv=%g" % dt])
-    [pos] = list(folder.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, points, fmt="%.17g")
-    run(params, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent)])
-    return pos.parent.parent
+    put_points(folder, points)
+    ck = checkpoint_folder(folder)
+    run(params, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    return ck
 
 
 def declined(folder):

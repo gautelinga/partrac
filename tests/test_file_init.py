@@ -66,15 +66,15 @@ def test_a_node_reinjected_from_a_file_start_moves_along_every_axis(tmp_path):
     checkpoint, so its step is declined; reinjected, it ends in the fluid and
     off the plane y = 0, which the flow never leaves (u_y = 0 there). The
     timeout catches a node that can never be moved."""
-    from runs import checkpoint_folder
+    from runs import checkpoint_folder, read_checkpoint, write_checkpoint
     f = nodes_file(tmp_path / "line.h5", [[x, 0., -2.] for x in (-1., -0.5, 0., 0.5, 1.)])
     params = copy_example(SPHERE, tmp_path / "c")
     args = BASE + ["init_mode=file:%s" % f, "outside=reinject"]
     run_app(PARTRAC, params, args)
     ck = checkpoint_folder(tmp_path / "c")
-    pos = np.loadtxt(ck / "Checkpoints" / "positions.pos")
+    pos = read_checkpoint(ck)["points"]
     pos[2] = [0., 0., 1.]                     # the sphere's centre
-    np.savetxt(ck / "Checkpoints" / "positions.pos", pos, fmt="%.17g")
+    write_checkpoint(ck, points=pos)
     run_app(PARTRAC, params, args, "T=0.03", "restart_folder=%s" % ck, timeout=60)
     p = dump_at(tmp_path / "c", 0.03)["points"]
     assert len(p) == 5

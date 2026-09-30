@@ -72,20 +72,20 @@ def test_a_particle_slower_than_u_eps_follows_outside(tmp_path, outside):
         assert not np.any(c == 2.0)
 
 
-@pytest.mark.parametrize("binary", [SPATIAL, STEPPER],
-                         ids=["tracervectors_spatial", "static_space_stepper"])
-def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary):
+@pytest.mark.parametrize("binary,fmt", [(SPATIAL, "hdf5"), (STEPPER, "hdf5"), (SPATIAL, "text")],
+                         ids=["tracervectors_spatial", "static_space_stepper", "tracervectors_spatial-text"])
+def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary, fmt):
     """A march stopped at a checkpoint and resumed must give bit-identical dumps
     to one run straight through. The checkpoint carries each particle's
     integration time and the step count resumes; otherwise a long march split
     over several jobs would restart its integration times from zero or dump at
-    the wrong path lengths."""
+    the wrong path lengths. An old text checkpoint carries them too."""
     if not os.path.exists(binary):
         pytest.skip(os.path.basename(binary) + " is not built")
     # the final checkpoint is written one step past Ln: xn = 0.2, step 20
     cont, split = continuous_and_resumed(binary, POISEUILLE, tmp_path,
                                          [BASE[binary], "dxn=0.01 dump_intv=0.1"],
-                                         "Ln=0.19", "Ln=0.4")
+                                         "Ln=0.19", "Ln=0.4", text=fmt == "text")
     a, b = groups(cont), groups(split)
     for xn in (0.3, 0.4):
         assert xn in a, "the march never reached xn = %g: the loop end dropped its last steps" % xn

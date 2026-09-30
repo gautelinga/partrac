@@ -59,7 +59,7 @@ def test_an_initial_state_outside_the_domain_is_reported(tmp_path, extra, messag
 def test_an_init_mode_the_schema_lets_through_is_reported(tmp_path):
     """The schema checks the number of directions, not the mode's name."""
     reported(run(tmp_path, ["init_mode=bogus_x", "La=0.1", "x0=0", "y0=0", "z0=0"]),
-             "unknown init_mode: bogus_x")
+             "init_mode bogus_x: no such mode")
 
 
 @needs_partrac

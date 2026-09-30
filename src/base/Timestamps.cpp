@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iterator>
 #include "Error.hpp"
 #include "Timestamps.hpp"
 #include "files.hpp"
@@ -51,33 +52,17 @@ void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
 }
 
 StampPair Timestamps::get(const double t){
-  // TODO: Make more efficient
-  double t_prev, t_next;
-  std::string filename_prev, filename_next;
-  filename_next = stamps.begin()->second;
-  t_next = stamps.begin()->first;
-  for (std::map<double, std::string>::iterator it=stamps.begin()++;
-       it!=stamps.end(); ++it){
-    filename_prev = filename_next;
-    filename_next = it->second;
-    t_prev = t_next;
-    t_next = it->first;
-    if (t_prev <= t && t_next > t){
-      StampPair Pair(t_prev, filename_prev,
-                     t_next, filename_next);
-      return Pair;
-    }
-  }
-  double t_last = (--stamps.end())->first;
-  std::string filename_last = (--stamps.end())->second;
-  if (t >= t_last){
-    StampPair Pair(t_last, filename_last, t_last, filename_last);
-    return Pair;
-  }
-  double t_first = stamps.begin()->first;
-  std::string filename_first = stamps.begin()->second;
-  StampPair Pair(t_first, filename_first, t_first, filename_first);
-  return Pair;
+  if (stamps.empty())
+    partrac::fail("Timestamps: no time stamps");
+  // First stamp after t
+  const auto next = stamps.upper_bound(t);
+  // Before the first or past the last: that stamp twice
+  if (next == stamps.begin())
+    return StampPair(next->first, next->second, next->first, next->second);
+  const auto prev = std::prev(next);
+  if (next == stamps.end())
+    return StampPair(prev->first, prev->second, prev->first, prev->second);
+  return StampPair(prev->first, prev->second, next->first, next->second);
 }
 
 //

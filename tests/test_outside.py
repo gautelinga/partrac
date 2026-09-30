@@ -19,7 +19,10 @@ Two things are pinned:
   position update does not depend on what else a particle carries;
 - a particle placed outside the fluid (by editing a checkpoint) reports zero
   velocity, pressure and density in the dumps and does not move, under both
-  schemes.
+  schemes;
+- with outside=reinject, a particle that no offset along init_mode's
+  directions can bring back into the fluid is refused after a bounded number
+  of draws, rather than drawing for ever.
 """
 
 import math
@@ -30,9 +33,10 @@ import pytest
 
 from dumps import all_dumps
 from paths import REPO, app
-from runs import copy_example, run_app
+from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
+POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 APPS = ["tracers", "tracervectors", "tracertensors"]
 DT = 8.0
 
@@ -162,21 +166,39 @@ def test_a_particle_outside_the_fluid_has_zero_fields_and_stays(tmp_path, scheme
     d = case(tmp_path, scheme)
     run("tracers", d, ["scheme=%s" % scheme, "dt=%g" % DT, "T=%g" % DT,
                        "dump_intv=%g" % DT, "checkpoint_intv=%g" % DT])
-    [pos] = list(d.rglob("Checkpoints/positions.pos"))
-    ids = np.loadtxt(pos.parent / "id.list", dtype=int)
-    lines = pos.read_text().splitlines()
+    ck = read_checkpoint(d)
     zc = params()["z0"]
-    lines[0] = "0 0 %.17g" % (zc - 0.5)                  # inside the sphere
-    pos.write_text("\n".join(lines) + "\n")
-    moved = ids[0]
+    ck["points"][0] = [0., 0., zc - 0.5]                # inside the sphere
+    put_points(d, ck["points"])
+    moved = int(ck["id"][0, 0])
 
     # the checkpoint is at t = 2 DT; the resumed run dumps from there on
     run("tracers", d, ["scheme=%s" % scheme, "dt=%g" % DT, "T=%g" % (4 * DT),
                        "dump_intv=%g" % DT, "checkpoint_intv=1e9",
-                       "restart_folder=" + str(pos.parent.parent)])
+                       "restart_folder=" + str(checkpoint_folder(d))])
     later = {t: g for t, g in dumps(d).items() if t > 1.5 * DT}
     assert later, "the resumed run dumped nothing"
     for t, g in sorted(later.items()):
         assert np.array_equal(g["points"][moved], [0., 0., zc - 0.5]), t
         assert np.all(g["u"][moved] == 0), t
         assert np.all(g["p"][moved] == 0) and np.all(g["rho"][moved] == 0), t
+
+
+@needs_apps
+def test_a_particle_reinjection_cannot_reach_is_refused(tmp_path):
+    """Plane Poiseuille flow, fluid where |x| <= 1: a particle moved to
+    x = 1.5, in the wall, with init_mode=points_z. Reinjection offsets it
+    along z only, so no draw is inside; the resumed run stops with a message
+    naming the directions instead of drawing for ever. The timeout catches
+    the hang."""
+    d = copy_example(POISEUILLE, tmp_path / "reinject").parent
+    run("tracers", d, ["scheme=RK4", "dt=0.1", "T=0.1", "dump_intv=0.1", "checkpoint_intv=0.1"])
+    x = read_checkpoint(d)["points"]
+    x[0] = [1.5, 0., 0.]
+    put_points(d, x)
+    r = run_app(app("tracers"), d / "expr_params.dat", BASE,
+                ["scheme=RK4", "dt=0.1", "T=0.3", "dump_intv=0.1", "checkpoint_intv=1e9",
+                 "outside=reinject", "restart_folder=" + str(checkpoint_folder(d))],
+                check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
+    assert "outside=reinject: no position inside the domain along z in 1000000 draws" in r.stderr, r.stderr

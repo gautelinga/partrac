@@ -31,6 +31,12 @@ Passive tracers example:
 `./build/bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
 This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` and puts the simulation data into it.
 
+### Restarting
+A run writes `Checkpoints/checkpoint.h5` every `checkpoint_intv` and at the end. To continue a run, specify the folder that contains `Checkpoints/`:
+```
+./build/bin/partrac data_example/plane_poiseuille/expr_params.dat restart_folder=data_example/plane_poiseuille/RandomWalkers/Dm0..../0 T=2.0
+```
+
 ## Apps
 One app per kind of thing followed, all on the same run loop. Every app reads its field through any interpolator (`mode=`); the ones that step in time take `scheme=explicit` (with noise when `Dm > 0`) or `scheme=RK4`.
 
@@ -94,4 +100,4 @@ Set with `init_mode`. The trailing axes select the direction(s) involved.
 
 `filaments` starts from `pair_*` or `pairs_*` only.
 
-`init_weight` selects how `points_*` samples positions: `none` (uniform), `u`, or one velocity component `ux`, `uy`, `uz`.
+`init_weight` selects how `points_*` samples positions: `uniform`, `u`, or one velocity component `ux`, `uy`, `uz`.

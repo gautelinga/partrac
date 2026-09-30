@@ -49,10 +49,9 @@ public:
     bool has_space(const Uint n) const { return Nrw + n < Nrw_max; };
     Uint N() const { return Nrw; };
     void set_N(Uint n) { Nrw=n; };
+    // Old text checkpoints
     void load_scalar(const std::string filename, const std::string fieldname);
-    void dump_scalar(const std::string filename, const std::string fieldname) const;
     void load_positions(const std::string filename);
-    void dump_positions(const std::string filename) const;
     void dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool> &output_fields) const;
     //bool integrate(const double t, const double dt);
     // void attach_integrator(std::shared_ptr<Integrator> integrator) { this->integrator = integrator; };
@@ -105,11 +104,11 @@ public:
     // Shuffle slots; returns old -> new
     std::vector<Uint> shuffle(std::mt19937& gen);
     void load_vector(const std::string filename, const std::string fieldname);
-    void dump_vector(const std::string filename, const std::string fieldname) const;
     void load_tensor(const std::string filename, const std::string fieldname);
-    void dump_tensor(const std::string filename, const std::string fieldname) const;
     void load_ids(const std::string filename);
-    void dump_ids(const std::string filename) const;
+    // Checkpoint: positions, ids and the carried fields; t_loc if asked
+    void write_checkpoint(H5::H5File& h5f, const bool with_t_loc) const;
+    void read_checkpoint(const H5::H5File& h5f, const bool with_t_loc);
   private:
     //bool do_output_all = false;
     Uint Nrw = 0;
@@ -445,37 +444,13 @@ inline void ParticleSet::load_scalar(const std::string filename, const std::stri
   }
 }
 
-inline void ParticleSet::dump_scalar(const std::string filename, const std::string fieldname) const {
-  if (fieldname == "c"){
-    dump_scalar_field(filename, c_rw, N());
-  }
-  else if (fieldname == "t_loc"){
-    dump_scalar_field(filename, t_loc_rw, N());
-  }
-  else if (fieldname == "w"){
-    dump_scalar_field(filename, w_rw, N());
-  }
-  else if (fieldname == "S"){
-    dump_scalar_field(filename, S_rw, N());
-  }
-  else if (fieldname == "generation"){
-    dump_scalar_field(filename, generation_rw, N());
-  }
-  else {
-    // Unknown field
-    partrac::fail("ParticleSet::dump_scalar: no field '", fieldname, "'");
-  }
-}
-
 inline void ParticleSet::load_positions(const std::string filename){
     assert(N() == 0);
     std::vector<Vector3d> pos;
     load_vector_field(filename, pos);
+    if (pos.size() > Nrw_max)
+      partrac::fail(filename, ": ", pos.size(), " particles, more than Nrw_max = ", Nrw_max);
     add(pos, 0);
-}
-
-inline void ParticleSet::dump_positions(const std::string filename) const {
-    dump_vector_field(filename, x_rw, N());
 }
 
 
@@ -669,12 +644,6 @@ inline void ParticleSet::load_vector(const std::string filename, const std::stri
   else if (fieldname == "U") load_vector_field(filename, U_rw, N());
   else { partrac::fail("ParticleSet::load_vector: no field '", fieldname, "'"); }
 }
-inline void ParticleSet::dump_vector(const std::string filename, const std::string fieldname) const {
-  if (fieldname == "rhohat") dump_vector_field(filename, rhohat_rw, N());
-  else if (fieldname == "logstretch") dump_vector_field(filename, logstretch_rw, N());
-  else if (fieldname == "U") dump_vector_field(filename, U_rw, N());
-  else { partrac::fail("ParticleSet::dump_vector: no field '", fieldname, "'"); }
-}
 // F whole, as a checkpoint from before the factors has it: factored on load
 inline void ParticleSet::load_tensor(const std::string filename, const std::string fieldname){
   if (fieldname == "Q") load_tensor_field(filename, Q_rw, N());
@@ -685,16 +654,6 @@ inline void ParticleSet::load_tensor(const std::string filename, const std::stri
   }
   else { partrac::fail("ParticleSet::load_tensor: no field '", fieldname, "'"); }
 }
-inline void ParticleSet::dump_tensor(const std::string filename, const std::string fieldname) const {
-  if (fieldname == "Q") dump_tensor_field(filename, Q_rw, N());
-  else if (fieldname == "F"){
-    std::vector<Matrix3d> F_whole(N());
-    for (Uint i = 0; i < N(); ++i) F_whole[i] = F(i);
-    dump_tensor_field(filename, F_whole, N());
-  }
-  else { partrac::fail("ParticleSet::dump_tensor: no field '", fieldname, "'"); }
-}
-
 inline Matrix3d ParticleSet::F(const Uint i) const {
   Matrix3d Uf = Matrix3d::Identity();
   Uf(0, 1) = U_rw[i][0]; Uf(0, 2) = U_rw[i][1]; Uf(1, 2) = U_rw[i][2];
@@ -773,8 +732,61 @@ inline void ParticleSet::load_ids(const std::string filename){
   for (Uint i = 0; i < N(); ++i) id_rw[i] = ids[i];
   next_id = ids.empty() ? 0 : *std::max_element(ids.begin(), ids.end()) + 1;
 }
-inline void ParticleSet::dump_ids(const std::string filename) const {
-  dump_list(filename, id_rw, N());
+
+// The frame and factors as carried
+inline void ParticleSet::write_checkpoint(H5::H5File& h5f, const bool with_t_loc) const {
+  vector2hdf5(h5f, "points", x_rw, N());
+  ulong2hdf5(h5f, "id", id_rw, N());
+  scalar2hdf5(h5f, "c", c_rw, N());
+  if (with_t_loc)
+    scalar2hdf5(h5f, "t_loc", t_loc_rw, N());
+  if (element == TransportElement::Vector){
+    vector2hdf5(h5f, "rhohat", rhohat_rw, N());
+    scalar2hdf5(h5f, "w", w_rw, N());
+    scalar2hdf5(h5f, "S", S_rw, N());
+  }
+  if (element == TransportElement::Tensor){
+    tensor2hdf5(h5f, "Q", Q_rw, N());
+    vector2hdf5(h5f, "logstretch", logstretch_rw, N());
+    vector2hdf5(h5f, "U", U_rw, N());
+  }
+  if (has_generation)
+    scalar2hdf5(h5f, "generation", generation_rw, N());
+}
+
+inline void ParticleSet::read_checkpoint(const H5::H5File& h5f, const bool with_t_loc){
+  assert(N() == 0);
+  const Uint n = hdf5_rows(h5f, "points");
+  if (n > Nrw_max)
+    partrac::fail(h5f.getFileName(), ": ", n, " particles, more than Nrw_max = ", Nrw_max);
+  std::vector<Vector3d> pos;
+  hdf52vectors(h5f, "points", n, pos);
+  add(pos, 0);
+  // Scalar fields
+  std::vector<double> a;
+  auto scalars = [&](const std::string& name, std::vector<double>& v){
+    hdf52doubles(h5f, name, n, 1, a);
+    std::copy(a.begin(), a.end(), v.begin());
+  };
+  scalars("c", c_rw);
+  if (with_t_loc)
+    scalars("t_loc", t_loc_rw);
+  if (element == TransportElement::Vector){
+    hdf52vectors(h5f, "rhohat", n, rhohat_rw);
+    scalars("w", w_rw);
+    scalars("S", S_rw);
+  }
+  if (element == TransportElement::Tensor){
+    hdf52tensors(h5f, "Q", n, Q_rw);
+    hdf52vectors(h5f, "logstretch", n, logstretch_rw);
+    hdf52vectors(h5f, "U", n, U_rw);
+  }
+  if (has_generation)
+    scalars("generation", generation_rw);
+  std::vector<Uint> ids;
+  hdf52ulongs(h5f, "id", n, 1, ids);
+  std::copy(ids.begin(), ids.end(), id_rw.begin());
+  next_id = ids.empty() ? 0 : *std::max_element(ids.begin(), ids.end()) + 1;
 }
 
 // bool ParticleSet::integrate(const double t, const double dt){

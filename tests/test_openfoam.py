@@ -56,7 +56,7 @@ import pytest
 
 from dumps import all_dumps
 from paths import BIN, REPO, app
-from runs import run_app
+from runs import checkpoint_folder, put_points, read_checkpoint, run_app
 
 INTERPOL = app("interpol")
 TRACERS = app("tracers")
@@ -1103,12 +1103,12 @@ def from_checkpoint(params, points, dim, c, run, args, threads=4):
                          "frozen_fields=true", "t_frozen=" + c["time"], "t0=" + c["time"]]
     run_app(TRACERS, params, base, ["T=%r" % (t0 + c["dt"]), "dump_intv=1e9", "stat_intv=1e9",
                                     "checkpoint_intv=%r" % c["dt"], "num_threads=%d" % threads], timeout=1200)
-    [pos] = list(params.parent.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, np.c_[points, np.zeros((len(points), 3 - dim))], fmt="%.17g")
-    ids = np.loadtxt(pos.parent / "id.list", dtype=int)
-    run_app(TRACERS, params, base, args, ["checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent),
+    put_points(params.parent, points)
+    ids = read_checkpoint(params.parent)["id"][:, 0].astype(int)
+    folder = checkpoint_folder(params.parent)
+    run_app(TRACERS, params, base, args, ["checkpoint_intv=1e9", "restart_folder=" + str(folder),
                                           "num_threads=%d" % threads], timeout=3600)
-    return all_dumps(pos.parent.parent), ids
+    return all_dumps(folder), ids
 
 
 def lattice(n, off, lo, hi, dim):

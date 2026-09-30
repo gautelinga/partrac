@@ -42,6 +42,7 @@ import pytest
 
 from dumps import dump_at
 from paths import app
+from runs import checkpoint_folder, put_points, read_checkpoint
 
 
 def need_gmsh():
@@ -503,19 +504,19 @@ def restart_from(case, mode, points, args):
             "random=false", "seed=1", "scheme=RK4"]
     run(folder, base + ["T=%g" % DT, "dump_intv=1000", "stat_intv=1000",
                         "checkpoint_intv=%g" % DT])
-    [pos] = list(folder.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, np.c_[points, np.zeros((len(points), 3 - dim))], fmt="%.17g")
-    run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent)])
-    return pos.parent.parent
+    put_points(folder, points)
+    ck = checkpoint_folder(folder)
+    run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    return ck
 
 
 def probe(case, mode, points):
     """The velocity at each point, in the order given, with wall_p2=mode."""
     folder = restart_from(case, mode, points,
                           ["T=%g" % (2 * DT), "dump_intv=%g" % (2 * DT), "stat_intv=1000"])
-    ids = np.loadtxt(folder / "Checkpoints" / "id.list", dtype=int)
+    ids = read_checkpoint(folder)["id"][:, 0].astype(int)
     g = dump_at(folder, 2 * DT)
-    # dump_at orders by id; the probe points were written in id.list order
+    # dump_at orders by id; the probe points were written in the checkpoint's id order
     dim = points.shape[1]
     assert np.allclose(g["points"][ids][:, :dim], points, rtol=0, atol=1e-12)
     return g["u"][ids][:, :dim]

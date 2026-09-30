@@ -31,7 +31,7 @@ from cases import (APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
                    wrapper_kind)
 from dumps import all_dumps, read_stats
 from paths import REPO, app
-from runs import checkpoint_folder, copy_case, copy_example, run_app
+from runs import checkpoint_folder, copy_case, copy_example, read_checkpoint, run_app
 
 
 def smoke_cells():
@@ -370,7 +370,7 @@ def test_the_result_does_not_depend_on_the_thread_count(
 
 def final_positions(d):
     """The positions in the checkpoint the run under d ended on."""
-    return np.loadtxt(checkpoint_folder(d) / "Checkpoints" / "positions.pos")
+    return read_checkpoint(d)["points"]
 
 
 # uniform_x is a strip, so it exercises only the strip half of the statistics;

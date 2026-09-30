@@ -32,7 +32,7 @@ import pytest
 
 from dumps import all_dumps, dump_at
 from paths import REPO, app
-from runs import continuous_and_resumed, copy_example, run_app
+from runs import continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
@@ -239,18 +239,15 @@ OUTPUT_ONLY = [
 
 
 def final_checkpoint(tmp_path):
-    """The checkpoint the run ends on, as file name -> bytes."""
-    cp = list(tmp_path.rglob("positions.pos"))
-    assert len(cp) == 1, cp
-    return {f.name: f.read_bytes()
-            for f in sorted(cp[0].parent.iterdir()) if f.is_file()}
+    """The checkpoint the run ends on, as dataset name -> (dtype, shape, bytes)."""
+    return {k: (a.dtype, a.shape, a.tobytes()) for k, a in read_checkpoint(tmp_path).items()}
 
 
 @needs_partrac
 @pytest.mark.parametrize("io", OUTPUT_ONLY[1:], ids=lambda c: "_".join(c))
 def test_writing_more_often_does_not_move_the_mesh(tmp_path, io):
-    """Changing only the dump, statistics or checkpoint interval leaves the final
-    checkpoint byte-identical. Output frequency must never change the physics a
+    """Changing only the dump, statistics or checkpoint interval leaves every
+    dataset of the final checkpoint bit-identical. Output frequency must never change the physics a
     user gets."""
     # dump_intv is read by the time loop twice: it dumps, and it is one of the
     # conditions that call compute_interior, so an output interval is in a
@@ -265,19 +262,19 @@ def test_writing_more_often_does_not_move_the_mesh(tmp_path, io):
     a, b = final_checkpoint(tmp_path / "ref"), final_checkpoint(tmp_path / "got")
     assert set(a) == set(b)
     for name in sorted(a):
-        if name.endswith(".dat"):
-            continue                   # the parameter dump holds the intervals
         assert a[name] == b[name], name
 
 
 # --- resuming off every phase at once ------------------------------------------
 
 @needs_partrac
-def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path):
+@pytest.mark.parametrize("fmt", ["hdf5", "text"])
+def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path, fmt):
     """A run with injection, remeshing and tau, stopped at a step that is off the
     phase of every interval and resumed, ends in exactly the state of an
     uninterrupted run. On the injecting path the checkpoint has to carry the
-    inlet and every interval's phase as well as the particles."""
+    inlet and every interval's phase as well as the particles; an old text
+    checkpoint of the sheet and its inlet resumes the same way."""
     # The final checkpoint is written one step past T, so stopping at 0.17
     # resumes at step 35: 5 past a refinement (6 steps), 5 past an injection
     # (10) and 7 past a coarsening (14). T carries half a step so 0.4 is reached.
@@ -288,7 +285,7 @@ def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path):
     cont, split = continuous_and_resumed(
         PARTRAC, HAGEN, tmp_path, [BASE, phys],
         ["T=%g" % stop, "checkpoint_intv=%g" % stop],
-        ["T=%g" % (end + DT / 2), "checkpoint_intv=1e9"])
+        ["T=%g" % (end + DT / 2), "checkpoint_intv=1e9"], text=fmt == "text")
     a, b = dump_at(cont, end, raw=True), dump_at(split, end, raw=True)
     assert len(a["dA0"]) > 400                  # it really remeshed
     assert set(a) == set(b)

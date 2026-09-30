@@ -1,4 +1,8 @@
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include "Error.hpp"
@@ -254,49 +258,175 @@ bool Topology::resize_doublings(const double ds){
   return resizing_doublings(edges, edge_doublings(), ps, ds);
 }
 
+// Node pairs, stored lengths, tau and rho_prev
+static void write_edges(H5::H5File& h5f, const EdgesType& edges, const std::string& suffix){
+  const Uint n = edges.size();
+  std::vector<Uint> nodes(2*n);
+  std::vector<double> dl0(n), tau(n), rho_prev(n);
+  for (Uint i = 0; i < n; ++i){
+    nodes[2*i] = edges[i].first[0];
+    nodes[2*i+1] = edges[i].first[1];
+    dl0[i] = edges[i].second;
+    tau[i] = edges[i].tau;
+    rho_prev[i] = edges[i].rho_prev;
+  }
+  ulong2hdf5(h5f, "edges" + suffix, nodes, n, 2);
+  scalar2hdf5(h5f, "dl0" + suffix, dl0, n);
+  scalar2hdf5(h5f, "edge_tau" + suffix, tau, n);
+  scalar2hdf5(h5f, "edge_rho_prev" + suffix, rho_prev, n);
+}
+
+static void read_edges(const H5::H5File& h5f, EdgesType& edges, const std::string& suffix, const Uint n_nodes){
+  const Uint n = hdf5_rows(h5f, "edges" + suffix);
+  std::vector<Uint> nodes;
+  std::vector<double> dl0, tau, rho_prev;
+  hdf52ulongs(h5f, "edges" + suffix, n, 2, nodes);
+  hdf52doubles(h5f, "dl0" + suffix, n, 1, dl0);
+  hdf52doubles(h5f, "edge_tau" + suffix, n, 1, tau);
+  hdf52doubles(h5f, "edge_rho_prev" + suffix, n, 1, rho_prev);
+  for (Uint i = 0; i < n; ++i){
+    if (nodes[2*i] >= n_nodes || nodes[2*i+1] >= n_nodes)
+      partrac::fail(h5f.getFileName(), ": edge ", i, " of 'edges", suffix, "' joins nodes ", nodes[2*i],
+                    " and ", nodes[2*i+1], ", of ", n_nodes);
+    edges.push_back({{nodes[2*i], nodes[2*i+1]}, dl0[i], tau[i], rho_prev[i]});
+  }
+}
+
+// Edge triples, stored areas, tau and rho_prev
+static void write_faces(H5::H5File& h5f, const FacesType& faces){
+  const Uint n = faces.size();
+  std::vector<Uint> tri(3*n);
+  std::vector<double> dA0(n), tau(n), rho_prev(n);
+  for (Uint i = 0; i < n; ++i){
+    for (Uint j = 0; j < 3; ++j)
+      tri[3*i+j] = faces[i].first[j];
+    dA0[i] = faces[i].second;
+    tau[i] = faces[i].tau;
+    rho_prev[i] = faces[i].rho_prev;
+  }
+  ulong2hdf5(h5f, "face_edges", tri, n, 3);
+  scalar2hdf5(h5f, "dA0", dA0, n);
+  scalar2hdf5(h5f, "face_tau", tau, n);
+  scalar2hdf5(h5f, "face_rho_prev", rho_prev, n);
+}
+
+static void read_faces(const H5::H5File& h5f, FacesType& faces, const Uint n_edges){
+  const Uint n = hdf5_rows(h5f, "face_edges");
+  std::vector<Uint> tri;
+  std::vector<double> dA0, tau, rho_prev;
+  hdf52ulongs(h5f, "face_edges", n, 3, tri);
+  hdf52doubles(h5f, "dA0", n, 1, dA0);
+  hdf52doubles(h5f, "face_tau", n, 1, tau);
+  hdf52doubles(h5f, "face_rho_prev", n, 1, rho_prev);
+  for (Uint i = 0; i < n; ++i){
+    for (Uint j = 0; j < 3; ++j)
+      if (tri[3*i+j] >= n_edges)
+        partrac::fail(h5f.getFileName(), ": face ", i, " names edge ", tri[3*i+j], ", of ", n_edges);
+    faces.push_back({{tri[3*i], tri[3*i+1], tri[3*i+2]}, dA0[i], tau[i], rho_prev[i]});
+  }
+}
+
+// Indices below n
+static void read_list(const H5::H5File& h5f, const std::string& name, std::vector<Uint>& li,
+                      const Uint n, const std::string& what){
+  hdf52ulongs(h5f, name, hdf5_rows(h5f, name), 1, li);
+  for (Uint i = 0; i < li.size(); ++i)
+    if (li[i] >= n)
+      partrac::fail(h5f.getFileName(), ": entry ", i, " of '", name, "' names ", what, " ", li[i], ", of ", n);
+}
+
+// t in a params file, or NaN
+static double params_t(const std::string& path){
+  std::ifstream f(path);
+  std::string line;
+  while (std::getline(f, line))
+    if (line.rfind("t=", 0) == 0){
+      char* end = nullptr;
+      const double t = std::strtod(line.c_str() + 2, &end);
+      if (end != line.c_str() + 2) return t;
+    }
+  return std::numeric_limits<double>::quiet_NaN();
+}
+
+bool Topology::has_t_loc(const partrac::Params& prm) const {
+  return records_t_loc || (prm.has("local_dt") && prm.get<bool>("local_dt"));
+}
+
+// Written beside, then moved over the last: checkpoint.h5 first, params.dat last
 void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const {
   prm.set<double>("t", t);
   prm.set<Uint>("Nrw_current", ps.N());
-  prm.dump(checkpointsfolder);
-  // dump_positions(checkpointsfolder + "/positions.pos", ps.x_rw, ps.Nrw);
-  ps.dump_positions(checkpointsfolder + "/positions.pos");
-  dump_faces(checkpointsfolder + "/faces.face", faces);
-  dump_edges(checkpointsfolder + "/edges.edge", edges);
-  if (records_doublings){
-    std::vector<Uint> d(doublings);
-    d.resize(edges.size(), 0);
-    dump_list(checkpointsfolder + "/doublings.list", d);
+  prm.dump_tmp(checkpointsfolder);
+  const std::string path = checkpointsfolder + "/checkpoint.h5";
+  try {
+    H5::H5File h5f(path + ".tmp", H5F_ACC_TRUNC);
+    H5::Attribute at = h5f.createAttribute("t", H5::PredType::NATIVE_DOUBLE, H5::DataSpace(H5S_SCALAR));
+    at.write(H5::PredType::NATIVE_DOUBLE, &t);
+    at.close();
+    ps.write_checkpoint(h5f, has_t_loc(prm));
+    write_edges(h5f, edges, "");
+    write_faces(h5f, faces);
+    if (records_doublings){
+      std::vector<Uint> d(doublings);
+      d.resize(edges.size(), 0);
+      ulong2hdf5(h5f, "doublings", d, d.size());
+    }
+    if (prm.get<bool>("inject")){
+      vector2hdf5(h5f, "positions_inj", pos_inj, pos_inj.size());
+      write_edges(h5f, edges_inj, "_inj");
+      ulong2hdf5(h5f, "edges_inlet", edges_inlet, edges_inlet.size());
+      ulong2hdf5(h5f, "nodes_inlet", nodes_inlet, nodes_inlet.size());
+    }
+    h5f.close();
+  } catch (const H5::Exception&){
+    partrac::fail("cannot write the checkpoint ", path, ".tmp");
   }
-  //dump_colors(checkpointsfolder + "/colors.col", ps.c_rw, ps.Nrw);
-  ps.dump_scalar(checkpointsfolder + "/colors.col", "c");
-  if (prm.get<bool>("inject")){
-    dump_vector_field(checkpointsfolder + "/positions_inj.pos", pos_inj);
-    dump_edges(checkpointsfolder + "/edges_inj.edge", edges_inj);
-    dump_list(checkpointsfolder + "/edges_inlet.list", edges_inlet);
-    dump_list(checkpointsfolder + "/nodes_inlet.list", nodes_inlet);
-  }
-  if (records_t_loc || (prm.has("local_dt") && prm.get<bool>("local_dt"))){
-    ps.dump_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
-  }
-  // Carried fields and ids
-  if (ps.carries() == TransportElement::Vector){
-    ps.dump_vector(checkpointsfolder + "/rhohat.vec", "rhohat");
-    ps.dump_scalar(checkpointsfolder + "/w.dat", "w");
-    ps.dump_scalar(checkpointsfolder + "/S.dat", "S");
-  }
-  if (ps.carries() == TransportElement::Tensor){
-    ps.dump_tensor(checkpointsfolder + "/Q.ten", "Q");
-    ps.dump_vector(checkpointsfolder + "/logstretch.vec", "logstretch");
-    ps.dump_vector(checkpointsfolder + "/U.vec", "U");
-  }
-  if (ps.records_generation())
-    ps.dump_scalar(checkpointsfolder + "/generation.dat", "generation");
-  ps.dump_ids(checkpointsfolder + "/id.list");
+  if (std::rename((path + ".tmp").c_str(), path.c_str()) != 0)
+    partrac::fail("cannot move ", path, ".tmp to ", path, ": ", std::strerror(errno));
+  prm.commit_dump(checkpointsfolder);
 }
 
+// checkpoint.h5, or the text files of older runs
 void Topology::load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm){
+  const std::string path = checkpointsfolder + "/checkpoint.h5";
+  if (!std::ifstream(path)){
+    if (!std::ifstream(checkpointsfolder + "/positions.pos"))
+      partrac::fail(checkpointsfolder, ": no checkpoint.h5 or positions.pos");
+    load_text_checkpoint(checkpointsfolder, prm);
+    return;
+  }
+  H5::Exception::dontPrint();
+  H5::H5File h5f;
+  double t = 0.;
+  try {
+    h5f.openFile(path, H5F_ACC_RDONLY);
+    if (H5Aexists(h5f.getId(), "t") <= 0)
+      partrac::fail(path, ": no attribute 't'");
+    h5f.openAttribute("t").read(H5::PredType::NATIVE_DOUBLE, &t);
+  } catch (const H5::Exception&){
+    partrac::fail("cannot read the checkpoint ", path);
+  }
+  // One checkpoint
+  if (t != prm.get<double>("t"))
+    partrac::fail(path, " is at t = ", t, ", its params.dat at t = ", prm.get<double>("t"),
+                  params_t(checkpointsfolder + "/params.dat.tmp") == t
+                  ? "; params.dat.tmp beside it is the params.dat written with it" : "");
+  ps.read_checkpoint(h5f, has_t_loc(prm));
+  read_edges(h5f, edges, "", ps.N());
+  read_faces(h5f, faces, edges.size());
+  if (records_doublings)
+    hdf52ulongs(h5f, "doublings", edges.size(), 1, doublings);
+  if (prm.get<bool>("inject")){
+    const Uint n = hdf5_rows(h5f, "positions_inj");
+    hdf52vectors(h5f, "positions_inj", n, pos_inj);
+    read_edges(h5f, edges_inj, "_inj", n);
+    read_list(h5f, "edges_inlet", edges_inlet, edges.size(), "edge");
+    read_list(h5f, "nodes_inlet", nodes_inlet, ps.N(), "node");
+  }
+}
+
+void Topology::load_text_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm){
   std::string posfile = checkpointsfolder + "/positions.pos";
-  //load_positions(posfile, pos_init, prm.Nrw);
   ps.load_positions(posfile);
   std::string facefile = checkpointsfolder + "/faces.face";
   load_faces(facefile, faces);
@@ -307,7 +437,6 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
     doublings.resize(edges.size(), 0);
   }
   std::string colfile = checkpointsfolder + "/colors.col";
-  //load_colors(colfile, ps.c_rw, prm.Nrw);
   ps.load_scalar(colfile, "c");
   if (prm.get<bool>("inject")){
     std::string posinjfile = checkpointsfolder + "/positions_inj.pos";
@@ -319,7 +448,7 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
     load_list(edgesinletfile, edges_inlet);
     load_list(nodesinletfile, nodes_inlet);
   }
-  if (records_t_loc || (prm.has("local_dt") && prm.get<bool>("local_dt"))){
+  if (has_t_loc(prm)){
     ps.load_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
   }
   if (ps.carries() == TransportElement::Vector){

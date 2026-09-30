@@ -133,9 +133,13 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
     const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
     std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
     const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
+    const Uint max_draws = 1000000;
     for (const Uint i : nodes){
       Vector3d Dx = {0., 0., 0.};
+      Uint draws = 0;
       do {
+        if (++draws > max_draws)
+          partrac::fail("outside=reinject: no position inside the domain along ", dirs, " in ", max_draws, " draws");
         if (rx) Dx[0] = ux(run.gens[0]);
         if (ry) Dx[1] = uy(run.gens[0]);
         if (rz) Dx[2] = uz(run.gens[0]);

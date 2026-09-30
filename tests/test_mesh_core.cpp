@@ -172,17 +172,11 @@ TEST_CASE("a field a particle set does not have is an error, by name", "[mesh][e
   for (const char* what : {"scalar", "vector", "tensor"}){
     INFO(what);
     const std::string w = what;
-    const auto dump = [&]{
-      if (w == "scalar") ps.dump_scalar("unused.h5", "no_such_field");
-      if (w == "vector") ps.dump_vector("unused.h5", "no_such_field");
-      if (w == "tensor") ps.dump_tensor("unused.h5", "no_such_field");
-    };
     const auto load = [&]{
       if (w == "scalar") ps.load_scalar("unused.h5", "no_such_field");
       if (w == "vector") ps.load_vector("unused.h5", "no_such_field");
       if (w == "tensor") ps.load_tensor("unused.h5", "no_such_field");
     };
-    REQUIRE_THROWS_WITH( dump(), Catch::Contains("no field 'no_such_field'") );
     REQUIRE_THROWS_WITH( load(), Catch::Contains("no field 'no_such_field'") );
   }
   REQUIRE_THROWS_AS( ps.dump_as("no_such_field", "name"), partrac::Error );

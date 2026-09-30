@@ -17,7 +17,7 @@ import subprocess
 import pytest
 
 from paths import REPO, app
-from runs import copy_example, run_app
+from runs import copy_example, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
 EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -54,7 +54,7 @@ BAD_CASES = [
     (["init_mode=uniform_x", "ds_ini=0.1"], "ds_init"),         # typo; test_params.cpp pins the other parse errors
     (["init_mode=uniform"], "init_mode"),                       # key[1] out of bounds
     (["init_mode=randomgaussianstrip_x", "La=1", "Lb=0.1"], "init_mode"),  # needs key[2]
-    (["init_mode=nowhere_x"], "unknown init_mode"),             # well formed, no such mode
+    (["init_mode=nowhere_x"], "no such mode"),                  # well formed, no such mode
     (["init_mode=file:"], "init_mode"),                         # no path
     (["init_mode="], "init_mode is empty"),                     # its own check, before the shape check
     (["init_mode=from_file:positions.h5"], "was from_file"),    # the old form, named in the refusal
@@ -151,10 +151,7 @@ def test_nrw_is_an_input_and_the_counts_are_recorded_separately(case):
     assert int(prm["Nrw_init"]) < 1000              # some of the strip was dropped
     assert int(prm["Nrw_current"]) == int(prm["Nrw_init"])
 
-    written = list(case.glob("**/Checkpoints/positions.pos"))
-    assert len(written) == 1
-    n = len([l for l in written[0].read_text().splitlines() if l.strip()])
-    assert n == int(prm["Nrw_current"])
+    assert len(read_checkpoint(case)["points"]) == int(prm["Nrw_current"])
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")

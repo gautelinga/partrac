@@ -15,7 +15,7 @@ import pytest
 
 from dumps import all_dumps
 from paths import app, built_with_dolfin
-from runs import copy_case, run_app
+from runs import copy_case, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
 INTERPOL = app("interpol")
@@ -114,7 +114,7 @@ def test_fields_hold_on_a_degenerate_stamp_bracket(mesh_dir, xdmf, tmp_path, mod
         assert np.isfinite(a).all(), name
     # the checkpoint is written after the step from the last dump, so particles
     # that could still step have moved away from the dumped positions
-    x_end = np.loadtxt(sorted(d.glob("**/Checkpoints/positions.pos"))[0])
+    x_end = read_checkpoint(d)["points"]
     assert np.abs(x_end - fields["points"]).max() > 1e-6
 
 

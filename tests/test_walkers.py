@@ -221,16 +221,18 @@ def test_separation_data_is_the_dump_filtered_to_the_axis(tmp_path, init_mode, a
 # --- restart, circle init, statistics -----------------------------------------
 
 @needs_walkers
-def test_a_resumed_run_keeps_every_walkers_generation(tmp_path):
+@pytest.mark.parametrize("fmt", ["hdf5", "text"])
+def test_a_resumed_run_keeps_every_walkers_generation(tmp_path, fmt):
     """A checkpoint carries each walker's position and generation, so the
     resumed run's first dump equals the uninterrupted run's dump at that time,
     after the same splits. Generator state is not checkpointed, so only the
-    restart time is compared; a lost generation would reset walkers' weights."""
+    restart time is compared; a lost generation would reset walkers' weights.
+    An old text checkpoint carries the generation too."""
     # the final checkpoint is written one step past T: t = 0.3, step 30
     cont, split = continuous_and_resumed(
         WALKERS, POISEUILLE, tmp_path,
         [BASE, "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.05 checkpoint_intv=1e9"],
-        "T=0.29", "T=0.4", env={"OMP_NUM_THREADS": "1"})
+        "T=0.29", "T=0.4", env={"OMP_NUM_THREADS": "1"}, text=fmt == "text")
     a, b = all_dumps(cont, raw=True), all_dumps(split, raw=True)
     # the stopped run dumps up to 0.25, the resumed one from 0.3 on
     assert sorted(b) == sorted(a), sorted(b)

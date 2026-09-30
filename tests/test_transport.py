@@ -170,18 +170,20 @@ def test_solid_rotation_turns_without_stretching(tmp_path):
 # --- restart -------------------------------------------------------------------
 
 @needs_partrac
+@pytest.mark.parametrize("fmt", ["hdf5", "text"])
 @pytest.mark.parametrize("transport", ["vector", "tensor"])
-def test_a_resumed_run_is_identical_to_one_never_stopped(tmp_path, transport):
+def test_a_resumed_run_is_identical_to_one_never_stopped(tmp_path, transport, fmt):
     """A run stopped at t = 0.2 and resumed from its checkpoint writes a dump
     at t = 0.4 bit-identical to an uninterrupted run. The checkpoint must carry
     the element (rhohat, w, S or F's factors) as well as the position, or a resumed run
-    loses the deformation accumulated before the restart."""
+    loses the deformation accumulated before the restart. An old text
+    checkpoint (Q.ten, logstretch.vec, U.vec) resumes bit for bit as well."""
     dt, stop, end = 0.01, 0.2, 0.4
     # the final checkpoint is written one step past T, so T = stop - dt checkpoints at stop
     cont, split = continuous_and_resumed(
         app_for(transport), POISEUILLE, tmp_path,
         [BASE, "scheme=RK4 dt=%g dump_intv=%g" % (dt, stop)],
-        "T=%g" % (stop - dt), "T=%g" % end)
+        "T=%g" % (stop - dt), "T=%g" % end, text=fmt == "text")
     a, b = dump_at(cont, end), dump_at(split, end)
     assert set(a) == set(b)
     for k in a:
@@ -215,10 +217,10 @@ def test_the_factors_keep_the_compressed_direction(tmp_path):
 
 @needs_partrac
 def test_a_checkpoint_holding_F_whole_resumes(tmp_path):
-    """A checkpoint from before the factors holds F whole in F.ten: a run
+    """A text checkpoint from before the factors holds F whole in F.ten: a run
     resumed from one, made here from a new checkpoint's factors, ends where a
     run never stopped does, to round-off (F is factored on load)."""
-    from runs import checkpoint_folder
+    from runs import checkpoint_folder, write_text_checkpoint
     dt, stop, end = 0.01, 0.2, 0.4
     args = [BASE, "scheme=RK4 dt=%g dump_intv=%g" % (dt, stop)]
     cont = copy_example(POISEUILLE, tmp_path / "cont")
@@ -226,12 +228,8 @@ def test_a_checkpoint_holding_F_whole_resumes(tmp_path):
     run_app(TENSORS, cont, args, "T=%g" % end)
     run_app(TENSORS, old, args, "T=%g" % (stop - dt))
     ck = checkpoint_folder(tmp_path / "old") / "Checkpoints"
-    Q = np.loadtxt(ck / "Q.ten").reshape(-1, 3, 3)
-    F = deformation_gradient({"Q": Q, "logstretch": np.loadtxt(ck / "logstretch.vec"),
-                              "U": np.loadtxt(ck / "U.vec")})
-    np.savetxt(ck / "F.ten", F.reshape(-1, 9), fmt="%.17g")
-    for f in ("Q.ten", "logstretch.vec", "U.vec"):
-        (ck / f).unlink()
+    write_text_checkpoint(ck, F_whole=True)
+    assert (ck / "F.ten").exists() and not (ck / "Q.ten").exists()
     run_app(TENSORS, old, args, "T=%g" % end, "restart_folder=%s" % ck.parent)
     a, b = dump_at(tmp_path / "cont", end), dump_at(tmp_path / "old", end)
     assert np.abs(deformation_gradient(a) - deformation_gradient(b)).max() < 1e-12
