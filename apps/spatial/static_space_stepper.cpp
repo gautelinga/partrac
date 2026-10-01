@@ -97,7 +97,7 @@ static int run(int argc, char* argv[])
     }
   };
 
-  hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
+  hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     // Finished and trapped nodes
     if (verbose && nodes.size() > 0){
       Vector3d x_trapped = {0., 0., 0.};

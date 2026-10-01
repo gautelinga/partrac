@@ -314,6 +314,7 @@ public:
   Uint get_nz() { return n[2]; };
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
+  double next_stamp_after(const double t) const override { return ts.next_after(t); }
   using Interpol::locate;
   using Interpol::evaluate;
 protected:
@@ -704,18 +705,18 @@ inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, cons
     Uxy_next = inner_product(_dwux_y, _Vx_next);
     Uxz_prev = inner_product(_dwux_z, _Vx_prev);
     Uxz_next = inner_product(_dwux_z, _Vx_next);
-    Uyx_prev = inner_product(_dwux_x, _Vy_prev);
-    Uyx_next = inner_product(_dwux_x, _Vy_next);
-    Uyy_prev = inner_product(_dwux_y, _Vy_prev);
-    Uyy_next = inner_product(_dwux_y, _Vy_next);
-    Uyz_prev = inner_product(_dwux_z, _Vy_prev);
-    Uyz_next = inner_product(_dwux_z, _Vy_next);
-    Uzx_prev = inner_product(_dwux_x, _Vz_prev);
-    Uzx_next = inner_product(_dwux_x, _Vz_next);
-    Uzy_prev = inner_product(_dwux_y, _Vz_prev);
-    Uzy_next = inner_product(_dwux_y, _Vz_next);
-    Uzz_prev = inner_product(_dwux_z, _Vz_prev);
-    Uzz_next = inner_product(_dwux_z, _Vz_next);
+    Uyx_prev = inner_product(_dwuy_x, _Vy_prev);
+    Uyx_next = inner_product(_dwuy_x, _Vy_next);
+    Uyy_prev = inner_product(_dwuy_y, _Vy_prev);
+    Uyy_next = inner_product(_dwuy_y, _Vy_next);
+    Uyz_prev = inner_product(_dwuy_z, _Vy_prev);
+    Uyz_next = inner_product(_dwuy_z, _Vy_next);
+    Uzx_prev = inner_product(_dwuz_x, _Vz_prev);
+    Uzx_next = inner_product(_dwuz_x, _Vz_next);
+    Uzy_prev = inner_product(_dwuz_y, _Vz_prev);
+    Uzy_next = inner_product(_dwuz_y, _Vz_next);
+    Uzz_prev = inner_product(_dwuz_z, _Vz_prev);
+    Uzz_next = inner_product(_dwuz_z, _Vz_next);
   }
 
   fields.U = { alpha_t * Ux_next + (1-alpha_t) * Ux_prev,

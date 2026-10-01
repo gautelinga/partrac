@@ -29,6 +29,50 @@ inline void evaluate_motion(Interp& intp, const Vector3d& x, const double t, con
   else intp.evaluate(x, t, pos, ptvals);
 }
 
+// One RK4 step of h from (x, t): dx, the element's el (unnormalised) or dF, pos
+// at the end; false if a stage or the end is outside. Stop: no stage after an outside one
+template<TransportElement E, bool Stop, typename Interp>
+inline bool rk4_stages(Interp& intp, PointValues& ptvals, CellPos& pos, const Vector3d& x,
+                       [[maybe_unused]] const Vector3d& n, [[maybe_unused]] const Matrix3d& F,
+                       const double t, const double h,
+                       Vector3d& dx, [[maybe_unused]] Vector3d& el, [[maybe_unused]] Matrix3d& dF){
+  Vector3d k1, k2, k3, k4;
+  [[maybe_unused]] Vector3d F1, F2, F3, F4;
+  [[maybe_unused]] Matrix3d dF1, dF2, dF3, dF4;
+  bool inside = true;
+  k1 = k2 = k3 = k4 = Vector3d::Zero();
+  if constexpr (E == TransportElement::Vector) F1 = F2 = F3 = F4 = Vector3d::Zero();
+  if constexpr (E == TransportElement::Tensor) dF1 = dF2 = dF3 = dF4 = Matrix3d::Zero();
+  if (intp.locate(x, t, pos)){
+    evaluate_motion(intp, x, t, pos, ptvals);
+    k1 = ptvals.get_u();
+    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); F1 = J * n; }
+    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); dF1 = J * F; }
+  } else inside = false;
+  if ((!Stop || inside) && intp.locate(x + k1 * h/2, t + h/2, pos)){
+    evaluate_motion(intp, x + k1 * h/2, t + h/2, pos, ptvals);
+    k2 = ptvals.get_u();
+    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n2 = n + F1 * h/2; F2 = J * n2; }
+    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F2 = F + dF1 * h/2; dF2 = J * F2; }
+  } else inside = false;
+  if ((!Stop || inside) && intp.locate(x + k2 * h/2, t + h/2, pos)){
+    evaluate_motion(intp, x + k2 * h/2, t + h/2, pos, ptvals);
+    k3 = ptvals.get_u();
+    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n3 = n + F2 * h/2; F3 = J * n3; }
+    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F3 = F + dF2 * h/2; dF3 = J * F3; }
+  } else inside = false;
+  if ((!Stop || inside) && intp.locate(x + k3 * h, t + h, pos)){
+    evaluate_motion(intp, x + k3 * h, t + h, pos, ptvals);
+    k4 = ptvals.get_u();
+    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n4 = n + F3 * h; F4 = J * n4; }
+    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F4 = F + dF3 * h; dF4 = J * F4; }
+  } else inside = false;
+  dx = (k1 + 2*k2 + 2*k3 + k4) * h/6;
+  if constexpr (E == TransportElement::Vector) el = n + (F1 + 2*F2 + 2*F3 + F4) * h/6;
+  if constexpr (E == TransportElement::Tensor) dF = (dF1 + 2*dF2 + 2*dF3 + dF4) * h/6;
+  return inside && intp.locate(x + dx, t + h, pos);
+}
+
 // A step with a stage or its end outside, again in 2, 4, then 8 substeps with
 // every stage inside; false: the particle leaves the fluid. Out of the loop:
 // rare and bulky
@@ -46,39 +90,19 @@ bool rk4_substeps(Interp& intp, ParticleSet& ps, const Uint i, const double t, c
     if constexpr (E == TransportElement::Vector){ n = ps.rhohat(i); w = ps.w(i); }
     if constexpr (E == TransportElement::Tensor) F = ps.frame(i);
     PointValues ptvals(intp.get_U0());
-    // Velocity and gradient at p, if inside
-    auto at = [&](const Vector3d& p, const double tt, Vector3d& u, Matrix3d& J){
-      if (!intp.locate(p, tt, pos))
-        return false;
-      evaluate_motion(intp, p, tt, pos, ptvals);
-      u = ptvals.get_u();
-      if constexpr (E != TransportElement::Point) J = ptvals.get_J();
-      return true;
-    };
     bool ok = true;
     for (int s = 0; s < m && ok; ++s){
-      const double ts = t + s*h;
-      Vector3d k1, k2, k3, k4;
-      Matrix3d J1, J2, J3, J4;
-      ok = at(x, ts, k1, J1) && at(x + k1 * h/2, ts + h/2, k2, J2)
-        && at(x + k2 * h/2, ts + h/2, k3, J3) && at(x + k3 * h, ts + h, k4, J4);
-      if (!ok)
-        break;
-      const Vector3d dx = (k1 + 2*k2 + 2*k3 + k4) * h/6;
-      ok = intp.locate(x + dx, ts + h, pos);
+      Vector3d dx, el;
+      Matrix3d dF;
+      ok = rk4_stages<E, true>(intp, ptvals, pos, x, n, F, t + s*h, h, dx, el, dF);
       if (!ok)
         break;
       if constexpr (E == TransportElement::Vector){
-        const Vector3d F1 = J1 * n, F2 = J2 * (n + F1 * h/2), F3 = J3 * (n + F2 * h/2), F4 = J4 * (n + F3 * h);
-        const Vector3d el = n + (F1 + 2*F2 + 2*F3 + F4) * h/6;
         const double len = el.norm();
         n = el/len;
         w += log(len);
       }
-      if constexpr (E == TransportElement::Tensor){
-        const Matrix3d dF1 = J1 * F, dF2 = J2 * (F + dF1 * h/2), dF3 = J3 * (F + dF2 * h/2), dF4 = J4 * (F + dF3 * h);
-        F += (dF1 + 2*dF2 + 2*dF3 + dF4) * h/6;
-      }
+      if constexpr (E == TransportElement::Tensor) F += dF;
       x += dx;
     }
     if (!ok)
@@ -103,160 +127,39 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
     std::vector<Uint> outside_nodes_loc;
     Uint n_accepted_loc = 0;
     Uint n_declined_loc = 0;
-    Vector3d dx, k1, k2, k3, k4;
 
     #pragma omp for
     for (Uint i=0; i < ps.N(); ++i){
         Vector3d x = ps.x(i);
         CellPos pos;
         pos.id = ps.get_cell_id(i);
-
         PointValues ptvals(intp.get_U0());
+        // Carried element
+        [[maybe_unused]] const Vector3d n = E == TransportElement::Vector ? ps.rhohat(i) : Vector3d::Zero();
+        [[maybe_unused]] const Matrix3d F = E == TransportElement::Tensor ? ps.frame(i) : Matrix3d::Zero();
+        Vector3d dx;
+        [[maybe_unused]] Vector3d el;
+        [[maybe_unused]] Matrix3d dF;
 
-        if constexpr (E == TransportElement::Point){
-            // An outside stage or end: substeps
-            bool inside = true;
-            k1 = k2 = k3 = k4 = Vector3d::Zero();
-            if (intp.locate(x, t, pos)){
-                evaluate_motion(intp, x, t, pos, ptvals);
-                k1 = ptvals.get_u();
-            } else inside = false;
-            if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
-                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
-                k2 = ptvals.get_u();
-            } else inside = false;
-            if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
-                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
-                k3 = ptvals.get_u();
-            } else inside = false;
-            if (intp.locate(x + k3 * dt, t + dt, pos)){
-                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
-                k4 = ptvals.get_u();
-            } else inside = false;
-
-            dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
-
-            if (inside && intp.locate(x+dx, t+dt, pos)){
-                ps.set_x(i, x + dx);
-                ps.set_t_loc(i, ps.t_loc(i) + dt);
-                ps.set_cell_id(i, pos.id);
-                ++n_accepted_loc;
-            }
-            else if (rk4_substeps<E>(intp, ps, i, t, dt))
-                ++n_accepted_loc;
-            else {
-                outside_nodes_loc.push_back(i);
-                ++n_declined_loc;
-            }
-        }
-        if constexpr (E == TransportElement::Vector){
-            // Line element: d(rhohat)/dt = J rhohat; an outside stage or end: substeps
-            const Vector3d n = ps.rhohat(i);
-            bool inside = true;
-            k1 = k2 = k3 = k4 = Vector3d::Zero();
-            Vector3d F1 = Vector3d::Zero(), F2 = Vector3d::Zero(), F3 = Vector3d::Zero(), F4 = Vector3d::Zero();
-
-            bool is_inside = intp.locate(x, t, pos);
-            if (is_inside){
-                evaluate_motion(intp, x, t, pos, ptvals);
-                k1 = ptvals.get_u();
-                Matrix3d J1 = ptvals.get_J();
-                F1 = J1 * n;
-            } else inside = false;
-            is_inside = intp.locate(x + k1 * dt/2, t + dt/2, pos);
-            if (is_inside){
-                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
-                k2 = ptvals.get_u();
-                Vector3d n2 = n + F1 * dt/2;
-                Matrix3d J2 = ptvals.get_J();
-                F2 = J2 * n2;
-            } else inside = false;
-            is_inside = intp.locate(x + k2 * dt/2, t + dt/2, pos);
-            if (is_inside){
-                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
-                k3 = ptvals.get_u();
-                Vector3d n3 = n + F2 * dt/2;
-                Matrix3d J3 = ptvals.get_J();
-                F3 = J3 * n3;
-            } else inside = false;
-            is_inside = intp.locate(x + k3 * dt, t + dt, pos);
-            if (is_inside){
-                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
-                k4 = ptvals.get_u();
-                Vector3d n4 = n + F3 * dt;
-                Matrix3d J4 = ptvals.get_J();
-                F4 = J4 * n4;
-            } else inside = false;
-            dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
-            Vector3d el = n + (F1 + 2*F2 + 2*F3 + F4) * dt/6;
-
-            if (inside && intp.locate(x + dx, t+dt, pos)){
-                ps.set_x(i, x + dx);
-                ps.set_t_loc(i, ps.t_loc(i) + dt);
+        // An outside stage or end: substeps
+        if (rk4_stages<E, false>(intp, ptvals, pos, x, n, F, t, dt, dx, el, dF)){
+            ps.set_x(i, x + dx);
+            ps.set_t_loc(i, ps.t_loc(i) + dt);
+            if constexpr (E == TransportElement::Vector){
                 const double len = el.norm();
                 ps.set_rhohat(i, el/len);
                 ps.set_w(i, ps.w(i) + log(len));
-                ps.set_cell_id(i, pos.id);
-                ++n_accepted_loc;
             }
-            else if (rk4_substeps<E>(intp, ps, i, t, dt))
-                ++n_accepted_loc;
-            else {
-                outside_nodes_loc.push_back(i);
-                ++n_declined_loc;
-            }
-        }
-        if constexpr (E == TransportElement::Tensor){
-            // Deformation gradient: its frame, dQ/dt = J Q, then factored; an outside stage or end: substeps
-            const Matrix3d F = ps.frame(i);
-            bool inside = true;
-            k1 = k2 = k3 = k4 = Vector3d::Zero();
-            Matrix3d dFdt1 = Matrix3d::Zero(), dFdt2 = Matrix3d::Zero(), dFdt3 = Matrix3d::Zero(), dFdt4 = Matrix3d::Zero();
-
-            if (intp.locate(x, t, pos)){
-                evaluate_motion(intp, x, t, pos, ptvals);
-                k1 = ptvals.get_u();
-                Matrix3d J1 = ptvals.get_J();
-                dFdt1 = J1 * F;
-            } else inside = false;
-            if (intp.locate(x + k1 * dt/2, t + dt/2, pos)){
-                evaluate_motion(intp, x + k1 * dt/2, t + dt/2, pos, ptvals);
-                k2 = ptvals.get_u();
-                Matrix3d F2 = F + dFdt1 * dt/2;
-                Matrix3d J2 = ptvals.get_J();
-                dFdt2 = J2 * F2;
-            } else inside = false;
-            if (intp.locate(x + k2 * dt/2, t + dt/2, pos)){
-                evaluate_motion(intp, x + k2 * dt/2, t + dt/2, pos, ptvals);
-                k3 = ptvals.get_u();
-                Matrix3d F3 = F + dFdt2 * dt/2;
-                Matrix3d J3 = ptvals.get_J();
-                dFdt3 = J3 * F3;
-            } else inside = false;
-            if (intp.locate(x + k3 * dt, t + dt, pos)){
-                evaluate_motion(intp, x + k3 * dt, t + dt, pos, ptvals);
-                k4 = ptvals.get_u();
-                Matrix3d F4 = F + dFdt3 * dt;
-                Matrix3d J4 = ptvals.get_J();
-                dFdt4 = J4 * F4;
-            } else inside = false;
-
-            dx = (k1 + 2*k2 + 2*k3 + k4) * dt/6;
-            Matrix3d dF = (dFdt1 + 2*dFdt2 + 2*dFdt3 + dFdt4) * dt/6;
-
-            if (inside && intp.locate(x + dx, t+dt, pos)){
-                ps.set_x(i, x + dx);
-                ps.set_t_loc(i, ps.t_loc(i) + dt);
+            if constexpr (E == TransportElement::Tensor)
                 ps.advance_frame(i, F + dF);
-                ps.set_cell_id(i, pos.id);
-                ++n_accepted_loc;
-            }
-            else if (rk4_substeps<E>(intp, ps, i, t, dt))
-                ++n_accepted_loc;
-            else {
-                outside_nodes_loc.push_back(i);
-                ++n_declined_loc;
-            }
+            ps.set_cell_id(i, pos.id);
+            ++n_accepted_loc;
+        }
+        else if (rk4_substeps<E>(intp, ps, i, t, dt))
+            ++n_accepted_loc;
+        else {
+            outside_nodes_loc.push_back(i);
+            ++n_declined_loc;
         }
     }
     #pragma omp critical
@@ -479,6 +382,7 @@ void ParticleSet::update_fields(Interp& intp, const double t, std::map<std::stri
   const bool do_phi = has_phi;
   const bool do_cell_type = has_cell_type;
   const bool do_S = element == TransportElement::Vector;
+  const bool do_S3 = element == TransportElement::Tensor;
 
   #pragma omp parallel for
   for (Uint irw=0; irw < N(); ++irw){
@@ -492,6 +396,13 @@ void ParticleSet::update_fields(Interp& intp, const double t, std::map<std::stri
     if (do_S){
       const Matrix3d J = ptvals.get_J();
       S_rw[irw] = rhohat_rw[irw].transpose() * J * rhohat_rw[irw];
+    }
+    // Stretching rates along the frame
+    if (do_S3){
+      Matrix3d Q;
+      Vector3d s, U;
+      settled(irw, Q, s, U);
+      S3_rw[irw] = (Q.transpose() * ptvals.get_J() * Q).diagonal();
     }
     // Always, for the statistics
     u_rw[irw] = ptvals.get_u();

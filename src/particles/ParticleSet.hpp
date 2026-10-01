@@ -83,6 +83,8 @@ public:
     void set_w(const Uint i, const double v) { w_rw[i] = v; };
     double S(const Uint i) const { return S_rw[i]; };
     void set_S(const Uint i, const double v) { S_rw[i] = v; };
+    // The deformation's stretching rates along its settled frame, diag(Q^T J Q)
+    Vector3d S3(const Uint i) const { return S3_rw[i]; };
     // Deformation gradient F = Q diag(exp(logstretch)) U, U unit upper triangular:
     // the stretches as logs, the frame orthonormal
     Matrix3d F(const Uint i) const;
@@ -137,6 +139,7 @@ public:
     std::vector<Matrix3d> Q_rw;        // deformation gradient: its frame, orthonormal once settled,
     std::vector<Vector3d> logstretch_rw;   // the log of its triangular factor's diagonal
     std::vector<Vector3d> U_rw;        // and the unit triangular factor's entries 01, 02, 12
+    std::vector<Vector3d> S3_rw;       // its stretching rates along the settled frame
     // F = exp(s) G, factored into the fields of slot i
     void factor_F(const Uint i, const Matrix3d& G, const double s);
     // Recorded fields, sized by record_*()
@@ -484,6 +487,8 @@ inline void ParticleSet::dump_hdf5(H5::H5File& h5f, const std::string& groupname
         tensor2hdf5(h5f, groupname + "/Q", Q, N());
         vector2hdf5(h5f, groupname + "/logstretch", ls, N());
         vector2hdf5(h5f, groupname + "/U", U, N());
+        if (output_fields["S"])
+            vector2hdf5(h5f, groupname + "/S", S3_rw, N());
     }
     if (has_J && output_fields["J"])
         tensor2hdf5(h5f, groupname + "/J", J_rw, N());
@@ -525,6 +530,7 @@ inline void ParticleSet::carry(const TransportElement e){
     Q_rw.resize(Nrw_max);
     logstretch_rw.resize(Nrw_max);
     U_rw.resize(Nrw_max);
+    S3_rw.resize(Nrw_max);
   }
   for (Uint i = 0; i < Nrw; ++i) init_carried_fields(i);
 }
@@ -536,7 +542,7 @@ inline void ParticleSet::for_each_array(Fn&& fn){
   fn(c_rw); fn(H_rw); fn(rho_rw); fn(p_rw); fn(t_loc_rw);
   fn(cell_id_rw); fn(id_rw);
   if (!rhohat_rw.empty()){ fn(rhohat_rw); fn(w_rw); fn(S_rw); }
-  if (!Q_rw.empty()){ fn(Q_rw); fn(logstretch_rw); fn(U_rw); }
+  if (!Q_rw.empty()){ fn(Q_rw); fn(logstretch_rw); fn(U_rw); fn(S3_rw); }
   if (has_J) fn(J_rw);
   if (has_phi) fn(phi_rw);
   if (has_cell_type) fn(cell_type_rw);
@@ -558,6 +564,7 @@ inline void ParticleSet::init_carried_fields(const Uint irw){
     Q_rw[irw] = Matrix3d::Identity();
     logstretch_rw[irw] = Vector3d::Zero();
     U_rw[irw] = Vector3d::Zero();
+    S3_rw[irw] = Vector3d::Zero();
   }
   if (has_J) J_rw[irw] = Matrix3d::Zero();
   if (has_phi) phi_rw[irw] = 0.;
@@ -583,6 +590,7 @@ inline void ParticleSet::interpolate_carried(const Uint k, const Uint inode, con
       return Matrix3d(Q_rw[n] * (logstretch_rw[n].array() - s).exp().matrix().asDiagonal() * Uf);
     };
     factor_F(k, 0.5*(scaled(inode) + scaled(jnode)), s);
+    S3_rw[k] = 0.5*(S3_rw[inode] + S3_rw[jnode]);
   }
   if (has_J) J_rw[k] = 0.5*(J_rw[inode] + J_rw[jnode]);
   if (has_phi) phi_rw[k] = 0.5*(phi_rw[inode] + phi_rw[jnode]);

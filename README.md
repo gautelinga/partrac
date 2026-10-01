@@ -52,6 +52,8 @@ One app per kind of thing followed, all on the same run loop. Every app reads it
 | `filaments`             | Pairs of points and their stretching                                      |
 | `interpol`              | Probes the fields at random points                                        |
 
+Stretching rates `S` in the dumps: `tracervectors` always writes the line element's, shape (N, 1); `tracertensors` writes the three along its frame's axes, shape (N, 3), with `output_S=true`. Their means and variances are statistics columns of both apps.
+
 The older per-interpolator names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still run: each is its app with the interpolator and the choices it used to fix pinned (`apps/CMakeLists.txt`).
 
 ## Mesh examples

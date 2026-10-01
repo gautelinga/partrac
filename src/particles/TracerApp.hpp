@@ -54,6 +54,7 @@ inline std::map<std::string, bool> tracer_output_fields(const partrac::Params& p
   output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
   output_fields["J"] = prm.get<bool>("output_J");
+  output_fields["S"] = prm.get<bool>("output_S");
   output_fields["phi"] = prm.get<bool>("output_phi");
   output_fields["cell_type"] = prm.get<bool>("output_cell_type");
   return output_fields;
@@ -92,9 +93,10 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
     if (E == TransportElement::Tensor)
       push_logdetF_columns(cols, ps);
     cols.push_back(at_rest_column(ps));
+    push_S_columns(cols, ps);
     return cols;
   };
-  hooks.after_step = [&](const int, const double t, const std::vector<Uint>& outside_nodes){
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
     handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
 
@@ -140,7 +142,7 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
     cols.push_back(at_rest_column(ps));
     return cols;
   };
-  hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
+  hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     handle_outside(run, mesh, ps, outside, nodes, xn, verbose);
   };
   // Stop when no particle is left

@@ -142,13 +142,15 @@ static int run(int argc, char* argv[])
     }
   };
 
-  hooks.after_step = [&](const int it, const double t, const std::vector<Uint>& outside_nodes){
-    // Tau integration
+  // Outside nodes
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
+    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
+  };
+  // Tau integration
+  hooks.after_step = [&](const int it, const double){
     if (integrate_tau && at_interval(it + 1, tau_intv, dt)){
       mesh.integrate_tau(dt * steps_per(tau_intv, dt), tau_max);
     }
-    // Outside nodes
-    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);

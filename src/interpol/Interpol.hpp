@@ -2,6 +2,7 @@
 #define __INTERPOL_HPP
 
 #include <iostream>
+#include <limits>
 #include <string>
 #include "typedefs.hpp"
 #include "PointValues.hpp"
@@ -26,6 +27,11 @@ inline Matrix3d stamp_rate(const Matrix3d& next, const Matrix3d& prev, const dou
   for (int i = 0; i < 9; ++i)
     rate.data()[i] = (next.data()[i] - prev.data()[i])/(t_next - t_prev);
   return rate;
+}
+// t in the bracket, up to the run loop's snap at a stamp and rounding
+inline bool in_bracket(const double t, const double t_prev, const double t_next, const double snap){
+  const double tol = snap + 1e-6*(t_next - t_prev);
+  return t_next == t_prev || (t >= t_prev - tol && t <= t_next + tol);
 }
 
 class Interpol {  // Abstract base class
@@ -73,6 +79,10 @@ public:
   // The fields at t for every later time; the default only brackets t, so a
   // loader without its own still evaluates at each step's time
   virtual void freeze(const double t) { update(t); }
+  // First stamp after t, where the blend's rate changes; +inf: none
+  virtual double next_stamp_after(const double t) const { return std::numeric_limits<double>::infinity(); }
+  // The run loop's snap at a stamp: how far a stage may lie outside the bracket
+  void set_stamp_snap(const double s) { stamp_snap = s; }
   // After locate, pos describes x in pos.id, inside or not; on failure id is unchanged
   virtual bool locate(const Vector3d &x, const double t, CellPos& pos) = 0;
   // Only after a successful locate: outside the fluid the velocity is zero
@@ -103,6 +113,7 @@ protected:
   Vector3d x_max;
   double U0 = 1.0;
   double t_update;
+  double stamp_snap = 0.;
 };
 
 

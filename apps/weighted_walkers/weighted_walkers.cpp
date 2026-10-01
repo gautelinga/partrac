@@ -233,7 +233,7 @@ static int run(int argc, char* argv[])
         write_separation_data(sepdatafolder, t, ps, selection);
     };
     // Resampling
-    hooks.after_step = [&](const int it, const double t, const std::vector<Uint>&){
+    hooks.after_step = [&](const int it, const double t){
         if (!at_interval(it, refine_intv, dt))
             return;
         get_exited_nodes(exited_nodes, exit_buffers, ps, axes, Ln, Lt);

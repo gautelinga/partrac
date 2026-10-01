@@ -152,3 +152,100 @@ def test_linear_is_the_default(tmp_path):
     assert va.keys() == vb.keys()
     for k in va:
         assert np.array_equal(va[k], vb[k]), k
+
+
+TRACERS = app("tracers")
+
+
+def wall_felbm(d):
+    """A 16^3 felbm case with walls at z = 0, 15 and a pillar 6 <= x, y <= 9,
+    holding a steady field whose three components differ and are not linear."""
+    n = 16
+    i = np.arange(n, dtype=float)
+    x, y, z = np.meshgrid(i, i, i, indexing="ij")
+    k = 2 * np.pi / n
+    solid = np.zeros((n, n, n), dtype=np.int32)   # [z, y, x]
+    solid[0, :, :] = 1
+    solid[-1, :, :] = 1
+    solid[:, 6:10, 6:10] = 1
+    stamp = {"u_x": np.sin(k * (x + 2 * y)) + 0.3 * np.cos(k * z),
+             "u_y": 0.5 * np.cos(k * (x - y)) * np.sin(k * z),
+             "u_z": np.cos(k * (2 * x + y)) + 0.4 * np.sin(2 * k * y),
+             "density": np.ones((n, n, n)), "pressure": np.zeros((n, n, n))}
+    write_felbm(d, [stamp, stamp], solid, times=(0, 100))
+
+
+# Centres in near-solid cells, fluid side of the wall, away from the sub-cubes' mid-planes:
+# the z wall, the pillar's faces at x = 6 and 9 and at y = 6, a pillar edge; the last two bulk
+NEAR = [(2.3, 3.7, 0.7), (5.3, 7.3, 5.6), (9.7, 8.2, 12.3), (7.6, 5.2, 9.3), (5.3, 5.4, 4.7),
+        (2.3, 12.6, 14.3)]
+BULK = [(2.3, 12.6, 7.4), (12.2, 3.7, 10.6)]
+
+
+@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+def test_lattice_gradient_is_the_velocity_gradient(tmp_path):
+    """At points in cells next to solids, and in bulk cells, the dumped J is
+    the derivative of the dumped u: differences of u over 1e-5 cells match
+    J(i, j) = du_i/dx_j to 1e-6 of the field's gradient. Every row of J taken
+    with one component's weights fails the uy and uz rows. The points are
+    placed through a checkpoint and dumped one short step on, so the
+    differences are taken over the dumped points."""
+    from runs import checkpoint_folder, put_points, read_checkpoint
+    from dumps import dump_at
+    d = tmp_path / "felbm"
+    d.mkdir()
+    wall_felbm(d)
+    delta = 1e-5
+    centres = np.array(NEAR + BULK)
+    m = len(centres)
+    pts = [centres] + [centres + s * delta * e for e in np.eye(3) for s in (1, -1)]
+    pts = np.concatenate(pts)
+    base = ("mode=felbm init_mode=points_x scheme=RK4 Dm=0 dt=0.001 int_order=2 Nrw=%d Nrw_max=%d "
+            "x0=2 y0=2 z0=8 random=false seed=1 stat_intv=1e9" % (len(pts), len(pts)))
+    run_app(TRACERS, d / "felbm_params.dat", base, "T=0.001 dump_intv=1e9 checkpoint_intv=0.001")
+    put_points(d, pts)
+    ids = read_checkpoint(d)["id"][:, 0]
+    ck = checkpoint_folder(d)
+    run_app(TRACERS, d / "felbm_params.dat", base,
+            "T=0.002 dump_intv=0.001 checkpoint_intv=1e9 output_J=true restart_folder=%s" % ck)
+    g = dump_at(d, 0.002, raw=True)
+    # back in the order put
+    slot = np.argsort(g["id"][:, 0])[np.argsort(np.argsort(ids))]
+    x = g["points"][slot].reshape(7, m, 3)
+    u = g["u"][slot].reshape(7, m, 3)
+    J = g["J"][slot].reshape(7, m, 3, 3)[0]
+    assert np.abs(x - pts.reshape(7, m, 3)).max() < 0.01
+    # du = J dx over the three pairs
+    dX = np.stack([x[1 + 2 * k] - x[2 + 2 * k] for k in range(3)], axis=-1)
+    dU = np.stack([u[1 + 2 * k] - u[2 + 2 * k] for k in range(3)], axis=-1)
+    fd = dU @ np.linalg.inv(dX)
+    assert np.abs(fd).max() > 0.1
+    err = np.abs(J - fd) / np.abs(fd).max()
+    rows = err.max(axis=-1)   # per centre and row
+    assert rows.max() < 1e-6, rows
+
+
+TENSORS = app("tracertensors")
+
+
+@pytest.mark.skipif(not os.path.exists(TENSORS), reason="tracertensors is not built")
+def test_steady_identity_next_to_solids(tmp_path):
+    """In a steady field F carries the velocity along: F(T) u(x0) = u(x(T)).
+    With tracers all over the lattice of wall_felbm, many next to its walls,
+    90% hold it to 2% of |u|; a J next to solids that is not the derivative of
+    u leaves a tenth of them off by more than a third."""
+    from dumps import all_dumps, deformation_gradient
+    d = tmp_path / "felbm"
+    d.mkdir()
+    wall_felbm(d)
+    run_app(TENSORS, d / "felbm_params.dat",
+            "mode=felbm init_mode=points_xyz scheme=RK4 Dm=0 dt=0.02 int_order=1 Nrw=1000 "
+            "Nrw_max=1000 x0=0 y0=0 z0=0 random=true seed=3 T=2 dump_intv=2 stat_intv=1e9 "
+            "checkpoint_intv=1e9")
+    D = all_dumps(d)
+    F = deformation_gradient(D[2.0])
+    u0, u = D[0.0]["u"], D[2.0]["u"]
+    moving = np.linalg.norm(u, axis=1) > 1e-3
+    e = np.linalg.norm(np.einsum("nij,nj->ni", F, u0) - u, axis=1)[moving] / np.linalg.norm(u, axis=1)[moving]
+    assert moving.sum() > 900
+    assert np.percentile(e, 90) < 0.02, np.percentile(e, [50, 90, 100])

@@ -29,6 +29,7 @@ inline void add_common(partrac::Schema& s, const TracerDefaults& d){
   s.opt<std::string>("init_weight", "uniform", "what the initial points are sampled by: uniform, u, ux, uy or uz");
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.opt<bool>("output_J", d.output_J, "dump the velocity gradient at each particle");
+  s.opt<bool>("output_S", false, "dump the stretching rates along the frame (tracertensors)");
   s.opt<bool>("output_phi", d.output_phi, "dump the phase field at each particle");
   s.opt<bool>("output_cell_type", d.output_cell_type, "dump the cell marker at each particle");
   s.opt<double>("t0", 0.0, "start time");

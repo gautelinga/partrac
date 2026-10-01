@@ -25,7 +25,7 @@ class MeshCore : public Interpol {
 public:
   MeshCore(const std::string& infilename) : Interpol(infilename) {}
   bool locate(const Vector3d &x, const double t, CellPos& pos){
-    assert(t_next == t_prev || (t <= t_next && t >= t_prev));
+    assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
     const Vector3d xx = _modx(x);
     return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos);
   }

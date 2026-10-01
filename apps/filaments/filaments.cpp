@@ -103,7 +103,7 @@ static int run(int argc, char* argv[])
       return pair_stats_columns(t, ps, mesh.edges, mesh.edge_doublings(), counters.get_declined());
     };
 
-  hooks.after_step = [&](const int, const double, const std::vector<Uint>& outside_nodes){
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double){
     if (outside_nodes.size() == 0)
       return;
     std::cout << "Some nodes are outside.\n";

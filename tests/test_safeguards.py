@@ -1,7 +1,7 @@
 """What a run reports about its own trustworthiness.
 
-- n_at_rest, the last statistics column of the tracer apps: tracers slower
-  than 1e-3 of the mean speed. A field that traps tracers at walls or
+- n_at_rest, a statistics column of the tracer apps (the last of
+  tracers'): tracers slower than 1e-3 of the mean speed. A field that traps tracers at walls or
   stagnation points shows nothing else: the mean velocity barely moves while
   the slow layer empties into the traps.
 - logdetF_mean and logdetF_var (tracertensors): log det F, zero in an
@@ -79,7 +79,7 @@ def test_log_det_F_is_the_integral_of_the_divergence(tmp_path, axx, ayy):
     assert st["t"] == pytest.approx(T)
     assert st["logdetF_mean"] == pytest.approx((axx + ayy) * T, abs=1e-8)
     assert st["logdetF_var"] < 1e-16
-    assert list(st)[-1] == "n_at_rest"
+    assert list(st)[-7] == "n_at_rest"   # the frame's six rate columns follow
 
 
 @pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")

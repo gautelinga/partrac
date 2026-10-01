@@ -26,13 +26,14 @@ public:
   void update(const double t);
   // The walk first; the fallback is dolfin's tree, not MeshCore's
   bool locate(const Vector3d &x, const double t, CellPos& pos){
-    assert(t <= t_next && t >= t_prev);
+    assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
     const Vector3d xx = _modx(x);
     return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos);
   }
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals);
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
+  double next_stamp_after(const double t) const override { return ts.next_after(t); }
   using MeshCore<Cell>::locate;
 protected:
   static constexpr int D = Cell::n_verts - 1;

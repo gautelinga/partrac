@@ -23,7 +23,7 @@ template<bool Scalars>
 void SplitInterpol<Cell>::evaluate_impl(const Vector3d &, const double t, const CellPos& pos, PointValues& fields)
 {
   // Assuming inside fluid
-  assert(t <= t_next && t >= t_prev);
+  assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
   const double alpha_t = stamp_weight(t, t_prev, t_next);
   const int id = pos.id;
   constexpr std::size_t N = Split::n_sub;

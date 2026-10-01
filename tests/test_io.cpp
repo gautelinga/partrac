@@ -1,4 +1,5 @@
 #include <catch2/catch.hpp>
+#include <limits>
 #include <sstream>
 #include "Error.hpp"
 #include "param_print.hpp"
@@ -58,6 +59,48 @@ TEST_CASE("A time is bracketed by the stamps at and after it", "[timestamps]") {
   StampPair sp = ts.get(3.);
   REQUIRE(sp.prev.t == 2.);
   REQUIRE(sp.next.t == 5.);
+}
+
+TEST_CASE("The next stamp is the first strictly after a time", "[timestamps]") {
+  // where the run loop cuts a step; none past the last
+  std::vector<std::pair<double, std::string>> items = {{2., "b"}, {0., "a"}, {5., "c"}};
+  Timestamps ts;
+  ts.initialize(items);
+  const double none = std::numeric_limits<double>::infinity();
+  REQUIRE(ts.next_after(-1.) == 0.);
+  REQUIRE(ts.next_after(0.) == 2.);
+  REQUIRE(ts.next_after(1.) == 2.);
+  REQUIRE(ts.next_after(2.) == 5.);
+  REQUIRE(ts.next_after(5.) == none);
+  REQUIRE(ts.next_after(7.) == none);
+
+  MultiTimestamps mts;
+  mts.initialize({{0., {"u.h5", "u0"}}, {2., {"u.h5", "u1"}}, {5., {"u.h5", "u2"}}});
+  REQUIRE(mts.next_after(-1.) == 0.);
+  REQUIRE(mts.next_after(0.) == 2.);
+  REQUIRE(mts.next_after(4.9) == 5.);
+  REQUIRE(mts.next_after(5.) == none);
+}
+
+TEST_CASE("The XDMF stamps bracket a time as the others do", "[timestamps]") {
+  MultiTimestamps mts;
+  mts.initialize({{0., {"u.h5", "u0"}}, {2., {"u.h5", "u1"}}, {5., {"u.h5", "u2"}}});
+  auto bracket = [&](const double t){
+    MultiStampPair sp = mts.get(t);
+    return std::make_pair(sp.prev.it, sp.next.it);
+  };
+  REQUIRE(bracket(-1.) == std::make_pair(Uint(0), Uint(0)));
+  REQUIRE(bracket(0.) == std::make_pair(Uint(0), Uint(1)));
+  REQUIRE(bracket(1.) == std::make_pair(Uint(0), Uint(1)));
+  REQUIRE(bracket(2.) == std::make_pair(Uint(1), Uint(2)));
+  REQUIRE(bracket(5.) == std::make_pair(Uint(2), Uint(2)));
+  REQUIRE(bracket(7.) == std::make_pair(Uint(2), Uint(2)));
+  REQUIRE(mts.get(3.).prev.t == 2.);
+  REQUIRE(mts.get(3.).next.t == 5.);
+
+  // searched by bisection: out of order is refused
+  MultiTimestamps unsorted;
+  REQUIRE_THROWS_AS(unsorted.initialize({{2., {"u.h5", "u1"}}, {0., {"u.h5", "u0"}}}), partrac::Error);
 }
 
 TEST_CASE("A degenerate stamp bracket holds the field", "[timestamps]") {

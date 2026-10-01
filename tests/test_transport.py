@@ -256,3 +256,65 @@ def test_a_plane_flow_stretches_past_the_range_of_a_double(tmp_path):
     assert np.allclose(s[:, 0], T, rtol=1e-5) and np.allclose(s[:, 1], -T, rtol=1e-5)
     assert np.abs(s[:, 0] + s[:, 1]).max() < 1e-3       # RK4's map has det 1 - O(dt^6) a step
     assert np.array_equal(s[:, 2], np.zeros(len(s))) and np.array_equal(u, np.zeros_like(u))
+
+
+# --- stretching rates along the frame -------------------------------------------
+
+# Eigenvalues 1, 0 and -1 with shear between them; A e_z = 0, so the z axis is at rest
+SHEAR = [[1., 2., 0.], [0., -1., 0.], [0.5, 0.7, 0.]]
+ABC = os.path.join(REPO, "data_example", "abc_flow", "expr_params.dat")
+
+
+@needs_partrac
+def test_the_rates_converge_to_the_eigenvalues_in_order(tmp_path):
+    """With J constant, real distinct eigenvalues and a shear part, the frame
+    turns to J's Schur vectors and S, the diagonal of Q^T J Q, to its
+    eigenvalues from the largest down, the error shrinking as e^-t (the gap
+    is 1). The statistics carry each rate's mean and variance after n_at_rest."""
+    from dumps import all_dumps, read_stats
+    d = tmp_path / "flow"
+    d.mkdir(parents=True)
+    with open(LINEAR) as f:
+        lines = [l for l in f.read().splitlines() if not l.startswith(("A", "#"))]
+    (d / "expr_params.dat").write_text("\n".join(lines) + "\n" + "".join(
+        "A%s%s=%r\n" % ("xyz"[i], "xyz"[j], SHEAR[i][j]) for i in range(3) for j in range(3)))
+    case = run(tmp_path, str(d / "expr_params.dat"), "tensor",
+               "init_mode=points_z Nrw=10 Nrw_max=10 scheme=RK4 dt=0.01 T=20 dump_intv=5 "
+               "stat_intv=5 output_S=true")
+    D = all_dumps(case)
+    err = {t: np.abs(g["S"].reshape(-1, 3) - [1., 0., -1.]).max() for t, g in D.items() if t > 0}
+    for t in (10.0, 15.0, 20.0):
+        assert 0.5 < err[t] / err[t - 5] / np.exp(-5) < 2, err
+    assert err[20.0] < 1e-8, err
+    st = read_stats(case)
+    names = list(st)
+    i = names.index("n_at_rest")
+    assert names[i + 1:] == ["S1_mean", "S1_var", "S2_mean", "S2_var", "S3_mean", "S3_var"]
+    for j, t in enumerate(st["t"]):
+        S = D[round(t, 9)]["S"].reshape(-1, 3)
+        for k in range(3):
+            assert st["S%d_mean" % (k + 1)][j] == pytest.approx(S[:, k].mean(), rel=1e-5, abs=1e-12)
+            assert st["S%d_var" % (k + 1)][j] == pytest.approx(S[:, k].var(ddof=1), rel=1e-5, abs=1e-12)
+
+
+@needs_partrac
+def test_the_first_rate_is_the_line_elements(tmp_path):
+    """With init_mode=points_x a line element starts along +-e_x, the frame's
+    first column, and both are carried by the same steps, so on the ABC flow
+    the tensor app's S1 is the vector app's S, particle for particle, to
+    round-off. The vector app's statistics end with S's variance."""
+    from dumps import read_stats
+    args = ("init_mode=points_x x0=5 y0=5 z0=5 scheme=RK4 dt=0.01 T=2 dump_intv=1 stat_intv=1 "
+            "output_S=true")
+    v = run(tmp_path, ABC, "vector", args, name="v")
+    t = run(tmp_path, ABC, "tensor", args, name="t")
+    for T in (1.0, 2.0):
+        gv, gt = dump_at(v, T), dump_at(t, T)
+        assert np.array_equal(gv["points"], gt["points"])
+        S1 = gt["S"].reshape(-1, 3)[:, 0]
+        assert np.abs(S1).max() > 0.1
+        assert np.abs(S1 - gv["S"][:, 0]).max() < 1e-10, np.abs(S1 - gv["S"][:, 0]).max()
+    st = read_stats(v)
+    assert list(st)[-2:] == ["n_at_rest", "S_var"]
+    S = dump_at(v, 2.0)["S"][:, 0]
+    assert st["S_var"][-1] == pytest.approx(S.var(ddof=1), rel=1e-5)

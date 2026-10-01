@@ -1,5 +1,7 @@
+#include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include "Error.hpp"
 #include "Timestamps.hpp"
 #include "files.hpp"
@@ -65,6 +67,11 @@ StampPair Timestamps::get(const double t){
   return StampPair(prev->first, prev->second, next->first, next->second);
 }
 
+double Timestamps::next_after(const double t) const {
+  const auto next = stamps.upper_bound(t);
+  return next == stamps.end() ? std::numeric_limits<double>::infinity() : next->first;
+}
+
 //
 void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector<std::string>>>& items){
   t_.resize(items.size());
@@ -81,6 +88,9 @@ void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector
       t_max = tkey;
     }
   }
+  // Searched by bisection
+  if (!std::is_sorted(t_.begin(), t_.end()))
+    partrac::fail("XDMF: the time keys are not in increasing order");
   //folder = "";
   //filename = "";
 }
@@ -98,24 +108,19 @@ void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<
 }
 
 MultiStampPair MultiTimestamps::get(const double t){
-  if (t_.size() > 0)
-  {
-    for (Uint _it=1; _it < t_.size(); ++_it)
-    {
-      if (t_[_it-1] <= t && t_[_it] > t)
-      {
-        MultiStampPair Pair(t_[_it-1], _it-1, t_[_it], _it);
-        return Pair;
-      }
-    }
-  }
-  Uint it_last = t_.size()-1;
-  double t_last = t_[it_last];
-  if (t >= t_last){
-    MultiStampPair Pair(t_last, it_last, t_last, it_last);
-    return Pair;
-  }
-  double t_first = t_[0];
-  MultiStampPair Pair(t_first, 0, t_first, 0);
-  return Pair;
+  if (t_.empty())
+    partrac::fail("XDMF: no time stamps");
+  // First stamp after t
+  const Uint next = std::upper_bound(t_.begin(), t_.end(), t) - t_.begin();
+  // Before the first or past the last: that stamp twice
+  if (next == 0)
+    return MultiStampPair(t_[0], 0, t_[0], 0);
+  if (next == t_.size())
+    return MultiStampPair(t_[next-1], next-1, t_[next-1], next-1);
+  return MultiStampPair(t_[next-1], next-1, t_[next], next);
+}
+
+double MultiTimestamps::next_after(const double t) const {
+  const auto next = std::upper_bound(t_.begin(), t_.end(), t);
+  return next == t_.end() ? std::numeric_limits<double>::infinity() : *next;
 }

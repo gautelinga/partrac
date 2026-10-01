@@ -37,6 +37,8 @@ public:
   std::string get_first() { return folder + "/" + stamps[0]; };
   //  std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
   StampPair get(const double);
+  // First stamp after t; +inf past the last
+  double next_after(const double t) const;
   double get_t_min() const { return t_min; };
   double get_t_max() const { return t_max; };
 private:
@@ -78,6 +80,8 @@ public:
   // std::string get_first() { return folder + "/" + stamps[0]; };
   // std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
   MultiStampPair get(const double);
+  // First stamp after t; +inf past the last
+  double next_after(const double t) const;
   double get_t_min() const { return t_min; };
   double get_t_max() const { return t_max; };
   std::vector<std::string> get_path(const std::string& field, const Uint it) const { return stamps.at(field)[it]; }

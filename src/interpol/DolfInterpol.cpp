@@ -216,7 +216,7 @@ template<typename Cell>
 void DolfInterpol<Cell>::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
 {
   const int id = pos.id;
-  assert(t <= t_next && t >= t_prev);
+  assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
   const double alpha_t = stamp_weight(t, t_prev, t_next);
   const Vector3d x_loc = _modx(x);
 

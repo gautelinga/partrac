@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <random>
@@ -196,9 +197,11 @@ inline void note_step_size(Run& run, const ParticleSet& ps, const double t_field
 struct RunHooks {
   // After field update: injection, remeshing, resizing, removal
   std::function<void(int it, double t)> reshape = [](int, double){};
-  // After step
-  std::function<void(int it, double t, const std::vector<Uint>& outside)> after_step =
-      [](int, double, const std::vector<Uint>&){};
+  // After each piece of a step: the particles that could not step
+  std::function<void(const std::vector<Uint>& nodes, double t)> outside =
+      [](const std::vector<Uint>&, double){};
+  // After step, once
+  std::function<void(int it, double t)> after_step = [](int, double){};
   // Statistics columns; unset: mesh statistics
   std::function<std::vector<StatsColumn>(double t, Integrator& counters)> statistics;
   // After statistics row
@@ -214,9 +217,17 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
               const RunHooks& hooks = RunHooks()){
   partrac::Params& prm = run.prm;
   const bool restarting = prm.get<std::string>("restart_folder") != "";
-  double t = restarting ? prm.get<double>("t") : run.t0;
   // Resume step count
   int it = restarting ? static_cast<int>(prm.get<Uint>("it")) : 0;
+  // Time from the step count since the run's start, else since the restart
+  double t_start = run.t0;
+  int it_start = 0;
+  if (restarting && t_start + it*dt != prm.get<double>("t")){
+    t_start = prm.get<double>("t");
+    it_start = it;
+  }
+  const auto time_at = [&](const int k){ return t_start + (k - it_start)*dt; };
+  double t = time_at(it);
 
   const std::string& newfolder = run.out.run;
   prm.dump(newfolder, t);
@@ -247,6 +258,16 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   }
 
   bool step_noted = false;
+
+  // Steps cut at stamps; a stamp within snap of a piece's end makes no piece
+  const bool cuts = !run.frozen_fields;
+  const double snap = 1e-9*dt;
+  run.intp->set_stamp_snap(snap);
+  const double t_last = run.intp->get_t_max();
+  const auto next_stamp = [&](const double ta){
+    const double s = run.intp->next_stamp_after(ta);
+    return s < t_last ? s : std::numeric_limits<double>::infinity();
+  };
 
   // Counted from the second step: the first refreshes and checkpoints
   PerfWindow counters;
@@ -307,12 +328,36 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
       h5f.close();
     }
 
-    auto outside_nodes = stepper.step(*run.intp, ps, t, dt);
+    // Pieces between stamps
+    const double t_end = time_at(it + 1);
+    double ta = t;
+    while (true){
+      double tb = t_end;
+      if (cuts){
+        // Stamps just after the piece's start: taken as its start
+        double s = next_stamp(ta), t_upd = ta;
+        while (s <= ta + snap){
+          t_upd = s;
+          s = next_stamp(s);
+        }
+        if (t_upd != t)
+          run.intp->update(t_upd);
+        if (s < t_end - snap)
+          tb = s;
+      }
+      // A whole step is dt
+      const double h = (ta == t && tb == t_end) ? dt : tb - ta;
+      const auto outside_nodes = stepper.step(*run.intp, ps, ta, h);
+      hooks.outside(outside_nodes, ta);
+      if (tb == t_end)
+        break;
+      ta = tb;
+    }
 
-    hooks.after_step(it, t, outside_nodes);
+    hooks.after_step(it, t);
 
-    t += dt;
     it += 1;
+    t = time_at(it);
   }
   const double duration = omp_get_wtime() - wall_0;
   counters.disable();
