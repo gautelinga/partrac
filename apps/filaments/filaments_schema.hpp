@@ -4,6 +4,7 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "strings.hpp"
+#include "TracerParams.hpp"
 
 // Parameters accepted by this app
 inline partrac::Schema filaments_schema(){
@@ -55,7 +56,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
   s.opt<bool>("output_all_props", true, "dump all properties");
   s.opt<bool>("minimal_output", false, "dump less");
-  s.opt<std::string>("scheme", "explicit", "ODE integration scheme");
+  add_scheme(s, "explicit");
   s.opt<std::string>("tag", "", "appended to the folder name");
   s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
@@ -66,7 +67,6 @@ inline partrac::Schema filaments_schema(){
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
                      "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
-  s.choices("scheme", {"explicit", "RK4"});
   s.choices("resize", {"rescale", "doublings"});
   s.choices("resize_target", {"ds_max", "ds_init"});
   s.choices("outside", {"ignore", "reinject"});
@@ -86,11 +86,6 @@ inline partrac::Schema filaments_schema(){
             return split_string(p.get<std::string>("init_mode"), "_").size() >= 2;
           },
           "init_mode is missing a direction, as in pairs_xyz");
-  // RK4 ignores Dm
-  s.warn([](const partrac::Params& p){
-           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
-         },
-         "scheme=RK4 ignores Dm");
   // No reinjection with diffusion
   s.check([](const partrac::Params& p){
             return !(p.get<std::string>("outside") == "reinject"

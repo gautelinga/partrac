@@ -1,5 +1,3 @@
-cmake_minimum_required(VERSION 3.14)
-
 # Testing library
 FetchContent_Declare(
   catch
@@ -8,9 +6,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(catch)
 # Adds Catch2::Catch2
 
-# Listed, not globbed: a glob is only re-evaluated when cmake runs again
-add_executable(unittest
-  test_main.cpp
+# Catch's main, without partrac's usage requirements
+add_library(unittest_main OBJECT test_main.cpp)
+target_link_libraries(unittest_main PRIVATE Catch2::Catch2)
+target_compile_features(unittest_main PRIVATE cxx_std_17)
+
+# Listed, not globbed: a glob is only re-evaluated when cmake runs again.
+# An object library, so the units compile before the libraries are linked
+add_library(unittest_objects OBJECT
   test_io.cpp
   test_h5direct.cpp
   test_params.cpp
@@ -30,18 +33,28 @@ add_executable(unittest
   test_split_eval.cpp
   test_split_interpol.cpp
   test_wall_edges.cpp
+  test_tableau.cpp
+  test_regions.cpp
+  test_cells.cpp
+  region_cases.cpp
 )
 
-target_link_libraries(unittest
+target_link_libraries(unittest_objects
 	PRIVATE
 	Catch2::Catch2
 	partrac_base
 	partrac_io
+	partrac_particles)
+target_include_directories(unittest_objects PRIVATE ../apps/)
+target_compile_features(unittest_objects PRIVATE cxx_std_17)
+target_compile_definitions(unittest_objects PRIVATE PARTRAC_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_executable(unittest $<TARGET_OBJECTS:unittest_main> $<TARGET_OBJECTS:unittest_objects>)
+target_link_libraries(unittest
+	PRIVATE
+	partrac_base
+	partrac_io
 	partrac_particles
 	z)
-target_include_directories(unittest PRIVATE ../apps/)
-target_compile_features(unittest PRIVATE cxx_std_17)
-target_compile_definitions(unittest PRIVATE PARTRAC_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 add_test(NAME unittesttest COMMAND unittest)
 

@@ -53,6 +53,8 @@ void hdf52doubles(const H5::H5File& h5f, const std::string& dsetname, const Uint
                   std::vector<double>& a);
 void hdf52ulongs(const H5::H5File& h5f, const std::string& dsetname, const Uint rows, const Uint cols,
                  std::vector<Uint>& a);
+void hdf52ints(const H5::H5File& h5f, const std::string& dsetname, const Uint rows, const Uint cols,
+               std::vector<int>& a);
 // Vectors and tensors, one a row
 void hdf52vectors(const H5::H5File& h5f, const std::string& dsetname, const Uint rows,
                   std::vector<Vector3d>& a_rw);

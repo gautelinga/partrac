@@ -15,6 +15,7 @@
 // read (one stamp into a buffer), key and name (a timestamp's Key and its name
 // in the log). Its schema declares include_phi and wall_p2, which are read here.
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -46,6 +47,19 @@ public:
   bool has_phase_field() const override { return include_phi; }
   bool has_phase_gradient() const override { return phase_gradient_; }
   void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) override;
+  // A cell's velocity nodes at both stamps, gathered once for the evaluations in it
+  struct Held {
+    std::array<double, Cell::n_dofs_max*3> prev, next;
+    std::array<double, (Cell::n_verts - 1)*Cell::n_dofs_max> prev2, next2;   // a wall cell's P2 blocks
+    bool wall, quad_prev, quad_next;
+  };
+  void hold(const Region& R, Held& h) const;
+  // evaluate_motion at the barycentrics of cell id from its held nodes
+  void held_motion(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
+                   PointValues& fields);
+  // The same without the gradients
+  void held_velocity(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
+                     PointValues& fields);
 protected:
   friend Format;
   template<bool Scalars>
@@ -102,9 +116,23 @@ protected:
   std::vector<std::int32_t> wall_index_;   // -1: no wall vertex
   std::vector<WallEdges> wall_cells_;
 
-  // Velocity, acceleration and their gradients in a wall cell, in a unit of
-  // its own: P2 for a stamp whose wall vertices are at rest, else P1
+  // A wall cell, out of line: gathers, then wall_at
+  __attribute__((noinline))
   void wall_motion(const int id, const CellPos& pos, const double alpha_t, PointValues& fields) const;
+  // The per-point part of the evaluations, from gathered nodes; Velocity: no gradients
+  template<bool Velocity = false>
+  void plain_at(const int id, const std::array<double, 4>& bary, const double alpha_t,
+                const double* prev, const double* next, PointValues& fields) const;
+  // A wall cell's P2 blocks, for the stamps whose wall vertices are at rest
+  std::array<bool, 2> wall_blocks(const int id, const double* prev, const double* next, double* prev2,
+                                  double* next2) const;
+  template<bool Velocity = false>
+  void wall_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const double* prev,
+               const double* next, const double* prev2, const double* next2, const bool quad_prev,
+               const bool quad_next, PointValues& fields) const;
+  template<bool Velocity = false>
+  void held_at(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
+               PointValues& fields) const;
 
   double rest_tol_prev_ = 0.;   // the tolerance of the stamps in play
   double rest_tol_next_ = 0.;

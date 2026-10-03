@@ -2,7 +2,8 @@
 #define __MESHCORE_HPP
 
 // What an interpolator on a simplex mesh does once its tables exist: hold the
-// cells and the facet table, locate a point, and walk a move off the walls.
+// cells and the facet table, locate a point, walk a move off the walls, and
+// its regions (regions.hpp).
 // None of it depends on where the tables came from, so it compiles without
 // dolfin; a loader fills them, DolfInterpol from a dolfin mesh and the rest
 // from the file's own arrays.
@@ -17,6 +18,7 @@
 #include "Params.hpp"
 #include "cell_tree.hpp"
 #include "cell_walk.hpp"
+#include "regions.hpp"
 #include "geometry.hpp"
 #include "simplex_load.hpp"
 
@@ -34,12 +36,41 @@ public:
   // Outward unit normal of the cell's wall facets, their mean at an edge; zero off the wall
   Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
   double hmin() const { return hmin_; }
+  Uint cell_count() const { return cells_.size(); }
   // (d! volume)^(1/d): the barycentric gradients' determinant is its inverse
   double cell_size(const int cell_id) const {
     const Cell& c = cells_[std::size_t(cell_id)];
     const Vector3d g1 = c.bary_grad(1), g2 = c.bary_grad(2);
     const double det = dim == 2 ? g1[0]*g2[1] - g1[1]*g2[0] : g1.dot(g2.cross(c.bary_grad(3)));
     return std::pow(std::abs(det), -1./dim);
+  }
+  // Regions (regions.hpp): x is never wrapped
+  using region_type = Region;
+  using levels_type = std::array<double, 4>;
+  static constexpr int n_levels = Cell::n_verts;
+  static constexpr bool half_open = false;   // a point on a facet is in both cells
+  bool region_of(const int id, const Vector3d& x, const double band, Region& R, levels_type& lev){
+    return ::region_of(cells_, period_, id, x, band, [this](const Vector3d& p){ return _modx(p); },
+                       [this](const Vector3d& xx, CellPos& pos){
+                         return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos); },
+                       R, lev);
+  }
+  // Cell id with the offset of the wrapped point
+  Region region_in(const int id, const Vector3d& x) const { return {id, _modx(x) - x}; }
+  Vector3d region_point(const Region& R, const Vector3d& x, levels_type& lev) const {
+    return ::region_point(cells_, R, x, [this](const Vector3d& p){ return _modx(p); }, lev);
+  }
+  int across(const Region& R, const int k, const Vector3d& x, Region& next) const {
+    return region_across(cells_, facet_neigh_, period_, R, k, x, [this](const Vector3d& p){ return _modx(p); }, next);
+  }
+  void level_rates(const Region& R, const Vector3d& v, levels_type& rate) const {
+    ::level_rates(cells_[std::size_t(R.id)], v, rate);
+  }
+  Vector3d level_grad(const Region& R, const int k) const { return cells_[std::size_t(R.id)].bary_grad(k); }
+  // Of the regions in cell id, as a path crosses them
+  double region_size(const int id) const { return cell_size(id); }
+  bool is_wall(const Region& R, const int k) const {
+    return facet_neigh_[std::size_t(R.id)*Cell::n_verts + std::size_t(k)] == facet_wall;
   }
   using Interpol::locate;
   using Interpol::evaluate;

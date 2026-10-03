@@ -8,6 +8,7 @@
 // builds its tables from a dolfin mesh and a dofmap; what a step reads once
 // they exist is MeshCore's.
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -57,6 +58,19 @@ protected:
   void build_facet_table();
   // Out of the step loops: dolfin's bounding box tree, from nothing known
   bool locate_tree(const Vector3d& xx, CellPos& pos);
+  // Pairs of a space's dofs at one position modulo the periods
+  std::vector<std::array<std::uint32_t, 2>> seam_pairs(const dolfin::FunctionSpace& space) const;
+  // A stamp's field into data: dolfin's read, or by cells and checked at the seam
+  void read_field(dolfin::HDF5File& file, const std::string& filename, const std::string& name,
+                  dolfin::Function& f, std::vector<double>& data, bool by_cells,
+                  const std::vector<std::array<std::uint32_t, 2>>& seam, const char* what) const;
+  // Per cell from the file's own dofmap, so a periodic image keeps its value
+  void read_by_cells(const std::string& filename, const std::string& name,
+                     const dolfin::Function& f, std::vector<double>& data) const;
+  // Refuses a stamp whose field differs between periodic images, by the range of each component
+  void check_seam(const dolfin::Function& f, const std::vector<double>& data,
+                  const std::vector<std::array<std::uint32_t, 2>>& pairs,
+                  const std::string& filename, const char* what) const;
 
   std::shared_ptr<dolfin::Mesh> mesh;
   std::shared_ptr<dolfin::FunctionSpace> u_space_;
@@ -78,6 +92,9 @@ protected:
   Uint u_dim_ = 0, p_dim_ = 0;           // p_dim_ stays 0 when pressure is ignored
   // Read out whole at each load: dolfin's vector is not safe to read in parallel
   std::vector<double> u_prev_data_, u_next_data_, p_prev_data_, p_next_data_;
+  // P3 on a periodic mesh: unconstrained spaces, their dofs paired across the seam
+  bool u_by_cells_ = false, p_by_cells_ = false;
+  std::vector<std::array<std::uint32_t, 2>> u_seam_, p_seam_;
 };
 
 // Geometric dimension of the mesh a fenics parameter file names; 0 if unknown

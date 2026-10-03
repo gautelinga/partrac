@@ -341,7 +341,7 @@ InitialState init_ellipsoid(const std::vector<std::string>& key, std::shared_ptr
       const Vector3d x = s.ps.x(irw);
       const Vector3d nn = (x - x_c)/ (x - x_c).norm();
       const double rad = 1./sqrt(nn[0]*nn[0]/lx2 + nn[1]*nn[1]/ly2 + nn[2]*nn[2]/lz2);
-      s.ps.set_x(irw, x_c + rad * nn);
+      s.ps.move(irw, x_c + rad * nn);
     }
     n_rem = coarsen_surface(s, prm.get<double>("ds_min"));
     ++attempt;

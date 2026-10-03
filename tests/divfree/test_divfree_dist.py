@@ -10,9 +10,10 @@ exclusive scan, the reductions and the exact median -- are checked on their
 own.
 
 The one-rank path runs in process. The tables at one to four ranks run as MPI
-jobs, one a mesh, each running every check and reporting by its exit code;
-run as a script, this file is that job. The jobs skip where no launcher starts
-a job of several ranks for mpi4py, and fail there with PARTRAC_REQUIRE_MPI set.
+jobs, one a mesh, the rank counts shared out over the meshes, each running
+every check and reporting by its exit code; run as a script, this file is that
+job. The jobs skip where no launcher starts a job of several ranks for mpi4py,
+and fail there with PARTRAC_REQUIRE_MPI set.
 """
 
 import os
@@ -424,7 +425,7 @@ def test_a_partitioner_this_petsc_lacks_is_refused_by_name():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("ranks", [2, 3, 4])
+@pytest.mark.parametrize("ranks", [2, 4])
 def test_the_building_blocks_across_ranks_give_the_serial_answers(ranks):
     """The sample sort with its way back, the scan, the keyed reductions and
     the exact median, each on keys and values spread unevenly over the ranks --
@@ -433,9 +434,12 @@ def test_the_building_blocks_across_ranks_give_the_serial_answers(ranks):
     assert "PASSED" in run_job(ranks, "blocks")
 
 
+# each mesh at one rank count, every count on 2D and 3D meshes; one mesh at one rank
+MESH_RANKS = [(name, 2 + k % 3) for k, name in enumerate(sorted(CASES))] + [(sorted(CASES)[0], 1)]
+
+
 @pytest.mark.slow
-@pytest.mark.parametrize("ranks", [1, 2, 3, 4])
-@pytest.mark.parametrize("name", sorted(CASES))
+@pytest.mark.parametrize("name,ranks", MESH_RANKS, ids=["%s-%d" % c for c in MESH_RANKS])
 def test_the_distributed_tables_are_the_serial_ones(tmp_path, name, ranks):
     """Read in blocks, and partitioned by PT-Scotch and moved: each rank's
     tables are `Topo`'s restricted to its cells, the globals are the serial

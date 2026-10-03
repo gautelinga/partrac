@@ -54,9 +54,9 @@ import subprocess
 import numpy as np
 import pytest
 
-from dumps import all_dumps
+from dumps import all_dumps, deformation_gradient, dump_at
 from paths import BIN, REPO, app
-from runs import checkpoint_folder, put_points, read_checkpoint, run_app
+from runs import cells_counts, checkpoint_folder, put_points, read_checkpoint, run_app
 
 INTERPOL = app("interpol")
 TRACERS = app("tracers")
@@ -218,6 +218,28 @@ def test_tracers_run_on_the_channel(tmp_path):
                                   "stat_intv=0.5", "checkpoint_intv=1e9"],
                 env={"OMP_NUM_THREADS": "2"}, timeout=300)
     assert "Time = 1.5" in r.stdout, r.stdout[-2000:]
+
+
+@needs_openfoam
+def test_rk4cells_on_the_channel_is_rk4_on_its_linear_field(tmp_path):
+    """The channel's field is linear (exact under the least-squares nodes), so
+    landing on facets costs RK4cells nothing: its positions and F are RK4's to
+    RK4's own error, and it crosses facets of the W12 split without relocating."""
+    out = {}
+    for scheme in ("RK4cells", "RK4"):
+        params = case_copy(CHANNEL, tmp_path / scheme)
+        for t in ("1", "2"):
+            shutil.copytree(tmp_path / scheme / "0", tmp_path / scheme / t)
+        r = run_app(app("tracertensors"), params,
+                    ["mode=openfoam", "Nrw=200", "Nrw_max=200", "int_order=1", "Dm=0", "dt=0.02", "t0=1",
+                     "T=1.4", "x0=0.5", "y0=0.5", "z0=0.5", "init_mode=points_xyz", "random=false", "seed=1",
+                     "dump_intv=0.4", "stat_intv=0.4", "checkpoint_intv=1e9", "scheme=" + scheme], timeout=300)
+        g = dump_at(tmp_path / scheme, 1.4)
+        out[scheme] = (g["points"], deformation_gradient(g), r.stdout)
+    (xc, Fc, log), (x4, F4, _) = out["RK4cells"], out["RK4"]
+    c = cells_counts(log)
+    assert c and c["crossings"] > 1 and c["relocations"] == 0, log[-2000:]
+    assert np.abs(xc - x4).max() < 1e-8 and np.abs(Fc - F4).max() < 1e-8, (np.abs(xc - x4).max(), np.abs(Fc - F4).max())
 
 
 @needs_openfoam

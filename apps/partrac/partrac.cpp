@@ -31,6 +31,7 @@ static int run(int argc, char* argv[])
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  scheme.prepare(*run.intp);
   if (prm.get<bool>("output_phi"))
     ps.record_phi();
   Topology mesh(ps, prm);
@@ -154,6 +155,7 @@ static int run(int argc, char* argv[])
   };
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
+  scheme.report(std::cout);
 
   return 0;
 }

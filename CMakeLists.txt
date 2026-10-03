@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.19)
 
 set(PROJECT_NAME partrac)
 project(${PROJECT_NAME}
@@ -6,6 +6,14 @@ project(${PROJECT_NAME}
   DESCRIPTION "Particle tracker"
   LANGUAGES C CXX
   )
+
+# Step objects are listed by path (src/CMakeLists.txt): one configuration per build
+get_property(PARTRAC_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if (PARTRAC_MULTI_CONFIG)
+  message(FATAL_ERROR "partrac: ${CMAKE_GENERATOR} is a multi-configuration generator, which "
+    "the build does not support; use a single-configuration one, such as Unix Makefiles or "
+    "Ninja, with CMAKE_BUILD_TYPE")
+endif()
 
 # Set CMake behavior
 cmake_policy(SET CMP0004 NEW)
@@ -113,13 +121,10 @@ else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DDEBUG -O2 ${PARTRAC_ARCH_FLAGS} -ggdb3 -pedantic-errors")
 endif()
 
-# Line and branch counters for gcov/gcovr, in a build of its own (build-cov).
-# -O0 so that lines are not merged; atomic because the step loops run on OpenMP
-# threads, where plain counters lose counts; absolute paths so that reports can
-# be made from any directory.
+# gcov counters: atomic for threads, absolute paths; serial, no flatten
 option(PARTRAC_COVERAGE "Instrument for test coverage (gcov)." OFF)
 if (PARTRAC_COVERAGE)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 --coverage -fprofile-update=atomic -fprofile-abs-path")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-update=atomic -fprofile-abs-path")
 endif()
 
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
@@ -141,10 +146,21 @@ if (HDF5_IS_PARALLEL)
 endif()
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenMP REQUIRED)
+if (PARTRAC_COVERAGE)
+  # OpenMP linked but not compiled, except in mesh_tables.cpp: serial loops
+  set_property(TARGET OpenMP::OpenMP_CXX PROPERTY INTERFACE_COMPILE_OPTIONS "")
+  # PARTRAC_HOT_LOOP empty from the first line of every unit, so no precompiled headers
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wno-unknown-pragmas>"
+    "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${PROJECT_SOURCE_DIR}/cmake/coverage.hpp>")
+  set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
+endif()
 # Headers only, and used whether or not dolfin is enabled
 find_package(Boost REQUIRED)
 
 include_directories(${HDF5_INCLUDE_DIR} ${Boost_INCLUDE_DIRS} ${MPI_CXX_INCLUDE_DIRS})
+
+# Units compile without waiting for linked libraries (CMake 3.19)
+set(CMAKE_OPTIMIZE_DEPENDENCIES ON)
 
 add_subdirectory(src)
 

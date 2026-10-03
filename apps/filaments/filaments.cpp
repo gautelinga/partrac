@@ -42,8 +42,8 @@ inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std:
       const bool inside_b = run.intp->locate(x0 + Dx - 0.5*dx);
       outside = !(inside_a && inside_b);
     }
-    ps.set_x(a, ps.x(a) + Dx);
-    ps.set_x(b, ps.x(b) + Dx);
+    ps.move(a, ps.x(a) + Dx);
+    ps.move(b, ps.x(b) + Dx);
   }
 }
 
@@ -63,6 +63,7 @@ static int run(int argc, char* argv[])
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  scheme.prepare(*run.intp);
   Topology mesh(ps, prm);
   // Doublings
   const bool doublings = prm.get<std::string>("resize") == "doublings";
@@ -112,6 +113,7 @@ static int run(int argc, char* argv[])
   };
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
+  scheme.report(std::cout);
 
   return 0;
 }

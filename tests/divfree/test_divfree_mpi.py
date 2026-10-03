@@ -16,10 +16,10 @@ import sys
 import numpy as np
 import pytest
 
-from divfree_cases import (CASES, D, IDS, INTERPOL, channel2d, channel3d,
+from cases import shared_dir
+from divfree_cases import (CASES, CLEANER, D, IDS, INTERPOL, channel2d, channel3d,
                            interpol_probe, mpi_clean, mpi_run, pocket_case, same_log,
                            same_output, smooth_noslip, write_case)
-from paths import REPO
 
 
 # ------------------------------------------------------- read back by the apps
@@ -38,8 +38,7 @@ def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
     t = D.Topo(X, cells, per)
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], per)
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, os.path.join(REPO, "python", "divfree", "divfree_clean.py"),
-                        str(cfg), "--out", str(out), "--no-key"],
+    r = subprocess.run([sys.executable, CLEANER, str(cfg), "--out", str(out), "--no-key"],
                        capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout + r.stderr
     g = interpol_probe(out / "dolfin_params.dat", mode, 60)
@@ -140,11 +139,34 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
         assert np.abs(a["u" + c] - b["u" + c]).max() < 1e-8 * scale, c
 
 
+@pytest.fixture(scope="session")
+def one_rank_pocket(tmp_path_factory):
+    """one_rank_pocket(dim, kind) -> (parameter file, the folder one rank cleaned
+    it into, what that run printed, what --check printed): one rank shares
+    nothing out, so every partition's test compares with the same run, made
+    once a session."""
+
+    def get(dim, kind):
+        def build(d):
+            cfg = pocket_case(d / "in", dim, kind)
+            (d / "clean.log").write_text(mpi_clean(cfg, d / "out1", 1, timeout=120).stdout)
+            r = mpi_run(1, [CLEANER, cfg, "--check"], timeout=120)
+            assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+            (d / "check.log").write_text(r.stdout)
+
+        d = shared_dir(tmp_path_factory, "pocket_%dd_%s" % (dim, kind.replace(" ", "_")), build)
+        return (d / "in" / "dolfin_params.dat", d / "out1", (d / "clean.log").read_text(),
+                (d / "check.log").read_text())
+
+    return get
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("partition", ["blocks", "ptscotch"])
 @pytest.mark.parametrize("kind", ["closed", "moving wall"])
 @pytest.mark.parametrize("dim", [2, 3])
-def test_three_ranks_report_every_number_one_rank_reports(tmp_path, dim, kind, partition):
+def test_three_ranks_report_every_number_one_rank_reports(tmp_path, one_rank_pocket, dim, kind,
+                                                          partition):
     """What the tool prints -- the counts of cells, edges, held nodes, free and
     boundary-free midpoints and changed edges, the fluxes, the volume means,
     the drift, the divergence left, and under --check the Taylor-Hood moments
@@ -158,18 +180,13 @@ def test_three_ranks_report_every_number_one_rank_reports(tmp_path, dim, kind, p
     stamp's; a closed domain whose data leaves a net flux the step has to
     share out over every cell; a moving wall with free midpoints on it."""
     pytest.importorskip("h5py")
-    cfg = pocket_case(tmp_path / "in", dim, kind)
-    tool = os.path.join(REPO, "python", "divfree", "divfree_clean.py")
-    runs, checks = {}, {}
-    for n in (1, 3):
-        runs[n] = mpi_clean(cfg, tmp_path / ("out%d" % n), n, extra=["--partition", partition],
-                            timeout=120).stdout
-        r = mpi_run(n, [tool, cfg, "--check", "--partition", partition], timeout=120)
-        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-        checks[n] = r.stdout
-    free_on_wall = int(re.search(r"(\d+) of them on the boundary", runs[1]).group(1))
+    cfg, out1, run1, check1 = one_rank_pocket(dim, kind)
+    run3 = mpi_clean(cfg, tmp_path / "out3", 3, extra=["--partition", partition], timeout=120).stdout
+    r = mpi_run(3, [CLEANER, cfg, "--check", "--partition", partition], timeout=120)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    free_on_wall = int(re.search(r"(\d+) of them on the boundary", run1).group(1))
     assert (free_on_wall > 0) == (kind == "moving wall")
-    assert ("singular" in runs[1]) == (kind == "closed")
-    same_log(runs[1], runs[3])
-    same_log(checks[1], checks[3])
-    same_output(tmp_path / "out1", tmp_path / "out3", 1.25)
+    assert ("singular" in run1) == (kind == "closed")
+    same_log(run1, run3)
+    same_log(check1, r.stdout)
+    same_output(out1, tmp_path / "out3", 1.25)

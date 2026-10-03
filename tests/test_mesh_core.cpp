@@ -81,6 +81,27 @@ struct EverywhereInterpol final : public Interpol {
   using Interpol::evaluate;
 };
 
+// Fluid above y = 0.3 sin(pi x), a hump the fluid wraps; its outward normal for any cell
+struct HumpInterpol final : public Interpol {
+  HumpInterpol() : Interpol("") {}
+  static double hump(const double x){ return 0.3*std::sin(M_PI*x); }
+  double get_t_min() override { return 0.; }
+  double get_t_max() override { return 1.; }
+  void update(const double) override {}
+  bool locate(const Vector3d& x, const double, CellPos& pos) override {
+    if (x[1] < hump(x[0])) return false;
+    pos.id = 0;
+    return true;
+  }
+  void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) override {}
+  static Vector3d normal(const Vector3d& x){
+    return Vector3d(0.3*M_PI*std::cos(M_PI*x[0]), -1., 0.).normalized();
+  }
+  Vector3d get_boundary_normal(const Vector3d& x, int&) override { return normal(x); }
+  using Interpol::locate;
+  using Interpol::evaluate;
+};
+
 double total_length(const EdgesType& edges, const ParticleSet& ps){
   double s = 0.;
   for (const auto& e : edges) s += ps.dist(e.first[0], e.first[1]);
@@ -128,6 +149,48 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
     REQUIRE( n_rem > 0 );
     REQUIRE( total_length(edges, ps) == Approx(2.0) );
   }
+}
+
+TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edge, until inside", "[mesh]") {
+  // Two nodes 0.01 above the hump, unlike slopes; their midpoint is inside it
+  ParticleSet ps(std::make_shared<HumpInterpol>(), 8);
+  const double lift = 0.01;
+  const Vector3d x0(0.1, HumpInterpol::hump(0.1) + lift, 0.), x1(0.7, HumpInterpol::hump(0.7) + lift, 0.);
+  ps.add({x0, x1}, 0);
+  ps.set_cell_id(0, 0);
+  ps.set_cell_id(1, 0);
+  FacesType faces;
+  EdgesType edges = {{{0, 1}, (x1 - x0).norm()}};
+  Edge2FacesType edge2faces;
+  Node2EdgesType node2edges;
+  compute_edge2faces(edge2faces, faces, edges);
+  compute_node2edges(node2edges, edges, ps.N());
+  EdgesListType edges_inlet;
+  NodesListType nodes_inlet;
+  std::vector<Vector3d> pos_inj;
+  EdgesType edges_inj;
+
+  REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
+                      pos_inj, edges_inj, ps, 0.6, 0., false) == 1 );
+  REQUIRE( ps.N() == 3 );
+  // Along the normals' mean, square to the edge, by the first multiple of 1% of the edge inside
+  const Vector3d tau = (x0 - x1).normalized(), mid = 0.5*(x0 + x1);
+  Vector3d n = HumpInterpol::normal(x0) + HumpInterpol::normal(x1);
+  n -= n.dot(tau)*tau;
+  n /= -n.norm();
+  // Neither straight up nor the normals' mean itself
+  REQUIRE( n[0] < -0.2 );
+  REQUIRE( std::abs(n.dot((HumpInterpol::normal(x0) + HumpInterpol::normal(x1)).normalized())) < 0.995 );
+  const auto below = [](const Vector3d& y){ return y[1] < HumpInterpol::hump(y[0]); };
+  int k = 1;
+  while (below(mid + k*(1e-2*(x1 - x0).norm())*n)) ++k;
+  const Vector3d x = ps.x(2), expected = mid + k*(1e-2*(x1 - x0).norm())*n;
+  INFO("new node at " << x.transpose() << ", expected " << expected.transpose() << " (" << k << " steps)");
+  REQUIRE( k > 2 );
+  REQUIRE( (x - expected).norm() < 1e-14 );
+  REQUIRE( x[2] == 0. );
+  REQUIRE( !below(x) );
+  REQUIRE( ps.get_cell_id(2) == 0 );
 }
 
 TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {

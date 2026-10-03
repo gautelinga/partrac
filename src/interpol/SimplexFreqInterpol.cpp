@@ -23,6 +23,22 @@ void same_element(const simplex_load::Element& a, const simplex_load::Element& b
 // Times a thread keeps the weights of: an RK4 step asks three distinct ones
 constexpr int weight_slots = 4;
 
+// One component's share of the velocity, its rate and their gradients at a point
+template<int D>
+__attribute__((always_inline))
+inline void add_component(const double* N, const double* Nx, const double* Ny, const double* Nz,
+                          const double* block, const Uint ncoeffs, const double w, const double wt,
+                          Vector3d& U, Vector3d& A, Matrix3d& gradU, Matrix3d& gradA, const bool gradient){
+  const Vector3d U_f = block_value<D>(N, block, ncoeffs);
+  U += w*U_f;
+  A += wt*U_f;
+  if (gradient){
+    const Matrix3d G_f = block_gradient<D>(Nx, Ny, Nz, block, ncoeffs);
+    gradU += w*G_f;
+    gradA += wt*G_f;
+  }
+}
+
 // Serial of each loader built, so kept weights are never read as a later
 // loader's at the same address
 std::atomic<std::uint64_t> next_id{1};
@@ -208,15 +224,8 @@ void SimplexFreqInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t,
   for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq){
     gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_row, u_dofs_.stride(),
                       u_nodes_[iFreq].data(), u_block.data());
-    const Vector3d U_f = block_value<D>(Nu_.data(), u_block.data(), ncoeffs_u);
-    U += wf.w[iFreq]*U_f;
-    A += wf.wt[iFreq]*U_f;
-    if (gradient){
-      const Matrix3d G_f = block_gradient<D>(Nux_.data(), Nuy_.data(), Nuz_.data(),
-                                             u_block.data(), ncoeffs_u);
-      gradU += wf.w[iFreq]*G_f;
-      gradA += wf.wt[iFreq]*G_f;
-    }
+    add_component<D>(Nu_.data(), Nux_.data(), Nuy_.data(), Nuz_.data(), u_block.data(), ncoeffs_u,
+                     wf.w[iFreq], wf.wt[iFreq], U, A, gradU, gradA, gradient);
     if constexpr (Scalars){
       if (include_pressure){
         std::array<double, Cell::n_dofs_max> p_block;
@@ -238,6 +247,45 @@ void SimplexFreqInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t,
     fields.gradU = gradU;
     fields.gradA = gradA;
   }
+}
+
+template<typename Cell>
+void SimplexFreqInterpol<Cell>::hold(const Region& R, Held& h) const
+{
+  const int id = R.id;
+  constexpr std::size_t bs = Cell::n_dofs_max*3;
+  const std::size_t nfreq = u_nodes_.size();
+  h.blocks.resize(nfreq*bs);
+  for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq)
+    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
+                      u_nodes_[iFreq].data(), h.blocks.data() + iFreq*bs);
+}
+
+template<typename Cell>
+void SimplexFreqInterpol<Cell>::held_motion(const int id, const std::array<double, 4>& lev,
+                                            const double t, const Held& h, PointValues& fields)
+{
+  constexpr std::size_t bs = Cell::n_dofs_max*3;
+  const FreqWeights& wf = weights(t);
+  const std::size_t nfreq = u_nodes_.size();
+  std::array<double, Cell::n_dofs_max> Nu_, Nux_, Nuy_, Nuz_;   // Nuz_ unused in 2D
+  cell_basis(cells_[id], lev, ncoeffs_u, Nu_.data(), "u");
+  const bool gradient = wants_gradient();
+  if (gradient)
+    cell_deriv(cells_[id], lev, ncoeffs_u, Nux_.data(), Nuy_.data(), Nuz_.data(), "u");
+
+  // The gradients summed in place
+  Vector3d U = Vector3d::Zero();
+  Vector3d A = Vector3d::Zero();
+  if (gradient){
+    fields.gradU.setZero();
+    fields.gradA.setZero();
+  }
+  for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq)
+    add_component<D>(Nu_.data(), Nux_.data(), Nuy_.data(), Nuz_.data(), h.blocks.data() + iFreq*bs,
+                     ncoeffs_u, wf.w[iFreq], wf.wt[iFreq], U, A, fields.gradU, fields.gradA, gradient);
+  fields.U = U;
+  fields.A = A;
 }
 
 template class SimplexFreqInterpol<Triangle>;

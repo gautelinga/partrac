@@ -245,6 +245,29 @@ TEST_CASE("a checkpoint survives a write and a read, bit for bit", "[io]") {
   }
 }
 
+TEST_CASE("a checkpoint keeps the next id past removed particles; one without it numbers on from the largest id", "[io]") {
+  TempFile f("checkpoint.h5");
+  ParticleSet ps = three_particles();
+  ps.set_N(2);   // id 2 removed
+  {
+    H5::H5File h5(f.name, H5F_ACC_TRUNC);
+    ps.write_checkpoint(h5, false);
+  }
+  auto next_after_read = [&](){
+    ParticleSet back(nullptr, 8);
+    H5::H5File h5(f.name, H5F_ACC_RDONLY);
+    back.read_checkpoint(h5, false);
+    back.add({{0.5, 0.5, 0.5}}, back.N());
+    return back.id(back.N() - 1);
+  };
+  REQUIRE(next_after_read() == 3);
+  {
+    H5::H5File h5(f.name, H5F_ACC_RDWR);
+    h5.removeAttr("next_id");
+  }
+  REQUIRE(next_after_read() == 2);
+}
+
 TEST_CASE("a checkpoint without a field, or with one of the wrong shape, stops the run", "[io]") {
   TempFile f("checkpoint.h5");
   ParticleSet ps = three_particles();

@@ -28,6 +28,7 @@ import os
 import numpy as np
 import pytest
 
+from cases import ABC
 from dumps import all_dumps
 from paths import REPO, app
 from runs import checkpoint_folder, copy_example, read_checkpoint, run_app, write_checkpoint
@@ -35,7 +36,6 @@ from runs import checkpoint_folder, copy_example, read_checkpoint, run_app, writ
 PARTRAC = app("partrac")
 SSS = app("static_space_stepper")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
-ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
 PLANE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 PI = 3.14159265358979
 

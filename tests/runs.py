@@ -1,4 +1,4 @@
-"""Running an app on a private copy of an example.
+"""Running an app on a private copy of an example, and comparing runs.
 
 Every app writes its output beside its parameter file, so a test runs on a
 copy. The apps refuse a parameter given twice, and a test states a common set
@@ -8,11 +8,14 @@ here, the later value winning.
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 
 import numpy as np
 import pytest
+
+from dumps import all_dumps, deformation_gradient, read_stats
 
 
 def merged(*argsets):
@@ -92,7 +95,8 @@ def write_checkpoint(d, **datasets):
 
 
 # One row a particle; points first
-PER_PARTICLE = ("points", "id", "c", "t_loc", "rhohat", "w", "S", "Q", "logstretch", "U", "generation")
+PER_PARTICLE = ("points", "id", "c", "t_loc", "rhohat", "w", "S", "Q", "logstretch", "U", "generation",
+                "cell_id")
 
 
 def put_points(d, points):
@@ -100,16 +104,18 @@ def put_points(d, points):
 
     With as many points as particles the ids and fields are kept; otherwise
     the ids are 0..n-1, c runs from 0 to 1 and t_loc is 0, and a checkpoint
-    carrying an element cannot be resized.
+    carrying an element cannot be resized. The cells are unknown (-1): the
+    resume locates the points.
     """
     points = np.asarray(points, dtype=float)
     points = np.c_[points, np.zeros((len(points), 3 - points.shape[1]))]
     ck = read_checkpoint(d)
     n = len(points)
     if n == len(ck["points"]):
-        write_checkpoint(d, points=points)
+        write_checkpoint(d, points=points, **({"cell_id": np.full(n, -1)} if "cell_id" in ck else {}))
         return
-    new = {"points": points, "id": np.arange(n), "c": np.linspace(0., 1., n), "t_loc": np.zeros(n)}
+    new = {"points": points, "id": np.arange(n), "c": np.linspace(0., 1., n), "t_loc": np.zeros(n),
+           "cell_id": np.full(n, -1)}
     extra = [k for k in PER_PARTICLE if k in ck and k not in new]
     assert not extra, "cannot resize %s" % extra
     write_checkpoint(d, **{k: v for k, v in new.items() if k in ck})
@@ -158,7 +164,6 @@ def write_text_checkpoint(folder, F_whole=False):
             rows(stem, *columns(ck[name]))
     if "Q" in ck:
         if F_whole:
-            from dumps import deformation_gradient
             F = deformation_gradient({"Q": ck["Q"], "logstretch": ck["logstretch"], "U": ck["U"]})
             rows("F.ten", *columns(F.reshape(-1, 9)))
         else:
@@ -184,3 +189,57 @@ def continuous_and_resumed(binary, example, root, args, stop, end, env=None, tex
         write_text_checkpoint(resume / "Checkpoints")
     run_app(binary, split, args, end, ["restart_folder=%s" % resume], env=env)
     return cont.parent, split.parent
+
+
+# --- comparing runs ------------------------------------------------------------
+
+def cells_counts(stdout):
+    """RK4cells' counts per particle-step, by name, from the first report in stdout; {} without one."""
+    m = re.search(r"RK4cells: (\d+) particle-steps; per particle-step (.*)", stdout)
+    if not m:
+        return {}
+    return {k: float(v) for v, k in re.findall(r"([0-9.e+-]+) ([a-z ]+?)(?:,|$)", m.group(2))}
+
+
+def same_dumps(a, b, after=-1.0, skip=()):
+    """The dumps of the runs in the folders a and b after a time: the same
+    times and datasets, every dataset but those in skip bit for bit, as
+    written; the times compared."""
+    da, db = all_dumps(a, raw=True), all_dumps(b, raw=True)
+    times = sorted(t for t in da if t > after)
+    assert times and times == sorted(t for t in db if t > after), (sorted(da), sorted(db))
+    for t in times:
+        assert set(da[t]) == set(db[t]), t
+        for k in set(da[t]) - set(skip):
+            assert np.array_equal(da[t][k], db[t][k]), (t, k)
+    return times
+
+
+def same_checkpoint(a, b):
+    """The checkpoints under the folders a and b: the same datasets, each bit
+    for bit; a's checkpoint."""
+    ca, cb = read_checkpoint(a), read_checkpoint(b)
+    assert set(ca) == set(cb), (sorted(ca), sorted(cb))
+    for k in ca:
+        assert np.array_equal(ca[k], cb[k]), k
+    return ca
+
+
+def same_stats(a, b):
+    """The statistics files under the folders a and b: the same columns, each bit for bit."""
+    sa, sb = read_stats(a), read_stats(b)
+    assert list(sa) == list(sb), (list(sa), list(sb))
+    for k in sa:
+        assert np.array_equal(sa[k], sb[k]), k
+
+
+def halving_ratios(runs):
+    """For runs [(x, F)] at dt halving from one to the next, the ratios of the
+    successive changes of F and of x, p90 over the particles: [(rF, rx)], one
+    for each three runs in a row."""
+    ratios = []
+    for (x0, F0), (x1, F1), (x2, F2) in zip(runs, runs[1:], runs[2:]):
+        dF = [np.percentile(np.linalg.norm(a - b, axis=(1, 2)), 90) for a, b in ((F0, F1), (F1, F2))]
+        dx = [np.percentile(np.linalg.norm(a - b, axis=1), 90) for a, b in ((x0, x1), (x1, x2))]
+        ratios.append((dF[0] / dF[1], dx[0] / dx[1]))
+    return ratios

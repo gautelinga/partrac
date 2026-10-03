@@ -25,6 +25,14 @@ The executables end up in `build/bin/`. `-DPARTRAC_ENABLE_OPENFOAM=ON` adds
 ```
 ctest --test-dir build --output-on-failure
 ```
+A coverage build:
+```
+cmake -S . -B build-cov -DPARTRAC_COVERAGE=ON
+make -C build-cov -j
+ctest --test-dir build-cov
+gcovr
+```
+Its loops run serially.
 
 ## Running
 Passive tracers example:
@@ -38,7 +46,7 @@ A run writes `Checkpoints/checkpoint.h5` every `checkpoint_intv` and at the end.
 ```
 
 ## Apps
-One app per kind of thing followed, all on the same run loop. Every app reads its field through any interpolator (`mode=`); the ones that step in time take `scheme=explicit` (with noise when `Dm > 0`) or `scheme=RK4`.
+One app per kind of thing followed, all on the same run loop. Every app reads its field through any interpolator (`mode=`); the ones that step in time take a time scheme (below).
 
 | App                     | What it follows                                                           |
 |-------------------------|---------------------------------------------------------------------------|
@@ -52,9 +60,13 @@ One app per kind of thing followed, all on the same run loop. Every app reads it
 | `filaments`             | Pairs of points and their stretching                                      |
 | `interpol`              | Probes the fields at random points                                        |
 
-Stretching rates `S` in the dumps: `tracervectors` always writes the line element's, shape (N, 1); `tracertensors` writes the three along its frame's axes, shape (N, 3), with `output_S=true`. Their means and variances are statistics columns of both apps.
-
 The older per-interpolator names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still run: each is its app with the interpolator and the choices it used to fix pinned (`apps/CMakeLists.txt`).
+
+### Time schemes
+Set with `scheme`.
+* `explicit`: Euler, or second order with `int_order=2`. Diffusive when `Dm > 0`.
+* `RK4`: Fourth-order Runge-Kutta. Ignores `Dm`.
+* `RK4cells`: RK4 with the steps cut where a particle crosses a cell facet, `Dm=0`. 
 
 ## Mesh examples
 The `data_example` folders for the mesh modes (`ppf_triangle_p2`, `test_triangle_p2`, `test_tet_p1`, `test_tet_p2`, `sine_trianglefreq_p2`, `sine_tetfreq_p2`) ship a `generate_up.py` rather than the mesh itself. Run it inside the folder to write `mesh.h5` and `up_0.h5`:
@@ -62,15 +74,6 @@ The `data_example` folders for the mesh modes (`ppf_triangle_p2`, `test_triangle
 cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 ```
 It needs FEniCS/dolfin.
-
-## Divergence-free velocity fields
-`python/divfree/divfree_clean.py` prepares a dolfin HDF5 case so that the velocity is divergence-free in every cell, which keeps tracers from stopping at no-slip walls. The output is a case of its own whose parameter file carries `divfree=true`.
-```
-python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
-mpirun -n 8 python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
-python3 python/divfree/divfree_clean.py CLEANED/dolfin_params.dat --check
-```
-It needs `h5py`, `scipy`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the options. Under `mpirun` each rank holds its part of the mesh; run it with `OMP_NUM_THREADS=1`.
 
 ## Visualization
 Plotting the position:
@@ -103,3 +106,12 @@ Set with `init_mode`. The trailing axes select the direction(s) involved.
 `filaments` starts from `pair_*` or `pairs_*` only.
 
 `init_weight` selects how `points_*` samples positions: `uniform`, `u`, or one velocity component `ux`, `uy`, `uz`.
+
+## Divergence-free velocity fields
+`python/divfree/divfree_clean.py` prepares a dolfin HDF5 case so that the velocity is divergence-free in every cell, which keeps tracers from stopping at no-slip walls. The output is a case of its own whose parameter file carries `divfree=true`.
+```
+python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
+mpirun -n 8 python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out CLEANED
+python3 python/divfree/divfree_clean.py CLEANED/dolfin_params.dat --check
+```
+It needs `h5py`, `scipy`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the options. Under `mpirun` each rank holds its part of the mesh; run it with `OMP_NUM_THREADS=1`.

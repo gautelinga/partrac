@@ -3,7 +3,8 @@
 The mesh examples ship a generator rather than the mesh, so the cases that need
 a mesh build it here, once per session and shared by the xdist workers, and
 skip when dolfin is missing. The FELBM and XDMF cases are small synthetic inputs
-written directly in the formats StructuredInterpol and the XDMF loaders read.
+written directly in the formats StructuredInterpol and the XDMF loaders read;
+stamp_mesh is a P1 square holding exact fields, put in time by cases.stamp_case.
 """
 
 import os
@@ -12,7 +13,7 @@ import subprocess
 
 import pytest
 
-from cases import shared_dir, write_felbm
+from cases import LINEAR, UNIFORM, shared_dir, write_felbm
 from paths import REPO
 
 DATA = os.path.join(REPO, "data_example")
@@ -95,6 +96,34 @@ def felbm_dir(tmp_path_factory):
         write_felbm(d, [fields, fields], solid)
 
     return shared_dir(tmp_path_factory, "felbm", build)
+
+
+@pytest.fixture(scope="session")
+def stamp_mesh(tmp_path_factory):
+    """A folder holding the P1 square mesh, one field file per entry of LINEAR and UNIFORM,
+    and dolfin_params.dat; a test writes its own timestamps.dat."""
+    df = pytest.importorskip("dolfin", reason="mesh generation needs dolfin")
+
+    def build(d):
+        mesh = df.RectangleMesh(df.Point(-2.0, -2.0), df.Point(2.0, 2.0), 8, 8)
+        V = df.VectorFunctionSpace(mesh, "CG", 1)
+        P = df.FunctionSpace(mesh, "CG", 1)
+        p = df.interpolate(df.Expression("0.0", degree=1), P)
+        exprs = {k: ("%r*x[0] + %r*x[1]" % tuple(A[0]), "%r*x[0] + %r*x[1]" % tuple(A[1]))
+                 for k, A in LINEAR.items()}
+        exprs.update({k: ("%r" % U[0], "%r" % U[1]) for k, U in UNIFORM.items()})
+        with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as h:
+            h.write(mesh, "mesh")
+        for name, e in exprs.items():
+            u = df.interpolate(df.Expression(e, degree=1), V)
+            with df.HDF5File(mesh.mpi_comm(), str(d / (name + ".h5")), "w") as h:
+                h.write(u, "u")
+                h.write(p, "p")
+        (d / "dolfin_params.dat").write_text(
+            "velocity_space=P1\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
+            "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
+
+    return shared_dir(tmp_path_factory, "stamp_mesh", build)
 
 
 @pytest.fixture(scope="session")

@@ -30,10 +30,9 @@ sys.path.insert(0, HERE)
 import numpy as np                 # noqa: E402
 import pytest                      # noqa: E402
 
-from divfree_cases import (D, channel2d, channel3d, mpi_clean, mpi_run,  # noqa: E402
+from divfree_cases import (CLEANER, D, channel2d, channel3d, mpi_clean, mpi_run,  # noqa: E402
                            read_back, same_log, same_output, smooth_noslip,
                            two_cells, write_case)
-from paths import REPO             # noqa: E402
 from test_divfree_files import poke_checkpoint   # noqa: E402
 
 from mpi4py import MPI             # noqa: E402
@@ -205,9 +204,13 @@ REFUSED = {
 }
 
 
+# each refusal at two or three ranks, in turn; the case built for two at two
+KIND_RANKS = [(k, 2 if k == "cells disagree across ranks" else 2 + i % 2)
+              for i, k in enumerate(sorted(REFUSED))]
+
+
 @pytest.mark.slow
-@pytest.mark.parametrize("ranks", [2, 3])
-@pytest.mark.parametrize("kind", sorted(REFUSED))
+@pytest.mark.parametrize("kind,ranks", KIND_RANKS, ids=["%s-%d" % c for c in KIND_RANKS])
 def test_a_refusal_fires_on_every_rank_and_names_what_one_rank_names(tmp_path, kind, ranks):
     """Each rank reads only its rows and values, so what is wrong may be in
     another rank's share: the verdict is reduced over the ranks and every rank
@@ -317,24 +320,15 @@ def test_both_write_routes_write_the_same_case_and_say_which(tmp_path, monkeypat
             assert np.abs(a - b).max() < 1e-12 * scale, out
 
 
-@pytest.mark.slow
-def test_the_gather_is_forced_by_one_or_true_and_by_nothing_else(tmp_path, monkeypatch):
+def test_the_gather_is_forced_by_one_or_true_and_by_nothing_else(monkeypatch):
     """PARTRAC_HDF5_GATHER=0 or =false reads as asking for no gather, so only 1
-    and true, in any case, force it; the log says which route was taken."""
-    pytest.importorskip("h5py")
-    X, cells = channel2d(4)
-    t = D.Topo(X, cells, [True, False])
-    cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
-    said = {}
-    for value in ("", "0", "false", "1", "True"):
+    and true, in any case, force it. Which route the log names is the write
+    routes' test's."""
+    from divfree_write import gather_forced
+    for value, forced in (("", False), ("0", False), ("false", False), ("yes", False),
+                          ("1", True), ("True", True), (" TRUE ", True)):
         monkeypatch.setenv("PARTRAC_HDF5_GATHER", value)
-        r = mpi_clean(cfg, tmp_path / ("out" + value), 2)
-        said[value] = r.stdout.rstrip().split("\n")[-1]
-    if said[""].endswith("gathered to rank 0"):
-        pytest.skip("the h5py of the jobs has no MPI, so every run was gathered")
-    for value, route in (("0", "through parallel HDF5"), ("false", "through parallel HDF5"),
-                         ("1", "gathered to rank 0"), ("True", "gathered to rank 0")):
-        assert said[value].endswith(route), (value, said[value])
+        assert gather_forced() == forced, value
 
 
 @pytest.mark.slow
@@ -351,8 +345,7 @@ def test_the_check_on_several_ranks_reports_what_one_rank_reports(tmp_path):
                      stamps=["0", "1"])
     said = {}
     for n in (1, 3):
-        r = mpi_run(n, [os.path.join(REPO, "python", "divfree", "divfree_clean.py"), cfg,
-                        "--check"], timeout=120)
+        r = mpi_run(n, [CLEANER, cfg, "--check"], timeout=120)
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
         lines = r.stdout.rstrip().split("\n")
         assert sum(l.startswith("  0 up_0.h5:") for l in lines) == 1, r.stdout

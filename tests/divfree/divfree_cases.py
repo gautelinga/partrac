@@ -18,7 +18,8 @@ import pytest
 
 from paths import REPO, app
 
-sys.path.insert(0, os.path.join(REPO, "python", "divfree"))
+CLEANER = os.path.join(REPO, "python", "divfree", "divfree_clean.py")
+sys.path.insert(0, os.path.dirname(CLEANER))
 
 if not os.environ.get("PARTRAC_REQUIRE_MPI"):
     pytest.importorskip("petsc4py", reason="the cleaner solves with PETSc")
@@ -501,8 +502,7 @@ def mpi_run(ranks, args, timeout=900, env=None):
 def mpi_clean(cfg, out, ranks, extra=(), ok=True, timeout=900):
     """The tool as its own job on that many ranks. With ok=False the job is
     expected to fail and the caller reads the output."""
-    tool = os.path.join(REPO, "python", "divfree", "divfree_clean.py")
-    r = mpi_run(ranks, [tool, cfg, "--out", out] + list(extra), timeout)
+    r = mpi_run(ranks, [CLEANER, cfg, "--out", out] + list(extra), timeout)
     if ok:
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     return r

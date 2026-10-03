@@ -4,6 +4,7 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "Initializer.hpp"
+#include "TracerParams.hpp"
 
 // Parameters accepted by this app
 inline partrac::Schema partrac_schema(){
@@ -60,7 +61,7 @@ inline partrac::Schema partrac_schema(){
   s.opt<bool>("integrate_tau", false, "integrate the eigentime");
   s.opt<bool>("output_all_props", true, "dump all properties");
   s.opt<bool>("minimal_output", false, "dump less");
-  s.opt<std::string>("scheme", "explicit", "ODE integration scheme");
+  add_scheme(s, "explicit");
   s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
   s.opt<std::string>("tag", "", "appended to the folder name");
   s.opt<std::string>("restart_folder", "", "folder to restart from");
@@ -72,7 +73,6 @@ inline partrac::Schema partrac_schema(){
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
   s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
                      "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
-  s.choices("scheme", {"explicit", "RK4"});
   s.choices("outside", {"ignore", "reinject", "mark"});
   s.choices("exit_plane", {"none", "x", "y", "z"});
   s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
@@ -81,11 +81,6 @@ inline partrac::Schema partrac_schema(){
             return !(p.get<bool>("inject") && p.get<bool>("filter"));
           },
           "cannot inject and filter at the same time");
-  // RK4 ignores Dm
-  s.warn([](const partrac::Params& p){
-           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
-         },
-         "scheme=RK4 ignores Dm");
   // Floor output intervals at one step; 0 is off, negative an error
   s.check([](const partrac::Params& p){
             for (const auto& key : {"checkpoint_intv", "coarsen_intv", "dump_intv", "filter_intv", "inject_intv", "refine_intv", "stat_intv", "tau_intv"})

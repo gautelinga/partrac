@@ -261,3 +261,9 @@ void hdf52ulongs(const H5::H5File& h5f, const std::string& dsetname, const Uint 
   hdf5_check(h5f, dsetname, rows, cols);
   partrac::h5_read(h5f.getId(), dsetname, a);
 }
+
+void hdf52ints(const H5::H5File& h5f, const std::string& dsetname, const Uint rows, const Uint cols,
+               std::vector<int>& a){
+  hdf5_check(h5f, dsetname, rows, cols);
+  partrac::h5_read(h5f.getId(), dsetname, a);
+}

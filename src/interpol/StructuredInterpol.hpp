@@ -1,6 +1,9 @@
 #ifndef __STRUCTUREDINTERPOL_HPP
 #define __STRUCTUREDINTERPOL_HPP
 
+#include <algorithm>
+#include <array>
+#include <limits>
 #include "Error.hpp"
 #include "Interpol.hpp"
 #include "Params.hpp"
@@ -270,6 +273,23 @@ inline void compute_velocity_subcube(double V[2][2][2], const Grid3<double>& u, 
   enforce_noslip(V, is_solid_2);
 }
 
+// A region of the lattice, x never wrapped: a floor cell whose nodes are all
+// fluid, or one of the eight sub-cubes of a floor cell next to a solid node,
+// whose nearest node is its corner on that side
+struct LatticeRegion {
+  int id = -1;                      // the wrapped node: the floor cell's, or the sub-cube's nearest
+  std::array<int, 3> f = {0, 0, 0}; // the floor cell
+  int sub = -1;                     // -1: the floor cell; else bit a set for the upper half along axis a
+};
+
+// A floor cell's or a sub-cube's velocity nodes at both stamps, [stamp][component][i][j][k]:
+// a sub-cube's from the refined nodes with no slip, beside its solid corners
+struct LatticeNodes {
+  double v[2][3][2][2][2];
+  bool solid[2][2][2];
+  bool bulk;
+};
+
 // The felbm lattice: loading, stamps, locate and reflect; the two below evaluate on it
 class StructuredLattice
   : public Interpol {
@@ -308,6 +328,15 @@ public:
     double _dwuz_x[2][2][2],
     double _dwuz_y[2][2][2],
     double _dwuz_z[2][2][2]);
+  // The weights of a floor cell from its 1D weights
+  void bulk_weights(const double _wq[3][2], double _w[2][2][2], double _dw_x[2][2][2], double _dw_y[2][2][2],
+                    double _dw_z[2][2][2]) const;
+  // probe_space_boundary's weights of a sub-cube from its 1D weights, for the held evaluation
+  void sub_weights(const double _wq[3][2], const bool _is_solid_2[2][2][2], double _wux[2][2][2],
+                   double _wuy[2][2][2], double _wuz[2][2][2], double _dwux_x[2][2][2], double _dwux_y[2][2][2],
+                   double _dwux_z[2][2][2], double _dwuy_x[2][2][2], double _dwuy_y[2][2][2],
+                   double _dwuy_z[2][2][2], double _dwuz_x[2][2][2], double _dwuz_y[2][2][2],
+                   double _dwuz_z[2][2][2]) const;
   //bool inside_domain(const Vector3d &x) const;
   Uint get_nx() { return n[0]; };
   Uint get_ny() { return n[1]; };
@@ -368,6 +397,53 @@ public:
   StructuredInterpol(const std::string& infilename) : StructuredLattice(infilename, "linear") {}
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   using Interpol::evaluate;
+  // Regions (regions.hpp's interface): levels the region's 1D weights, the
+  // lower face's then the upper face's along each axis; a point on an upper
+  // face is the next region's
+  using region_type = LatticeRegion;
+  using levels_type = std::array<double, 6>;
+  static constexpr int n_levels = 6;
+  static constexpr bool half_open = true;
+  bool region_of(const int id, const Vector3d& x, const double band, LatticeRegion& R, levels_type& lev) const;
+  LatticeRegion region_in(const int id, const Vector3d& x) const;
+  Vector3d region_point(const LatticeRegion& R, const Vector3d& x, levels_type& lev) const;
+  int across(const LatticeRegion& R, const int k, const Vector3d& x, LatticeRegion& next) const;
+  void level_rates(const LatticeRegion& R, const Vector3d& v, levels_type& rate) const;
+  Vector3d level_grad(const LatticeRegion& R, const int k) const;
+  bool is_wall(const LatticeRegion& R, const int k) const;
+  // The sub-cubes'
+  double region_size(const int) const { return 0.5*hmin(); }
+  // Ids a region takes: its node's
+  Uint cell_count() const { return n[0]*n[1]*n[2]; }
+  using Held = LatticeNodes;
+  void hold(const LatticeRegion& R, Held& h) const;
+  // evaluate's velocity, its rate and gradient at the levels of the held region
+  void held_motion(const int id, const levels_type& lev, const double t, const Held& h, PointValues& fields) const;
+  // The same without the gradient
+  void held_velocity(const int id, const levels_type& lev, const double t, const Held& h, PointValues& fields) const;
+private:
+  // The 1D weights of a floor cell, and of the region R at x
+  void bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const;
+  void region_wq(const LatticeRegion& R, const Vector3d& x, double wq[3][2]) const;
+  // The wrapped node indices of floor cell f
+  void cell_ind(const std::array<int, 3>& f, Uint ind[3][2]) const;
+  bool fluid_cell(const std::array<int, 3>& f) const;
+  int node_id(const std::array<int, 3>& f, const int sub) const;
+  bool solid_node(const std::array<int, 3>& f, const int sub) const;
+  // The region holding x: the floor cell, else the sub-cube of x's halves
+  LatticeRegion region_at(const Vector3d& x) const;
+  // At a face shared by sub-cubes: the one whose node is id, if its levels at x are down to -tol
+  bool region_named(const int id, const Vector3d& x, const double tol, LatticeRegion& R) const;
+  void gather(const Uint ind[3][2], const bool bulk, const bool sub_x[3], LatticeNodes& h) const;
+  // A weighted sum of stamp s's component c of the gathered nodes
+  struct NodeVals {
+    const double (&v)[2][3][2][2][2];
+    template<int s, int c>
+    double sum(const double w[2][2][2]) const { return inner_product(w, v[s][c]); }
+  };
+  // Velocity, its rate and gradient from the 1D weights and the gathered nodes; Velocity: no gradient
+  template<bool Velocity>
+  void motion_at(const double wq[3][2], const LatticeNodes& h, const double alpha_t, PointValues& fields) const;
 };
 
 // The nearest node in space; no gradient
@@ -578,6 +654,285 @@ inline void StructuredConstInterpol::check_gradient() const {
   }
 }
 
+inline void StructuredInterpol::bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const {
+  for (Uint i=0; i<3; ++i){
+    double wxi = (x[i]-dx[i]*ix_fl[i])/dx[i];
+    wq[i][0] = 1 - wxi;
+    wq[i][1] =     wxi;
+  }
+}
+
+inline void StructuredInterpol::region_wq(const LatticeRegion& R, const Vector3d& x, double wq[3][2]) const {
+  if (R.sub < 0){
+    bulk_wq(x, R.f.data(), wq);
+    return;
+  }
+  for (Uint i=0; i<3; ++i){
+    const double xd = x[i]/dx[i] - R.f[i];
+    double wxi = (R.sub >> i) & 1 ? 2 * xd - 1.0: 2 * xd;
+    wq[i][0] = 1 - wxi;
+    wq[i][1] =     wxi;
+  }
+}
+
+inline void StructuredInterpol::cell_ind(const std::array<int, 3>& f, Uint ind[3][2]) const {
+  for (Uint i=0; i<3; ++i){
+    ind[i][0] = imodulo(f[i], n[i]);
+    ind[i][1] = imodulo(ind[i][0] + 1, n[i]);
+  }
+}
+
+inline bool StructuredInterpol::fluid_cell(const std::array<int, 3>& f) const {
+  Uint ind[3][2];
+  cell_ind(f, ind);
+  for (Uint i=0; i<2; ++i)
+    for (Uint j=0; j<2; ++j)
+      for (Uint k=0; k<2; ++k)
+        if (isSolid(ind[0][i], ind[1][j], ind[2][k]))
+          return false;
+  return true;
+}
+
+inline int StructuredInterpol::node_id(const std::array<int, 3>& f, const int sub) const {
+  const int s = sub < 0 ? 0 : sub;
+  return int((imodulo(f[0] + (s & 1), n[0])*n[1] + imodulo(f[1] + ((s >> 1) & 1), n[1]))*n[2]
+             + imodulo(f[2] + ((s >> 2) & 1), n[2]));
+}
+
+inline bool StructuredInterpol::solid_node(const std::array<int, 3>& f, const int sub) const {
+  return isSolid(imodulo(f[0] + (sub & 1), n[0]), imodulo(f[1] + ((sub >> 1) & 1), n[1]),
+                 imodulo(f[2] + ((sub >> 2) & 1), n[2]));
+}
+
+inline LatticeRegion StructuredInterpol::region_at(const Vector3d& x) const {
+  LatticeRegion R;
+  for (Uint i=0; i<3; ++i)
+    R.f[i] = floor(x[i]/dx[i]);
+  if (!fluid_cell(R.f)){
+    R.sub = 0;
+    for (Uint i=0; i<3; ++i)
+      if (x[i]/dx[i] - R.f[i] >= 0.5) R.sub |= 1 << i;
+  }
+  R.id = node_id(R.f, R.sub);
+  return R;
+}
+
+inline bool StructuredInterpol::region_named(const int id, const Vector3d& x, const double tol, LatticeRegion& R) const {
+  if (R.sub < 0 || id < 0)
+    return false;
+  for (int s = 0; s < 8; ++s){
+    LatticeRegion S = R;
+    S.sub = s;
+    S.id = node_id(S.f, s);
+    if (S.id != id) continue;
+    levels_type lev;
+    region_point(S, x, lev);
+    if (*std::min_element(lev.begin(), lev.end()) >= -tol){
+      R = S;
+      return true;
+    }
+  }
+  return false;
+}
+
+inline bool StructuredInterpol::region_of(const int id, const Vector3d& x, const double band, LatticeRegion& R,
+                                          levels_type& lev) const {
+  R = region_at(x);
+  if (R.sub >= 0 && solid_node(R.f, R.sub) && !region_named(id, x, band, R))
+    return false;
+  region_point(R, x, lev);
+  return true;
+}
+
+inline LatticeRegion StructuredInterpol::region_in(const int id, const Vector3d& x) const {
+  LatticeRegion R = region_at(x);
+  // A tie on a face, or a point just across a wall: the stored node's sub-cube
+  if (R.id != id)
+    region_named(id, x, R.sub >= 0 && solid_node(R.f, R.sub) ? std::numeric_limits<double>::infinity() : 0., R);
+  return R;
+}
+
+inline Vector3d StructuredInterpol::region_point(const LatticeRegion& R, const Vector3d& x, levels_type& lev) const {
+  double wq[3][2];
+  region_wq(R, x, wq);
+  for (int a = 0; a < 3; ++a){
+    lev[2*a] = wq[a][1];
+    lev[2*a + 1] = wq[a][0];
+  }
+  return x;
+}
+
+inline int StructuredInterpol::across(const LatticeRegion& R, const int k, const Vector3d& x, LatticeRegion& next) const {
+  const int a = k >> 1, bit = 1 << a;
+  const bool up = k & 1;
+  const int entered = 2*a + !up;
+  next = R;
+  // A sub-cube's mid-plane: the next sub-cube of the cell, a wall if its node is solid
+  if (R.sub >= 0 && up != bool(R.sub & bit)){
+    next.sub = R.sub ^ bit;
+    if (solid_node(next.f, next.sub))
+      return -1;
+    next.id = node_id(next.f, next.sub);
+    return entered;
+  }
+  next.f[a] += up ? 1 : -1;
+  if (fluid_cell(next.f))
+    next.sub = -1;
+  // Next to a solid: the sub-cube on the face entered, its node on that face
+  else if (R.sub >= 0)
+    next.sub = R.sub ^ bit;
+  else {
+    next.sub = up ? 0 : bit;
+    for (int b = 0; b < 3; ++b)
+      if (b != a && x[b]/dx[b] - next.f[b] >= 0.5) next.sub |= 1 << b;
+  }
+  next.id = node_id(next.f, next.sub);
+  return entered;
+}
+
+inline void StructuredInterpol::level_rates(const LatticeRegion& R, const Vector3d& v, levels_type& rate) const {
+  const double scale = R.sub < 0 ? 1. : 2.;
+  for (int a = 0; a < 3; ++a){
+    rate[2*a] = scale*v[a]/dx[a];
+    rate[2*a + 1] = -rate[2*a];
+  }
+}
+
+inline Vector3d StructuredInterpol::level_grad(const LatticeRegion& R, const int k) const {
+  Vector3d g = Vector3d::Zero();
+  g[k >> 1] = (k & 1 ? -1. : 1.)*(R.sub < 0 ? 1. : 2.)/dx[k >> 1];
+  return g;
+}
+
+inline bool StructuredInterpol::is_wall(const LatticeRegion& R, const int k) const {
+  const int bit = 1 << (k >> 1);
+  return R.sub >= 0 && bool(k & 1) != bool(R.sub & bit) && solid_node(R.f, R.sub ^ bit);
+}
+
+inline void StructuredInterpol::gather(const Uint ind[3][2], const bool bulk, const bool sub_x[3], LatticeNodes& h) const {
+  const Grid3<double>* g[2][3] = {{&ux_prev, &uy_prev, &uz_prev}, {&ux_next, &uy_next, &uz_next}};
+  h.bulk = bulk;
+  if (bulk){
+    for (Uint s=0; s<2; ++s)
+      for (Uint c=0; c<3; ++c)
+        for (Uint i=0; i<2; ++i)
+          for (Uint j=0; j<2; ++j)
+            for (Uint k=0; k<2; ++k)
+              h.v[s][c][i][j][k] = (*g[s][c])(ind[0][i], ind[1][j], ind[2][k]);
+    return;
+  }
+  bool is_solid_3[3][3][3];
+  compute_solid_local(is_solid_3, isSolid, ind);
+  get_subcube(h.solid, is_solid_3, sub_x);
+  for (Uint s=0; s<2; ++s)
+    for (Uint c=0; c<3; ++c)
+      compute_velocity_subcube(h.v[s][c], *g[s][c], h.solid, sub_x, ind, W);
+}
+
+template<bool Velocity>
+__attribute__((always_inline))
+inline void StructuredInterpol::motion_at(const double _wq[3][2], const LatticeNodes& h, const double alpha_t,
+                                          PointValues& fields) const {
+  double Ux_prev, Uy_prev, Uz_prev;
+  double Ux_next, Uy_next, Uz_next;
+
+  double Uxx_prev, Uxx_next, Uxy_prev, Uxy_next, Uxz_prev, Uxz_next;
+  double Uyx_prev, Uyx_next, Uyy_prev, Uyy_next, Uyz_prev, Uyz_next;
+  double Uzx_prev, Uzx_next, Uzy_prev, Uzy_next, Uzz_prev, Uzz_next;
+
+  const NodeVals v{h.v};
+  if (h.bulk) // Bulk cell
+  {
+    double _w[2][2][2], _dw_x[2][2][2], _dw_y[2][2][2], _dw_z[2][2][2];
+    bulk_weights(_wq, _w, _dw_x, _dw_y, _dw_z);
+
+    Ux_prev = v.template sum<0, 0>(_w);
+    Ux_next = v.template sum<1, 0>(_w);
+    Uy_prev = v.template sum<0, 1>(_w);
+    Uy_next = v.template sum<1, 1>(_w);
+    Uz_prev = v.template sum<0, 2>(_w);
+    Uz_next = v.template sum<1, 2>(_w);
+
+    if constexpr (!Velocity){
+      Uxx_prev = v.template sum<0, 0>(_dw_x);
+      Uxx_next = v.template sum<1, 0>(_dw_x);
+      Uxy_prev = v.template sum<0, 0>(_dw_y);
+      Uxy_next = v.template sum<1, 0>(_dw_y);
+      Uxz_prev = v.template sum<0, 0>(_dw_z);
+      Uxz_next = v.template sum<1, 0>(_dw_z);
+      Uyx_prev = v.template sum<0, 1>(_dw_x);
+      Uyx_next = v.template sum<1, 1>(_dw_x);
+      Uyy_prev = v.template sum<0, 1>(_dw_y);
+      Uyy_next = v.template sum<1, 1>(_dw_y);
+      Uyz_prev = v.template sum<0, 1>(_dw_z);
+      Uyz_next = v.template sum<1, 1>(_dw_z);
+      Uzx_prev = v.template sum<0, 2>(_dw_x);
+      Uzx_next = v.template sum<1, 2>(_dw_x);
+      Uzy_prev = v.template sum<0, 2>(_dw_y);
+      Uzy_next = v.template sum<1, 2>(_dw_y);
+      Uzz_prev = v.template sum<0, 2>(_dw_z);
+      Uzz_next = v.template sum<1, 2>(_dw_z);
+    }
+  }
+  else // Close to boundary
+  {
+    double _wux[2][2][2], _dwux_x[2][2][2], _dwux_y[2][2][2], _dwux_z[2][2][2];
+    double _wuy[2][2][2], _dwuy_x[2][2][2], _dwuy_y[2][2][2], _dwuy_z[2][2][2];
+    double _wuz[2][2][2], _dwuz_x[2][2][2], _dwuz_y[2][2][2], _dwuz_z[2][2][2];
+    sub_weights(_wq, h.solid, _wux, _wuy, _wuz, _dwux_x, _dwux_y, _dwux_z,
+                _dwuy_x, _dwuy_y, _dwuy_z, _dwuz_x, _dwuz_y, _dwuz_z);
+
+    Ux_prev = v.template sum<0, 0>(_wux);
+    Ux_next = v.template sum<1, 0>(_wux);
+    Uy_prev = v.template sum<0, 1>(_wuy);
+    Uy_next = v.template sum<1, 1>(_wuy);
+    Uz_prev = v.template sum<0, 2>(_wuz);
+    Uz_next = v.template sum<1, 2>(_wuz);
+
+    if constexpr (!Velocity){
+      Uxx_prev = v.template sum<0, 0>(_dwux_x);
+      Uxx_next = v.template sum<1, 0>(_dwux_x);
+      Uxy_prev = v.template sum<0, 0>(_dwux_y);
+      Uxy_next = v.template sum<1, 0>(_dwux_y);
+      Uxz_prev = v.template sum<0, 0>(_dwux_z);
+      Uxz_next = v.template sum<1, 0>(_dwux_z);
+      Uyx_prev = v.template sum<0, 1>(_dwuy_x);
+      Uyx_next = v.template sum<1, 1>(_dwuy_x);
+      Uyy_prev = v.template sum<0, 1>(_dwuy_y);
+      Uyy_next = v.template sum<1, 1>(_dwuy_y);
+      Uyz_prev = v.template sum<0, 1>(_dwuy_z);
+      Uyz_next = v.template sum<1, 1>(_dwuy_z);
+      Uzx_prev = v.template sum<0, 2>(_dwuz_x);
+      Uzx_next = v.template sum<1, 2>(_dwuz_x);
+      Uzy_prev = v.template sum<0, 2>(_dwuz_y);
+      Uzy_next = v.template sum<1, 2>(_dwuz_y);
+      Uzz_prev = v.template sum<0, 2>(_dwuz_z);
+      Uzz_next = v.template sum<1, 2>(_dwuz_z);
+    }
+  }
+
+  fields.U = { alpha_t * Ux_next + (1-alpha_t) * Ux_prev,
+               alpha_t * Uy_next + (1-alpha_t) * Uy_prev,
+               alpha_t * Uz_next + (1-alpha_t) * Uz_prev };
+  fields.A = { stamp_rate(Ux_next, Ux_prev, t_prev, t_next),
+               stamp_rate(Uy_next, Uy_prev, t_prev, t_next),
+               stamp_rate(Uz_next, Uz_prev, t_prev, t_next) };
+
+  if constexpr (!Velocity){
+    Matrix3d gradU_prev;
+    gradU_prev << Uxx_prev, Uxy_prev, Uxz_prev,
+                  Uyx_prev, Uyy_prev, Uyz_prev,
+                  Uzx_prev, Uzy_prev, Uzz_prev;
+
+    Matrix3d gradU_next;
+    gradU_next << Uxx_next, Uxy_next, Uxz_next,
+                  Uyx_next, Uyy_next, Uyz_next,
+                  Uzx_next, Uzy_next, Uzz_next;
+
+    fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
+  }
+}
+
 inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields){
   // Time weight between stamps
   const double alpha_t = stamp_weight(t, t_prev, t_next);
@@ -743,6 +1098,24 @@ inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, cons
 
 }
 
+inline void StructuredInterpol::hold(const LatticeRegion& R, Held& h) const {
+  Uint ind[3][2];
+  cell_ind(R.f, ind);
+  const bool sub_x[3] = {bool(R.sub & 1), bool(R.sub & 2), bool(R.sub & 4)};
+  gather(ind, R.sub < 0, sub_x, h);
+}
+
+inline void StructuredInterpol::held_motion(const int, const levels_type& lev, const double t, const Held& h,
+                                            PointValues& fields) const {
+  const double wq[3][2] = {{lev[1], lev[0]}, {lev[3], lev[2]}, {lev[5], lev[4]}};
+  motion_at<false>(wq, h, stamp_weight(t, t_prev, t_next), fields);
+}
+
+inline void StructuredInterpol::held_velocity(const int, const levels_type& lev, const double t, const Held& h,
+                                              PointValues& fields) const {
+  const double wq[3][2] = {{lev[1], lev[0]}, {lev[3], lev[2]}, {lev[5], lev[4]}};
+  motion_at<true>(wq, h, stamp_weight(t, t_prev, t_next), fields);
+}
 
 inline bool StructuredLattice::compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]){
   // Assuming this cell is not inside the solid phase
@@ -785,6 +1158,16 @@ inline void StructuredLattice::probe_space_bulk(const Vector3d &x,
     _wq[i][1] =     wxi;
   }
 
+  bulk_weights(_wq, _w, _dw_x, _dw_y, _dw_z);
+}
+
+__attribute__((always_inline))
+inline void StructuredLattice::bulk_weights(const double _wq[3][2],
+    double _w[2][2][2],
+    double _dw_x[2][2][2],
+    double _dw_y[2][2][2],
+    double _dw_z[2][2][2]
+  ) const {
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){
       for (Uint k=0; k<2; ++k){
@@ -845,6 +1228,69 @@ inline void StructuredLattice::probe_space_boundary(
     _wq[i][1] =     wxi;
   }
 
+  double gamma = 2;
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        double wqux = _wq[0][i];
+        double dwqux = dwq[0][i];
+        double wquy = _wq[1][j];
+        double dwquy = dwq[1][j];
+        double wquz = _wq[2][k];
+        double dwquz = dwq[2][k];
+
+        if (_is_solid_2[i == 0 ? 1 : 0][j][k]){
+          wqux = pow(_wq[0][i], gamma);
+          dwqux = gamma * pow(_wq[0][i], gamma-1) * dwq[0][i];
+        }
+
+        if (_is_solid_2[i][j == 0 ? 1 : 0][k]){
+          wquy = pow(_wq[1][j], gamma);
+          dwquy = gamma * pow(_wq[1][j], gamma-1) * dwq[1][j];
+        }
+
+        if (_is_solid_2[i][j][k == 0 ? 1 : 0]){
+          wquz = pow(_wq[2][k], gamma);
+          dwquz = gamma * pow(_wq[2][k], gamma-1) * dwq[2][k];
+        }
+
+        _wux[i][j][k] = wqux     * _wq[1][j] * _wq[2][k];
+        _wuy[i][j][k] = _wq[0][i] * wquy     * _wq[2][k];
+        _wuz[i][j][k] = _wq[0][i] * _wq[1][j] * wquz;
+
+        _dwux_x[i][j][k] = 2 * dwqux * _wq[1][j] * _wq[2][k];
+        _dwux_y[i][j][k] = 2 *  wqux * dwq[1][j] * _wq[2][k];
+        _dwux_z[i][j][k] = 2 *  wqux * _wq[1][j] * dwq[2][k];
+
+        _dwuy_x[i][j][k] = 2 * dwq[0][i] *  wquy * _wq[2][k];
+        _dwuy_y[i][j][k] = 2 * _wq[0][i] * dwquy * _wq[2][k];
+        _dwuy_z[i][j][k] = 2 * _wq[0][i] *  wquy * dwq[2][k];
+
+        _dwuz_x[i][j][k] = 2 * dwq[0][i] * _wq[1][j] *  wquz;
+        _dwuz_y[i][j][k] = 2 * _wq[0][i] * dwq[1][j] *  wquz;
+        _dwuz_z[i][j][k] = 2 * _wq[0][i] * _wq[1][j] * dwquz;
+      }
+    }
+  }
+}
+
+__attribute__((always_inline))
+inline void StructuredLattice::sub_weights(const double _wq[3][2],
+  const bool _is_solid_2[2][2][2],
+  double _wux[2][2][2],
+  double _wuy[2][2][2],
+  double _wuz[2][2][2],
+  double _dwux_x[2][2][2],
+  double _dwux_y[2][2][2],
+  double _dwux_z[2][2][2],
+  double _dwuy_x[2][2][2],
+  double _dwuy_y[2][2][2],
+  double _dwuy_z[2][2][2],
+  double _dwuz_x[2][2][2],
+  double _dwuz_y[2][2][2],
+  double _dwuz_z[2][2][2]
+  ) const
+{
   double gamma = 2;
   for (Uint i=0; i<2; ++i){
     for (Uint j=0; j<2; ++j){

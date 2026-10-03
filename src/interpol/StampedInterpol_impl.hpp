@@ -106,13 +106,7 @@ void StampedInterpol<Cell, Format>::freeze(const double t)
                   t_min, " to ", t_max);
   update(t);
   const double a = stamp_weight(t, t_prev, t_next);
-  if (a == 1.){
-    u_prev_ = u_next_;
-    p_prev_ = p_next_;
-    phi_prev_ = phi_next_;
-    rest_tol_prev_ = rest_tol_next_;
-  }
-  else if (a != 0.){
+  if (a != 0.){
     // Blend the two stamps into one
     const auto blend = [a](const std::vector<double>& prev, const std::vector<double>& next,
                            std::vector<double>& out){

@@ -11,6 +11,7 @@
 #include "RKIntegrator.hpp"
 #include "ExplicitIntegrator.hpp"
 #include "SpatialIntegrator.hpp"
+#include "tableau.hpp"
 #include <type_traits>
 #include <utility>
 
@@ -29,49 +30,22 @@ inline void evaluate_motion(Interp& intp, const Vector3d& x, const double t, con
   else intp.evaluate(x, t, pos, ptvals);
 }
 
-// One RK4 step of h from (x, t): dx, the element's el (unnormalised) or dF, pos
-// at the end; false if a stage or the end is outside. Stop: no stage after an outside one
-template<TransportElement E, bool Stop, typename Interp>
-inline bool rk4_stages(Interp& intp, PointValues& ptvals, CellPos& pos, const Vector3d& x,
-                       [[maybe_unused]] const Vector3d& n, [[maybe_unused]] const Matrix3d& F,
-                       const double t, const double h,
-                       Vector3d& dx, [[maybe_unused]] Vector3d& el, [[maybe_unused]] Matrix3d& dF){
-  Vector3d k1, k2, k3, k4;
-  [[maybe_unused]] Vector3d F1, F2, F3, F4;
-  [[maybe_unused]] Matrix3d dF1, dF2, dF3, dF4;
-  bool inside = true;
-  k1 = k2 = k3 = k4 = Vector3d::Zero();
-  if constexpr (E == TransportElement::Vector) F1 = F2 = F3 = F4 = Vector3d::Zero();
-  if constexpr (E == TransportElement::Tensor) dF1 = dF2 = dF3 = dF4 = Matrix3d::Zero();
-  if (intp.locate(x, t, pos)){
+// A stage located from scratch: inside if a cell holds it
+template<typename Interp>
+struct LocatedEval {
+  Interp& intp;
+  PointValues& ptvals;
+  CellPos& pos;
+  bool operator()(const Vector3d& x, const double t){
+    if (!intp.locate(x, t, pos))
+      return false;
     evaluate_motion(intp, x, t, pos, ptvals);
-    k1 = ptvals.get_u();
-    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); F1 = J * n; }
-    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); dF1 = J * F; }
-  } else inside = false;
-  if ((!Stop || inside) && intp.locate(x + k1 * h/2, t + h/2, pos)){
-    evaluate_motion(intp, x + k1 * h/2, t + h/2, pos, ptvals);
-    k2 = ptvals.get_u();
-    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n2 = n + F1 * h/2; F2 = J * n2; }
-    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F2 = F + dF1 * h/2; dF2 = J * F2; }
-  } else inside = false;
-  if ((!Stop || inside) && intp.locate(x + k2 * h/2, t + h/2, pos)){
-    evaluate_motion(intp, x + k2 * h/2, t + h/2, pos, ptvals);
-    k3 = ptvals.get_u();
-    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n3 = n + F2 * h/2; F3 = J * n3; }
-    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F3 = F + dF2 * h/2; dF3 = J * F3; }
-  } else inside = false;
-  if ((!Stop || inside) && intp.locate(x + k3 * h, t + h, pos)){
-    evaluate_motion(intp, x + k3 * h, t + h, pos, ptvals);
-    k4 = ptvals.get_u();
-    if constexpr (E == TransportElement::Vector){ const Matrix3d J = ptvals.get_J(); const Vector3d n4 = n + F3 * h; F4 = J * n4; }
-    if constexpr (E == TransportElement::Tensor){ const Matrix3d J = ptvals.get_J(); const Matrix3d F4 = F + dF3 * h; dF4 = J * F4; }
-  } else inside = false;
-  dx = (k1 + 2*k2 + 2*k3 + k4) * h/6;
-  if constexpr (E == TransportElement::Vector) el = n + (F1 + 2*F2 + 2*F3 + F4) * h/6;
-  if constexpr (E == TransportElement::Tensor) dF = (dF1 + 2*dF2 + 2*dF3 + dF4) * h/6;
-  return inside && intp.locate(x + dx, t + h, pos);
-}
+    return true;
+  }
+  Vector3d u(){ return ptvals.get_u(); }
+  Matrix3d J(){ return ptvals.get_J(); }
+  bool end(const Vector3d& x, const double t){ return intp.locate(x, t, pos); }
+};
 
 // A step with a stage or its end outside, again in 2, 4, then 8 substeps with
 // every stage inside; false: the particle leaves the fluid. Out of the loop:
@@ -90,11 +64,12 @@ bool rk4_substeps(Interp& intp, ParticleSet& ps, const Uint i, const double t, c
     if constexpr (E == TransportElement::Vector){ n = ps.rhohat(i); w = ps.w(i); }
     if constexpr (E == TransportElement::Tensor) F = ps.frame(i);
     PointValues ptvals(intp.get_U0());
+    LocatedEval<Interp> ev{intp, ptvals, pos};
     bool ok = true;
     for (int s = 0; s < m && ok; ++s){
       Vector3d dx, el;
       Matrix3d dF;
-      ok = rk4_stages<E, true>(intp, ptvals, pos, x, n, F, t + s*h, h, dx, el, dF);
+      ok = rk_stages<RK4Tableau, E, true>(ev, x, n, F, t + s*h, h, dx, el, dF);
       if (!ok)
         break;
       if constexpr (E == TransportElement::Vector){
@@ -141,8 +116,9 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
         [[maybe_unused]] Vector3d el;
         [[maybe_unused]] Matrix3d dF;
 
+        LocatedEval<Interp> ev{intp, ptvals, pos};
         // An outside stage or end: substeps
-        if (rk4_stages<E, false>(intp, ptvals, pos, x, n, F, t, dt, dx, el, dF)){
+        if (rk_stages<RK4Tableau, E, false>(ev, x, n, F, t, dt, dx, el, dF)){
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
             if constexpr (E == TransportElement::Vector){

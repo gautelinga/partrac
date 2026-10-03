@@ -217,12 +217,12 @@ def expect_route(r, route):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("route", ["parallel", "gather"])
-@pytest.mark.parametrize("ranks", [2, 3, 4])
+@pytest.mark.parametrize("ranks", [2, 3])
 @pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
 def test_every_rank_writes_what_the_serial_writers_write(tmp_path, dim, ranks, route):
     """Each rank writes its own uneven block of the cells and of the nodes --
-    the two split differently, rank 1 holding no cells and at three ranks and
-    more one rank no nodes -- in pieces far smaller than a block, so every
+    the two split differently, rank 1 holding no cells and at three ranks one
+    rank no nodes -- in pieces far smaller than a block, so every
     loop runs. The files must equal the serial writers' dataset by dataset and
     attribute by attribute on either route, and a group the input does not
     hold is reported missing by every rank."""

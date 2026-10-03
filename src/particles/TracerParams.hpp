@@ -15,6 +15,21 @@ struct TracerDefaults {
   bool output_J;
 };
 
+// The time scheme, def by default; reads Dm
+inline void add_scheme(partrac::Schema& s, const std::string& def){
+  s.opt<std::string>("scheme", def, "ODE integration scheme; explicit is the diffusive step, RK4cells RK4 cut at the cells' facets");
+  s.choices("scheme", {"explicit", "RK4", "RK4cells"});
+  s.check([](const partrac::Params& p){
+            return p.get<std::string>("scheme") != "RK4cells" || p.get<double>("Dm") == 0.0;
+          },
+          "scheme=RK4cells has no diffusion: Dm must be 0");
+  // RK4 ignores Dm
+  s.warn([](const partrac::Params& p){
+           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
+         },
+         "scheme=RK4 ignores Dm");
+}
+
 namespace tracer_params_detail {
 
 inline void add_common(partrac::Schema& s, const TracerDefaults& d){
@@ -101,15 +116,9 @@ inline void add_tracer_params(partrac::Schema& s, const TracerDefaults& d){
   s.require<double>("T", "final time");
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
   s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
-  s.opt<std::string>("scheme", "RK4", "ODE integration scheme; explicit is the diffusive step");
+  add_scheme(s, "RK4");
   s.opt<std::string>("outside", d.outside, "a particle that cannot take its step: ignore (it stays), reinject at a random offset, or mark (c = 2)");
-  s.choices("scheme", {"explicit", "RK4"});
   s.choices("outside", {"ignore", "reinject", "mark"});
-  // RK4 ignores Dm
-  s.warn([](const partrac::Params& p){
-           return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
-         },
-         "scheme=RK4 ignores Dm");
   s.finalize([](partrac::Params& p){
     tracer_params_detail::floor_intervals(p, p.get<double>("dt"));
   });

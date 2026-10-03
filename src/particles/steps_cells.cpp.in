@@ -1,0 +1,8 @@
+// The RK4cells loop for @INTERP@ and one transport element, a unit of its own beside the RK4 loop
+#include "steps_cells_impl.hpp"
+#include "@INTERP@.hpp"
+
+// The RK4 substeps of the fallback, compiled with the RK4 loop
+extern template bool rk4_substeps<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const Uint, const double, const double);
+
+template std::vector<Uint> RK4CellsIntegrator::step<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);

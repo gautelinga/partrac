@@ -30,13 +30,13 @@ import os
 import numpy as np
 import pytest
 
+from cases import ABC
 from dumps import all_dumps, read_stats
 from paths import REPO, app
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
-ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
 SINE3D = os.path.join(REPO, "data_example", "sine_flow_3d", "expr_params.dat")
 PI = 3.14159265358979
 

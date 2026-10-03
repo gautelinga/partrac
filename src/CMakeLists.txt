@@ -31,6 +31,11 @@ target_link_libraries(${PROJECT_NAME}_io PUBLIC ${PROJECT_NAME}_base
 
 # Interpolators; only the reference loader (mode fenics) needs dolfin
 set(PARTRAC_INTERPOL_SOURCES interpol/interpol_factory.cpp interpol/mesh_tables.cpp)
+# A coverage build's one OpenMP unit: it splits its work by omp_get_max_threads
+if (PARTRAC_COVERAGE)
+  separate_arguments(PARTRAC_OPENMP_FLAGS UNIX_COMMAND "${OpenMP_CXX_FLAGS}")
+  set_source_files_properties(interpol/mesh_tables.cpp PROPERTIES COMPILE_OPTIONS "${PARTRAC_OPENMP_FLAGS}")
+endif()
 # Shewchuk's exact predicates, vendored verbatim: C, none of our warnings, and
 # no floating-point contraction, which their exactness rests on. An object
 # library of its own so that a C source takes none of the C++ options.
@@ -45,9 +50,12 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/MeshCore.cpp
   interpol/SimplexInterpol.cpp
   interpol/SimplexInterpol_eval.cpp
+  interpol/SimplexInterpol_held.cpp
   interpol/SplitInterpol.cpp
   interpol/SplitInterpol_eval.cpp
+  interpol/SplitInterpol_held.cpp
   interpol/XDMFInterpol_eval.cpp
+  interpol/XDMFInterpol_held.cpp
   interpol/simplex_load.cpp
   interpol/SimplexFreqInterpol.cpp
   interpol/XDMFInterpol.cpp
@@ -60,8 +68,9 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/openfoam_phase.cpp
   interpol/OpenFoamInterpol.cpp
   interpol/OpenFoamInterpol_eval.cpp
-  $<TARGET_OBJECTS:${PROJECT_NAME}_predicates>
+  interpol/OpenFoamInterpol_held.cpp
   )
+set(PARTRAC_INTERPOL_OBJECTS $<TARGET_OBJECTS:${PROJECT_NAME}_predicates>)
 
 # The OpenFOAM reader, the only unit that includes an OpenFOAM header: its
 # include tree as system headers and its flags, linked with DT_RPATH to the
@@ -104,17 +113,24 @@ if (PARTRAC_ENABLE_DOLFIN)
   target_link_libraries(${PROJECT_NAME}_dolfin PUBLIC ${PROJECT_NAME}_io ${PROJECT_NAME}_base
     OpenMP::OpenMP_CXX dolfin)
   set_property(TARGET ${PROJECT_NAME}_dolfin PROPERTY POSITION_INDEPENDENT_CODE ON)
-  list(APPEND PARTRAC_INTERPOL_SOURCES $<TARGET_OBJECTS:${PROJECT_NAME}_dolfin>)
+  list(APPEND PARTRAC_INTERPOL_OBJECTS $<TARGET_OBJECTS:${PROJECT_NAME}_dolfin>)
 endif()
-add_library(${PROJECT_NAME}_interpol ${PARTRAC_INTERPOL_SOURCES})
-target_include_directories(${PROJECT_NAME}_interpol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/interpol)
-target_link_libraries(${PROJECT_NAME}_interpol PUBLIC ${PROJECT_NAME}_io ${PROJECT_NAME}_base
-  OpenMP::OpenMP_CXX)
-if (PARTRAC_ENABLE_DOLFIN)
-  target_link_libraries(${PROJECT_NAME}_interpol PUBLIC dolfin)
-endif()
+# The units an object library, which compiles while the other object libraries
+# do; the archive takes all of them
+add_library(${PROJECT_NAME}_interpol_units OBJECT ${PARTRAC_INTERPOL_SOURCES})
+add_library(${PROJECT_NAME}_interpol $<TARGET_OBJECTS:${PROJECT_NAME}_interpol_units>
+  ${PARTRAC_INTERPOL_OBJECTS})
+foreach(t ${PROJECT_NAME}_interpol_units ${PROJECT_NAME}_interpol)
+  target_include_directories(${t} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/interpol)
+  target_link_libraries(${t} PUBLIC ${PROJECT_NAME}_io ${PROJECT_NAME}_base OpenMP::OpenMP_CXX)
+  if (PARTRAC_ENABLE_DOLFIN)
+    target_link_libraries(${t} PUBLIC dolfin)
+  endif()
+  if (PARTRAC_ENABLE_OPENFOAM)
+    target_link_libraries(${t} PUBLIC ${CMAKE_DL_LIBS})
+  endif()
+endforeach()
 if (PARTRAC_ENABLE_OPENFOAM)
-  target_link_libraries(${PROJECT_NAME}_interpol PUBLIC ${CMAKE_DL_LIBS})
   add_dependencies(${PROJECT_NAME}_interpol ${PROJECT_NAME}_openfoam)
 endif()
 
@@ -128,41 +144,70 @@ set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
 if (PARTRAC_ENABLE_DOLFIN)
   set(PARTRAC_DOLFIN_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol)
 endif()
+# The interpolators with regions (has_regions), which RK4cells steps in cells
+set(PARTRAC_CELLS_INTERPOLATORS ${PARTRAC_STEP_INTERPOLATORS})
+list(REMOVE_ITEM PARTRAC_CELLS_INTERPOLATORS AnalyticInterpol StructuredConstInterpol)
 set(PARTRAC_STEP_SOURCES)
+set(PARTRAC_CELLS_STEP_SOURCES)
 set(PARTRAC_DOLFIN_STEP_SOURCES)
+# The step objects in the order of this loop, where CMake writes them for the
+# object libraries below
+set(PARTRAC_STEP_OBJECTS)
+set(PARTRAC_OBJDIR ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles)
 foreach(INTERP ${PARTRAC_STEP_INTERPOLATORS} ${PARTRAC_DOLFIN_STEP_INTERPOLATORS})
   set(STEP_LIST PARTRAC_STEP_SOURCES)
+  set(STEP_DIR ${PARTRAC_OBJDIR}/${PROJECT_NAME}_steps_units.dir)
   if (INTERP IN_LIST PARTRAC_DOLFIN_STEP_INTERPOLATORS)
     set(STEP_LIST PARTRAC_DOLFIN_STEP_SOURCES)
+    set(STEP_DIR ${PARTRAC_OBJDIR}/${PROJECT_NAME}_dolfin_steps.dir)
   endif()
   configure_file(particles/steps.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp @ONLY)
   list(APPEND ${STEP_LIST} ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp)
+  list(APPEND PARTRAC_STEP_OBJECTS ${STEP_DIR}/steps_${INTERP}.cpp${CMAKE_CXX_OUTPUT_EXTENSION})
   foreach(ELEMENT Point Vector Tensor)
     configure_file(particles/steps_rk4.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_rk4_${ELEMENT}_${INTERP}.cpp @ONLY)
     list(APPEND ${STEP_LIST} ${CMAKE_CURRENT_BINARY_DIR}/steps_rk4_${ELEMENT}_${INTERP}.cpp)
+    list(APPEND PARTRAC_STEP_OBJECTS ${STEP_DIR}/steps_rk4_${ELEMENT}_${INTERP}.cpp${CMAKE_CXX_OUTPUT_EXTENSION})
+    if (INTERP IN_LIST PARTRAC_CELLS_INTERPOLATORS)
+      configure_file(particles/steps_cells.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_cells_${ELEMENT}_${INTERP}.cpp @ONLY)
+      list(APPEND PARTRAC_CELLS_STEP_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/steps_cells_${ELEMENT}_${INTERP}.cpp)
+      list(APPEND PARTRAC_STEP_OBJECTS
+        ${PARTRAC_OBJDIR}/${PROJECT_NAME}_cells_units.dir/steps_cells_${ELEMENT}_${INTERP}.cpp${CMAKE_CXX_OUTPUT_EXTENSION})
+    endif()
   endforeach()
 endforeach()
 
-# The step loops of the reference loader, for the same reason
+# Precompiled step headers; no prologue, which would silence their warnings
+set(CMAKE_PCH_PROLOGUE "")
+add_library(${PROJECT_NAME}_steps_units OBJECT ${PARTRAC_STEP_SOURCES})
+target_precompile_headers(${PROJECT_NAME}_steps_units PRIVATE particles/steps_impl.hpp)
+add_library(${PROJECT_NAME}_cells_units OBJECT ${PARTRAC_CELLS_STEP_SOURCES})
+target_precompile_headers(${PROJECT_NAME}_cells_units PRIVATE particles/steps_cells_impl.hpp)
+set(PARTRAC_STEP_TARGETS ${PROJECT_NAME}_steps_units ${PROJECT_NAME}_cells_units)
+
+# The step loops of the reference loader; no precompiled header: too large
 if (PARTRAC_ENABLE_DOLFIN)
   add_library(${PROJECT_NAME}_dolfin_steps OBJECT ${PARTRAC_DOLFIN_STEP_SOURCES})
-  target_include_directories(${PROJECT_NAME}_dolfin_steps PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/particles)
-  target_link_libraries(${PROJECT_NAME}_dolfin_steps PUBLIC ${PROJECT_NAME}_interpol)
   set_property(TARGET ${PROJECT_NAME}_dolfin_steps PROPERTY POSITION_INDEPENDENT_CODE ON)
-  list(APPEND PARTRAC_STEP_SOURCES $<TARGET_OBJECTS:${PROJECT_NAME}_dolfin_steps>)
+  list(APPEND PARTRAC_STEP_TARGETS ${PROJECT_NAME}_dolfin_steps)
 endif()
 
 # Particles, meshes, initializers, steps and the run loop
-add_library(${PROJECT_NAME}_particles
+add_library(${PROJECT_NAME}_particles_units OBJECT
   particles/mesh.cpp
   particles/Topology.cpp
   particles/Initializer.cpp
   particles/stepping.cpp
-  ${PARTRAC_STEP_SOURCES}
   )
-target_include_directories(${PROJECT_NAME}_particles PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/particles)
-target_link_libraries(${PROJECT_NAME}_particles PUBLIC ${PROJECT_NAME}_interpol)
+# Step objects in the loop's order
+set_source_files_properties(${PARTRAC_STEP_OBJECTS} PROPERTIES EXTERNAL_OBJECT ON GENERATED ON)
+add_library(${PROJECT_NAME}_particles $<TARGET_OBJECTS:${PROJECT_NAME}_particles_units>
+  ${PARTRAC_STEP_OBJECTS})
+add_dependencies(${PROJECT_NAME}_particles ${PARTRAC_STEP_TARGETS})
+foreach(t ${PROJECT_NAME}_particles_units ${PARTRAC_STEP_TARGETS} ${PROJECT_NAME}_particles)
+  target_include_directories(${t} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/particles)
+  target_link_libraries(${t} PUBLIC ${PROJECT_NAME}_interpol)
+endforeach()
 
 # What every app links against
 add_library(${PROJECT_NAME}_core INTERFACE)

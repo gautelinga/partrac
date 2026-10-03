@@ -7,6 +7,7 @@
 // SimplexInterpol reads a stamp and held by node, so an evaluation gathers the
 // cell's nodes out of each component in turn.
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -37,6 +38,14 @@ public:
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() { return dolfin_params.template get<double>("t_min"); };
   double get_t_max() { return dolfin_params.template get<double>("t_max"); };
+  // A cell's velocity nodes in every component, gathered once for the evaluations in it
+  struct Held {
+    std::vector<double> blocks;   // a component's block every n_dofs_max*3
+  };
+  void hold(const Region& R, Held& h) const;
+  // evaluate_motion at the barycentrics of cell id from its held nodes
+  void held_motion(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
+                   PointValues& fields);
 protected:
   template<bool Scalars>
   void evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);

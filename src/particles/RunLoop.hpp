@@ -145,7 +145,7 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
         if (ry) Dx[1] = uy(run.gens[0]);
         if (rz) Dx[2] = uz(run.gens[0]);
       } while (!run.intp->locate(ps.x(i) + Dx));
-      ps.set_x(i, ps.x(i) + Dx);
+      ps.move(i, ps.x(i) + Dx);
     }
   }
   if (outside == "mark")

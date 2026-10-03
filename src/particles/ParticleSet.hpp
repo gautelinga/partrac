@@ -1,5 +1,6 @@
 #ifndef __PARTICLESET_HPP
 #define __PARTICLESET_HPP
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include "Error.hpp"
@@ -15,6 +16,9 @@
 #include <numeric>
 #include <algorithm>
 
+
+// The cells of a mesh interpolator, 0 for the rest (stepping.cpp)
+Uint cell_count(Interpol& intp);
 
 class ParticleSet {
 public:
@@ -35,6 +39,8 @@ public:
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
     Vector3d x(const Uint i) const { return x_rw[i]; };
     void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
+    // Moved: its cell unknown
+    void move(const Uint i, const Vector3d& pos) { x_rw[i] = pos; cell_id_rw[i] = -1; };
     double t_loc(const Uint i) const { return t_loc_rw[i]; };
     void set_t_loc(const Uint i, const double val) { t_loc_rw[i] = val; };
     Vector3d u(const Uint i) const { return u_rw[i]; };
@@ -88,7 +94,7 @@ public:
     // Deformation gradient F = Q diag(exp(logstretch)) U, U unit upper triangular:
     // the stretches as logs, the frame orthonormal
     Matrix3d F(const Uint i) const;
-    void set_F(const Uint i, const Matrix3d& F) { factor_F(i, F, 0.); };
+    void set_F(const Uint i, const Matrix3d& F) { factor_F(i, F); };
     Matrix3d frame(const Uint i) const { return Q_rw[i]; };
     // The frame after a step, M = (propagator) Q: kept while well conditioned,
     // else factored into F's factors
@@ -108,7 +114,7 @@ public:
     void load_vector(const std::string filename, const std::string fieldname);
     void load_tensor(const std::string filename, const std::string fieldname);
     void load_ids(const std::string filename);
-    // Checkpoint: positions, ids and the carried fields; t_loc if asked
+    // Checkpoint: positions, ids and next_id, the carried fields and cell ids; t_loc if asked
     void write_checkpoint(H5::H5File& h5f, const bool with_t_loc) const;
     void read_checkpoint(const H5::H5File& h5f, const bool with_t_loc);
   private:
@@ -140,8 +146,8 @@ public:
     std::vector<Vector3d> logstretch_rw;   // the log of its triangular factor's diagonal
     std::vector<Vector3d> U_rw;        // and the unit triangular factor's entries 01, 02, 12
     std::vector<Vector3d> S3_rw;       // its stretching rates along the settled frame
-    // F = exp(s) G, factored into the fields of slot i
-    void factor_F(const Uint i, const Matrix3d& G, const double s);
+    // F = G, factored into the fields of slot i
+    void factor_F(const Uint i, const Matrix3d& G);
     // Recorded fields, sized by record_*()
     bool has_J = false, has_phi = false, has_cell_type = false, has_generation = false;
     std::vector<Matrix3d> J_rw;
@@ -215,10 +221,10 @@ inline void ParticleSet::add(const std::vector<Vector3d> &pos_init,
 //template<typename T>
 inline bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside=true){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
+  int cell_id = cell_id_rw[inode];
   
   if (check_if_inside){
     double t0 = 0.; // not needed?
-    int cell_id = cell_id_rw[inode];
     
     bool inside = intp->locate(x_rw_new, t0, cell_id);
     if (!inside){
@@ -267,6 +273,8 @@ inline bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode,
   }
 
   x_rw[Nrw] = x_rw_new;
+  // The cell located, else unknown
+  cell_id_rw[Nrw] = check_if_inside ? cell_id : -1;
 
   c_rw[Nrw] = 0.5*(c_rw[inode]+c_rw[jnode]);
   t_loc_rw[Nrw] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
@@ -310,7 +318,7 @@ inline void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint
   Uint irws[2] = {inode, jnode};
   for (Uint i=0; i<2; ++i){
     Uint irw = irws[i];
-    x_rw[irw] = x;
+    move(irw, x);
     c_rw[irw] = 0.5*(c_rw[inode]+c_rw[jnode]);
     t_loc_rw[irw] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
 
@@ -341,8 +349,8 @@ inline void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node
     else {
         pos_new = x_rw[jnode];
     }
-    x_rw[inode] = pos_new;
-    x_rw[jnode] = pos_new;
+    move(inode, pos_new);
+    move(jnode, pos_new);
 
     c_rw[new_inode] = 0.5*(c_rw[inode]+c_rw[jnode]);
     t_loc_rw[new_inode] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);
@@ -574,24 +582,6 @@ inline void ParticleSet::init_carried_fields(const Uint irw){
 
 // Interpolate carried fields
 inline void ParticleSet::interpolate_carried(const Uint k, const Uint inode, const Uint jnode){
-  if (element == TransportElement::Vector){
-    Vector3d r = 0.5*(rhohat_rw[inode] + rhohat_rw[jnode]);
-    const double rn = r.norm();
-    rhohat_rw[k] = rn > 0. ? Vector3d(r/rn) : rhohat_rw[inode];
-    w_rw[k] = 0.5*(w_rw[inode] + w_rw[jnode]);
-    S_rw[k] = 0.5*(S_rw[inode] + S_rw[jnode]);
-  }
-  if (element == TransportElement::Tensor){
-    // The mean of the two F, on the larger's scale
-    const double s = std::max(logstretch_rw[inode].maxCoeff(), logstretch_rw[jnode].maxCoeff());
-    auto scaled = [&](const Uint n){
-      Matrix3d Uf = Matrix3d::Identity();
-      Uf(0, 1) = U_rw[n][0]; Uf(0, 2) = U_rw[n][1]; Uf(1, 2) = U_rw[n][2];
-      return Matrix3d(Q_rw[n] * (logstretch_rw[n].array() - s).exp().matrix().asDiagonal() * Uf);
-    };
-    factor_F(k, 0.5*(scaled(inode) + scaled(jnode)), s);
-    S3_rw[k] = 0.5*(S3_rw[inode] + S3_rw[jnode]);
-  }
   if (has_J) J_rw[k] = 0.5*(J_rw[inode] + J_rw[jnode]);
   if (has_phi) phi_rw[k] = 0.5*(phi_rw[inode] + phi_rw[jnode]);
   if (has_cell_type) cell_type_rw[k] = cell_type_rw[inode];   // label
@@ -658,7 +648,7 @@ inline void ParticleSet::load_tensor(const std::string filename, const std::stri
   else if (fieldname == "F"){
     std::vector<Matrix3d> F_whole(N());
     load_tensor_field(filename, F_whole, N());
-    for (Uint i = 0; i < N(); ++i) factor_F(i, F_whole[i], 0.);
+    for (Uint i = 0; i < N(); ++i) factor_F(i, F_whole[i]);
   }
   else { partrac::fail("ParticleSet::load_tensor: no field '", fieldname, "'"); }
 }
@@ -669,7 +659,7 @@ inline Matrix3d ParticleSet::F(const Uint i) const {
 }
 
 // Gram-Schmidt: G = Q R, R's diagonal positive
-inline void ParticleSet::factor_F(const Uint i, const Matrix3d& G, const double s){
+inline void ParticleSet::factor_F(const Uint i, const Matrix3d& G){
   Vector3d q0 = G.col(0), q1 = G.col(1), q2 = G.col(2);
   const double r00 = q0.norm();
   q0 /= r00;
@@ -684,7 +674,7 @@ inline void ParticleSet::factor_F(const Uint i, const Matrix3d& G, const double 
   const double r22 = q2.norm();
   q2 /= r22;
   Q_rw[i] << q0, q1, q2;
-  logstretch_rw[i] = {s + log(r00), s + log(r11), s + log(r22)};
+  logstretch_rw[i] = {log(r00), log(r11), log(r22)};
   U_rw[i] = {r01/r00, r02/r00, r12/r11};
 }
 
@@ -760,6 +750,10 @@ inline void ParticleSet::write_checkpoint(H5::H5File& h5f, const bool with_t_loc
   }
   if (has_generation)
     scalar2hdf5(h5f, "generation", generation_rw, N());
+  int2hdf5(h5f, "cell_id", cell_id_rw, N());
+  const std::uint64_t next = next_id;
+  h5f.createAttribute("next_id", H5::PredType::NATIVE_UINT64, H5::DataSpace(H5S_SCALAR))
+     .write(H5::PredType::NATIVE_UINT64, &next);
 }
 
 inline void ParticleSet::read_checkpoint(const H5::H5File& h5f, const bool with_t_loc){
@@ -795,6 +789,21 @@ inline void ParticleSet::read_checkpoint(const H5::H5File& h5f, const bool with_
   hdf52ulongs(h5f, "id", n, 1, ids);
   std::copy(ids.begin(), ids.end(), id_rw.begin());
   next_id = ids.empty() ? 0 : *std::max_element(ids.begin(), ids.end()) + 1;
+  // Ids of removed nodes stay unused; none saved in older checkpoints
+  if (H5Aexists(h5f.getId(), "next_id") > 0){
+    std::uint64_t next = 0;
+    try { h5f.openAttribute("next_id").read(H5::PredType::NATIVE_UINT64, &next); }
+    catch (const H5::Exception&){ partrac::fail(h5f.getFileName(), ": cannot read 'next_id'"); }
+    next_id = std::max<Uint>(next_id, next);
+  }
+  // Cells of this mesh only; none in older checkpoints
+  if (h5f.nameExists("cell_id")){
+    std::vector<int> cell_ids;
+    hdf52ints(h5f, "cell_id", n, 1, cell_ids);
+    const Uint nc = intp ? cell_count(*intp) : 0;
+    for (Uint i = 0; i < n; ++i)
+      cell_id_rw[i] = cell_ids[i] >= 0 && Uint(cell_ids[i]) < nc ? cell_ids[i] : -1;
+  }
 }
 
 // bool ParticleSet::integrate(const double t, const double dt){

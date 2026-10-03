@@ -23,10 +23,10 @@ import re
 import numpy as np
 import pytest
 
-from cases import shared_dir
+from cases import LINEAR, UNIFORM, stamp_case
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
 from paths import app
-from runs import checkpoint_file, checkpoint_folder, copy_case, run_app
+from runs import checkpoint_file, checkpoint_folder, run_app
 
 PARTRAC = app("partrac")
 TRACERS = app("tracers")
@@ -34,12 +34,6 @@ TENSORS = app("tracertensors")
 
 needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (PARTRAC, TRACERS, TENSORS)),
                                 reason="partrac, tracers or tracertensors is not built")
-
-# The fields the generator writes, by file stem: a matrix A (u = A x) or a vector U (u = U)
-LINEAR = {"lin_a": [[0.3, 1.0], [-0.8, -0.3]],
-          "lin_b": [[-0.5, 0.4], [-1.2, 0.5]],
-          "out": [[1.0, 0.0], [0.0, -1.0]]}
-UNIFORM = {"uni_a": [0.2, 0.1], "uni_b": [-0.1, 0.3]}
 
 # Alternating stamps off the dt grid of every dt below; the last far past T
 ALTERNATING = [(0.0, "a"), (0.37, "b"), (0.61, "a"), (1.13, "b"), (3.0, "a")]
@@ -51,41 +45,6 @@ TENSOR_BASE = ("mode=triangle init_mode=points_x x0=0 y0=0 z0=0 Nrw=40 Nrw_max=4
 PARTRAC_BASE = ("mode=triangle init_mode=strip_x La=1 x0=0 y0=0 z0=0 Nrw=50 Nrw_max=5000 "
                 "ds_max=1e9 ds_min=1e-9 refine=false coarsen=false Dm=0 int_order=1 scheme=RK4 "
                 "checkpoint_intv=1e9 random=false seed=1").split()
-
-
-@pytest.fixture(scope="session")
-def stamp_mesh(tmp_path_factory):
-    """A folder holding the P1 square mesh, one field file per entry of LINEAR and UNIFORM,
-    and dolfin_params.dat; a test writes its own timestamps.dat."""
-    df = pytest.importorskip("dolfin", reason="mesh generation needs dolfin")
-
-    def build(d):
-        mesh = df.RectangleMesh(df.Point(-2.0, -2.0), df.Point(2.0, 2.0), 8, 8)
-        V = df.VectorFunctionSpace(mesh, "CG", 1)
-        P = df.FunctionSpace(mesh, "CG", 1)
-        p = df.interpolate(df.Expression("0.0", degree=1), P)
-        exprs = {k: ("%r*x[0] + %r*x[1]" % tuple(A[0]), "%r*x[0] + %r*x[1]" % tuple(A[1]))
-                 for k, A in LINEAR.items()}
-        exprs.update({k: ("%r" % U[0], "%r" % U[1]) for k, U in UNIFORM.items()})
-        with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as h:
-            h.write(mesh, "mesh")
-        for name, e in exprs.items():
-            u = df.interpolate(df.Expression(e, degree=1), V)
-            with df.HDF5File(mesh.mpi_comm(), str(d / (name + ".h5")), "w") as h:
-                h.write(u, "u")
-                h.write(p, "p")
-        (d / "dolfin_params.dat").write_text(
-            "velocity_space=P1\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
-            "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
-
-    return shared_dir(tmp_path_factory, "stamp_mesh", build)
-
-
-def case(stamp_mesh, root, stamps, name="case"):
-    """A copy of the mesh case under root/name with the stamps [(t, field stem)]; return its params file."""
-    d = copy_case(stamp_mesh, root / name)
-    (d / "timestamps.dat").write_text("".join("%r %s.h5\n" % (t, f) for t, f in stamps))
-    return d / "dolfin_params.dat"
 
 
 def alternating(prefix):
@@ -124,7 +83,7 @@ def flow_map(stamps, t_end, n=400):
 
 def tensor_errors(stamp_mesh, root, dt, binary=TENSORS):
     """(max |F - Phi|, max |x - Phi x0|) at T of tracertensors under RK4 on the alternating linear flow."""
-    params = case(stamp_mesh, root, alternating("lin"), "dt%g" % dt)
+    params = stamp_case(stamp_mesh, root, alternating("lin"), "dt%g" % dt)
     run_app(binary, params, TENSOR_BASE, "scheme=RK4 dt=%r T=%r dump_intv=%r" % (dt, T, T + dt / 2))
     g0, gT = dump_at(params.parent, 0.0), dump_at(params.parent, T)
     # far from the walls, where no particle leaves the square
@@ -163,7 +122,7 @@ def test_the_explicit_step_takes_the_new_rate_past_a_stamp(stamp_mesh, tmp_path)
     in time exactly, and across stamps only if the step is cut there. Every
     particle moves by the integral of U(t), to round-off."""
     stamps = alternating("uni")
-    params = case(stamp_mesh, tmp_path, stamps)
+    params = stamp_case(stamp_mesh, tmp_path, stamps)
     run_app(TENSORS, params, TENSOR_BASE,
             "scheme=explicit int_order=2 dt=0.1 T=%r dump_intv=%r" % (T, T + 0.05))
     g0, gT = dump_at(params.parent, 0.0), dump_at(params.parent, T)
@@ -177,7 +136,7 @@ def test_the_explicit_step_takes_the_new_rate_past_a_stamp(stamp_mesh, tmp_path)
 
 def partrac_case(stamp_mesh, root, stamps, extra="", name="case", dt=0.1, T_end=0.5):
     """Run partrac on the strip to T_end with the stamps; return its case folder."""
-    params = case(stamp_mesh, root, stamps, name)
+    params = stamp_case(stamp_mesh, root, stamps, name)
     run_app(PARTRAC, params, PARTRAC_BASE,
             "dt=%r T=%r stat_intv=%r dump_intv=%r" % (dt, T_end, dt, T_end + dt / 2), extra)
     return params.parent
@@ -263,7 +222,7 @@ def test_tau_is_integrated_once_a_step_in_a_cut_step(stamp_mesh, tmp_path):
 
 def outside_run(stamp_mesh, root, outside):
     """tracers on the outflow u = (x, -y), with a stamp inside the one step [0, 0.1]; return (stdout, n_declined)."""
-    params = case(stamp_mesh, root, [(0.0, "out"), (0.05, "out"), (3.0, "out")], outside)
+    params = stamp_case(stamp_mesh, root, [(0.0, "out"), (0.05, "out"), (3.0, "out")], outside)
     r = run_app(TRACERS, params, TENSOR_BASE, "Nrw=200 Nrw_max=200 scheme=RK4 dt=0.1 T=0.1",
                 "stat_intv=0.1 dump_intv=1e9 verbose=true outside=%s" % outside)
     return r.stdout, int(read_stats(params.parent)["n_declined"][-1])
@@ -297,8 +256,8 @@ def test_a_resumed_run_has_the_times_of_one_never_stopped(stamp_mesh, tmp_path):
     common = ("scheme=RK4 dt=0.1 dump_intv=0.1 stat_intv=1e9 init_mode=points_x Nrw=40 "
               "Nrw_max=40")
     end = ["T=1.1", "checkpoint_intv=1e9"]
-    cont = case(stamp_mesh, tmp_path, stamps, "cont")
-    split = case(stamp_mesh, tmp_path, stamps, "split")
+    cont = stamp_case(stamp_mesh, tmp_path, stamps, "cont")
+    split = stamp_case(stamp_mesh, tmp_path, stamps, "split")
     run_app(TENSORS, cont, TENSOR_BASE, common, end)
     run_app(TENSORS, split, TENSOR_BASE, common, ["T=0.65"])
     resume = checkpoint_folder(split.parent)

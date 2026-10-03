@@ -82,6 +82,14 @@ struct FoundCounts {
 constexpr std::int32_t facet_wall = -1;
 constexpr std::int32_t facet_periodic(const std::int32_t id){ return -2 - id; }
 
+// Across a periodic facet of inward normal g: the axis and the signed period
+// that carry a point to the partner's side
+inline double periodic_shift(const Vector3d& g, const Vector3d& period, int& axis){
+  axis = 0;
+  g.cwiseAbs().maxCoeff(&axis);
+  return (g[axis] > 0. ? 1. : -1.)*period[axis];
+}
+
 // From the known cell, try its periodic partners, then step across the facet
 // of the most negative barycentric; false at a wall or after max_walk steps
 template<typename Cell>
@@ -186,10 +194,9 @@ inline bool reflect_in_cells(const std::vector<Cell>& cells,
     }
     else {
       // Periodic image of p
-      const Vector3d n = cells[id].bary_grad(k_exit);
-      int axis = 0;
-      n.cwiseAbs().maxCoeff(&axis);
-      p[axis] += (n[axis] > 0. ? 1. : -1.)*period[axis];
+      int axis;
+      const double shift = periodic_shift(cells[id].bary_grad(k_exit), period, axis);
+      p[axis] += shift;
       id = facet_periodic(a);
     }
     d = rest;

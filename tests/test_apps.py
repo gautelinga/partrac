@@ -27,11 +27,11 @@ import subprocess
 import numpy as np
 import pytest
 
-from cases import (APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
+from cases import (ABC, APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
                    wrapper_kind)
 from dumps import all_dumps, read_stats
 from paths import REPO, app
-from runs import checkpoint_folder, copy_case, copy_example, read_checkpoint, run_app
+from runs import copy_case, copy_example, read_checkpoint, run_app
 
 
 def smoke_cells():
@@ -238,7 +238,7 @@ def test_the_filaments_statistics_read_the_fields_where_they_are_written(tmp_pat
     # start the pairs at the centre of the example's [0, 2 pi]^3 domain
     pi = "3.14159265358979"
     run_app(app("filaments"),
-            copy_example(os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat"), d),
+            copy_example(ABC, d),
             "mode=analytic init_mode=pairs_xyz Nrw=100 Nrw_max=2000 int_order=1 "
             "ds_max=0.4 ds_min=0.1 ds_init=0.1 x0=%s y0=%s z0=%s Dm=0 scheme=RK4 "
             "dt=0.01 T=0.5 dump_intv=0.1 stat_intv=0.1 checkpoint_intv=1e9 "

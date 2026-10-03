@@ -40,9 +40,9 @@ import subprocess
 import numpy as np
 import pytest
 
-from dumps import dump_at
+from dumps import all_dumps, dump_at, read_stats
 from paths import app
-from runs import checkpoint_folder, put_points, read_checkpoint
+from runs import cells_counts, checkpoint_folder, put_points, read_checkpoint
 
 
 def need_gmsh():
@@ -479,15 +479,16 @@ def case(request):
 
 
 def run(case, args):
-    """Run tracers on the case's parameter file with args; assert it succeeded."""
+    """Run tracers on the case's parameter file with args; assert it succeeded; its stdout."""
     r = subprocess.run([TRACERS, str(case / "dolfin_params.dat")] + args,
                        capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
 
 
-def restart_from(case, mode, points, args):
-    """Run tracers on case(mode) from a checkpoint holding `points`; returns
-    the run folder.
+def restart_from(case, mode, points, args, scheme="RK4", out=None, dt=DT):
+    """Run tracers on case(mode) from a checkpoint holding `points`, stepped
+    by scheme at dt; returns the run folder, and appends the run's stdout to out.
 
     A short run with positions drawn around case.seed_point (from a fixed
     seed) writes the checkpoint, at t = 2 DT and step 2, and its positions
@@ -499,14 +500,16 @@ def restart_from(case, mode, points, args):
     dim = points.shape[1]
     seed = list(case.seed_point) + [0.0] * (3 - dim)
     base = ["mode=" + case.mode, "init_mode=points_" + "xyz"[:dim], "int_order=1", "Dm=0",
-            "dt=%g" % DT, "Nrw=%d" % len(points), "Nrw_max=%d" % len(points),
+            "dt=%g" % dt, "Nrw=%d" % len(points), "Nrw_max=%d" % len(points),
             "x0=%g" % seed[0], "y0=%g" % seed[1], "z0=%g" % seed[2],
-            "random=false", "seed=1", "scheme=RK4"]
-    run(folder, base + ["T=%g" % DT, "dump_intv=1000", "stat_intv=1000",
-                        "checkpoint_intv=%g" % DT])
+            "random=false", "seed=1", "scheme=" + scheme]
+    run(folder, base + ["T=%g" % dt, "dump_intv=1000", "stat_intv=1000",
+                        "checkpoint_intv=%g" % dt])
     put_points(folder, points)
     ck = checkpoint_folder(folder)
-    run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    stdout = run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    if out is not None:
+        out.append(stdout)
     return ck
 
 
@@ -763,3 +766,68 @@ def test_tracers_keep_the_eulerian_mean_velocity_past_a_sphere(sphere):
     assert stuck["none"] > 0.5 and ux["none"][late].mean() < 0.5, (stuck, ux["none"][late].mean())
     assert stuck["edge"] < 0.1, stuck
     assert ux["edge"][late].mean() > 0.85, ux["edge"][late].mean()
+
+
+def cells_against_rk4(case, mode, points, T, dt):
+    """tracers from points to T with wall_p2=mode at dt under RK4 and
+    RK4cells: {scheme: (steps declined, fraction at rest at T, fallbacks a
+    particle-step or None)}, and the positions RK4cells stored at its step
+    ends that no cell holds. Such a position dumps zero u and p, which no
+    position in the fluid does: p is nowhere zero."""
+    res, outside = {}, None
+    for scheme in ("RK4", "RK4cells"):
+        out = []
+        every = scheme == "RK4cells"
+        args = ["T=%g" % T, "dump_intv=%g" % (dt if every else T), "stat_intv=%g" % T]
+        if every:
+            args.append("output_all_props=true")
+        folder = restart_from(case, mode, points, args, scheme=scheme, out=out, dt=dt)
+        u = dump_at(folder, T)["u"]
+        [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
+        res[scheme] = (read_stats(f)["n_declined"][-1], np.mean(np.linalg.norm(u, axis=1) < 1e-3),
+                       cells_counts(out[0]).get("fallbacks"))
+        if every:
+            dumps = all_dumps(folder)
+            assert len(dumps) >= T / dt - 2
+            outside = sum(int(np.sum((g["p"].ravel() == 0) & (g["u"] == 0).all(axis=1))) for g in dumps.values())
+    return res, outside
+
+
+@pytest.mark.slow
+def test_rk4cells_past_the_sphere_declines_as_rk4_does(sphere):
+    """RK4cells on the sphere case (a periodic box, the no-slip sphere, stamps
+    every 0.25), tracers on the 10^3 lattice to T = 50, with wall_p2=edge and
+    none, dt from 0.05 to 0.5. A step meeting the sphere falls back to RK4's
+    substeps and RK4's outside rule, so RK4cells declines no more steps than
+    RK4. With wall_p2=none tracers come to rest on the sphere under both,
+    within the band of its facets and moving into them: a wall never makes
+    them cross before they step, so they step held in their cell and the
+    fallbacks stay rare. An end below a wall is moved onto it and nudged
+    inside, so every position stored at a step's end is in a cell."""
+    n, T = 10, 50.0
+    x = (np.arange(n) + 0.5) / n
+    points = np.stack(np.meshgrid(*[x] * 3, indexing="ij"), axis=-1).reshape(-1, 3)
+    points = points[inside(sphere.geometry, points)]
+    runs = {(mode, dt): cells_against_rk4(sphere, mode, points, T, dt)
+            for mode in ("edge", "none") for dt in (DT, 0.2, 0.5)}
+    table = "\n".join("%s dt=%g: %s, %d outside" % (k + v) for k, v in runs.items())
+    for (mode, dt), (res, outside) in runs.items():
+        (d4, rest4, _), (dc, restc, fbc) = res["RK4"], res["RK4cells"]
+        assert dc <= d4 and fbc < 1e-3 and outside == 0, table
+        if mode == "edge":
+            assert rest4 < 0.02 and restc < rest4 + 0.01, table
+        else:
+            assert rest4 > 0.5 and restc > 0.5, table
+
+
+def test_rk4cells_between_the_cylinders_declines_none(obstacles):
+    """The four cylinders in the P1 field (wall_p2=none), tracers on a 30^2
+    lattice to T = 100 at dt = 0.5: RK4 declines steps of tracers resting on
+    the walls when the flow turns them; RK4cells, which keeps every stored
+    position in a cell, declines none."""
+    n = 30
+    x = (np.arange(n) + 0.5) / n
+    points = np.stack(np.meshgrid(x, x, indexing="ij"), axis=-1).reshape(-1, 2)
+    points = points[inside(obstacles.geometry, points)]
+    res, outside = cells_against_rk4(obstacles, "none", points, 100.0, 0.5)
+    assert res["RK4cells"][0] == 0 and outside == 0, (res, outside)

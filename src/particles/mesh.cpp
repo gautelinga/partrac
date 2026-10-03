@@ -1428,7 +1428,7 @@ bool resizing(EdgesType &edges,
       resized = true;
       // Scale reference length too
       edge.second *= rescale_factor;
-      ps.set_x(jnode, xi + dx * rescale_factor); // such that xj = xi + dx
+      ps.move(jnode, xi + dx * rescale_factor); // such that xj = xi + dx
     }
   }
   return resized;
@@ -1446,7 +1446,7 @@ bool resizing_doublings(const EdgesType &edges, std::vector<Uint>& doublings, Pa
     if (length > ds){
       const int n = ceil(log2(length / ds));
       doublings[iedge] += n;
-      ps.set_x(jnode, xi - dx / exp2(n));
+      ps.move(jnode, xi - dx / exp2(n));
       resized = true;
     }
   }

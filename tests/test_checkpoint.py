@@ -37,7 +37,7 @@ BASE = ("mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw=21 Nrw_max=200000 
         "random=false seed=1").split()
 
 # every dataset of this run's checkpoint, and the column count of each
-DATASETS = {"points": 3, "id": 1, "c": 1,
+DATASETS = {"points": 3, "id": 1, "c": 1, "cell_id": 1,
             "edges": 2, "dl0": 1, "edge_tau": 1, "edge_rho_prev": 1,
             "face_edges": 3, "dA0": 1, "face_tau": 1, "face_rho_prev": 1,
             "positions_inj": 3, "edges_inj": 2, "dl0_inj": 1, "edge_tau_inj": 1,
@@ -80,8 +80,9 @@ def test_a_run_leaves_one_whole_checkpoint_and_nothing_half_written(case):
     """After a run that checkpointed several times the Checkpoints folder holds
     checkpoint.h5 and params.dat only: no temporary file, no text files. The
     checkpoint has every dataset, one row per particle, edge, face or inlet
-    entry, every edge on existing nodes and every face on existing edges, and
-    its time is the one params.dat resumes at."""
+    entry, every edge on existing nodes and every face on existing edges, its
+    time is the one params.dat resumes at, and its next node id is above every
+    id present."""
     h5py = pytest.importorskip("h5py")
     f = checkpoint_file(case)
     assert sorted(p.name for p in f.parent.iterdir()) == ["checkpoint.h5", "params.dat"]
@@ -92,7 +93,7 @@ def test_a_run_leaves_one_whole_checkpoint_and_nothing_half_written(case):
         assert ck[k].ndim == 2 and ck[k].shape[1] == cols, k
     n, ne, nf = len(ck["points"]), len(ck["edges"]), len(ck["face_edges"])
     assert nf > 0, "the sheet has no faces: the test would not see them"
-    for k in ("id", "c"):
+    for k in ("id", "c", "cell_id"):
         assert len(ck[k]) == n, k
     for k in ("dl0", "edge_tau", "edge_rho_prev"):
         assert len(ck[k]) == ne, k
@@ -105,7 +106,9 @@ def test_a_run_leaves_one_whole_checkpoint_and_nothing_half_written(case):
     assert ck["nodes_inlet"].max() < n and ck["edges_inlet"].max() < ne
     assert sorted(ck["id"][:, 0]) == sorted(set(ck["id"][:, 0]))
     with h5py.File(f, "r") as h:
+        assert sorted(h.attrs) == ["next_id", "t"]
         assert h.attrs["t"] == params_t(f.parent)
+        assert h.attrs["next_id"] > ck["id"].max()
 
 
 @needs_partrac

@@ -1,6 +1,6 @@
 """The smoke-run table shared by the tests and the harness scripts, the
-synthetic FELBM writer, and the cache that builds each generated input once
-per test session.
+synthetic FELBM writer, the stamped fields on the P1 square, and the cache
+that builds each generated input once per test session.
 
 One table says what each app takes (APPS) and one what each input kind needs
 (KINDS); a smoke run is one of their product. The retired app names are
@@ -17,6 +17,7 @@ import shutil
 from paths import REPO
 
 EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
+ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
 
 CORE = "Dm=0 dt=0.005 T=0.02 Nrw=100 Nrw_max=2000 dump_intv=1.0 stat_intv=1.0"
 
@@ -136,6 +137,23 @@ def write_felbm(d, fields, solid, times=(0, 100), extra=""):
                                               for k, t in enumerate(times)))
     (d / "felbm_params.dat").write_text(
         "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n" + extra)
+
+
+# --- the stamped fields on the P1 square (conftest's stamp_mesh) ---------------
+
+# The fields on the square [-2, 2]^2, by file stem: a matrix A (u = A x) or a vector U (u = U)
+LINEAR = {"lin_a": [[0.3, 1.0], [-0.8, -0.3]],
+          "lin_b": [[-0.5, 0.4], [-1.2, 0.5]],
+          "out": [[1.0, 0.0], [0.0, -1.0]]}
+UNIFORM = {"uni_a": [0.2, 0.1], "uni_b": [-0.1, 0.3]}
+
+
+def stamp_case(stamp_mesh, root, stamps, name="case"):
+    """A copy of the mesh case under root/name with the stamps [(t, field stem)]; return its params file."""
+    d = root / name
+    shutil.copytree(stamp_mesh, d)
+    (d / "timestamps.dat").write_text("".join("%r %s.h5\n" % (t, f) for t, f in stamps))
+    return d / "dolfin_params.dat"
 
 
 # --- generated inputs, built once per session ----------------------------------

@@ -17,11 +17,13 @@ import os
 import numpy as np
 import pytest
 
-from dumps import dump_at
+from cases import ABC
+from dumps import all_dumps, dump_at
 from paths import REPO, app
-from runs import continuous_and_resumed
+from runs import checkpoint_folder, continuous_and_resumed, copy_example, run_app
 
 PARTRAC = app("partrac")
+TRACERS = app("tracers")
 SINE = os.path.join(REPO, "data_example", "sine_flow", "expr_params.dat")
 
 # DT divides STOP and END exactly in binary, so step counts are exact
@@ -117,7 +119,6 @@ def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
 # --- filaments ------------------------------------------------------------------
 
 FILAMENTS = app("filaments")
-ABC = os.path.join(REPO, "data_example", "abc_flow_unsteady", "expr_params.dat")
 
 
 @pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
@@ -145,3 +146,21 @@ def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path, resiz
             assert np.array_equal(a[k], b[k]), "%s differs at t = %g after a restart" % (k, t)
     if resize == "doublings":
         assert dump_at(cont, 0.2)["doublings"].max() >= 1, "nothing was halved before the stop"
+
+
+@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+def test_a_run_resumed_at_another_dt_goes_on_from_the_checkpoints_time(tmp_path):
+    """Time is counted in steps from the run's start, or from the restart if dt
+    has changed there: steps of 0.1 checkpointed at t = 0.6 and resumed at
+    dt = 0.05 dump at 0.6, 0.7, ... up to T. Counted from the start, the
+    resumed steps would be timed from 0.3."""
+    params = copy_example(ABC, tmp_path)
+    base = ("mode=analytic init_mode=points_xyz x0=3 y0=3 z0=3 Nrw=20 Nrw_max=20 Dm=0 int_order=1 "
+            "scheme=RK4 stat_intv=1e9 dump_intv=0.1 random=false seed=1")
+    # the final checkpoint is written one step past T: t = 0.6, step 6
+    run_app(TRACERS, params, base, "dt=0.1 T=0.5 checkpoint_intv=0.5")
+    run_app(TRACERS, params, base, "dt=0.05 T=1.0 checkpoint_intv=1e9",
+            "restart_folder=%s" % checkpoint_folder(tmp_path))
+    # the resumed run's own file, named by the time it starts at
+    resumed = sorted(all_dumps(tmp_path, "data_from_t0.6*.h5"))
+    assert len(resumed) == 5 and np.allclose(resumed, [0.6, 0.7, 0.8, 0.9, 1.0], rtol=0, atol=1e-9), resumed
