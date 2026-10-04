@@ -1,9 +1,10 @@
 import argparse
 import sys
-sys.path.append("..")
+import os
+basedir = os.path.join(os.path.dirname(__file__), "..")
+sys.path.append(basedir)
 from utils import Params, read_timestamps
 import numpy as np
-import os
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import h5py

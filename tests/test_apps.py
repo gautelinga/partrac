@@ -138,6 +138,30 @@ def test_every_built_app_is_listed():
     assert always <= built, always - built
 
 
+@pytest.mark.parametrize("how", ["on PATH", "through a link"])
+def test_a_retired_name_finds_its_app_from_anywhere(tmp_path, how):
+    """A retired name finds the merged app installed beside it however it is
+    started: by name from PATH, where argv[0] has no directory, or through a
+    symbolic link in another directory, from a working directory that has
+    neither."""
+    name = sorted(WRAPPERS)[0]
+    if not os.path.exists(app(name)):
+        pytest.skip(name + " is not built")
+    env = dict(os.environ)
+    if how == "on PATH":
+        argv = [name, "--help"]
+        env["PATH"] = os.path.dirname(app(name))
+    else:
+        (tmp_path / "links").mkdir()
+        os.symlink(app(name), tmp_path / "links" / name)
+        argv = [str(tmp_path / "links" / name), "--help"]
+    (tmp_path / "work").mkdir()
+    r = subprocess.run(argv, cwd=tmp_path / "work", env=env, capture_output=True, text=True,
+                       timeout=60)
+    assert "could not run" not in r.stderr, r.stderr
+    assert r.returncode == 0, r.stdout[-1000:] + r.stderr
+
+
 @pytest.mark.parametrize("name", sorted(WRAPPERS))
 def test_a_retired_name_runs_the_merged_app(name, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
     """A retired name gives byte-identical h5 output to the merged app with its arguments pinned.

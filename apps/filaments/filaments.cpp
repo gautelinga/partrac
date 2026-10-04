@@ -70,6 +70,8 @@ static int run(int argc, char* argv[])
   mesh.records_doublings = doublings;
 
   load_or_initialize(run, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
   std::map<std::string, bool> output_fields;
   output_fields["u"] = !prm.get<bool>("minimal_output");

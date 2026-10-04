@@ -6,13 +6,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from utils import Params
+from utils import Params, node_logelong, run_folder
 
 parser = argparse.ArgumentParser(description="Plot pos")
 parser.add_argument("folder", type=str, help="Folder")
 parser.add_argument("-t_min", type=float, default=0.0, help="t_min")
 parser.add_argument("-t_max", type=float, default=np.inf, help="t_max")
-parser.add_argument("-cmap", type=str, default="parula", help="colormap")
+parser.add_argument("-cmap", type=str, default="viridis", help="colormap")
 parser.add_argument("-axis", type=int, default=2, help="Projection axis")
 parser.add_argument("--show", action="store_true", help="Show plot")
 parser.add_argument("--export", action="store_true", help="Export")
@@ -29,6 +29,7 @@ parser.add_argument("-pointsize",
                     default=1.0,
                     help="Point/dot size")
 args = parser.parse_args()
+args.folder = run_folder(args.folder)
 
 params = Params(args.folder)
 t0 = params.get_tmin()
@@ -69,7 +70,7 @@ for t in list(sorted(posf.keys())):
 proj_axis = [[1, 2], [2, 0], [0, 1]]
 pax = proj_axis[args.axis]
 
-cmap = plt.cm.get_cmap(args.cmap)
+cmap = plt.get_cmap(args.cmap)
 
 for t in ts:
     posft, grp = posf[t]
@@ -78,7 +79,9 @@ for t in ts:
         if args.nocol:
             col = np.zeros_like(pos)
         elif args.elong:
-            elong = np.array(h5f[grp + "/e"])
+            logelong = node_logelong(h5f[grp])
+            if logelong is None:
+                exit("--elong needs edges (a strip); none at t = {}".format(t))
         else:
             col = np.array(h5f[grp + "/c"])
 
@@ -90,18 +93,18 @@ for t in ts:
     x1 = np.remainder(pos[:, pax[0]] - args.x_shift, L[pax[0]])
     x2 = np.remainder(pos[:, pax[1]], L[pax[1]])
     if args.elong:
-        c = np.log(elong[:, 0])
-        label = "$\mathrm{log}(\delta \ell/\delta \ell_0)$"
+        c = logelong
+        label = r"$\mathrm{log}(\delta \ell/\delta \ell_0)$"
     else:
         c = col[:, 0]
         label = "Color"
 
     if args.cmin is None:
-        cmin = c.min()
+        cmin = np.nanmin(c)
     else:
         cmin = args.cmin
     if args.cmax is None:
-        cmax = c.max()
+        cmax = np.nanmax(c)
     else:
         cmax = args.cmax
 

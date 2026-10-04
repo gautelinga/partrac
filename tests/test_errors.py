@@ -73,6 +73,19 @@ def test_a_missing_positions_file_is_reported(tmp_path):
 
 
 @needs_partrac
+def test_a_positions_file_hdf5_cannot_read_is_reported(tmp_path):
+    """HDF5's own exceptions are not standard ones: a file without nodes, or
+    not HDF5 at all, must still end as a reported error, not an abort."""
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(tmp_path / "no_nodes.h5", "w") as f:
+        f["points"] = [[0., 0., 0.]]
+    (tmp_path / "text.h5").write_text("not HDF5\n")
+    for name in ("no_nodes.h5", "text.h5"):
+        reported(run(tmp_path, ["init_mode=file:%s" % (tmp_path / name)]),
+                 "cannot read the dataset 'nodes'")
+
+
+@needs_partrac
 @pytest.mark.parametrize("edit,message", [
     (lambda text: "".join(l for l in text.splitlines(True) if not l.startswith("expression")),
      "no expression= in"),

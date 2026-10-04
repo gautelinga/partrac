@@ -14,7 +14,7 @@ import pytest
 
 from dumps import all_dumps, by_id
 from paths import REPO, app
-from runs import continuous_and_resumed, copy_example, run_app
+from runs import checkpoint_folder, continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 SPATIAL = app("tracervectors_spatial")
 STEPPER = app("static_space_stepper")
@@ -23,10 +23,8 @@ POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params
 BASE = {
     SPATIAL: ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=400 Nrw_max=400 "
               "stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"),
-    # the stepper floors its intervals to multiples of dt, so dt is set to a
-    # value that divides every interval used here
     STEPPER: ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=400 Nrw_max=400 "
-              "ds_init=0 ds_max=1 ds_min=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 dt=0.005 "
+              "ds_init=0 ds_max=1 ds_min=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 "
               "stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"),
 }
 
@@ -94,3 +92,21 @@ def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary, fmt
         assert set(a[xn]) == set(b[xn])
         for k in a[xn]:
             assert np.array_equal(a[xn][k], b[xn][k]), "%s differs at xn = %g after a restart" % (k, xn)
+
+
+@pytest.mark.skipif(not os.path.exists(STEPPER), reason="static_space_stepper is not built")
+def test_a_resumed_march_skips_the_initial_passes(tmp_path):
+    """static_space_stepper refines and coarsens a new line before its first
+    step, but not a line restored from a checkpoint: the checkpoint holds the
+    line as the march left it, and reshaping it again on resuming would make a
+    resumed march differ from one never stopped."""
+    line = ("init_mode=strip_x La=1.6 Nrw=20 ds_max=0.1 ds_min=0.01 refine=true coarsen=true "
+            "dxn=0.01 dump_intv=0.1")
+    params = copy_example(POISEUILLE, tmp_path)
+    first = run_app(STEPPER, params, BASE[STEPPER], line, "Ln=0.05")
+    assert "Initial refinement" in first.stdout and "Initial coarsening" in first.stdout
+    assert len(read_checkpoint(tmp_path)["edges"]) > 0, "no line left to resume"
+    resumed = run_app(STEPPER, params, BASE[STEPPER], line, "Ln=0.1",
+                      ["restart_folder=%s" % checkpoint_folder(tmp_path)])
+    assert "Initial refinement" not in resumed.stdout
+    assert "Initial coarsening" not in resumed.stdout

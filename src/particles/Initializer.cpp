@@ -107,7 +107,7 @@ void compute_maps(Surface& s){
 Uint refine_surface(Surface& s, const double ds_max, const bool check_if_inside){
   return sheet_refinement(s.faces, s.edges, s.edge2faces, s.node2edges,
                           s.edges_inlet, s.nodes_inlet, s.pos_inj, s.edges_inj,
-                          s.ps, ds_max, 0.0, false, check_if_inside);
+                          s.ps, ds_max, 0.0, StuckEdge::Keep, check_if_inside);
 }
 
 // Collapse edges shorter than ds_min
@@ -510,19 +510,24 @@ InitialState init_gaussian_circle(const std::vector<std::string>& key, std::shar
 
 InitialState init_file(const std::string& path, std::shared_ptr<Interpol> intp, const partrac::Params& prm){
   verify_file_exists(path);
-  H5::H5File h5file(path, H5F_ACC_RDONLY);
-  H5::DataSet dset_nodes = h5file.openDataSet("nodes");
-  H5::DataSpace dspace_nodes = dset_nodes.getSpace();
-  // One row a point, one to three coordinates
-  if (dspace_nodes.getSimpleExtentNdims() != 2)
-    partrac::fail(path, ": nodes is not a two-dimensional array, one row a point");
   hsize_t dims_nodes[2];
-  dspace_nodes.getSimpleExtentDims(dims_nodes, NULL);
-  if (dims_nodes[1] < 1 || dims_nodes[1] > 3)
-    partrac::fail(path, ": nodes has ", dims_nodes[1], " columns, not one to three coordinates");
-  std::vector<double> nodes_buf(dims_nodes[0]*dims_nodes[1]);
-  dset_nodes.read(nodes_buf.data(), H5::PredType::NATIVE_DOUBLE, dspace_nodes, dspace_nodes);
-  h5file.close();
+  std::vector<double> nodes_buf;
+  try {
+    H5::H5File h5file(path, H5F_ACC_RDONLY);
+    H5::DataSet dset_nodes = h5file.openDataSet("nodes");
+    H5::DataSpace dspace_nodes = dset_nodes.getSpace();
+    // One row a point, one to three coordinates
+    if (dspace_nodes.getSimpleExtentNdims() != 2)
+      partrac::fail(path, ": nodes is not a two-dimensional array, one row a point");
+    dspace_nodes.getSimpleExtentDims(dims_nodes, NULL);
+    if (dims_nodes[1] < 1 || dims_nodes[1] > 3)
+      partrac::fail(path, ": nodes has ", dims_nodes[1], " columns, not one to three coordinates");
+    nodes_buf.resize(dims_nodes[0]*dims_nodes[1]);
+    dset_nodes.read(nodes_buf.data(), H5::PredType::NATIVE_DOUBLE, dspace_nodes, dspace_nodes);
+    h5file.close();
+  } catch (const H5::Exception&){
+    partrac::fail(path, ": cannot read the dataset 'nodes'");
+  }
 
   // Coordinates the file leaves out from (x0, y0, z0)
   const Vector3d x0 = initial_position(prm);

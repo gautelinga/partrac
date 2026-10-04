@@ -192,6 +192,16 @@ def test_a_point_inlet_traces_a_chain_not_a_sheet(tmp_path):
 
 
 @needs_partrac
+def test_an_injection_that_exactly_fills_the_set_is_made(tmp_path):
+    """Nrw_max is a capacity, so a generation that fits into it exactly is
+    injected, as refinement fills the set to its last slot; the ones after it
+    find no room and are skipped."""
+    _, g = lines(tmp_path, ["init_mode=point", "Nrw=20", "Nrw_max=60", "z0=-0.5", "T=0.2",
+                            "dump_intv=0.2"])
+    assert len(g["points"]) == 60        # the inlet and two injections
+
+
+@needs_partrac
 @pytest.mark.parametrize("init_mode,extra", [
     ("sheet_xy", ["La=0.5", "Lb=0.5", "ds_init=0.1"]),
     ("ellipsoid_xy", ["La=0.5", "Lb=0.5"]),

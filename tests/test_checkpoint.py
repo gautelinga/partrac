@@ -152,8 +152,8 @@ def test_a_params_file_that_cannot_be_written_replaces_nothing(case):
     h5, params = (folder / "checkpoint.h5").read_bytes(), (folder / "params.dat").read_text()
     os.symlink("/dev/full", folder / "params.dat.tmp")
     r = resume(case, check=False)
-    assert r.returncode != 0, r.stdout[-1000:] + r.stderr[-1000:]
-    assert "could not write" in r.stderr, r.stderr
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
+    assert "Error: could not write" in r.stderr, r.stderr
     assert not (folder / "params.dat").is_symlink()
     assert (folder / "params.dat").read_text() == params
     assert (folder / "checkpoint.h5").read_bytes() == h5

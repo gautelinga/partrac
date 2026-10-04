@@ -1,4 +1,5 @@
 #include "Params.hpp"
+#include "Error.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -308,8 +309,7 @@ void Params::print() const { print(std::cout); }
 void Params::write_to(const std::string& filename) const {
   std::ofstream f(filename);
   if (!f)
-    throw ParamError(m_schema ? m_schema->app : "params",
-                     {"could not open '" + filename + "' for writing"});
+    partrac::fail("could not open '", filename, "' for writing");
   if (m_schema) {
     for (const auto& e : m_schema->entries) {
       const auto it = m_values.find(e.key);
@@ -319,8 +319,7 @@ void Params::write_to(const std::string& filename) const {
   }
   f.close();
   if (f.fail())
-    throw ParamError(m_schema ? m_schema->app : "params",
-                     {"could not write '" + filename + "'"});
+    partrac::fail("could not write '", filename, "'");
 }
 
 void Params::dump_tmp(const std::string& folder) const {
@@ -330,8 +329,7 @@ void Params::dump_tmp(const std::string& folder) const {
 void Params::commit_dump(const std::string& folder) const {
   const std::string path = folder + "/params.dat";
   if (std::rename((path + ".tmp").c_str(), path.c_str()) != 0)
-    throw ParamError(m_schema ? m_schema->app : "params",
-                     {"could not move '" + path + ".tmp' to '" + path + "'"});
+    partrac::fail("could not move '", path, ".tmp' to '", path, "'");
 }
 
 // Written beside, then moved over the last one

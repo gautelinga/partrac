@@ -16,6 +16,7 @@ import subprocess
 
 import pytest
 
+from cases import APPS, args_for
 from paths import REPO, app
 from runs import copy_example, read_checkpoint, run_app
 
@@ -118,6 +119,31 @@ def test_dry_run_writes_nothing(case):
     r = run_check(case, ["init_mode=uniform_x"])
     assert r.returncode == 0
     assert set(os.listdir(case)) == before
+
+
+@pytest.mark.parametrize("name", sorted(n for n in APPS if n != "interpol"))
+def test_every_app_checks_without_running(name, case):
+    """Every particle app honours --check as partrac does: it loads the field
+    and the initial state, says so, and stops before the time loop, leaving
+    the case directory untouched. An app that ignored the flag would run the
+    whole simulation and write its folders."""
+    if not os.path.exists(app(name)):
+        pytest.skip(name + " is not built")
+    before = set(os.listdir(case))
+    r = run_app(app(name), case / "expr_params.dat", ["--check"], args_for(name, "analytic"),
+                check=False, timeout=300)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Check OK" in r.stdout
+    assert set(os.listdir(case)) == before
+
+
+@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+def test_interpol_refuses_check(case):
+    """interpol has no run to stop before: --check is refused, not ignored."""
+    r = run_app(app("interpol"), case / "expr_params.dat", ["--check"], args_for("interpol", "analytic"),
+                check=False, timeout=300)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "--check" in r.stderr
 
 
 @pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")

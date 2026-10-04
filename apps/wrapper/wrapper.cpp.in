@@ -14,8 +14,11 @@ int main(int argc, char* argv[]){
     std::cerr << "Please specify an input file." << std::endl;
     return 1;
   }
-  // Target beside this binary
-  std::vector<char> self(argv[0], argv[0] + std::strlen(argv[0]) + 1);
+  // Target beside this binary, symlinks resolved; argv[0]'s directory without /proc
+  std::vector<char> self(4096, '\0');
+  const ssize_t n = readlink("/proc/self/exe", self.data(), self.size() - 1);
+  if (n <= 0 || n >= ssize_t(self.size()) - 1)
+    self.assign(argv[0], argv[0] + std::strlen(argv[0]) + 1);
   std::string target = std::string(dirname(self.data())) + "/@WRAPPER_TARGET@";
   std::vector<std::string> args = {target, argv[1], @WRAPPER_ARGS_CODE@};
   // Renamed arguments

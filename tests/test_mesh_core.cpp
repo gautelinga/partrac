@@ -125,7 +125,7 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   EdgesType edges_inj;
 
   const Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                pos_inj, edges_inj, ps, 0.6, 0., false);
+                                pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop);
   REQUIRE( n_add == 2 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( edges.size() == 4 );
@@ -141,7 +141,7 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   REQUIRE( ends == 2 );
   // Short enough already: nothing to do
   REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj, ps, 0.6, 0., false) == 0 );
+                      pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop) == 0 );
 
   SECTION("and coarsening a straight strip keeps its length"){
     const Uint n_rem = coarsening(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
@@ -171,7 +171,7 @@ TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edg
   EdgesType edges_inj;
 
   REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj, ps, 0.6, 0., false) == 1 );
+                      pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop) == 1 );
   REQUIRE( ps.N() == 3 );
   // Along the normals' mean, square to the edge, by the first multiple of 1% of the edge inside
   const Vector3d tau = (x0 - x1).normalized(), mid = 0.5*(x0 + x1);
@@ -210,7 +210,7 @@ TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {
 
   // Only the diagonal is longer than 1.2
   const Uint n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                      pos_inj, edges_inj, ps, 1.2, 0., false, false);
+                                      pos_inj, edges_inj, ps, 1.2, 0., StuckEdge::Keep, false);
   REQUIRE( n_add == 1 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( faces.size() == 4 );

@@ -166,6 +166,8 @@ static int run(int argc, char* argv[])
     return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(interpol_schema(), argc, argv);
+  if (prm.check_only())
+    partrac::fail("interpol has no --check: it only probes the field");
 
   if (prm.get<int>("num_threads") > 0){
       omp_set_dynamic(0);

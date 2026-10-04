@@ -1,9 +1,12 @@
 import argparse
+import sys
 import os
 import matplotlib.pyplot as plt
 import numpy as np
 import h5py
-from utils import Params, read_timestamps
+basedir = os.path.join(os.path.dirname(__file__), "..")
+sys.path.append(basedir)
+from utils import Params, read_timestamps, node_logelong
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.colors import Normalize, colorConverter, LinearSegmentedColormap
 
@@ -31,7 +34,7 @@ params = Params(args.folder)
 t0 = params.get_tmin()
 params.get("Lx", t0)
 
-felbm_folder = os.path.dirname(os.path.dirname(os.path.dirname(os.path.join(args.folder, ""))))
+felbm_folder = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.join(args.folder, "")))))
 
 timestamps = read_timestamps(os.path.join(felbm_folder, "timestamps.dat"))
 
@@ -39,9 +42,6 @@ Lx = float(params.get("Lx", t0))
 Ly = float(params.get("Ly", t0))
 Lz = float(params.get("Lz", t0))
 L = [Lx, Ly, Lz]
-nx = int(params.get("nx", t0))
-ny = int(params.get("ny", t0))
-nz = int(params.get("nz", t0))
 
 files = os.listdir(args.folder)
 
@@ -76,10 +76,12 @@ proj_axis = [[1, 2],
              [0, 1]]
 pax = proj_axis[args.axis]
 
-cmap = plt.cm.get_cmap(args.cmap)
+cmap = plt.get_cmap(args.cmap)
 
 with h5py.File(os.path.join(felbm_folder, "output_is_solid.h5"), "r") as h5f:
-    is_solid = np.array(h5f["is_solid"]).reshape((nz, ny, nx))
+    is_solid = np.array(h5f["is_solid"])
+    nx, ny, nz = is_solid.shape
+    is_solid = is_solid.reshape((nz, ny, nx))
 
 is_solid = is_solid[nz//2, :, :]
 x, y = np.meshgrid(np.arange(nx), np.arange(ny))
@@ -128,14 +130,16 @@ for t in ts:
     posft, grp = posf[t]
     with h5py.File(posft, "r") as h5f:
         pos = np.array(h5f[grp + "/points"])
-        elong = np.array(h5f[grp + "/e"])
+        logelong = node_logelong(h5f[grp])
+        if logelong is None:
+            exit("Needs edges (a strip); none at t = {}".format(t))
 
     fig, ax = plt.subplots(figsize=figsize)
     x1 = np.remainder(pos[:, pax[0]], L[pax[0]])
     x2 = np.remainder(pos[:, pax[1]], L[pax[1]])
 
-    c = np.log(elong[:, 0])
-    label = "$\mathrm{log}(\delta \ell/\delta \ell_0)$"
+    c = logelong
+    label = r"$\mathrm{log}(\delta \ell/\delta \ell_0)$"
 
     alpha_t = (t-t_prev)/(t_next-t_prev)
     rho = alpha_t*rho_next + (1.0-alpha_t)*rho_prev

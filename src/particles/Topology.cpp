@@ -153,7 +153,7 @@ Uint Topology::refine(){
                       pos_inj, edges_inj,
                       ps, ds_max,
                       curv_refine_factor,
-                      cut_if_stuck);
+                      cut_if_stuck ? StuckEdge::Cut : StuckEdge::Stop);
   check_topology();
   return n;
 }

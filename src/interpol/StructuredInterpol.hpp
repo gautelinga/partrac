@@ -75,10 +75,14 @@ inline void load_field(H5::H5File &h5file
                      , const std::string field
                      , const int nx, const int ny, const int nz
                      ){
-  H5::DataSet dset = h5file.openDataSet(field);
-  H5::DataSpace dspace = dset.getSpace();
   std::vector<double> Uv(nx*ny*nz);
-  dset.read(Uv.data(), H5::PredType::NATIVE_DOUBLE, dspace, dspace);
+  try {
+    H5::DataSet dset = h5file.openDataSet(field);
+    H5::DataSpace dspace = dset.getSpace();
+    dset.read(Uv.data(), H5::PredType::NATIVE_DOUBLE, dspace, dspace);
+  } catch (const H5::Exception&){
+    partrac::fail(h5file.getFileName(), ": cannot read the dataset '", field, "'");
+  }
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -115,10 +119,14 @@ inline void load_int_field_as_bool(H5::H5File &h5file
                                  , const int nz
 )
 {
-  H5::DataSet dset = h5file.openDataSet(field);
-  H5::DataSpace dspace = dset.getSpace();
   std::vector<int> Uv(nx*ny*nz);
-  dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
+  try {
+    H5::DataSet dset = h5file.openDataSet(field);
+    H5::DataSpace dspace = dset.getSpace();
+    dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
+  } catch (const H5::Exception&){
+    partrac::fail(h5file.getFileName(), ": cannot read the dataset '", field, "'");
+  }
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -147,7 +155,12 @@ inline void load_h5(const std::string h5filename
   verify_file_exists(h5filename);
   if (verbose)
     std::cout << "Opening " << h5filename << std::endl;
-  H5::H5File h5file(h5filename, H5F_ACC_RDONLY);
+  H5::H5File h5file;
+  try {
+    h5file.openFile(h5filename, H5F_ACC_RDONLY);
+  } catch (const H5::Exception&){
+    partrac::fail("cannot open ", h5filename);
+  }
   load_field(h5file, ux, "u_x", nx, ny, nz);
   load_field(h5file, uy, "u_y", nx, ny, nz);
   if (!ignore_uz)
@@ -483,12 +496,17 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   std::string solid_filename = get_folder() + "/" + felbm_params.get<std::string>("is_solid_file");
   verify_file_exists(solid_filename);
 
-  H5::H5File solid_file(solid_filename, H5F_ACC_RDONLY);
-  H5::DataSet dset_solid = solid_file.openDataSet("is_solid");
-  H5::DataSpace dspace_solid = dset_solid.getSpace();
-
+  H5::H5File solid_file;
   hsize_t dims[3];
-  dspace_solid.getSimpleExtentDims(dims, NULL);
+  try {
+    solid_file.openFile(solid_filename, H5F_ACC_RDONLY);
+    H5::DataSpace dspace_solid = solid_file.openDataSet("is_solid").getSpace();
+    if (dspace_solid.getSimpleExtentNdims() != 3)
+      partrac::fail(solid_filename, ": is_solid is not a three-dimensional array");
+    dspace_solid.getSimpleExtentDims(dims, NULL);
+  } catch (const H5::Exception&){
+    partrac::fail(solid_filename, ": cannot read the dataset 'is_solid'");
+  }
   for (Uint i=0; i<3; ++i)
     n[i] = dims[i];
   x_min << 0., 0., 0.;

@@ -18,6 +18,9 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 Uint get_common_entry(Uint kedge, Uint ledge,
                       EdgesType &edges);
 
+// An edge whose midpoint cannot be placed: kept as it is, cut, or the run stops
+enum class StuckEdge { Keep, Cut, Stop };
+
 // Inlet edges are split along with their template
 Uint sheet_refinement(FacesType &faces,
                       EdgesType &edges,
@@ -30,7 +33,7 @@ Uint sheet_refinement(FacesType &faces,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
-                      const bool cut_if_stuck,
+                      const StuckEdge stuck,
                       const bool check_if_inside=true);
 
 Uint refinement(FacesType &faces,
@@ -43,7 +46,7 @@ Uint refinement(FacesType &faces,
                 EdgesType &edges_inj,
                 ParticleSet& ps, const double ds_max,
                 const double curv_refine_factor,
-                const bool cut_if_stuck);
+                const StuckEdge stuck);
 
 void compute_edge2faces(Edge2FacesType &edge2faces,
                         const FacesType &faces,

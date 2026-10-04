@@ -65,7 +65,8 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   std::vector<std::mt19937> gens = make_generators(prm);
 
   std::cout << "Creating folders..." << std::endl;
-  RunFolders out = make_run_folders(intp->get_folder(), name, prm, folder_opts);
+  RunFolders out = make_run_folders(intp->get_folder(), name, prm,
+                                    prm.check_only() ? folder_opts | DryRun : folder_opts);
 
   if (prm.get<bool>("verbose"))
     prm.print();
@@ -119,6 +120,14 @@ inline bool load_or_initialize(Run& run, Topology& mesh){
   }
   mesh.compute_maps();
   return restarting;
+}
+
+// --check: loaded and initialized, nothing run or written
+inline bool check_only(const Run& run, const ParticleSet& ps, Topology& mesh){
+  if (!run.prm.check_only())
+    return false;
+  std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
+  return true;
 }
 
 // Particles that could not step: ignore, reinject, mark or remove
@@ -246,8 +255,12 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // No dump file when dumping is off
   H5::H5File h5f;
   if (dump_intv > 0.){
-    { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
-    h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+    try {
+      { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+      h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+    } catch (const H5::Exception&){
+      partrac::fail("cannot create the dump file ", h5fname);
+    }
   }
 
   std::ofstream statfile;
@@ -315,17 +328,21 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     // Dump detailed data
     if (at_interval(it, dump_intv, dt)){
       std::string groupname = std::to_string(t);
-      // Clear file if it exists, otherwise create
-      if (at_interval(it, chunk_intv, dt) && it > 0){
-        h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-        h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+      try {
+        // Clear file if it exists, otherwise create
+        if (at_interval(it, chunk_intv, dt) && it > 0){
+          h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
+          h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+        }
+        else {
+          h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+        }
+        h5f.createGroup(groupname + "/");
+        mesh.dump_hdf5(h5f, groupname, output_fields);
+        h5f.close();
+      } catch (const H5::Exception&){
+        partrac::fail("cannot write the dump at t = ", t, " to ", h5fname);
       }
-      else {
-        h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
-      }
-      h5f.createGroup(groupname + "/");
-      mesh.dump_hdf5(h5f, groupname, output_fields);
-      h5f.close();
     }
 
     // Pieces between stamps

@@ -29,7 +29,7 @@ template<typename... Args>
 }
 
 // A main's body; an Error goes to stderr and the run exits with 2, as a parameter
-// error; any other exception, from dolfin or the standard library, with 1
+// error; any other exception, from dolfin, HDF5 or the standard library, with 1
 template<typename Body>
 int report_errors(Body&& body){
 #ifdef __GLIBC__
@@ -45,6 +45,10 @@ int report_errors(Body&& body){
     return 2;
   } catch (const std::exception& e) {
     std::cerr << "Error (unexpected): " << e.what() << std::endl;
+    return 1;
+  } catch (...) {
+    // HDF5's exceptions are not std::exception
+    std::cerr << "Error (unexpected): an exception of unknown type" << std::endl;
     return 1;
   }
 }

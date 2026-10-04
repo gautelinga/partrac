@@ -31,20 +31,22 @@ static int run(int argc, char* argv[])
   // Checkpoint t_loc
   mesh.records_t_loc = true;
 
-  load_or_initialize(run, mesh);
+  const bool restarting = load_or_initialize(run, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
   const bool refine = prm.get<bool>("refine");
   const bool coarsen = prm.get<bool>("coarsen");
   const bool verbose = prm.get<bool>("verbose");
 
-  // Initial refinement and coarsening
-  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
+  // Initial refinement and coarsening, not on a restart
+  if (refine && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
     if (verbose)
       std::cout << "Added " << n_add << " edges." << std::endl;
   }
-  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
+  if (coarsen && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen(true);
     if (verbose)

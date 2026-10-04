@@ -6,12 +6,7 @@ import h5py
 from utils import Params
 
 
-def get_crossings(part_id, part_it0, it2t, it_max, Ly_):
-    xt = []
-    tt = []
-    for it in range(part_it0[part_id], it_max):
-        tt.append(it2t[it])
-        xt.append(x[it][part_id])
+def get_crossings(tt, xt, Ly_):
     xt = np.array(xt)
     tt = np.array(tt)
     xt[:, 1] -= xt[0, 1]
@@ -73,26 +68,29 @@ if not os.path.exists(imgfolder):
 
 ts = list(sorted(posf.keys()))
 
-part_t0 = []
-part_it0 = []
-x = dict()
-for it, t in enumerate(ts):
+# Tracks by id; one ends at the first dump missing it
+tracks = dict()
+ended = set()
+for t in ts:
     posft, cat = posf[t]
     with h5py.File(posft, "r") as h5f:
         x_loc = np.array(h5f[cat]["points"])
-        if len(x_loc) > len(part_t0):
-            part_t0.extend([t for _ in range(len(x_loc)-len(part_t0))])
-            part_it0.extend([it for _ in range(len(x_loc)-len(part_it0))])
-        x[it] = x_loc
-
-t_max = ts[-1]
-it_max = len(ts)
-it2t = dict(zip(list(range(len(ts))), ts))
+        id_loc = np.array(h5f[cat]["id"])[:, 0]
+    present = set(id_loc.tolist())
+    ended.update([part_id for part_id in tracks if part_id not in present])
+    for part_id, xi in zip(id_loc.tolist(), x_loc):
+        if part_id in ended:
+            continue
+        if part_id not in tracks:
+            tracks[part_id] = ([], [])
+        tracks[part_id][0].append(t)
+        tracks[part_id][1].append(xi)
 
 xt_0 = []
 xt_x = []
-for part_id in range(len(part_t0)):
-    out = get_crossings(part_id, part_it0, it2t, it_max, [Ly])
+for part_id in sorted(tracks):
+    tt, xt = tracks[part_id]
+    out = get_crossings(tt, xt, [Ly])
     if out:
         x0, t0 = out[0]
         xx, tx = out[1]
@@ -127,7 +125,7 @@ ax_[1].axis("off")
 plt.tight_layout()
 plt.show()
 
-"""
+r"""
 
 assert(args.t0 in ts)
 tq = [args.t0]

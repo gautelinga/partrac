@@ -62,11 +62,11 @@ inline partrac::Schema spatial_schema(){
           },
           "intervals cannot be negative");
   s.finalize([](partrac::Params& p){
-    const double dt = p.get<double>("dt");
+    const double dxn = p.get<double>("dxn");
     if (p.get<double>("dump_intv") > 0.)
-      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
+      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dxn));
     if (p.get<double>("stat_intv") > 0.)
-      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
+      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dxn));
     p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
   });
   return s;

@@ -24,10 +24,7 @@ static int run(int argc, char* argv[])
   }
   partrac::Params prm = partrac::parse_or_exit(partrac_schema(), argc, argv);
 
-  // Dry run
-  const bool dry_run = prm.check_only();
-
-  Run run = start_run(prm, "RandomWalkers", dry_run ? DryRun : DefaultLayout);
+  Run run = start_run(prm, "RandomWalkers");
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
@@ -41,11 +38,8 @@ static int run(int argc, char* argv[])
 
   const bool restarting = load_or_initialize(run, mesh);
 
-  // Parameters checked
-  if (dry_run){
-      std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
+  if (check_only(run, ps, mesh))
     return 0;
-  }
 
   const bool refine = prm.get<bool>("refine");
   const bool coarsen = prm.get<bool>("coarsen");

@@ -103,6 +103,16 @@ TEST_CASE("The XDMF stamps bracket a time as the others do", "[timestamps]") {
   REQUIRE_THROWS_AS(unsorted.initialize({{2., {"u.h5", "u1"}}, {0., {"u.h5", "u0"}}}), partrac::Error);
 }
 
+TEST_CASE("An XDMF field with another number of steps than u is refused", "[timestamps]") {
+  // p and phi are indexed by u's steps: more would read past u's keys, fewer past their own
+  MultiTimestamps mts;
+  mts.initialize({{0., {"u.h5", "u0"}}, {2., {"u.h5", "u1"}}});
+  REQUIRE_THROWS_AS(mts.add("p", {{0., {"p.h5", "p0"}}, {2., {"p.h5", "p1"}}, {5., {"p.h5", "p2"}}}),
+                    partrac::Error);
+  REQUIRE_THROWS_AS(mts.add("p", {{0., {"p.h5", "p0"}}}), partrac::Error);
+  mts.add("p", {{0., {"p.h5", "p0"}}, {2., {"p.h5", "p1"}}});
+}
+
 TEST_CASE("A degenerate stamp bracket holds the field", "[timestamps]") {
   // the plain expressions, where the bracket has width
   REQUIRE(stamp_weight(0.25, 0., 1.) == 0.25);

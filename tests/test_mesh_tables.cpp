@@ -459,22 +459,23 @@ TEST_CASE("The key sort is stable and gives the same order at 1 and 4 threads", 
   for (std::size_t i = 0; i < n; ++i) base[i] = rng() % 97;
   const int saved = omp_get_max_threads();
   std::vector<std::vector<std::uint32_t>> out;
+  bool ordered = true, carried = true;
   for (const int nt : {1, 4}){
     omp_set_num_threads(nt);
     std::vector<std::uint64_t> key = base;
     std::vector<std::uint32_t> pay;
     mesh_tables::sort_by_key_indexed(key, pay);
-    bool ordered = true, carried = true;
     for (std::size_t i = 0; i < n; ++i){
       if (key[i] != base[pay[i]]) carried = false;
       // Ties in the order of the input index, so the order is total
       if (i && (key[i-1] > key[i] || (key[i-1] == key[i] && pay[i-1] >= pay[i]))) ordered = false;
     }
-    REQUIRE(carried);
-    REQUIRE(ordered);
     out.push_back(pay);
   }
+  // Restored before any check can end the case
   omp_set_num_threads(saved);
+  REQUIRE(carried);
+  REQUIRE(ordered);
   REQUIRE(out[0] == out[1]);
 }
 

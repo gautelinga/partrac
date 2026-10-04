@@ -129,10 +129,7 @@ inline SepdataSelection sepdata_selection(const partrac::Params& prm, const std:
 inline void write_separation_data(const std::string& folder, const double t, const ParticleSet& ps,
                                   const SepdataSelection& sel){
     const std::string sepdatafname = folder + "/sepdata_from_t" + std::to_string(t) + ".h5";
-    H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
-
     const std::string groupname = std::to_string(t);
-    sepdata_h5f.createGroup(groupname + "/");
 
     std::vector<Vector3d> xyz_;
     std::vector<double> w_;
@@ -150,10 +147,15 @@ inline void write_separation_data(const std::string& folder, const double t, con
             }
         }
     }
-    vector2hdf5(sepdata_h5f, groupname + "/x", xyz_, xyz_.size());
-    scalar2hdf5(sepdata_h5f, groupname + "/w", w_, w_.size());
-
-    sepdata_h5f.close();
+    try {
+        H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
+        sepdata_h5f.createGroup(groupname + "/");
+        vector2hdf5(sepdata_h5f, groupname + "/x", xyz_, xyz_.size());
+        scalar2hdf5(sepdata_h5f, groupname + "/w", w_, w_.size());
+        sepdata_h5f.close();
+    } catch (const H5::Exception&){
+        partrac::fail("cannot write ", sepdatafname);
+    }
 }
 
 static int run(int argc, char* argv[])
@@ -174,7 +176,8 @@ static int run(int argc, char* argv[])
 
     Run run = start_run(prm, "WeightedWalkers");
     const std::string sepdatafolder = run.out.run + "Sepdata/";
-    create_folder(sepdatafolder);
+    if (!prm.check_only())
+        create_folder(sepdatafolder);
 
     ExplicitIntegrator integrator(prm.get<double>("Dm"), prm.get<int>("int_order"), run.gens);
 
@@ -196,6 +199,8 @@ static int run(int argc, char* argv[])
         mesh.load_initial_state(init_gaussian_circle(key, run.intp, prm, run.gens[0]), prm);
     }
     mesh.compute_maps();
+    if (check_only(run, ps, mesh))
+        return 0;
 
     std::map<std::string, bool> output_fields;
     output_fields["u"] = false;

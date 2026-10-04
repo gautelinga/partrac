@@ -70,6 +70,8 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   record_tracer_fields<E>(run, ps, E == TransportElement::Vector);
   Topology mesh(ps, prm);
   start_tracers<E>(run, ps, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
   std::map<std::string, bool> output_fields = tracer_output_fields(prm);
 
@@ -120,6 +122,8 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
   // Checkpoint t_loc
   mesh.records_t_loc = true;
   start_tracers<E>(run, ps, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
   std::map<std::string, bool> output_fields = tracer_output_fields(prm);
   output_fields["t_loc"] = true;

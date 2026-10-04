@@ -96,6 +96,8 @@ void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector
 }
 
 void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<double, std::vector<std::string>>>& items){
+  if (items.size() != t_.size())
+    partrac::fail("XDMF: field ", field, " has ", items.size(), " time steps, u has ", t_.size());
   stamps[field].resize(items.size()); // initialize vector
   for (Uint i=0; i < items.size(); ++i){
     auto tkey = items[i].first;

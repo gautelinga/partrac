@@ -177,7 +177,7 @@ Uint sheet_refinement(FacesType &faces,
                       ParticleSet& ps,
                       const double ds_max,
                       const double curv_refine_factor,
-                      const bool cut_if_stuck,
+                      const StuckEdge stuck,
                       const bool check_if_inside){
   bool changed;
   Uint n_add = 0;
@@ -312,12 +312,10 @@ Uint sheet_refinement(FacesType &faces,
           edges_inlet.push_back(new_iedge);
         }
       }
-      else {
-        //std::cout << "Here we should remove this edge." << std::endl;
-        //exit(1);
-        if (cut_if_stuck)
-          edges_to_remove.insert(iedge);
-      }
+      else if (stuck == StuckEdge::Stop)
+        partrac::fail("an edge is stuck; cut_if_stuck=true cuts it and goes on");
+      else if (stuck == StuckEdge::Cut)
+        edges_to_remove.insert(iedge);
     }
 
     std::vector<std::pair<double, Uint>> next;
@@ -357,7 +355,7 @@ inline Uint strip_refinement(FacesType &faces,
                              ParticleSet& ps,
                              const double ds_max,
                              const double curv_refine_factor,
-                             const bool cut_if_stuck){
+                             const StuckEdge stuck){
   Uint n_add = 0;
   Uint iedge = 0;
   std::set<Uint> edges_to_remove;
@@ -406,8 +404,8 @@ inline Uint strip_refinement(FacesType &faces,
         ++n_add;
       }
       else {
-        // exit(1);
-        edges_to_remove.insert(iedge);
+        if (stuck != StuckEdge::Keep)
+          edges_to_remove.insert(iedge);
         ++iedge;
       }
     }
@@ -416,7 +414,7 @@ inline Uint strip_refinement(FacesType &faces,
     }
   }
   if (edges_to_remove.size() > 0){
-    if (!cut_if_stuck){
+    if (stuck == StuckEdge::Stop){
       partrac::fail("an edge is stuck; cut_if_stuck=true cuts it and goes on");
     }
     std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
@@ -443,17 +441,17 @@ Uint refinement(FacesType &faces,
                 EdgesType &edges_inj,
                 ParticleSet& ps, const double ds_max,
                 const double curv_refine_factor,
-                const bool cut_if_stuck){
+                const StuckEdge stuck){
   Uint n_add = 0;
   if (faces.size() > 0){
     n_add = sheet_refinement(faces, edges, edge2faces, node2edges,
                       edges_inlet, nodes_inlet, pos_inj, edges_inj,
-                      ps, ds_max, curv_refine_factor, cut_if_stuck);
+                      ps, ds_max, curv_refine_factor, stuck);
   }
   else {
     n_add = strip_refinement(faces, edges, edge2faces, node2edges,
                       edges_inlet, nodes_inlet,
-                      ps, ds_max, curv_refine_factor, cut_if_stuck);
+                      ps, ds_max, curv_refine_factor, stuck);
   }
   return n_add;
 }
@@ -1637,7 +1635,7 @@ bool injection(const std::vector<Vector3d> &pos_inj,
                const bool verbose
                ){
   const Uint n_inj = pos_inj.size();
-  if (n_inj == 0 || !ps.has_space(n_inj))
+  if (n_inj == 0)
     return true;
   assert(nodes_inlet.size() == n_inj);
 
@@ -1657,6 +1655,9 @@ bool injection(const std::vector<Vector3d> &pos_inj,
     if (!reused[i])
       fresh.push_back(i);
   }
+  // Room for the new nodes only
+  if (!ps.has_space(fresh.size()))
+    return true;
 
   const Uint irw0 = ps.N();
   ps.add(pos_inj, fresh, irw0);
