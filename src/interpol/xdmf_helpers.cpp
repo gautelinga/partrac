@@ -47,7 +47,6 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
 
   std::vector<std::pair<double, std::vector<std::string>>> titems;
   for (auto & p : tree.get_child("Xdmf.Domain.Grid")) {
-    //std :: cout << "[" << p.first << "]" << std :: endl;    
     if (p.first == "Grid"){
       double time = 0.;
       bool has_time = false;
@@ -68,8 +67,6 @@ std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::s
           // Check filename == h5filename too
         }
       }
-      //std::cout << " " << time << " " << location << std::endl;
-      //titems.push_back({time, {filename, location}});
       if (!has_time){
         partrac::fail("XDMF: a grid without a time");
       }

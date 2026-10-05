@@ -1,0 +1,10 @@
+// Written by src/CMakeLists.txt from its interpolator table
+#ifndef __INTERPOLATORS_HPP
+#define __INTERPOLATORS_HPP
+
+@INTERP_INCLUDES@
+@INTERP_ALIASES@
+// Every concrete interpolator, in the table's order
+#define PARTRAC_INTERPOLATORS(X)@INTERP_LIST@
+
+#endif

@@ -7,8 +7,6 @@
 #include "typedefs.hpp"
 #include "PointValues.hpp"
 
-//using namespace std;
-
 // Time weight and rate between stamps; zero rate on a single stamp
 inline double stamp_weight(const double t, const double t_prev, const double t_next){
   return (t_next > t_prev) ? (t - t_prev)/(t_next - t_prev) : 0.;
@@ -106,9 +104,6 @@ protected:
   bool verbose = true;
   int int_order = 1;
   bool needs_gradient_ = false;
-  //double Lx = 0;
-  //double Ly = 0;
-  //double Lz = 0;
   Vector3d x_min;
   Vector3d x_max;
   double U0 = 1.0;

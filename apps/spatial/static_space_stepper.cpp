@@ -1,5 +1,4 @@
 #include <iostream>
-#include <map>
 #include <set>
 #include <string>
 
@@ -27,7 +26,7 @@ static int run(int argc, char* argv[])
                                prm.get<double>("dx_max"), prm.get<double>("T"));
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
-  Topology mesh(ps, prm);
+  Topology mesh(ps, mesh_options(prm));
   // Checkpoint t_loc
   mesh.records_t_loc = true;
 
@@ -55,16 +54,10 @@ static int run(int argc, char* argv[])
 
   mesh.compute_interior();
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = true;
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
-  output_fields["t_loc"] = true;
-  output_fields["tau"] = true;
+  OutputFields output_fields = mesh_output_fields(prm, mesh);
+  output_fields.c = true;
+  output_fields.t_loc = true;
+  output_fields.tau = true;
 
   // Coarsen at refine_intv when coarsening is off
   const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")

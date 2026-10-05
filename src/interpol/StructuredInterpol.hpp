@@ -13,7 +13,6 @@
 #include "geometry.hpp"
 #include "strings.hpp"
 #include "Timestamps.hpp"
-#include "H5Cpp.h"
 
 // std::round to int for |v| < 2^31, without the libm call
 inline int round_to_int(const double v){
@@ -83,25 +82,6 @@ inline void load_field(H5::H5File &h5file
   } catch (const H5::Exception&){
     partrac::fail(h5file.getFileName(), ": cannot read the dataset '", field, "'");
   }
-  for (int ix=0; ix<nx; ++ix){
-    for (int iy=0; iy<ny; ++iy){
-      for (int iz=0; iz<nz; ++iz){
-  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix];
-      }
-    }
-  }
-}
-
-inline void load_int_field(H5::H5File &h5file
-                         , Grid3<int>& u
-                         , const std::string field
-                         , const int nx, const int ny, const int nz
-                         )
-{
-  H5::DataSet dset = h5file.openDataSet(field);
-  H5::DataSpace dspace = dset.getSpace();
-  std::vector<int> Uv(nx*ny*nz);
-  dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
   for (int ix=0; ix<nx; ++ix){
     for (int iy=0; iy<ny; ++iy){
       for (int iz=0; iz<nz; ++iz){
@@ -206,24 +186,6 @@ inline void matrix_product(double v[3][3][3], const Grid3<double>& u, const Uint
           for (Uint m=0; m<2; ++m){
             for (Uint n=0; n<2; ++n){
               v[i][j][k] += W[i][j][k][l][m][n] * u(ind[0][l], ind[1][m], ind[2][n]);
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-inline void enforce_noslip(double v[3][3][3], const Grid3<unsigned char>& isSolid, const Uint ind[3][2]){
-  for (Uint i=0; i<2; ++i){
-    for (Uint j=0; j<2; ++j){
-      for (Uint k=0; k<2; ++k){
-        if (isSolid(ind[0][i], ind[1][j], ind[2][k])){
-          for (Uint l=0; l<2; ++l){
-            for (Uint m=0; m<2; ++m){
-              for (Uint n=0; n<2; ++n){
-                v[i+l][j+m][k+n] = 0.;
-              }
             }
           }
         }
@@ -350,10 +312,6 @@ public:
                    double _dwux_z[2][2][2], double _dwuy_x[2][2][2], double _dwuy_y[2][2][2],
                    double _dwuy_z[2][2][2], double _dwuz_x[2][2][2], double _dwuz_y[2][2][2],
                    double _dwuz_z[2][2][2]) const;
-  //bool inside_domain(const Vector3d &x) const;
-  Uint get_nx() { return n[0]; };
-  Uint get_ny() { return n[1]; };
-  Uint get_nz() { return n[2]; };
   double get_t_min() { return ts.get_t_min(); };
   double get_t_max() { return ts.get_t_max(); };
   double next_stamp_after(const double t) const override { return ts.next_after(t); }
@@ -379,24 +337,7 @@ protected:
 
   double W[3][3][3][2][2][2];
 
-  double Vx_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double Vy_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double Vz_prev[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double Vx_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double Vy_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-  double Vz_next[2][2][2] = {{{0., 0.}, {0., 0.}}, {{0., 0.}, {0., 0.}}};
-
   partrac::Params felbm_params;
-
-  bool is_bulk = false;
-  bool is_inside_domain = false;
-
-  double Ux = 0.;
-  double Uy = 0.;
-  double Uz = 0.;
-  double Ax = 0.;
-  double Ay = 0.;
-  double Az = 0.;
 
   bool ignore_density = false;
   bool ignore_pressure = false;
@@ -516,8 +457,6 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   for (Uint i=0; i<3; ++i){
     dwq[i][0] = -1./dx[i];
     dwq[i][1] =  1./dx[i];
-    //dwwq[i][0] = -2./dx[i];
-    //dwwq[i][1] =  2./dx[i];
   }
 
   // Create arrays
@@ -1141,7 +1080,6 @@ inline bool StructuredLattice::compute_ind(const Vector3d &x, Uint _ind[3][2], i
     _ix_fl[i] = floor(x[i]/dx[i]);
   }
 
-  //Uint _ind[3][2] = {{0, 0}, {0, 0}, {0, 0}};  // trilinear intp
   for (Uint i=0; i<3; ++i){
     _ind[i][0] = imodulo(_ix_fl[i], n[i]);
     _ind[i][1] = imodulo(_ind[i][0] + 1, n[i]);
@@ -1229,17 +1167,15 @@ inline void StructuredLattice::probe_space_boundary(
     xd[i] = x[i]/dx[i] - _ix_fl[i];
   }
 
-  //bool sub_x[3];
   for (Uint i=0; i<3; ++i){
     _sub_x[i] = xd[i] >= 0.5;
   }
 
   bool is_solid_3[3][3][3];
-  //bool is_solid_2[2][2][2];
   compute_solid_local(is_solid_3, isSolid, _ind);
   get_subcube(_is_solid_2, is_solid_3, _sub_x);
 
-  double _wq[3][2] = {{0., 0.}, {0., 0.}, {0., 0.}};;
+  double _wq[3][2] = {{0., 0.}, {0., 0.}, {0., 0.}};
   for (Uint i=0; i<3; ++i){
     double wxi = _sub_x[i] ? 2 * xd[i] - 1.0: 2 * xd[i];
     _wq[i][0] = 1 - wxi;
@@ -1354,25 +1290,5 @@ inline void StructuredLattice::sub_weights(const double _wq[3][2],
     }
   }
 }
-
-
-// Interpolate in space and time and enforce BCs
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #endif

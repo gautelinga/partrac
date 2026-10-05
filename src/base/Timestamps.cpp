@@ -33,10 +33,6 @@ void Timestamps::initialize(const std::string& infilename){
   filename = infilename.substr(botDirPos+1, extPos-botDirPos-1);
 }
 
-void Timestamps::update(const double){
-  partrac::fail("Timestamps::update is not implemented");
-}
-
 void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
   for ( auto & item : items ){
     double tkey = item.first;
@@ -91,8 +87,6 @@ void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector
   // Searched by bisection
   if (!std::is_sorted(t_.begin(), t_.end()))
     partrac::fail("XDMF: the time keys are not in increasing order");
-  //folder = "";
-  //filename = "";
 }
 
 void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<double, std::vector<std::string>>>& items){

@@ -27,7 +27,6 @@ public:
 class FreqStamps {
 public:
   FreqStamps() { }
-  //FreqStamps(const std::string&);
   // A line is `t a file`, a harmonic of the base frequency with k its line
   // number, or `omega phi a file`; one form a file. A frequency may appear on
   // several lines, as the cosine and sine parts of a Fourier mode (phi = 0 and

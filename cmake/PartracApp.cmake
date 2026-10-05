@@ -1,10 +1,6 @@
-# partrac_add_app(<target> SOURCE <file> [NEEDS_DOLFIN])
+# partrac_add_app(<target> SOURCE <file>)
 function(partrac_add_app name)
-  cmake_parse_arguments(APP "NEEDS_DOLFIN" "SOURCE" "" ${ARGN})
-  if (APP_NEEDS_DOLFIN AND NOT PARTRAC_ENABLE_DOLFIN)
-    message(STATUS "Skipping app ${name}: needs dolfin.")
-    return()
-  endif()
+  cmake_parse_arguments(APP "" "SOURCE" "" ${ARGN})
 
   # its unit an object library, compiled before the libraries are linked
   add_library(${name}_objects OBJECT ${APP_SOURCE})

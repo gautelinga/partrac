@@ -3,8 +3,6 @@
 #ifndef __EXPR_BATCHELORVORTEX_HPP
 #define __EXPR_BATCHELORVORTEX_HPP
 
-//using namespace std;
-
 class Expr_BatchelorVortex final : public Expr {
 public:
   Expr_BatchelorVortex(const partrac::Params& expr_params) : Expr(expr_params) {

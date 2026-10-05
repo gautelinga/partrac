@@ -20,10 +20,9 @@ protected:
   double Dm;
   int int_order;
   std::vector<std::mt19937>& gens;
-  std::normal_distribution<double> rnd_normal;
 };
 
-inline ExplicitIntegrator::ExplicitIntegrator(const double Dm, const int int_order, std::vector<std::mt19937>& gens) : Dm(Dm), int_order(int_order), gens(gens), rnd_normal(0.0, 1.0) {
+inline ExplicitIntegrator::ExplicitIntegrator(const double Dm, const int int_order, std::vector<std::mt19937>& gens) : Dm(Dm), int_order(int_order), gens(gens) {
 }
 
 #endif

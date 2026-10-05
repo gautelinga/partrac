@@ -257,3 +257,31 @@ def test_a_checkpoint_that_does_not_fit_is_refused(case, damage, message):
     r = resume(case, check=False)
     refused(r, message)
     assert "HDF5-DIAG" not in r.stderr, r.stderr
+
+
+OLDER_CLOUD_KEYS = "inject_edges=1\ncut_if_stuck=1\ncurv_refine_factor=0\nfilter_target=0\n"
+
+
+@pytest.mark.parametrize("name,args", [
+    ("tracers", "mode=analytic init_mode=points_xy x0=0 y0=0 z0=0 Nrw=10 Nrw_max=10 int_order=1 Dm=0 "
+                "dt=0.01 T=0.02 checkpoint_intv=1e9 stat_intv=1e9 dump_intv=1e9 random=false seed=1"),
+    ("weighted_walkers", "mode=analytic init_mode=strip_y_x x0=0 y0=0 z0=0 La=0.5 Lb=0.0 ds_max=2.0 "
+                         "Nrw=10 Nrw_max=100 int_order=1 Dm=1e-4 dt=0.01 T=0.02 checkpoint_intv=1e9 "
+                         "stat_intv=1e9 dump_intv=1e9 random=false seed=1"),
+])
+def test_a_cloud_checkpoint_from_an_older_run_still_resumes(tmp_path, name, args):
+    """Older tracer and walker runs wrote four placeholder keys of a mesh's
+    remeshing into their params.dat, which their schemas no longer declare. A
+    restart reads past them; any other key it does not know is still refused."""
+    if not os.path.exists(app(name)):
+        pytest.skip(name + " is not built")
+    params = copy_example(POISEUILLE, tmp_path)
+    run_app(app(name), params, args)
+    folder = checkpoint_folder(tmp_path)
+    with open(folder / "Checkpoints" / "params.dat", "a") as f:
+        f.write(OLDER_CLOUD_KEYS)
+    run_app(app(name), params, args, "T=0.04", ["restart_folder=%s" % folder])
+    with open(folder / "Checkpoints" / "params.dat", "a") as f:
+        f.write("no_such_key=1\n")
+    r = run_app(app(name), params, args, "T=0.06", ["restart_folder=%s" % folder], check=False)
+    assert r.returncode == 2 and "unknown parameter 'no_such_key'" in r.stderr, r.stderr

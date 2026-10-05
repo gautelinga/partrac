@@ -20,8 +20,13 @@ This creates a file `timestamps.dat` in the same folder as `output.xdmf` that is
 cmake -S . -B build
 make -C build -j
 ```
-The executables end up in `build/bin/`. `-DPARTRAC_ENABLE_OPENFOAM=ON` adds
-`mode=openfoam`, built against an installed OpenFOAM. To run the tests:
+The executables end up in `build/bin/`. 
+
+`-DPARTRAC_ENABLE_DOLFIN=OFF` turns off Dolfin (`mode=fenics`) which is on by default. 
+`-DPARTRAC_ENABLE_OPENFOAM=ON` adds `mode=openfoam`, built against an installed OpenFOAM. 
+`CMAKE_BUILD_TYPE` is `Release` (the default) or `Debug`. 
+
+To run the tests:
 ```
 ctest --test-dir build --output-on-failure
 ```

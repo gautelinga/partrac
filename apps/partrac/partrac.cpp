@@ -1,6 +1,5 @@
 #include <cmath>
 #include <iostream>
-#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -31,7 +30,7 @@ static int run(int argc, char* argv[])
   scheme.prepare(*run.intp);
   if (prm.get<bool>("output_phi"))
     ps.record_phi();
-  Topology mesh(ps, prm);
+  Topology mesh(ps, mesh_options(prm));
 
   if (prm.get<bool>("inject"))
     std::cout << "Injection activated!" << std::endl;
@@ -69,16 +68,11 @@ static int run(int argc, char* argv[])
     print_param("U*dt         ", prm.get<double>("U")*dt);
   }
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output");
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output"); // && prm.output_all_props;
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
-  output_fields["tau"] = prm.get<bool>("integrate_tau");
-  output_fields["phi"] = prm.get<bool>("output_phi");
+  OutputFields output_fields = mesh_output_fields(prm, mesh);
+  // rho whatever output_all_props says
+  output_fields.rho = !prm.get<bool>("minimal_output");
+  output_fields.tau = prm.get<bool>("integrate_tau");
+  output_fields.phi = prm.get<bool>("output_phi");
 
   // Coarsen at refine_intv when coarsening is off
   const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")

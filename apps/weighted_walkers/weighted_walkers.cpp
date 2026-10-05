@@ -3,7 +3,6 @@
 #include <cmath>
 #include <iostream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -184,7 +183,7 @@ static int run(int argc, char* argv[])
     // Generation per walker
     ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
     ps.record_generation();
-    Topology mesh(ps, prm);
+    Topology mesh(ps, cloud_options(prm));
 
     // Gaussian strip or circle
     const std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
@@ -202,13 +201,8 @@ static int run(int argc, char* argv[])
     if (check_only(run, ps, mesh))
         return 0;
 
-    std::map<std::string, bool> output_fields;
-    output_fields["u"] = false;
-    output_fields["c"] = !prm.get<bool>("minimal_output");
-    output_fields["p"] = false;
-    output_fields["rho"] = false;
-    output_fields["H"] = false;
-    output_fields["n"] = false;
+    OutputFields output_fields;
+    output_fields.c = !prm.get<bool>("minimal_output");
 
     const double dt = prm.get<double>("dt");
     const double refine_intv = prm.get<double>("refine_intv");

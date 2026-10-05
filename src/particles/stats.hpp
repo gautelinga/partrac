@@ -137,7 +137,6 @@ inline std::vector<StatsColumn> mesh_stats_columns(
     for (Uint i = 0; i < faces.size(); ++i){
       Uint iedge = faces[i].first[0];
       Uint jedge = faces[i].first[1];
-      // Uint kedge = faces[i].first[2];
       double dA0 = faces[i].second;
       if (!(dA0 > 0.))
         continue;                 // degenerate, culled later
@@ -175,7 +174,6 @@ inline std::vector<StatsColumn> mesh_stats_columns(
 inline std::vector<StatsColumn> vector_stats_columns(
                  const double t,
                  const ParticleSet& ps,
-                 const bool has_phi,
                  const unsigned long int n_declined)
 {
   const Uint Nrw = ps.N();
@@ -186,7 +184,7 @@ inline std::vector<StatsColumn> vector_stats_columns(
   #pragma omp parallel for reduction(+:xm0,xm1,xm2,um0,um1,um2,wm,Sm,phim,u1m0,u1m1,u1m2,w1m,S1m,u2m0,u2m1,u2m2,w2m,S2m,Nrw1)
   for (Uint i = 0; i < Nrw; ++i){
     const Vector3d xi = ps.x(i), ui = ps.u(i);
-    const double wi = ps.w(i), Si = ps.S(i), phii = has_phi ? ps.phi(i) : 1.;
+    const double wi = ps.w(i), Si = ps.S(i), phii = ps.phi(i);
     xm0 += xi[0]; xm1 += xi[1]; xm2 += xi[2];
     um0 += ui[0]; um1 += ui[1]; um2 += ui[2];
     wm += wi; Sm += Si; phim += phii;
@@ -204,7 +202,7 @@ inline std::vector<StatsColumn> vector_stats_columns(
   #pragma omp parallel for reduction(+:xv0,xv1,xv2,uv0,uv1,uv2,wv,u1v0,u1v1,u1v2,w1v,u2v0,u2v1,u2v2,w2v)
   for (Uint i = 0; i < Nrw; ++i){
     const Vector3d xi = ps.x(i), ui = ps.u(i);
-    const double wi = ps.w(i), phii = has_phi ? ps.phi(i) : 1.;
+    const double wi = ps.w(i), phii = ps.phi(i);
     xv0 += pow(xi[0]-xm0, 2); xv1 += pow(xi[1]-xm1, 2); xv2 += pow(xi[2]-xm2, 2);
     uv0 += pow(ui[0]-um0, 2); uv1 += pow(ui[1]-um1, 2); uv2 += pow(ui[2]-um2, 2);
     wv += pow(wi-wm, 2);

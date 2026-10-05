@@ -349,11 +349,10 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
 
 template<typename Interp>
 PARTRAC_HOT_LOOP
-void ParticleSet::update_fields(Interp& intp, const double t, std::map<std::string, bool> &output_fields){
-  // Read before the threads: operator[] inserts
-  const bool do_rho = output_fields["rho"];
-  const bool do_p = output_fields["p"];
-  const bool do_J = has_J && output_fields["J"];
+void ParticleSet::update_fields(Interp& intp, const double t, const OutputFields& output_fields){
+  const bool do_rho = output_fields.rho;
+  const bool do_p = output_fields.p;
+  const bool do_J = has_J && output_fields.J;
   // phi always updated (vector statistics)
   const bool do_phi = has_phi;
   const bool do_cell_type = has_cell_type;
@@ -383,11 +382,9 @@ void ParticleSet::update_fields(Interp& intp, const double t, std::map<std::stri
     // Always, for the statistics
     u_rw[irw] = ptvals.get_u();
     if (do_rho){
-      //rho_rw[irw] = intp->get_rho();
       rho_rw[irw] = ptvals.get_rho();
     }
     if (do_p){
-      //p_rw[irw] = intp->get_p();
       p_rw[irw] = ptvals.get_p();
     }
     if (do_J)

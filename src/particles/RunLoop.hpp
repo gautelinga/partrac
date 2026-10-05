@@ -8,7 +8,6 @@
 #include <functional>
 #include <iostream>
 #include <limits>
-#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -130,6 +129,19 @@ inline bool check_only(const Run& run, const ParticleSet& ps, Topology& mesh){
   return true;
 }
 
+// Dumped fields of a mesh app; H and n need the curvature
+inline OutputFields mesh_output_fields(const partrac::Params& prm, Topology& mesh){
+  const bool full = !prm.get<bool>("minimal_output");
+  OutputFields f;
+  f.u = full;
+  f.c = full;
+  f.p = full && prm.get<bool>("output_all_props");
+  f.rho = full && prm.get<bool>("output_all_props");
+  f.H = full && mesh.dim() > 0 && mesh.computes_curvature();
+  f.n = full && mesh.dim() > 1 && mesh.computes_curvature();
+  return f;
+}
+
 // Particles that could not step: ignore, reinject, mark or remove
 inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std::string& outside,
                            const std::vector<Uint>& nodes, const double t, const bool verbose){
@@ -222,7 +234,7 @@ struct RunHooks {
 // Simulation loop
 template<typename Stepper>
 void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
-              std::map<std::string, bool>& output_fields, const double dt,
+              const OutputFields& output_fields, const double dt,
               const RunHooks& hooks = RunHooks()){
   partrac::Params& prm = run.prm;
   const bool restarting = prm.get<std::string>("restart_folder") != "";

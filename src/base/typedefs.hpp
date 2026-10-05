@@ -2,7 +2,6 @@
 #define __TYPEDEFS_HPP
 
 #include <vector>
-#include <list>
 #include <array>
 #include <map>
 #include <eigen3/Eigen/Dense>
@@ -33,11 +32,8 @@ public:
     double rho_prev = 1.0;
 };
 
-//typedef std::vector<std::pair<std::array<Uint, 2>, double>> EdgesType;
 typedef std::vector<EdgeType> EdgesType; 
-//typedef std::vector<std::pair<std::array<Uint, 3>, double>> FacesType;
 typedef std::vector<FaceType> FacesType;
-typedef std::list<Uint> FacesListType;
 typedef std::vector<Uint> EdgesListType;   // template edge -> live edge
 typedef std::vector<Uint> NodesListType;   // template node -> live node
 // Adjacency tables: the faces of an edge, the edges of a node
@@ -47,5 +43,18 @@ typedef std::vector<AdjRowType> Node2EdgesType;
 typedef std::vector<std::map<Uint, double>> InteriorAnglesType;
 typedef Eigen::Vector3d Vector3d;
 typedef Eigen::Matrix3d Matrix3d;
+
+// A line's or sheet's connectivity, and its inlet: the template positions and
+// edges, and the live edges and nodes they map to
+struct Connectivity {
+  EdgesType edges;
+  FacesType faces;
+  Edge2FacesType edge2faces;
+  Node2EdgesType node2edges;
+  std::vector<Vector3d> pos_inj;
+  EdgesType edges_inj;
+  EdgesListType edges_inlet;
+  NodesListType nodes_inlet;
+};
 
 #endif

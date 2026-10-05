@@ -67,8 +67,7 @@ private:
   double g3x_, g3y_;
   double g1x_, g1y_;
 
-  static constexpr std::array<int, 6> perm_ = {-1, -1, -1, 5, 3, 4};  // Check!
-  // static constexpr std::array<int, 6> perm_alt_ = {-1, -1, -1, 4, 5, 3};
+  static constexpr std::array<int, 6> perm_ = {-1, -1, -1, 5, 3, 4};
 
 public:
 

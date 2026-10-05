@@ -3,16 +3,12 @@
 #ifndef __EXPR_INFINITEPLANE_HPP
 #define __EXPR_INFINITEPLANE_HPP
 
-//using namespace std;
-
 class Expr_InfinitePlane final : public Expr {
 public:
   Expr_InfinitePlane(const partrac::Params& expr_params) : Expr(expr_params) {
-    //R = expr_params.get<double>("R");
     x0 = {expr_params.get<double>("x0"),
           expr_params.get<double>("y0"),
           expr_params.get<double>("z0")};
-    //u_inf = expr_params.get<double>("u_inf");
     alpha = expr_params.get<double>("alpha");
     mu = expr_params.get<double>("mu");
     p_inf = expr_params.get<double>("p_inf");
@@ -40,7 +36,7 @@ public:
   void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
     Vector3d r = x-x0;
 
-    ptvals.U = {alpha * r[0] * r[0], - 2 * alpha * r[0] * r[1], 0};  // * alpha * r[0] * r[2];
+    ptvals.U = {alpha * r[0] * r[0], - 2 * alpha * r[0] * r[1], 0};
     ptvals.P = p_inf + 2.0 * mu * alpha * r[0];
     ptvals.Rho = Rho;
 
@@ -53,7 +49,6 @@ private:
   double mu;  // Viscosity
   double alpha;  // alpha parameter = u''(x)
   Vector3d x0;  // origin
-  //double u_inf;  // Far-field velocity
   double p_inf;  // Far-field pressure
   double Rho;
 };

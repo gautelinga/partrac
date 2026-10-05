@@ -17,8 +17,6 @@
 #ifndef __ANALYTICINTERPOL_HPP
 #define __ANALYTICINTERPOL_HPP
 
-//using namespace std;
-
 class AnalyticInterpol final : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);

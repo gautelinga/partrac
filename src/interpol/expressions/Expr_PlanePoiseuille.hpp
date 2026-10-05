@@ -3,18 +3,14 @@
 #ifndef __EXPR_PLANEPOISEUILLE_HPP
 #define __EXPR_PLANEPOISEUILLE_HPP
 
-//using namespace std;
-
 class Expr_PlanePoiseuille final : public Expr {
 public:
   Expr_PlanePoiseuille(const partrac::Params& expr_params) : Expr(expr_params) {
-    //R = expr_params.get<double>("R");
     x0 = {expr_params.get<double>("x0"),
           expr_params.get<double>("y0"),
           expr_params.get<double>("z0")};
     u_inf = expr_params.get<double>("u_inf");
     R = expr_params.get<double>("R");
-    //alpha = expr_params.get<double>("alpha");
     mu = expr_params.get<double>("mu");
     p_inf = expr_params.get<double>("p_inf");
     Rho = expr_params.get<double>("rho");
@@ -43,7 +39,7 @@ public:
   void eval(const Vector3d &x, const double t __attribute__((unused)), PointValues& ptvals) {
     Vector3d r = x-x0;
     double chi = pow(r[0]/R, 2);
-    ptvals.U = {0., 0., 3./2*u_inf*(1.0 - chi)}; // * alpha * r[0] * r[2];
+    ptvals.U = {0., 0., 3./2*u_inf*(1.0 - chi)};
     ptvals.P = p_inf;
     ptvals.Rho = Rho;
     ptvals.gradU << 0., 0., 0.,
@@ -54,10 +50,9 @@ public:
   };
 private:
   double mu;  // Viscosity
-  //double alpha;  // alpha parameter = u''(x)
   Vector3d x0;  // origin
   double u_inf;  // Far-field velocity
-  double R; //
+  double R;
   double p_inf;  // Far-field pressure
   double Rho;
 };

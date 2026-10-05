@@ -390,6 +390,11 @@ Schema& Schema::strict_file(bool on) {
   return *this;
 }
 
+Schema& Schema::retired(const std::vector<std::string>& keys) {
+  m_impl->retired.insert(keys.begin(), keys.end());
+  return *this;
+}
+
 Params Schema::parse(int argc, char* argv[]) const {
   std::vector<std::string> args;
   args.reserve(static_cast<std::size_t>(argc));
@@ -469,6 +474,7 @@ Params Schema::parse(const std::vector<std::string>& args) const {
         if (!seen.insert(key).second)
           problems.push_back("parameter '" + key + "' given more than once in " + path);
         const detail::Entry* e = m_impl->find(key);
+        if (!e && m_impl->retired.count(key)) continue;
         if (!e) {
           const std::string msg = "unknown parameter '" + key + "' in " + path;
           if (m_impl->strict_file) problems.push_back(msg);
@@ -654,6 +660,10 @@ std::string Schema::help() const {
 
 void Schema::validate_self() const {
   std::vector<std::string> problems;
+
+  for (const auto& key : m_impl->retired)
+    if (m_impl->find(key))
+      problems.push_back("'" + key + "' is declared and retired");
 
   for (const auto& e : m_impl->entries) {
     if (e.def) {

@@ -11,17 +11,26 @@
 #include "Initializer.hpp"
 #include "io.hpp"
 
-Topology::Topology(ParticleSet& ps, const partrac::Params& prm) : ps(ps) {
-  ds_min = prm.get<double>("ds_min");
-  ds_max = prm.get<double>("ds_max");
-  curv_refine_factor = prm.get<double>("curv_refine_factor");
-  cut_if_stuck = prm.get<bool>("cut_if_stuck");
-  injecting = prm.has("inject") ? prm.get<bool>("inject") : false;
-  inject_edges = prm.get<bool>("inject_edges");
-  verbose = prm.get<bool>("verbose");
-  filter_target = prm.get<int>("filter_target");
-  Dm = prm.has("Dm") ? prm.get<double>("Dm") : 0.;
+TopologyOptions cloud_options(const partrac::Params& prm){
+  TopologyOptions o;
+  o.ds_min = prm.get<double>("ds_min");
+  o.ds_max = prm.get<double>("ds_max");
+  o.injecting = prm.has("inject") ? prm.get<bool>("inject") : false;
+  o.verbose = prm.get<bool>("verbose");
+  o.Dm = prm.has("Dm") ? prm.get<double>("Dm") : 0.;
+  return o;
 }
+
+TopologyOptions mesh_options(const partrac::Params& prm){
+  TopologyOptions o = cloud_options(prm);
+  o.curv_refine_factor = prm.get<double>("curv_refine_factor");
+  o.cut_if_stuck = prm.get<bool>("cut_if_stuck");
+  o.inject_edges = prm.get<bool>("inject_edges");
+  o.filter_target = prm.get<int>("filter_target");
+  return o;
+}
+
+Topology::Topology(ParticleSet& ps, const TopologyOptions& opts) : ps(ps), opts(opts) {}
 
 // Stop on an empty set or a changed dimension
 void Topology::check_topology(){
@@ -37,8 +46,8 @@ void Topology::check_dim(){
   if (dim0 < 0){
     if (d > 0){
       dim0 = d;
-      if (Dm > 0.)
-        std::cerr << "Warning: Dm = " << Dm << " > 0 on a " << d
+      if (opts.Dm > 0.)
+        std::cerr << "Warning: Dm = " << opts.Dm << " > 0 on a " << d
                   << "-dimensional mesh. Brownian motion and material "
                   << "deformation are normally not compatible." << std::endl;
     }
@@ -46,7 +55,7 @@ void Topology::check_dim(){
   }
   if (d == dim0) return;
   // Injection may raise the dimension
-  if (d > dim0 && injecting){
+  if (d > dim0 && opts.injecting){
     dim0 = d;
     return;
   }
@@ -57,7 +66,7 @@ void Topology::check_dim(){
 // Dimension the run settles into, including injection
 int Topology::dim_settled(){
   int d = dim();
-  if (injecting && inject_edges){
+  if (opts.injecting && opts.inject_edges){
     const int inlet = edges_inj.size() > 0 ? 1
                     : (pos_inj.size() > 0 ? 0 : -1);
     if (inlet >= 0)
@@ -109,9 +118,7 @@ void Topology::integrate_tau(const double dt, const double tau_max){
 
       std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
       std::vector<bool> node_isactive(ps.N(), true);
-      remove_inactive(faces, edges, edge2faces, node2edges,
-                      edges_inlet, nodes_inlet,
-                      face_isactive, edge_isactive, node_isactive, ps);
+      remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
       check_topology();   // culling may drop the dimension
     }
   }
@@ -138,22 +145,15 @@ void Topology::integrate_tau(const double dt, const double tau_max){
       }
       std::vector<bool> edge_isactive(edges.size(), true);
       std::vector<bool> node_isactive(ps.N(), true);
-      remove_inactive(faces, edges, edge2faces, node2edges,
-                      edges_inlet, nodes_inlet,
-                      face_isactive, edge_isactive, node_isactive, ps);
+      remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
       check_topology();
     }
   }
 }
 
 Uint Topology::refine(){
-  Uint n = refinement(faces, edges,
-                      edge2faces, node2edges,
-                      edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj,
-                      ps, ds_max,
-                      curv_refine_factor,
-                      cut_if_stuck ? StuckEdge::Cut : StuckEdge::Stop);
+  Uint n = refinement(*this, ps, opts.ds_max, opts.curv_refine_factor,
+                      opts.cut_if_stuck ? StuckEdge::Cut : StuckEdge::Stop);
   check_topology();
   return n;
 }
@@ -170,39 +170,23 @@ Uint Topology::coarsen(const bool full){
     ds_longest = std::max(ds_longest, ds);
   }
   // Cut scaled from the mesh
-  const double ds_cut = full ? ds_min : 1e-12 * ds_longest;
+  const double ds_cut = full ? opts.ds_min : 1e-12 * ds_longest;
 
   // Skip if no edge is below the cut
   Uint n = 0;
   if (ds_shortest <= ds_cut * (1. + 1e-9))
-    n = coarsening(faces, edges,
-                   edge2faces, node2edges,
-                   edges_inlet, nodes_inlet,
-                   ps, ds_cut,
-                   curv_refine_factor);
+    n = coarsening(*this, ps, ds_cut, opts.curv_refine_factor);
   check_topology();
   return n;
 }
 
 Uint Topology::inject(){
-  Uint n = injection(pos_inj,
-                   edges_inj,
-                   edges_inlet,
-                   nodes_inlet,
-                   edges, 
-                   faces,
-                   edge2faces,
-                   node2edges,
-                   ps,
-                   inject_edges,
-                   verbose);
+  Uint n = injection(*this, ps, opts.inject_edges, opts.verbose);
   // Cull what is no longer at the inlet
   std::vector<bool> face_isactive(faces.size(), true);
   std::vector<bool> edge_isactive(edges.size(), true);
   std::vector<bool> node_isactive(ps.N(), true);
-  remove_inactive(faces, edges, edge2faces, node2edges,
-                  edges_inlet, nodes_inlet,
-                  face_isactive, edge_isactive, node_isactive, ps);
+  remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
   check_topology();
   return n;
 }
@@ -211,26 +195,19 @@ void Topology::compute_interior(){
   // Only for curvature-weighted refinement
   if (!computes_curvature())
     return;
-  compute_interior_prop(interior_ang, mixed_areas, face_normals,
-                        faces, edges, edge2faces, ps);
-  compute_mean_curv(faces, edges, edge2faces, node2edges,
-                    ps, interior_ang, mixed_areas, face_normals);
+  compute_interior_prop(interior_ang, mixed_areas, face_normals, *this, ps);
+  compute_mean_curv(*this, ps, interior_ang, mixed_areas, face_normals);
 }
 
 void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
   std::vector<bool> face_isactive(faces.size(), true);
   std::vector<bool> edge_isactive(edges.size(), true);
-  remove_inactive(faces, edges,
-                  edge2faces, node2edges,
-                  edges_inlet, nodes_inlet,
-                  face_isactive, edge_isactive, node_isactive,
-                  ps);
+  remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
   check_dim();
 }
 
 bool Topology::filter(){
-  bool changed = filtering(faces, edges, edge2faces, node2edges,
-                           edges_inlet, nodes_inlet, ps, filter_target);
+  bool changed = filtering(*this, ps, opts.filter_target);
   check_topology();
   return changed;
 }
@@ -495,10 +472,10 @@ void Topology::renumber(const std::vector<Uint>& old2new){
   compute_node2edges(node2edges, edges, ps.N());
 }
 
-void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, std::map<std::string, bool>& output_fields){
+void Topology::dump_hdf5(H5::H5File& h5f, const std::string& groupname, const OutputFields& output_fields){
   
   if (dim() > 0)
-    mesh2hdf(h5f, groupname, ps, faces, edges, output_fields["tau"], records_doublings ? &edge_doublings() : nullptr);
+    mesh2hdf(h5f, groupname, ps, faces, edges, output_fields.tau, records_doublings ? &edge_doublings() : nullptr);
   ps.dump_hdf5(h5f, groupname, output_fields);
 }
 
@@ -530,8 +507,8 @@ void Topology::load_initial_state(const InitialState& init_state, partrac::Param
     for ( const auto & edge : edges_inj )
       ds_inj_max = std::max(ds_inj_max,
                             (pos_inj[edge.first[0]] - pos_inj[edge.first[1]]).norm());
-    if (ds_max > 0. && ds_inj_max > ds_max)
-      std::cerr << "Warning: ds_max = " << ds_max << " is below the injection "
+    if (opts.ds_max > 0. && ds_inj_max > opts.ds_max)
+      std::cerr << "Warning: ds_max = " << opts.ds_max << " is below the injection "
                 << "template's longest edge " << ds_inj_max << ". The inlet "
                 << "will be refined to match, so the injected curve gets finer "
                 << "as the run goes on." << std::endl;

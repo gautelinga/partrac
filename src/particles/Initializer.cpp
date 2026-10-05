@@ -83,19 +83,11 @@ std::vector<Vector3d> sample_inside(const std::function<Vector3d()>& draw, std::
 }
 
 // Triangulated surface being remeshed; no inlet
-struct Surface {
+struct Surface : Connectivity {
   Surface(std::shared_ptr<Interpol> intp, const std::vector<Vector3d>& nodes, const Uint Nrw_max) : ps(intp, Nrw_max) {
     ps.add(nodes, 0);
   }
   ParticleSet ps;
-  EdgesType edges;
-  FacesType faces;
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 };
 
 void compute_maps(Surface& s){
@@ -105,15 +97,12 @@ void compute_maps(Surface& s){
 
 // Split edges longer than ds_max
 Uint refine_surface(Surface& s, const double ds_max, const bool check_if_inside){
-  return sheet_refinement(s.faces, s.edges, s.edge2faces, s.node2edges,
-                          s.edges_inlet, s.nodes_inlet, s.pos_inj, s.edges_inj,
-                          s.ps, ds_max, 0.0, StuckEdge::Keep, check_if_inside);
+  return sheet_refinement(s, s.ps, ds_max, 0.0, StuckEdge::Keep, check_if_inside);
 }
 
 // Collapse edges shorter than ds_min
 Uint coarsen_surface(Surface& s, const double ds_min){
-  return sheet_coarsening(s.faces, s.edges, s.edge2faces, s.node2edges,
-                          s.edges_inlet, s.nodes_inlet, s.ps, ds_min, 0.0);
+  return sheet_coarsening(s, s.ps, ds_min, 0.0);
 }
 
 // Edge lengths and face areas from the positions
@@ -285,9 +274,7 @@ InitialState init_sheet(const std::vector<std::string>& key, std::shared_ptr<Int
         face_isactive[iface] = false;
     }
   }
-  remove_inactive(s.faces, s.edges, s.edge2faces, s.node2edges,
-                  s.edges_inlet, s.nodes_inlet,
-                  face_isactive, edge_isactive, node_isactive, s.ps);
+  remove_inactive(s, face_isactive, edge_isactive, node_isactive, s.ps);
 
   // Coarsen to ds_min, refine to ds_max
   Uint n_rem, n_add;

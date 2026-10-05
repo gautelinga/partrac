@@ -15,15 +15,9 @@ if (PARTRAC_MULTI_CONFIG)
     "Ninja, with CMAKE_BUILD_TYPE")
 endif()
 
-# Set CMake behavior
-cmake_policy(SET CMP0004 NEW)
-
-#set(CMAKE_CXX_COMPILER g++-10)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-#set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
 
 include(CTest)
 include(GNUInstallDirs)
@@ -36,20 +30,14 @@ else()
   message(STATUS "Doxygen not found, not building docs.")
 endif()
 
-#set(ENABLE_DOLFIN "true" CACHE STRING "Set to true to enable Dolfin import.")
-include(FeatureSummary)
-
 if (NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Release Debug." FORCE)
+endif()
+if (NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+  message(FATAL_ERROR "partrac: CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} is not supported; use Release or Debug")
 endif()
 
-set(OPTIONAL_PACKAGES "")
-list(APPEND OPTIONAL_PACKAGES "Dolfin")
-foreach (OPTIONAL_PACKAGE ${OPTIONAL_PACKAGES})
-  string (TOUPPER "PARTRAC_ENABLE_${OPTIONAL_PACKAGE}" OPTION_NAME)
-  option(${OPTION_NAME} "Compile with support for ${OPTIONAL_PACKAGE}." ON)
-  add_feature_info(${OPTION_NAME} ${OPTION_NAME} "Compile with support for ${OPTIONAL_PACKAGE}.")
-endforeach()
+option(PARTRAC_ENABLE_DOLFIN "Compile with support for Dolfin." ON)
 
 if(PARTRAC_ENABLE_DOLFIN)
   message(STATUS "*** with dolfin support ***")
@@ -63,7 +51,6 @@ endif()
 # WM_PRECISION_OPTION) or from OPENFOAM_DIR, whose etc/bashrc is sourced here.
 # The reader is a plugin the apps open only in that mode.
 option(PARTRAC_ENABLE_OPENFOAM "Compile the OpenFOAM reader (mode openfoam)." OFF)
-add_feature_info(PARTRAC_ENABLE_OPENFOAM PARTRAC_ENABLE_OPENFOAM "Compile the OpenFOAM reader (mode openfoam).")
 if(PARTRAC_ENABLE_OPENFOAM)
   set(OPENFOAM_DIR "" CACHE PATH "OpenFOAM installation, if its environment is not sourced")
   if (OPENFOAM_DIR)
@@ -91,10 +78,6 @@ if(PARTRAC_ENABLE_OPENFOAM)
   message(STATUS "*** with OpenFOAM: ${FOAM_PROJECT_DIR}, labels ${FOAM_LABEL_SIZE}, ${FOAM_PRECISION} ***")
 endif()
 
-message(STATUS "****** ${CMAKE_BUILD_TYPE}")
-message(STATUS "dolfin cxx flags: ${DOLFIN_CXX_FLAGS}")
-message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
-
 # Tuning for the build machine. Off by default: such a binary crashes with
 # SIGILL on a machine with an older instruction set.
 option(PARTRAC_NATIVE_ARCH "Optimize for the CPU of the build machine." OFF)
@@ -109,12 +92,12 @@ endif()
 # which would otherwise downgrade errors across the whole tree.
 set(PARTRAC_WARNING_FLAGS "-Wall -Wextra -Wno-unused-parameter -fno-permissive")
 
-if( CMAKE_BUILD_TYPE MATCHES "Release")
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
   # Optimized build
   message(STATUS "Release build")
   set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DNDEBUG -O3 ${PARTRAC_ARCH_FLAGS}")
-else() # (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  # # Debug build
+else()
+  # Debug build
   # No -pg: its profiling timer killed apps with SIGPROF on the CI runners, and
   # profiling here is perf and callgrind, not gprof.
   message(STATUS "Debug build")
@@ -128,13 +111,6 @@ if (PARTRAC_COVERAGE)
 endif()
 
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
-
-# Profiling: Use as LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libprofiler.so.0 CPUPROFILE=prof.txt ./partrac ...
-# pprof-symbolize --ps ./partrac prof.txt > prof.ps
-#list(APPEND DOLFIN_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprofiler.so.0")
-
-# Profiling build
-#set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pg -pedantic-errors -Wextra")
 
 find_package(HDF5 REQUIRED COMPONENTS CXX HL)
 # A parallel HDF5 includes mpi.h from its public headers, so it has to be on the
@@ -185,18 +161,3 @@ if (BUILD_TESTING)
   enable_testing()
   add_subdirectory(tests)
 endif()
-
-
-# # # Debug build
-# # set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
-# # set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
-
-# # Profiling: Use as LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libprofiler.so.0 CPUPROFILE=prof.txt ./partrac ...
-# # pprof-symbolize --ps ./partrac prof.txt > prof.ps
-# #list(APPEND DOLFIN_LIBRARIES "/usr/lib/x86_64-linux-gnu/libprofiler.so.0")
-
-# # Optimized build
-# set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} -DNDEBUG -O3 -march=native -ggdb3 -pedantic-errors -Wextra")
-# set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Debug MinSizeRel Release RelWithDebInfo." FORCE)
-
-message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")

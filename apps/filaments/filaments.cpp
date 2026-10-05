@@ -1,6 +1,5 @@
 #include <cmath>
 #include <iostream>
-#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -64,7 +63,7 @@ static int run(int argc, char* argv[])
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
   scheme.prepare(*run.intp);
-  Topology mesh(ps, prm);
+  Topology mesh(ps, mesh_options(prm));
   // Doublings
   const bool doublings = prm.get<std::string>("resize") == "doublings";
   mesh.records_doublings = doublings;
@@ -73,14 +72,7 @@ static int run(int argc, char* argv[])
   if (check_only(run, ps, mesh))
     return 0;
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output");
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
+  const OutputFields output_fields = mesh_output_fields(prm, mesh);
 
   const double dt = prm.get<double>("dt");
   const double resize_intv = prm.get<double>("resize_intv");

@@ -1,24 +1,9 @@
 #include <iostream>
 #include "Error.hpp"
 #include "interpol_factory.hpp"
-#include "AnalyticInterpol.hpp"
-#include "StructuredInterpol.hpp"
-#include "TetInterpol.hpp"
-#include "TriangleInterpol.hpp"
-#include "TriangleFreqInterpol.hpp"
-#include "TetFreqInterpol.hpp"
-#include "XDMFTriangleInterpol.hpp"
-#include "XDMFTetInterpol.hpp"
-#include "SplitTriangleInterpol.hpp"
-#include "SplitTetInterpol.hpp"
-#include "OpenFoamTetInterpol.hpp"
-#include "OpenFoamTriangleInterpol.hpp"
-#ifdef USE_DOLFIN
-#include "DolfTriangleInterpol.hpp"
-#include "DolfTetInterpol.hpp"
-#endif
+#include "interpolators.hpp"
 
-// Each interpolator built here is also in with_concrete and in PARTRAC_STEP_INTERPOLATORS
+// Each interpolator built here is a row of the table in src/CMakeLists.txt
 void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mode, const std::string& path){
   // A bare file name is in the working directory
   const std::string infilename = path.find('/') == std::string::npos ? "./" + path : path;
@@ -59,12 +44,7 @@ void set_interpolate_mode(std::shared_ptr<Interpol>& intp, const std::string& mo
     else
       intp = std::make_shared<OpenFoamTetInterpol>(infilename);
   }
-  else if (mode == "unstructured" || mode == "fenics" || mode == "xdmf"){
-    if (mode == "xdmf")
-      partrac::fail("XDMF format is not implemented yet.");
-    if (mode == "unstructured")
-      partrac::fail("mode unstructured does not name a loader; a mesh is read by 'fenics', "
-                    "'tet', 'triangle', 'trianglefreq', 'tetfreq', 'xdmftet', 'xdmftriangle' or 'openfoam'.");
+  else if (mode == "fenics"){
 #ifdef USE_DOLFIN
     // The cell type is the mesh's; a file without one fails in the tet loader's checks
     if (dolfin_mesh_dim(infilename) == 2)

@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -99,6 +100,7 @@ struct SchemaImpl {
   std::vector<Constraint> warns;
   std::vector<std::function<void(Params&)>> finalizers;
   bool strict_file = true;
+  std::set<std::string> retired;
 
   const Entry* find(const std::string& key) const;
   Entry& add(Entry e);
@@ -199,6 +201,8 @@ public:
 
   // Unknown keys in a checkpoint file: error (true, default) or warn (false).
   Schema& strict_file(bool on);
+  // Keys an older checkpoint file may hold, read past on a restart
+  Schema& retired(const std::vector<std::string>& keys);
 
   Params parse(int argc, char* argv[]) const;
   Params parse(const std::vector<std::string>& args) const;  // args[0] is the program
@@ -221,7 +225,7 @@ private:
 };
 
 // Convenience wrappers for apps: print to stderr and exit non-zero rather than
-// propagating the exception.  parse_or_abort (MPI-safe) lives in ParamsMPI.hpp.
+// propagating the exception.
 Params parse_or_exit(const Schema& s, int argc, char* argv[]);
 // An interpolator's parameter file
 Params parse_file_or_exit(const Schema& s, const std::string& path);

@@ -8,7 +8,6 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "PointValues.hpp"
-//using namespace std;
 
 class Expr {
 public:

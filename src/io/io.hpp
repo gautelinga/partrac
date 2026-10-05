@@ -11,10 +11,6 @@
 
 typedef std::shared_ptr<H5::H5File> H5FilePtr;
 
-//using namespace std;
-//using namespace H5;
-
-
 // Recently moved here
 
 void load_vector_field(const std::string& input_file, std::vector<Vector3d> &pos_init);

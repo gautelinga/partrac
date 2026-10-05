@@ -3,7 +3,6 @@
 
 // Steps on the abstract interpolator, dispatched to the loops compiled for each concrete one
 
-#include <map>
 #include <string>
 #include <vector>
 #include "typedefs.hpp"
@@ -34,6 +33,6 @@ template<TransportElement E>
 std::vector<Uint> spatial_step(SpatialIntegrator& integrator, Interpol& intp, ParticleSet& ps, const double t, const double ds);
 
 // Fields at the particles
-void update_fields(ParticleSet& ps, Interpol& intp, const double t, std::map<std::string, bool>& output_fields);
+void update_fields(ParticleSet& ps, Interpol& intp, const double t, const OutputFields& output_fields);
 
 #endif

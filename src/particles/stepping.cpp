@@ -52,7 +52,7 @@ std::vector<Uint> spatial_step(SpatialIntegrator& integrator, Interpol& intp, Pa
   return with_concrete(intp, [&](auto& ip){ return integrator.template step<E>(ip, ps, t, ds); });
 }
 
-void update_fields(ParticleSet& ps, Interpol& intp, const double t, std::map<std::string, bool>& output_fields){
+void update_fields(ParticleSet& ps, Interpol& intp, const double t, const OutputFields& output_fields){
   with_concrete(intp, [&](auto& ip){ ps.update_fields(ip, t, output_fields); });
 }
 

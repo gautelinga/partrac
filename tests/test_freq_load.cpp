@@ -23,8 +23,7 @@
 
 #include "Error.hpp"
 #include "h5direct.hpp"
-#include "TriangleFreqInterpol.hpp"
-#include "TetFreqInterpol.hpp"
+#include "interpolators.hpp"
 #include "case_dir.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"

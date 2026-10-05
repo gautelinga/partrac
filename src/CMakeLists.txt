@@ -8,7 +8,6 @@ add_library(${PROJECT_NAME}_params
   )
 target_include_directories(${PROJECT_NAME}_params PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/params)
 target_compile_features(${PROJECT_NAME}_params PUBLIC cxx_std_17)
-target_compile_options(${PROJECT_NAME}_params PRIVATE -Wall -Wextra)
 
 # Types, geometry, strings, stamps, files, generators, run folders
 add_library(${PROJECT_NAME}_base
@@ -121,7 +120,8 @@ add_library(${PROJECT_NAME}_interpol_units OBJECT ${PARTRAC_INTERPOL_SOURCES})
 add_library(${PROJECT_NAME}_interpol $<TARGET_OBJECTS:${PROJECT_NAME}_interpol_units>
   ${PARTRAC_INTERPOL_OBJECTS})
 foreach(t ${PROJECT_NAME}_interpol_units ${PROJECT_NAME}_interpol)
-  target_include_directories(${t} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/interpol)
+  target_include_directories(${t} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/interpol
+    ${CMAKE_CURRENT_BINARY_DIR}/generated)
   target_link_libraries(${t} PUBLIC ${PROJECT_NAME}_io ${PROJECT_NAME}_base OpenMP::OpenMP_CXX)
   if (PARTRAC_ENABLE_DOLFIN)
     target_link_libraries(${t} PUBLIC dolfin)
@@ -134,16 +134,59 @@ if (PARTRAC_ENABLE_OPENFOAM)
   add_dependencies(${PROJECT_NAME}_interpol ${PROJECT_NAME}_openfoam)
 endif()
 
-# The step loops, compiled once per interpolator; the same list as with_concrete
-# (interpol_dispatch.hpp) and set_interpolate_mode (interpol_factory.cpp)
-set(PARTRAC_STEP_INTERPOLATORS AnalyticInterpol StructuredInterpol StructuredConstInterpol
-  TetInterpol TriangleInterpol TriangleFreqInterpol TetFreqInterpol
-  XDMFTriangleInterpol XDMFTetInterpol SplitTriangleInterpol SplitTetInterpol
-  OpenFoamTriangleInterpol OpenFoamTetInterpol)
-set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
+# The interpolators, name|header|type, one row each, a loader needing dolfin in
+# the second table: the step loops are compiled per row, and interpolators.hpp,
+# written here, includes the headers, names the types and lists them for
+# with_concrete; the order is the cast chain's and the step objects' in the
+# archive. A new loader is a row here, its mode in interpol_modes() and
+# set_interpolate_mode, and, without regions, an entry in the RK4cells list below
+set(PARTRAC_INTERPOLATOR_TABLE
+  "AnalyticInterpol|AnalyticInterpol.hpp|AnalyticInterpol"
+  "StructuredInterpol|StructuredInterpol.hpp|StructuredInterpol"
+  "StructuredConstInterpol|StructuredInterpol.hpp|StructuredConstInterpol"
+  "TriangleInterpol|SimplexInterpol.hpp|SimplexInterpol<Triangle>"
+  "TetInterpol|SimplexInterpol.hpp|SimplexInterpol<Tet>"
+  "TriangleFreqInterpol|SimplexFreqInterpol.hpp|SimplexFreqInterpol<Triangle>"
+  "TetFreqInterpol|SimplexFreqInterpol.hpp|SimplexFreqInterpol<Tet>"
+  "XDMFTriangleInterpol|XDMFInterpol.hpp|XDMFInterpol<Triangle>"
+  "XDMFTetInterpol|XDMFInterpol.hpp|XDMFInterpol<Tet>"
+  "SplitTriangleInterpol|SplitInterpol.hpp|SplitInterpol<Triangle>"
+  "SplitTetInterpol|SplitInterpol.hpp|SplitInterpol<Tet>"
+  "OpenFoamTriangleInterpol|OpenFoamInterpol.hpp|OpenFoamInterpol<Triangle>"
+  "OpenFoamTetInterpol|OpenFoamInterpol.hpp|OpenFoamInterpol<Tet>")
+set(PARTRAC_DOLFIN_INTERPOLATOR_TABLE)
 if (PARTRAC_ENABLE_DOLFIN)
-  set(PARTRAC_DOLFIN_STEP_INTERPOLATORS DolfTriangleInterpol DolfTetInterpol)
+  set(PARTRAC_DOLFIN_INTERPOLATOR_TABLE
+    "DolfTriangleInterpol|DolfInterpol.hpp|DolfInterpol<Triangle>"
+    "DolfTetInterpol|DolfInterpol.hpp|DolfInterpol<Tet>")
 endif()
+set(PARTRAC_STEP_INTERPOLATORS)
+set(PARTRAC_DOLFIN_STEP_INTERPOLATORS)
+set(INTERP_INCLUDES "")
+set(INTERP_ALIASES "")
+set(INTERP_LIST "")
+foreach(ROW ${PARTRAC_INTERPOLATOR_TABLE} ${PARTRAC_DOLFIN_INTERPOLATOR_TABLE})
+  string(REPLACE "|" ";" FIELDS "${ROW}")
+  list(GET FIELDS 0 NAME)
+  list(GET FIELDS 1 HEADER)
+  list(GET FIELDS 2 TYPE)
+  if (ROW IN_LIST PARTRAC_DOLFIN_INTERPOLATOR_TABLE)
+    list(APPEND PARTRAC_DOLFIN_STEP_INTERPOLATORS ${NAME})
+  else()
+    list(APPEND PARTRAC_STEP_INTERPOLATORS ${NAME})
+  endif()
+  set(INTERP_HEADER_${NAME} ${HEADER})
+  set(INTERP_ALIAS_${NAME} "")
+  if (NOT TYPE STREQUAL NAME)
+    set(INTERP_ALIAS_${NAME} "using ${NAME} = ${TYPE};")
+    string(APPEND INTERP_ALIASES "using ${NAME} = ${TYPE};\n")
+  endif()
+  if (NOT INTERP_INCLUDES MATCHES "\"${HEADER}\"")
+    string(APPEND INTERP_INCLUDES "#include \"${HEADER}\"\n")
+  endif()
+  string(APPEND INTERP_LIST " X(${NAME})")
+endforeach()
+configure_file(interpol/interpolators.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/generated/interpolators.hpp @ONLY)
 # The interpolators with regions (has_regions), which RK4cells steps in cells
 set(PARTRAC_CELLS_INTERPOLATORS ${PARTRAC_STEP_INTERPOLATORS})
 list(REMOVE_ITEM PARTRAC_CELLS_INTERPOLATORS AnalyticInterpol StructuredConstInterpol)
@@ -161,6 +204,8 @@ foreach(INTERP ${PARTRAC_STEP_INTERPOLATORS} ${PARTRAC_DOLFIN_STEP_INTERPOLATORS
     set(STEP_LIST PARTRAC_DOLFIN_STEP_SOURCES)
     set(STEP_DIR ${PARTRAC_OBJDIR}/${PROJECT_NAME}_dolfin_steps.dir)
   endif()
+  set(INTERP_HEADER "${INTERP_HEADER_${INTERP}}")
+  set(INTERP_ALIAS "${INTERP_ALIAS_${INTERP}}")
   configure_file(particles/steps.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp @ONLY)
   list(APPEND ${STEP_LIST} ${CMAKE_CURRENT_BINARY_DIR}/steps_${INTERP}.cpp)
   list(APPEND PARTRAC_STEP_OBJECTS ${STEP_DIR}/steps_${INTERP}.cpp${CMAKE_CXX_OUTPUT_EXTENSION})
@@ -194,6 +239,7 @@ endif()
 
 # Particles, meshes, initializers, steps and the run loop
 add_library(${PROJECT_NAME}_particles_units OBJECT
+  particles/ParticleSet.cpp
   particles/mesh.cpp
   particles/Topology.cpp
   particles/Initializer.cpp
@@ -212,6 +258,3 @@ endforeach()
 # What every app links against
 add_library(${PROJECT_NAME}_core INTERFACE)
 target_link_libraries(${PROJECT_NAME}_core INTERFACE ${PROJECT_NAME}_particles)
-if (PARTRAC_ENABLE_MPI)
-  target_link_libraries(${PROJECT_NAME}_core INTERFACE ${MPI_LIBRARIES})
-endif()

@@ -3,6 +3,7 @@
 
 #include "typedefs.hpp"
 #include "Params.hpp"
+#include "interpol_factory.hpp"
 #include "strings.hpp"
 #include "TracerParams.hpp"
 
@@ -27,13 +28,11 @@ inline partrac::Schema filaments_schema(){
   s.opt<double>("ds_min", 0.0, "min edge length");
   s.require<double>("ds_init", "initial edge length");
   s.opt<double>("t0", 0.0, "start time");
-  s.opt<double>("U", 1.0, "velocity scale");
+  add_run_params(s, "current time");
   s.opt<double>("x0", 0.0, "initial position");
   s.opt<double>("y0", 0.0, "initial position");
   s.opt<double>("z0", 0.0, "initial position");
-  s.opt<double>("dump_intv", 100.0, "dump interval");
-  s.opt<double>("stat_intv", 100.0, "statistics interval");
-  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
+  add_intervals(s, "dt", {"resize_intv"});
   s.opt<double>("resize_intv", 0.0, "resize interval");
   s.opt<std::string>("resize", "rescale", "rescale an edge to the target, reference with it (ds/ds0 kept); or doublings: halve it until it fits, reference kept, halvings counted and dumped");
   s.opt<std::string>("resize_target", "ds_max", "the length a resize brings an edge back to: ds_max or ds_init");
@@ -41,12 +40,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("seed", 0, "random seed");
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
   s.opt<int>("filter_target", 0, "filter target");
-  s.opt<bool>("verbose", false, "print the parameters");
-  s.opt<bool>("random", true, "draw the seed randomly");
   s.opt<bool>("filter", false, "filter the filament");
   s.opt<bool>("inject", false, "inject new particles");
   s.opt<bool>("inject_edges", true, "inject edges too");
@@ -55,18 +49,8 @@ inline partrac::Schema filaments_schema(){
   s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
   s.opt<bool>("clear_initial_edges", false, "drop the initial edges");
   s.opt<bool>("output_all_props", true, "dump all properties");
-  s.opt<bool>("minimal_output", false, "dump less");
   add_scheme(s, "explicit");
-  s.opt<std::string>("tag", "", "appended to the folder name");
-  s.opt<std::string>("restart_folder", "", "folder to restart from");
-  s.runtime<std::string>("folder", "", "output folder");
-  s.runtime<double>("t", 0.0, "current time");
-  s.runtime<Uint>("it", 0, "current step");
-  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
-  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "tetfreq", "xdmftriangle", "xdmftet", "openfoam"});
+  s.choices("mode", interpol_modes());
   s.choices("resize", {"rescale", "doublings"});
   s.choices("resize_target", {"ds_max", "ds_init"});
   s.choices("outside", {"ignore", "reinject"});
@@ -93,21 +77,6 @@ inline partrac::Schema filaments_schema(){
                      && p.get<double>("Dm") > 0.);
           },
           "outside=reinject is for edges stuck in an underresolved field, not for diffusion: it cannot be combined with scheme=explicit and Dm > 0");
-  // Floor output intervals at one step; 0 is off, negative an error
-  s.check([](const partrac::Params& p){
-            for (const auto& key : {"checkpoint_intv", "dump_intv", "resize_intv", "stat_intv"})
-              if (p.get<double>(key) < 0.) return false;
-            return true;
-          },
-          "intervals cannot be negative");
-  s.finalize([](partrac::Params& p){
-    const double dt = p.get<double>("dt");
-    if (p.get<double>("dump_intv") > 0.)
-      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    if (p.get<double>("stat_intv") > 0.)
-      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
-    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
-  });
   return s;
 }
 

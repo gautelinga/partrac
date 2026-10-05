@@ -8,8 +8,6 @@
 #include <cmath>
 #include <set>
 #include <iterator>
-//#include "H5Cpp.h"
-//#include "hdf5.h"
 #include <ctime>
 
 #include "Error.hpp"
@@ -44,8 +42,6 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   std::cout << "Lx=" << Lx << ", Ly=" << Ly << ", Lz=" << Lz << std::endl;
 
   intp->update(t0);
-
-  // std::ofstream ofile(newfolder + "/interpolation.txt");
 
   std::vector<std::vector<double>> ptdata_threads_;
 
@@ -151,8 +147,6 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   write_h5part(newfolder + "/interpolation.h5part", ptheader, ptdata_);
 
   std::cout << "Done writing." << std::endl;
-
-  // ofile.close();
 }
 
 static int run(int argc, char* argv[])

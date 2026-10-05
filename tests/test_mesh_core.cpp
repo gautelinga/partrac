@@ -113,19 +113,16 @@ double total_length(const EdgesType& edges, const ParticleSet& ps){
 TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint", "[mesh]") {
   ParticleSet ps(std::make_shared<EverywhereInterpol>(), 64);
   ps.add({{0., 0., 0.}, {1., 0., 0.}, {2., 0., 0.}}, 0);
-  FacesType faces;
-  EdgesType edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}};
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
+  Connectivity m;
+  m.edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}};
+  FacesType& faces = m.faces;
+  EdgesType& edges = m.edges;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 
-  const Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop);
+  const Uint n_add = refinement(m, ps, 0.6, 0., StuckEdge::Stop);
   REQUIRE( n_add == 2 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( edges.size() == 4 );
@@ -140,12 +137,10 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   }
   REQUIRE( ends == 2 );
   // Short enough already: nothing to do
-  REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop) == 0 );
+  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 0 );
 
   SECTION("and coarsening a straight strip keeps its length"){
-    const Uint n_rem = coarsening(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                  ps, 0.75, 0.);
+    const Uint n_rem = coarsening(m, ps, 0.75, 0.);
     REQUIRE( n_rem > 0 );
     REQUIRE( total_length(edges, ps) == Approx(2.0) );
   }
@@ -159,19 +154,16 @@ TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edg
   ps.add({x0, x1}, 0);
   ps.set_cell_id(0, 0);
   ps.set_cell_id(1, 0);
-  FacesType faces;
-  EdgesType edges = {{{0, 1}, (x1 - x0).norm()}};
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
+  Connectivity m;
+  m.edges = {{{0, 1}, (x1 - x0).norm()}};
+  FacesType& faces = m.faces;
+  EdgesType& edges = m.edges;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 
-  REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj, ps, 0.6, 0., StuckEdge::Stop) == 1 );
+  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 1 );
   REQUIRE( ps.N() == 3 );
   // Along the normals' mean, square to the edge, by the first multiple of 1% of the edge inside
   const Vector3d tau = (x0 - x1).normalized(), mid = 0.5*(x0 + x1);
@@ -197,20 +189,18 @@ TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {
   // The unit square as two triangles across the diagonal 0-2
   ParticleSet ps(nullptr, 64);
   ps.add({{0., 0., 0.}, {1., 0., 0.}, {1., 1., 0.}, {0., 1., 0.}}, 0);
-  EdgesType edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}, {{0, 2}, std::sqrt(2.)}, {{2, 3}, 1.0}, {{0, 3}, 1.0}};
-  FacesType faces = {{{0, 1, 2}, 0.5}, {{2, 3, 4}, 0.5}};
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
+  Connectivity m;
+  m.edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}, {{0, 2}, std::sqrt(2.)}, {{2, 3}, 1.0}, {{0, 3}, 1.0}};
+  m.faces = {{{0, 1, 2}, 0.5}, {{2, 3, 4}, 0.5}};
+  EdgesType& edges = m.edges;
+  FacesType& faces = m.faces;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 
   // Only the diagonal is longer than 1.2
-  const Uint n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                      pos_inj, edges_inj, ps, 1.2, 0., StuckEdge::Keep, false);
+  const Uint n_add = sheet_refinement(m, ps, 1.2, 0., StuckEdge::Keep, false);
   REQUIRE( n_add == 1 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( faces.size() == 4 );

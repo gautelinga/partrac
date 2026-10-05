@@ -10,8 +10,6 @@
 #include "h5direct.hpp"
 #include "io.hpp"
 
-// using namespace std;
-
 // recently moved here
 void load_vector_field(const std::string& input_file,
                        std::vector<Vector3d> &pos_init){

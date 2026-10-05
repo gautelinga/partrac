@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
-from paths import app
+from paths import app, built_with_dolfin
 from runs import (cells_counts, checkpoint_folder, copy_case, halving_ratios, read_checkpoint, run_app,
                   same_checkpoint, same_dumps)
 from test_structured import wall_felbm
@@ -119,9 +119,8 @@ def test_at_the_walls_rk4cells_declines_no_more_than_rk4_and_stays_in_the_fluid(
 
 
 @needs_apps
-def test_rk4cells_refuses_the_constant_lattice_and_mode_fenics(tmp_path, mesh_dir):
-    """interpolation=constant has no regions; mode=fenics (dolfin's own
-    evaluation) none either: both refused, naming the modes RK4cells takes."""
+def test_rk4cells_refuses_the_constant_lattice(tmp_path):
+    """interpolation=constant has no regions: refused, naming the modes RK4cells takes."""
     d = tmp_path / "const"
     d.mkdir()
     wall_felbm(d)
@@ -130,6 +129,13 @@ def test_rk4cells_refuses_the_constant_lattice_and_mode_fenics(tmp_path, mesh_di
     r = run_app(TRACERS, d / "felbm_params.dat", ARGS, "scheme=RK4cells dt=0.1 T=0.1", check=False)
     assert r.returncode == 2 and "scheme=RK4cells steps in the cells of a mesh" in r.stderr, r.stderr
     assert "felbm (interpolation=linear)" in r.stderr and "use RK4" in r.stderr, r.stderr
+
+
+@needs_apps
+@pytest.mark.skipif(not built_with_dolfin(), reason="mode=fenics needs a build with dolfin")
+def test_rk4cells_refuses_mode_fenics(tmp_path, mesh_dir):
+    """mode=fenics (dolfin's own evaluation) has no regions: refused, naming
+    the modes RK4cells takes."""
     tet = copy_case(mesh_dir("tet"), tmp_path / "fenics")
     r = run_app(TRACERS, tet / "dolfin_params.dat",
                 "mode=fenics init_mode=points_xyz x0=0.5 y0=0.5 z0=0.5 Nrw=10 Nrw_max=10 Dm=0 int_order=1 "
