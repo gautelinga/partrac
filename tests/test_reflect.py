@@ -22,13 +22,13 @@ dumped positions, which it would not if steps were lost.
 
 import os
 import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
-from dumps import dump_at
-from paths import REPO, app, built_with_dolfin
+from dumps import dump_at, read_stats
+from paths import REPO, app
+from runs import checkpoint_folder, put_points, run_app
 
 TRACERS = app("tracers")
 
@@ -37,8 +37,7 @@ pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is 
 
 def run(params, args):
     """Run tracers on params with args; assert it succeeded."""
-    r = subprocess.run([TRACERS, str(params)] + args, capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(TRACERS, params, args, timeout=600)
 
 
 def restart_from(params, mode, points, args, dt):
@@ -55,17 +54,16 @@ def restart_from(params, mode, points, args, dt):
             "random=false", "seed=1", "scheme=explicit"]
     run(params, base + ["Dm=0", "T=%g" % dt, "dump_intv=1000", "stat_intv=1000",
                         "checkpoint_intv=%g" % dt])
-    [pos] = list(folder.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, points, fmt="%.17g")
-    run(params, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent)])
-    return pos.parent.parent
+    put_points(folder, points)
+    ck = checkpoint_folder(folder)
+    run(params, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    return ck
 
 
 def declined(folder):
     """The n_declined column of the run's statistics, one row per stat time."""
     [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
-    header = f.read_text().splitlines()[0].lstrip("#").split()
-    return np.loadtxt(f)[:, header.index("n_declined")]
+    return read_stats(f)["n_declined"]
 
 
 def assert_uniform(x, lo, hi, bins):
@@ -83,7 +81,6 @@ def lattice(n, lo, hi):
     return lo + (np.arange(n) + 0.5) * (hi - lo) / n
 
 
-@pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin")
 def test_triangle_mesh_walls_reflect(mesh_dir, tmp_path):
     """Plane Poiseuille flow u_y = 6x(1-x) on a 10 x 10 mesh, sigma = 0.03,
     a third of a cell: over 400 steps every particle meets a wall many times

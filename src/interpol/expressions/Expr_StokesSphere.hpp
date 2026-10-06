@@ -3,8 +3,6 @@
 #ifndef __EXPR_STOKESSPHERE_HPP
 #define __EXPR_STOKESSPHERE_HPP
 
-//using namespace std;
-
 class Expr_StokesSphere final : public Expr {
 public:
   Expr_StokesSphere(const partrac::Params& expr_params) : Expr(expr_params) {

@@ -26,14 +26,13 @@ where it is created. Two exact laws follow, and both are phase-sensitive:
 """
 
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps, dump_at
 from paths import REPO, app
+from runs import continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
 HAGEN = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
@@ -85,44 +84,26 @@ def swept_by(t, inject_intv):
 
 def run(tmp_path, extra):
     """Run partrac on Hagen-Poiseuille with `extra` overriding BASE; return the process result."""
-    # partrac refuses a parameter given twice, and these cases are built by
-    # layering one interval over a set of them, so the last word wins here
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    shutil.copy(HAGEN, tmp_path / "expr_params.dat")
-    argv = {}
-    for a in BASE + extra:
-        argv[a.split("=")[0]] = a
-    return subprocess.run([PARTRAC, str(tmp_path / "expr_params.dat")]
-                          + list(argv.values()),
-                          capture_output=True, text=True, timeout=600)
+    # these cases are built by layering one interval over a set of them, so
+    # the last word wins
+    return run_app(PARTRAC, copy_example(HAGEN, tmp_path), BASE, extra, check=False, timeout=600)
 
 
 def series(tmp_path, extra):
-    """Every dump that has faces, as (t, dA, dA0)."""
+    """Every dump that has faces, as (t, dA, dA0); the dumps before the first injection have none."""
     r = run(tmp_path, extra)
     assert r.returncode == 0, r.stdout + r.stderr
-    dump = list(tmp_path.rglob("data_from_t*.h5"))
-    assert len(dump) == 1
-    h = h5py.File(dump[0], "r")
-    out = []
-    for k in sorted(h.keys(), key=float):
-        if "dA0" not in h[k]:
-            continue                   # before the first injection
-        out.append((float(k),
-                    np.array(h[k + "/dA"]).ravel(),
-                    np.array(h[k + "/dA0"]).ravel()))
-    return out
+    assert len(list(tmp_path.rglob("data_from_t*.h5"))) == 1
+    return [(t, g["dA"].ravel(), g["dA0"].ravel())
+            for t, g in sorted(all_dumps(tmp_path, raw=True).items()) if "dA0" in g]
 
 
 def no_nan(tmp_path):
     """Assert that neither the dumps nor the statistics carry a NaN or an infinity."""
-    for f in tmp_path.rglob("data_from_t*.h5"):
-        h = h5py.File(f, "r")
-        for key in h:
-            for name in h[key]:
-                a = np.array(h[key + "/" + name])
-                if a.dtype.kind == "f":
-                    assert np.isfinite(a).all(), "%s at t = %s" % (name, key)
+    for t, g in all_dumps(tmp_path, raw=True).items():
+        for name, a in g.items():
+            if a.dtype.kind == "f":
+                assert np.isfinite(a).all(), "%s at t = %s" % (name, t)
     for f in tmp_path.rglob("tdata_from_t*.dat"):
         text = f.read_text().lower()
         assert "nan" not in text and "inf" not in text, f
@@ -258,18 +239,15 @@ OUTPUT_ONLY = [
 
 
 def final_checkpoint(tmp_path):
-    """The checkpoint the run ends on, as file name -> bytes."""
-    cp = list(tmp_path.rglob("positions.pos"))
-    assert len(cp) == 1, cp
-    return {f.name: f.read_bytes()
-            for f in sorted(cp[0].parent.iterdir()) if f.is_file()}
+    """The checkpoint the run ends on, as dataset name -> (dtype, shape, bytes)."""
+    return {k: (a.dtype, a.shape, a.tobytes()) for k, a in read_checkpoint(tmp_path).items()}
 
 
 @needs_partrac
 @pytest.mark.parametrize("io", OUTPUT_ONLY[1:], ids=lambda c: "_".join(c))
 def test_writing_more_often_does_not_move_the_mesh(tmp_path, io):
-    """Changing only the dump, statistics or checkpoint interval leaves the final
-    checkpoint byte-identical. Output frequency must never change the physics a
+    """Changing only the dump, statistics or checkpoint interval leaves every
+    dataset of the final checkpoint bit-identical. Output frequency must never change the physics a
     user gets."""
     # dump_intv is read by the time loop twice: it dumps, and it is one of the
     # conditions that call compute_interior, so an output interval is in a
@@ -284,19 +262,19 @@ def test_writing_more_often_does_not_move_the_mesh(tmp_path, io):
     a, b = final_checkpoint(tmp_path / "ref"), final_checkpoint(tmp_path / "got")
     assert set(a) == set(b)
     for name in sorted(a):
-        if name.endswith(".dat"):
-            continue                   # the parameter dump holds the intervals
         assert a[name] == b[name], name
 
 
 # --- resuming off every phase at once ------------------------------------------
 
 @needs_partrac
-def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path):
+@pytest.mark.parametrize("fmt", ["hdf5", "text"])
+def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path, fmt):
     """A run with injection, remeshing and tau, stopped at a step that is off the
     phase of every interval and resumed, ends in exactly the state of an
     uninterrupted run. On the injecting path the checkpoint has to carry the
-    inlet and every interval's phase as well as the particles."""
+    inlet and every interval's phase as well as the particles; an old text
+    checkpoint of the sheet and its inlet resumes the same way."""
     # The final checkpoint is written one step past T, so stopping at 0.17
     # resumes at step 35: 5 past a refinement (6 steps), 5 past an injection
     # (10) and 7 past a coarsening (14). T carries half a step so 0.4 is reached.
@@ -304,27 +282,11 @@ def test_a_resume_off_the_phase_of_every_interval_is_identical(tmp_path):
                      "integrate_tau=true", "tau_intv=%g" % DT, "tau_max=0",
                      "dump_intv=0.1"]
     end, stop = 0.4, 0.17
-    cont, split = tmp_path / "cont", tmp_path / "split"
-    for case, extra in ((cont, ["T=%g" % (end + DT / 2), "checkpoint_intv=1e9"]),
-                        (split, ["T=%g" % stop, "checkpoint_intv=%g" % stop])):
-        r = run(case, phys + extra)
-        assert r.returncode == 0, r.stdout + r.stderr
-    checkpoint = list(split.rglob("edges.edge"))
-    assert len(checkpoint) == 1
-    r = run(split, phys + ["T=%g" % (end + DT / 2), "checkpoint_intv=1e9",
-                           "restart_folder=" + str(checkpoint[0].parent.parent)])
-    assert r.returncode == 0, r.stdout + r.stderr
-
-    def state_at(case, t):
-        """Every dataset of the dump at time t under case."""
-        for f in sorted(case.rglob("data_from_t*.h5")):
-            h = h5py.File(f, "r")
-            for key in h:
-                if abs(float(key) - t) < 1e-9:
-                    return {n: np.array(h[key + "/" + n]) for n in h[key]}
-        raise AssertionError("no dump at t = %g under %s" % (t, case))
-
-    a, b = state_at(cont, end), state_at(split, end)
+    cont, split = continuous_and_resumed(
+        PARTRAC, HAGEN, tmp_path, [BASE, phys],
+        ["T=%g" % stop, "checkpoint_intv=%g" % stop],
+        ["T=%g" % (end + DT / 2), "checkpoint_intv=1e9"], text=fmt == "text")
+    a, b = dump_at(cont, end, raw=True), dump_at(split, end, raw=True)
     assert len(a["dA0"]) > 400                  # it really remeshed
     assert set(a) == set(b)
     for name in sorted(a):

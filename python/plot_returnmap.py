@@ -50,7 +50,7 @@ print(ts)
 assert(args.t0 in ts)
 tq = [args.t0]
 for i in range(1, 1+args.n):
-    assert(args.t0+args.tau in ts)
+    assert(args.t0+i*args.tau in ts)
     tq.append(args.t0+i*args.tau)
 
 posft, cat = posf[tq[0]]

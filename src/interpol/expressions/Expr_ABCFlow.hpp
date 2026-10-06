@@ -3,8 +3,6 @@
 #ifndef __EXPR_ABCFLOW_HPP
 #define __EXPR_ABCFLOW_HPP
 
-//using namespace std;
-
 class Expr_ABCFlow final : public Expr {
 public:
   Expr_ABCFlow(const partrac::Params& expr_params) : Expr(expr_params) {

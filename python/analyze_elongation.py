@@ -1,13 +1,11 @@
 import argparse
 import os
-from sunau import AUDIO_FILE_ENCODING_DOUBLE
 
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 from scipy import signal
-from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from utils import Params, find_params, get_timeseries, read_params, get_folders
 
@@ -98,7 +96,6 @@ if __name__ == "__main__":
         os.makedirs(images_folder)
 
     elongfilename = os.path.join(analysis_folder, "elongdata.dat")
-    #elongdatafile = open(elongfilename, "w")
 
     #params_ = []
     ts_ = []
@@ -140,9 +137,6 @@ if __name__ == "__main__":
         #    'color',
         #    [plt.cm.viridis(i) for i in np.linspace(0, 1, len(ts[::args.skip]))])
 
-    ht = np.zeros((len(ts_[0][::args.skip]), args.bins))
-
-    histdata = []
     for t in ts_[0]:
         for posf in posf_:
             assert(t in posf)
@@ -164,7 +158,6 @@ if __name__ == "__main__":
         dl_ = []
         dl0_ = []
 
-        fig, (ax1, ax2) = plt.subplots(1, 2)
         for posf in posf_:
             posft, grp = posf[t]
 
@@ -294,103 +287,3 @@ if __name__ == "__main__":
         #print(edges_set)
 
         #exit()
-
-if False:
-    if False:
-        if False:
-            with h5py.File(posft, "r") as h5f:
-                if grp + "/dA" in h5f and grp + "/dA0" in h5f:
-                    if args.single:
-                        print("Found face areas")
-                    dA = np.array(h5f[grp + "/dA"])[:, 0]
-                    dA0 = np.array(h5f[grp + "/dA0"])[:, 0]
-                    elong = dA / dA0
-                    ids = elong != 1.0
-                    elong = elong[ids]
-                    w = dA0[ids]
-                elif grp + "/dl" in h5f and grp + "/dl0" in h5f:
-                    if args.single:
-                        print("Found edge lengths")
-                    dl = np.array(h5f[grp + "/dl"])[:, 0]
-                    dl0 = np.array(h5f[grp + "/dl0"])[:, 0]
-                    elong = dl / dl0
-                    ids = (abs(elong) - 1.0) > 1e-9
-                    if args.weights == "dl":
-                        w = dl
-                    elif args.weights == "1":
-                        w = np.ones_like(dl0)
-                    else:
-                        w = dl0
-                    elong = elong[ids]
-                    w = w[ids]
-                else:
-                    print("Does not contain this.")
-                    exit()
-
-        ids = np.argsort(elong)
-        elong = elong[ids]
-        w = w[ids]
-        w /= w.sum()
-        wcum = np.cumsum(w)
-        #ids = np.logical_and(wcum > args.tol, wcum < 1 - args.tol)
-        #elong = elong[ids]
-        #w = w[ids]
-        #wcum = wcum[ids]
-
-        logelong = np.log(elong)
-        logelong_mean, logelong_var, logelong_std = calc_moments(logelong, w)
-        elong_mean, elong_var, elong_std = calc_moments(elong, w)
-
-        string = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(t, 
-                                                     np.log(elong_mean), np.log(elong_var), np.log(elong_std),
-                                                     logelong_mean, logelong_var, logelong_std)
-        print(string)
-        elongdatafile.write(string + "\n")
-
-        x_elong, hist_elong = calc_hist(elong, w, elong_mean, elong_std,
-                                        (np.exp(logelong_mean - args.nstd*logelong_std), np.exp(logelong_mean + args.nstd*logelong_std)), args.nstd, args.bins)
-        x_logelong, hist_logelong = calc_hist(logelong, w, logelong_mean,
-                                              logelong_std, None,
-                                              args.nstd, args.bins)
-        ht[it, :] = hist_logelong
-
-        if args.show:
-            var = "\\rho"
-            
-            fig, (ax1, ax2) = plt.subplots(1, 2)
-            ax1.plot(x_elong, hist_elong, label="$t={}$".format(t))
-            ax1.set_xlabel("$" + var + "$")
-            ax1.set_ylabel("$P(" + var + ")$")
-            #ax1.set_yscale("log")
-            xx = np.linspace(0, x_elong[-1], 1000)[1:]
-            ax1.plot(xx, lognormal(xx, logelong_mean, logelong_std))
-
-            var = "\\log(\\rho)"
-            ids = hist_logelong > 0
-            xf = x_logelong[ids]
-            ff = hist_logelong[ids]
-            ax2.plot(xf, ff)
-            ax2.set_xlabel("$" + var + "$")
-            ax2.set_ylabel("$P(" + var + ")$")
-            nn = 5.
-            xx = np.linspace(logelong_mean-nn*logelong_std, logelong_mean+nn*logelong_std, 1000)
-            ax2.plot(xx, gaussian(xx, logelong_mean, logelong_std))
-            plt.show()
-
-        if args.output:
-            histdata.append((t, np.array(list(zip(x_elong, hist_elong))), np.array(list(zip(x_logelong, hist_logelong)))))
-    elongdatafile.close()
-
-    if args.output:
-        with h5py.File(os.path.join(analysis_folder, "histograms.h5"), "w") as h5f:
-            for t, hist_elong, hist_logelong in histdata:
-                dset_elong = h5f.create_dataset("{}/elong".format(t),
-                                                data=hist_elong)
-                dset_logelong = h5f.create_dataset("{}/logelong".format(t),
-                                                   data=hist_logelong)
-
-    if args.show:
-        plt.show()
-
-        plt.imshow(ht.T[:, 1:])
-        plt.show()

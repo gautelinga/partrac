@@ -22,8 +22,6 @@ public:
     prev(t_prev, filename_prev), next(t_next, filename_next) {};
   Stamp prev;
   Stamp next;
-  double weight_next(const double t){ return (t-this->prev.t)/(this->next.t-this->prev.t); };
-  double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 
 class Timestamps {
@@ -32,11 +30,10 @@ public:
   Timestamps(const std::string&);
   void initialize(const std::string&);
   void initialize(std::vector<std::pair<double, std::string>>& );
-  void update(const double);
   std::string get_folder() const { return folder; };
-  std::string get_first() { return folder + "/" + stamps[0]; };
-  //  std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
   StampPair get(const double);
+  // First stamp after t; +inf past the last
+  double next_after(const double t) const;
   double get_t_min() const { return t_min; };
   double get_t_max() const { return t_max; };
 private:
@@ -64,8 +61,6 @@ public:
     prev(t_prev, it_prev), next(t_next, it_next) {};
   MultiStamp prev;
   MultiStamp next;
-  double weight_next(const double t){ return (t-this->prev.t)/(this->next.t-this->prev.t); };
-  double weight_prev(const double t){ return 1.-this->weight_next(t); };
 };
 
 class MultiTimestamps {
@@ -73,22 +68,18 @@ public:
   MultiTimestamps() { }
   void initialize(const std::vector<std::pair<double, std::vector<std::string>>>& );
   void add(const std::string&, const std::vector<std::pair<double, std::vector<std::string>>>& );
-  // void update(const double);
-  // std::string get_folder() const { return folder; };
-  // std::string get_first() { return folder + "/" + stamps[0]; };
-  // std::string get_is_solid(){ return folder + "/output_is_solid.h5"; };
   MultiStampPair get(const double);
+  // First stamp after t; +inf past the last
+  double next_after(const double t) const;
   double get_t_min() const { return t_min; };
   double get_t_max() const { return t_max; };
-  std::vector<std::string> get_path(const std::string& field, const Uint it){ return stamps[field][it]; }
+  std::vector<std::string> get_path(const std::string& field, const Uint it) const { return stamps.at(field)[it]; }
 private:
   std::vector<double> t_;
   std::map<std::string, std::vector<std::vector<std::string>>> stamps;
   double t_min = 1e14;
   double t_max = -1e14;
   std::string folder;
-  //std::string filename;
 };
-
 
 #endif

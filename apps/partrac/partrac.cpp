@@ -1,6 +1,5 @@
 #include <cmath>
 #include <iostream>
-#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -24,27 +23,22 @@ static int run(int argc, char* argv[])
   }
   partrac::Params prm = partrac::parse_or_exit(partrac_schema(), argc, argv);
 
-  // Dry run
-  const bool dry_run = prm.check_only();
-
-  Run run = start_run(prm, "RandomWalkers", dry_run ? DryRun : DefaultLayout);
+  Run run = start_run(prm, "RandomWalkers");
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  scheme.prepare(*run.intp);
   if (prm.get<bool>("output_phi"))
     ps.record_phi();
-  Topology mesh(ps, prm);
+  Topology mesh(ps, mesh_options(prm));
 
   if (prm.get<bool>("inject"))
     std::cout << "Injection activated!" << std::endl;
 
   const bool restarting = load_or_initialize(run, mesh);
 
-  // Parameters checked
-  if (dry_run){
-      std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
+  if (check_only(run, ps, mesh))
     return 0;
-  }
 
   const bool refine = prm.get<bool>("refine");
   const bool coarsen = prm.get<bool>("coarsen");
@@ -74,16 +68,11 @@ static int run(int argc, char* argv[])
     print_param("U*dt         ", prm.get<double>("U")*dt);
   }
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output");
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output"); // && prm.output_all_props;
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
-  output_fields["tau"] = prm.get<bool>("integrate_tau");
-  output_fields["phi"] = prm.get<bool>("output_phi");
+  OutputFields output_fields = mesh_output_fields(prm, mesh);
+  // rho whatever output_all_props says
+  output_fields.rho = !prm.get<bool>("minimal_output");
+  output_fields.tau = prm.get<bool>("integrate_tau");
+  output_fields.phi = prm.get<bool>("output_phi");
 
   // Coarsen at refine_intv when coarsening is off
   const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
@@ -142,16 +131,19 @@ static int run(int argc, char* argv[])
     }
   };
 
-  hooks.after_step = [&](const int it, const double t, const std::vector<Uint>& outside_nodes){
-    // Tau integration
+  // Outside nodes
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
+    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
+  };
+  // Tau integration
+  hooks.after_step = [&](const int it, const double){
     if (integrate_tau && at_interval(it + 1, tau_intv, dt)){
       mesh.integrate_tau(dt * steps_per(tau_intv, dt), tau_max);
     }
-    // Outside nodes
-    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
+  scheme.report(std::cout);
 
   return 0;
 }

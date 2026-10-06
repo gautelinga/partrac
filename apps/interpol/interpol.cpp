@@ -8,8 +8,6 @@
 #include <cmath>
 #include <set>
 #include <iterator>
-//#include "H5Cpp.h"
-//#include "hdf5.h"
 #include <ctime>
 
 #include "Error.hpp"
@@ -23,8 +21,8 @@
 #include "Integrator.hpp"
 #include "ExplicitIntegrator.hpp"
 #include "RKIntegrator.hpp"
-#include "Initializer.hpp"
 #include "interpol_factory.hpp"
+#include "morton.hpp"
 #include "h5part.hpp"
 #include "run_folders.hpp"
 
@@ -45,8 +43,6 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
   intp->update(t0);
 
-  // std::ofstream ofile(newfolder + "/interpolation.txt");
-
   std::vector<std::vector<double>> ptdata_threads_;
 
 
@@ -58,15 +54,16 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
     "uyx", "uyy", "uyz",
     "uzx", "uzy", "uzz"
   };
+  const bool phase = intp->has_phase_field();
+  if (phase) ptheader.push_back("phi");
+  const bool phase_gradient = intp->has_phase_gradient();
+  if (phase_gradient) ptheader.insert(ptheader.end(), {"dphi_dx", "dphi_dy", "dphi_dz"});
 
-  #pragma omp parallel 
+  // The points first, one generator a thread as before, so the set is the same
+  std::vector<double> xs(3 * std::size_t(num_points));
+  #pragma omp parallel
   {
-    #pragma omp single
-    ptdata_threads_.resize(omp_get_num_threads());
-
     std::mt19937 &gen = gens[omp_get_thread_num()];
-    auto& ptdata_loc_ = ptdata_threads_[omp_get_thread_num()];
-    ptdata_loc_.reserve(num_points * ptheader.size() / omp_get_num_threads());
 
     std::uniform_real_distribution<> uni_dist_x(x_min[0], x_max[0]);
     std::uniform_real_distribution<> uni_dist_y(x_min[1], x_max[1]);
@@ -74,10 +71,36 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
     #pragma omp for
     for (Uint i = 0; i < num_points; ++i){
-      CellPos pos;
-
+      // one expression, so the three draws keep the order they had
       Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
-      
+      xs[3*std::size_t(i)]     = x[0];
+      xs[3*std::size_t(i) + 1] = x[1];
+      xs[3*std::size_t(i) + 2] = x[2];
+    }
+  }
+
+  // Probed in Morton order, a contiguous range a thread: consecutive queries
+  // descend the same subtree and gather the same dofs. The rows come out in
+  // that order, which no consumer of this file depends on.
+  const int qdim = (x_max[2] > x_min[2]) ? 3 : 2;
+  const partrac::MortonBox box(x_min, x_max, qdim);
+  const std::vector<std::uint32_t> order =
+    partrac::morton_order(xs.data(), std::size_t(num_points), 3, box);
+
+  #pragma omp parallel
+  {
+    #pragma omp single
+    ptdata_threads_.resize(omp_get_num_threads());
+
+    auto& ptdata_loc_ = ptdata_threads_[omp_get_thread_num()];
+    ptdata_loc_.reserve(num_points * ptheader.size() / omp_get_num_threads());
+
+    #pragma omp for schedule(static)
+    for (Uint q = 0; q < num_points; ++q){
+      CellPos pos;
+      const double* p = xs.data() + 3*std::size_t(order[q]);
+      Vector3d x(p[0], p[1], p[2]);
+
       bool inside = intp->locate(x, t0, pos);
       if (inside){
         PointValues ptvals(intp->get_U0());
@@ -96,6 +119,12 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
           gradu(1,0), gradu(1,1), gradu(1,2),
           gradu(2,0), gradu(2,1), gradu(2,2)
         });
+        if (phase) ptdata_loc_.push_back(ptvals.get_phi());
+        if (phase_gradient){
+          Vector3d g;
+          intp->evaluate_phase_gradient(x, t0, pos, g);
+          ptdata_loc_.insert(ptdata_loc_.end(), {g[0], g[1], g[2]});
+        }
       }
     }
   }
@@ -118,8 +147,6 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   write_h5part(newfolder + "/interpolation.h5part", ptheader, ptdata_);
 
   std::cout << "Done writing." << std::endl;
-
-  // ofile.close();
 }
 
 static int run(int argc, char* argv[])
@@ -133,6 +160,8 @@ static int run(int argc, char* argv[])
     return 1;
   }
   partrac::Params prm = partrac::parse_or_exit(interpol_schema(), argc, argv);
+  if (prm.check_only())
+    partrac::fail("interpol has no --check: it only probes the field");
 
   if (prm.get<int>("num_threads") > 0){
       omp_set_dynamic(0);
@@ -146,12 +175,12 @@ static int run(int argc, char* argv[])
   intp->set_U0(prm.get<double>("U"));
   intp->set_int_order(prm.get<int>("int_order"));
 
+  // Parallel generators; before the folders, which name the seed
+  std::vector<std::mt19937> gens = make_generators(prm);
+
   std::string folder = intp->get_folder();
   const std::string newfolder = make_run_folders(folder, "Interpolation", prm,
                                                 NoSubfolders | NoRunIndex).run;
-
-  // Parallel generators
-  std::vector<std::mt19937> gens = make_generators(prm);
 
   double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
   std::cout << "Testing interpolation..." << std::endl;

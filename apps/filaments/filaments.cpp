@@ -1,6 +1,5 @@
 #include <cmath>
 #include <iostream>
-#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -23,6 +22,7 @@ inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std:
   const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
   const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
   std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
+  const Uint max_draws = 1000000;
   for (const Uint e : edge_ids){
     const Uint a = mesh.edges[e].first[0];
     const Uint b = mesh.edges[e].first[1];
@@ -30,7 +30,10 @@ inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std:
     const Vector3d dx = ps.x(a) - ps.x(b);
     Vector3d Dx = {0., 0., 0.};
     bool outside = true;
+    Uint draws = 0;
     while (outside){
+      if (++draws > max_draws)
+        partrac::fail("outside=reinject: no position inside the domain along ", dirs, " in ", max_draws, " draws");
       if (rx) Dx[0] = ux(run.gens[0]);
       if (ry) Dx[1] = uy(run.gens[0]);
       if (rz) Dx[2] = uz(run.gens[0]);
@@ -38,8 +41,8 @@ inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std:
       const bool inside_b = run.intp->locate(x0 + Dx - 0.5*dx);
       outside = !(inside_a && inside_b);
     }
-    ps.set_x(a, ps.x(a) + Dx);
-    ps.set_x(b, ps.x(b) + Dx);
+    ps.move(a, ps.x(a) + Dx);
+    ps.move(b, ps.x(b) + Dx);
   }
 }
 
@@ -59,21 +62,17 @@ static int run(int argc, char* argv[])
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
-  Topology mesh(ps, prm);
+  scheme.prepare(*run.intp);
+  Topology mesh(ps, mesh_options(prm));
   // Doublings
   const bool doublings = prm.get<std::string>("resize") == "doublings";
   mesh.records_doublings = doublings;
 
   load_or_initialize(run, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output");
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
+  const OutputFields output_fields = mesh_output_fields(prm, mesh);
 
   const double dt = prm.get<double>("dt");
   const double resize_intv = prm.get<double>("resize_intv");
@@ -99,7 +98,7 @@ static int run(int argc, char* argv[])
       return pair_stats_columns(t, ps, mesh.edges, mesh.edge_doublings(), counters.get_declined());
     };
 
-  hooks.after_step = [&](const int, const double, const std::vector<Uint>& outside_nodes){
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double){
     if (outside_nodes.size() == 0)
       return;
     std::cout << "Some nodes are outside.\n";
@@ -108,6 +107,7 @@ static int run(int argc, char* argv[])
   };
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
+  scheme.report(std::cout);
 
   return 0;
 }

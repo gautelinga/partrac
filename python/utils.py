@@ -95,3 +95,31 @@ def get_folders(folder):
             paramsfiles = find_params(fullpath)
             folders.append(fullpath)
     return folders
+
+def node_logelong(grp):
+    # Mean log(dl/dl0) over each node's edges; None without edges
+    if "edges" not in grp:
+        return None
+    edges = np.array(grp["edges"], dtype=int).flatten()
+    if "logelong" in grp:
+        le = np.array(grp["logelong"])[:, 0]
+    else:
+        le = np.log(np.array(grp["dl"])[:, 0] / np.array(grp["dl0"])[:, 0])
+    n = len(grp["points"])
+    le_sum = np.bincount(edges, weights=np.repeat(le, 2), minlength=n)
+    count = np.bincount(edges, minlength=n)
+    with np.errstate(invalid="ignore"):
+        return le_sum / count
+
+
+def run_folder(folder):
+    # The newest numbered run when folder holds runs, not params
+    if len(find_params(folder)) > 0:
+        return folder
+    runs = [a for a in os.listdir(folder)
+            if a.isdigit() and os.path.isdir(os.path.join(folder, a))]
+    if len(runs) == 0:
+        return folder
+    folder = os.path.join(folder, max(runs, key=int))
+    print("Using run folder", folder)
+    return folder

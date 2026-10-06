@@ -5,34 +5,14 @@
 #include <typeinfo>
 #include "Error.hpp"
 #include "Interpol.hpp"
-#include "AnalyticInterpol.hpp"
-#include "StructuredInterpol.hpp"
-#ifdef USE_DOLFIN
-#include "TriangleInterpol.hpp"
-#include "TetInterpol.hpp"
-#include "TriangleFreqInterpol.hpp"
-#include "XDMFTriangleInterpol.hpp"
-#include "XDMFTetInterpol.hpp"
-#include "DolfTriangleInterpol.hpp"
-#include "DolfTetInterpol.hpp"
-#endif
+#include "interpolators.hpp"
 
-// Call f with the concrete interpolator; the same list as set_interpolate_mode
-// and PARTRAC_STEP_INTERPOLATORS in src/CMakeLists.txt
+// Call f with the concrete interpolator, tried in the table's order (src/CMakeLists.txt)
 template<typename F>
 inline auto with_concrete(Interpol& ip, F&& f){
-  if (auto* p = dynamic_cast<AnalyticInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<StructuredInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<StructuredConstInterpol*>(&ip)) return f(*p);
-#ifdef USE_DOLFIN
-  if (auto* p = dynamic_cast<TriangleInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<TetInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<TriangleFreqInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<XDMFTriangleInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<XDMFTetInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<DolfTriangleInterpol*>(&ip)) return f(*p);
-  if (auto* p = dynamic_cast<DolfTetInterpol*>(&ip)) return f(*p);
-#endif
+#define PARTRAC_TRY(T) if (auto* p = dynamic_cast<T*>(&ip)) return f(*p);
+  PARTRAC_INTERPOLATORS(PARTRAC_TRY)
+#undef PARTRAC_TRY
   partrac::fail("with_concrete: interpolator type ", typeid(ip).name(), " is not in the dispatch list");
   return decltype(f(ip))();   // for the return type only; not reached
 }

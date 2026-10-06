@@ -21,6 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
+    # Open MPI refuses more ranks than it counts cores, and the MPI tests take 3
+    env:
+      OMPI_MCA_rmaps_base_oversubscribe: 1
 
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +33,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
-            python3-pytest python3-numpy python3-h5py
+            python3-pytest python3-numpy python3-h5py python3-h5py-mpi python3-scipy \
+            python3-mpi4py python3-petsc4py-real
+          # Debian keeps petsc4py beside its PETSc build, off the default path
+          echo "PYTHONPATH=$(ls -d /usr/lib/petscdir/petsc*/x86_64-linux-gnu-real/lib/python3/dist-packages)" >> "$GITHUB_ENV"
+
+      - name: MPI starts a job of two ranks
+        # the cleaner's MPI tests run here and nowhere else in CI: the FEniCS
+        # image's MPICH is built for PMIx, which its launcher does not serve,
+        # so every rank there is a world of one
+        run: |
+          python3 -c "import petsc4py; petsc4py.init([]); from petsc4py import PETSc"
+          test "$(mpiexec -n 2 python3 -c 'from mpi4py import MPI; print(MPI.COMM_WORLD.size)' | tr -d '\n')" = 22
 
       - name: Configure
         run: |
@@ -59,7 +73,13 @@ jobs:
           test "$built" -eq $(echo $expected | wc -w) || {
             ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
 
-      - name: Test
+      - name: Test, without the cases that need dolfin
+        # unittest builds test_interpol_core, test_simplex_load, test_xdmf_load
+        # and test_freq_load only under USE_DOLFIN, so none of them runs here;
+        # the python mesh tests skip, having no dolfin to write a fixture with;
+        # the MPI tests must run
+        env:
+          PARTRAC_REQUIRE_MPI: 1
         run: ctest --test-dir build --output-on-failure
 
   # Both build types carry the same warning flags, and the tree builds clean, so
@@ -100,8 +120,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests need
-        # the image has pytest, numpy and dolfin; h5py is what reads the dumps
-        run: python3 -m pip install --no-cache-dir h5py
+        # the image has pytest, numpy and dolfin; h5py is what reads the dumps,
+        # scipy the cleaner; numpy held at the image's, which dolfin and
+        # petsc4py are built against
+        run: python3 -m pip install --no-cache-dir h5py scipy "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
@@ -128,9 +150,48 @@ jobs:
           built=$(find build/bin -maxdepth 1 -type f -executable | wc -l)
           test "$built" -eq $(echo $expected | wc -w) || {
             ls build/bin; echo "built $built, expected $(echo $expected | wc -w)"; exit 1; }
-      - name: Test
-        # tests/test_mesh.py generates a mesh here rather than skipping
+      - name: Test, the whole suite
+        # here unittest also runs the cases behind USE_DOLFIN
+        # (test_interpol_core, test_simplex_load, test_xdmf_load,
+        # test_freq_load), and tests/test_mesh.py generates a mesh rather
+        # than skipping
         run: ctest --test-dir build --output-on-failure
+
+  # The build the mesh loaders are for since the direct loader: no dolfin in the
+  # binary, python dolfin in the image, so every mesh mode runs on fixtures
+  # dolfin writes. The one mode this build has not got is fenics; its tests are
+  # listed by name and deselected, so the gap in the run is in the log.
+  nodolfin_mesh:
+    name: dolfin OFF, mesh modes (FEniCS container)
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/scientificcomputing/fenics:2025-10-09
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tools the tests need
+        # the image has pytest, numpy and dolfin; h5py reads the dumps, scipy
+        # the cleaner, and xdist runs the suite on every core; numpy held at
+        # the image's, which dolfin and petsc4py are built against
+        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+      - name: Configure
+        # as the dolfin job, but with the option off: Ninja, and HDF5_ROOT for
+        # the image's mpich build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DHDF5_ROOT=/usr/lib/x86_64-linux-gnu/hdf5/mpich
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+      - name: Unit tests, without the cases that need dolfin
+        # test_interpol_core, test_simplex_load, test_xdmf_load and
+        # test_freq_load are built only under USE_DOLFIN: the loaders are
+        # covered here by the python tests below instead
+        run: build/tests/unittest
+      - name: The tests this build cannot run
+        run: python3 -m pytest tests/ -m fenics --collect-only -q
+      - name: Python tests, the fenics cases deselected
+        run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q -n $(nproc) tests/ -m "not fenics" -rs
 
   # Which lines the tests run, reported to Codecov. A job of its own, in the
   # dolfin container since only there every app is built and the mesh tests
@@ -147,10 +208,11 @@ jobs:
         # serially; curl because codecov-action downloads its uploader with it;
         # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_p2.py
         # builds its meshes with it and would otherwise skip, leaving the
-        # near-wall code unmeasured
+        # near-wall code unmeasured; numpy held at the image's, which dolfin
+        # and petsc4py are built against
         run: |
           apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py gcovr pytest-xdist gmsh
+          python3 -m pip install --no-cache-dir h5py scipy gcovr pytest-xdist gmsh "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         run: |
           cmake -S . -B build-cov -G Ninja \
@@ -185,6 +247,45 @@ jobs:
           files: build-cov/report/coverage.xml
           disable_search: true
           fail_ci_if_error: false
+
+  # mode=openfoam reads cases through OpenFOAM's own libraries, a plugin built
+  # against OpenFOAM.org 14 from its apt repository, a large install; the split
+  # and the node values are OpenFOAM-free and tested in every job, the reader
+  # here. The tests on solved cases too large to check in skip.
+  openfoam:
+    name: OpenFOAM reader (dolfin OFF)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install OpenFOAM and the dependencies
+        # three tries, the mirror fails now and then
+        run: |
+          sudo sh -c "wget -qO - https://dl.openfoam.org/gpg.key > /etc/apt/trusted.gpg.d/openfoam.asc"
+          sudo add-apt-repository -n -y http://dl.openfoam.org/ubuntu
+          for i in 1 2 3; do
+            sudo apt-get -o Acquire::Retries=5 update &&
+            sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends openfoam14 \
+              cmake g++ libhdf5-dev libeigen3-dev libboost-dev zlib1g-dev \
+              python3-pytest python3-numpy python3-h5py python3-scipy && break
+            [ $i = 3 ] && exit 1
+            sleep 30
+          done
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DPARTRAC_ENABLE_OPENFOAM=ON \
+            -DOPENFOAM_DIR=/opt/openfoam14 \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: make -C build -j$(nproc)
+      - name: Unit tests of the split and the node values
+        run: build/tests/unittest "[openfoam]"
+      - name: The reader through the apps
+        # fails rather than skips if the build has no reader
+        env:
+          PARTRAC_REQUIRE_OPENFOAM: 1
+        run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q tests/test_openfoam.py -m "not slow" -rs
 
   # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
   # SIGILL on an older machine. Check the option still reaches the compiler.

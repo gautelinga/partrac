@@ -4,7 +4,6 @@
 // Tracer apps: points, line elements or tensors on the shared run loop
 
 #include <iostream>
-#include <map>
 #include <set>
 #include <string>
 
@@ -47,16 +46,18 @@ bool start_tracers(Run& run, ParticleSet& ps, Topology& mesh){
   return restarting;
 }
 
-inline std::map<std::string, bool> tracer_output_fields(const partrac::Params& prm){
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = !prm.get<bool>("minimal_output");
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["J"] = prm.get<bool>("output_J");
-  output_fields["phi"] = prm.get<bool>("output_phi");
-  output_fields["cell_type"] = prm.get<bool>("output_cell_type");
-  return output_fields;
+inline OutputFields tracer_output_fields(const partrac::Params& prm){
+  const bool full = !prm.get<bool>("minimal_output");
+  OutputFields f;
+  f.u = full;
+  f.c = full;
+  f.p = full && prm.get<bool>("output_all_props");
+  f.rho = full && prm.get<bool>("output_all_props");
+  f.J = prm.get<bool>("output_J");
+  f.S = prm.get<bool>("output_S");
+  f.phi = prm.get<bool>("output_phi");
+  f.cell_type = prm.get<bool>("output_cell_type");
+  return f;
 }
 
 template<TransportElement E>
@@ -65,11 +66,14 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  scheme.prepare(*run.intp);
   record_tracer_fields<E>(run, ps, E == TransportElement::Vector);
-  Topology mesh(ps, prm);
+  Topology mesh(ps, cloud_options(prm));
   start_tracers<E>(run, ps, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
-  std::map<std::string, bool> output_fields = tracer_output_fields(prm);
+  const OutputFields output_fields = tracer_output_fields(prm);
 
   const double dt = prm.get<double>("dt");
   const std::string outside = prm.get<std::string>("outside");
@@ -86,15 +90,21 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
 
   RunHooks hooks;
   hooks.statistics = [&](const double t, Integrator& counters){
-    return E == TransportElement::Vector
-         ? vector_stats_columns(t, ps, true, counters.get_declined())
+    std::vector<StatsColumn> cols = E == TransportElement::Vector
+         ? vector_stats_columns(t, ps, counters.get_declined())
          : cloud_stats_columns(t, ps, counters.get_declined());
+    if (E == TransportElement::Tensor)
+      push_logdetF_columns(cols, ps);
+    cols.push_back(at_rest_column(ps));
+    push_S_columns(cols, ps);
+    return cols;
   };
-  hooks.after_step = [&](const int, const double t, const std::vector<Uint>& outside_nodes){
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
     handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
 
   run_loop(run, ps, mesh, stepper, output_fields, dt, hooks);
+  scheme.report(std::cout);
   return 0;
 }
 
@@ -108,13 +118,15 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
   record_tracer_fields<E>(run, ps, false);
   ps.dump_as("t_loc", "tau");
-  Topology mesh(ps, prm);
+  Topology mesh(ps, cloud_options(prm));
   // Checkpoint t_loc
   mesh.records_t_loc = true;
   start_tracers<E>(run, ps, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
-  std::map<std::string, bool> output_fields = tracer_output_fields(prm);
-  output_fields["t_loc"] = true;
+  OutputFields output_fields = tracer_output_fields(prm);
+  output_fields.t_loc = true;
 
   const double dxn = prm.get<double>("dxn");
   const std::string outside = prm.get<std::string>("outside");
@@ -132,9 +144,11 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
 
   RunHooks hooks;
   hooks.statistics = [&](const double xn, Integrator& counters){
-    return cloud_stats_columns(xn, ps, counters.get_declined());
+    std::vector<StatsColumn> cols = cloud_stats_columns(xn, ps, counters.get_declined());
+    cols.push_back(at_rest_column(ps));
+    return cols;
   };
-  hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
+  hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     handle_outside(run, mesh, ps, outside, nodes, xn, verbose);
   };
   // Stop when no particle is left

@@ -152,8 +152,8 @@ if __name__ == "__main__":
                 
                 ax3.hist(abs(A_)/tau_, bins=100, density=True)
                 ax3.set_yscale("log")
-                ax3.set_xlabel("$|\Delta u_n|$")
-                ax3.set_ylabel("$P(|\Delta u_n|)$")
+                ax3.set_xlabel(r"$|\Delta u_n|$")
+                ax3.set_ylabel(r"$P(|\Delta u_n|)$")
                 x = np.linspace(0., (A_/tau_).max(), 1000)
                 ax3.plot(x, 1./dun_avg * np.exp(-x/dun_avg))
 

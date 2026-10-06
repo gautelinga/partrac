@@ -1,5 +1,4 @@
 #include <iostream>
-#include <map>
 #include <set>
 #include <string>
 
@@ -27,24 +26,26 @@ static int run(int argc, char* argv[])
                                prm.get<double>("dx_max"), prm.get<double>("T"));
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
-  Topology mesh(ps, prm);
+  Topology mesh(ps, mesh_options(prm));
   // Checkpoint t_loc
   mesh.records_t_loc = true;
 
-  load_or_initialize(run, mesh);
+  const bool restarting = load_or_initialize(run, mesh);
+  if (check_only(run, ps, mesh))
+    return 0;
 
   const bool refine = prm.get<bool>("refine");
   const bool coarsen = prm.get<bool>("coarsen");
   const bool verbose = prm.get<bool>("verbose");
 
-  // Initial refinement and coarsening
-  if (refine && !prm.get<bool>("inject") && mesh.dim() > 0){
+  // Initial refinement and coarsening, not on a restart
+  if (refine && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial refinement" << std::endl;
     Uint n_add = mesh.refine();
     if (verbose)
       std::cout << "Added " << n_add << " edges." << std::endl;
   }
-  if (coarsen && !prm.get<bool>("inject") && mesh.dim() > 0){
+  if (coarsen && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
     std::cout << "Initial coarsening" << std::endl;
     Uint n_rem = mesh.coarsen(true);
     if (verbose)
@@ -53,16 +54,10 @@ static int run(int argc, char* argv[])
 
   mesh.compute_interior();
 
-  std::map<std::string, bool> output_fields;
-  output_fields["u"] = !prm.get<bool>("minimal_output");
-  output_fields["c"] = true;
-  output_fields["p"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  output_fields["rho"] = !prm.get<bool>("minimal_output") && prm.get<bool>("output_all_props");
-  // H and n need the curvature
-  output_fields["H"] = !prm.get<bool>("minimal_output") && mesh.dim() > 0 && mesh.computes_curvature();
-  output_fields["n"] = !prm.get<bool>("minimal_output") && mesh.dim() > 1 && mesh.computes_curvature();
-  output_fields["t_loc"] = true;
-  output_fields["tau"] = true;
+  OutputFields output_fields = mesh_output_fields(prm, mesh);
+  output_fields.c = true;
+  output_fields.t_loc = true;
+  output_fields.tau = true;
 
   // Coarsen at refine_intv when coarsening is off
   const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
@@ -97,7 +92,7 @@ static int run(int argc, char* argv[])
     }
   };
 
-  hooks.after_step = [&](const int, const double xn, const std::vector<Uint>& nodes){
+  hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     // Finished and trapped nodes
     if (verbose && nodes.size() > 0){
       Vector3d x_trapped = {0., 0., 0.};

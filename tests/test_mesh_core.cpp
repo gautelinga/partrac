@@ -11,10 +11,8 @@
 #include "mesh.hpp"
 
 // This file exists partly for what it tests and partly for the fact that it
-// compiles at all: the core headers define their functions in the header, so
-// until they were marked inline a second translation unit including them was a
-// multiple-definition link error, and every app avoided it only by being one
-// TU. If that regresses, this file stops linking.
+// compiles at all: the core headers define functions in the header, and this
+// second translation unit must link.
 //
 // ParticleSet's constructor only stores the interpolator, so a null one is
 // enough for anything that reads positions.
@@ -77,8 +75,31 @@ struct EverywhereInterpol final : public Interpol {
   double get_t_min() override { return 0.; }
   double get_t_max() override { return 1.; }
   void update(const double) override {}
+  void freeze(const double) override {}
   bool locate(const Vector3d&, const double, CellPos&) override { return true; }
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) override {}
+  using Interpol::locate;
+  using Interpol::evaluate;
+};
+
+// Fluid above y = 0.3 sin(pi x), a hump the fluid wraps; its outward normal for any cell
+struct HumpInterpol final : public Interpol {
+  HumpInterpol() : Interpol("") {}
+  static double hump(const double x){ return 0.3*std::sin(M_PI*x); }
+  double get_t_min() override { return 0.; }
+  double get_t_max() override { return 1.; }
+  void update(const double) override {}
+  void freeze(const double) override {}
+  bool locate(const Vector3d& x, const double, CellPos& pos) override {
+    if (x[1] < hump(x[0])) return false;
+    pos.id = 0;
+    return true;
+  }
+  void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) override {}
+  static Vector3d normal(const Vector3d& x){
+    return Vector3d(0.3*M_PI*std::cos(M_PI*x[0]), -1., 0.).normalized();
+  }
+  Vector3d get_boundary_normal(const Vector3d& x, int&) override { return normal(x); }
   using Interpol::locate;
   using Interpol::evaluate;
 };
@@ -94,19 +115,16 @@ double total_length(const EdgesType& edges, const ParticleSet& ps){
 TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint", "[mesh]") {
   ParticleSet ps(std::make_shared<EverywhereInterpol>(), 64);
   ps.add({{0., 0., 0.}, {1., 0., 0.}, {2., 0., 0.}}, 0);
-  FacesType faces;
-  EdgesType edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}};
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
+  Connectivity m;
+  m.edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}};
+  FacesType& faces = m.faces;
+  EdgesType& edges = m.edges;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 
-  const Uint n_add = refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                pos_inj, edges_inj, ps, 0.6, 0., false);
+  const Uint n_add = refinement(m, ps, 0.6, 0., StuckEdge::Stop);
   REQUIRE( n_add == 2 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( edges.size() == 4 );
@@ -121,35 +139,70 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   }
   REQUIRE( ends == 2 );
   // Short enough already: nothing to do
-  REQUIRE( refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                      pos_inj, edges_inj, ps, 0.6, 0., false) == 0 );
+  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 0 );
 
   SECTION("and coarsening a straight strip keeps its length"){
-    const Uint n_rem = coarsening(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                  ps, 0.75, 0.);
+    const Uint n_rem = coarsening(m, ps, 0.75, 0.);
     REQUIRE( n_rem > 0 );
     REQUIRE( total_length(edges, ps) == Approx(2.0) );
   }
+}
+
+TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edge, until inside", "[mesh]") {
+  // Two nodes 0.01 above the hump, unlike slopes; their midpoint is inside it
+  ParticleSet ps(std::make_shared<HumpInterpol>(), 8);
+  const double lift = 0.01;
+  const Vector3d x0(0.1, HumpInterpol::hump(0.1) + lift, 0.), x1(0.7, HumpInterpol::hump(0.7) + lift, 0.);
+  ps.add({x0, x1}, 0);
+  ps.set_cell_id(0, 0);
+  ps.set_cell_id(1, 0);
+  Connectivity m;
+  m.edges = {{{0, 1}, (x1 - x0).norm()}};
+  FacesType& faces = m.faces;
+  EdgesType& edges = m.edges;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
+  compute_edge2faces(edge2faces, faces, edges);
+  compute_node2edges(node2edges, edges, ps.N());
+
+  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 1 );
+  REQUIRE( ps.N() == 3 );
+  // Along the normals' mean, square to the edge, by the first multiple of 1% of the edge inside
+  const Vector3d tau = (x0 - x1).normalized(), mid = 0.5*(x0 + x1);
+  Vector3d n = HumpInterpol::normal(x0) + HumpInterpol::normal(x1);
+  n -= n.dot(tau)*tau;
+  n /= -n.norm();
+  // Neither straight up nor the normals' mean itself
+  REQUIRE( n[0] < -0.2 );
+  REQUIRE( std::abs(n.dot((HumpInterpol::normal(x0) + HumpInterpol::normal(x1)).normalized())) < 0.995 );
+  const auto below = [](const Vector3d& y){ return y[1] < HumpInterpol::hump(y[0]); };
+  int k = 1;
+  while (below(mid + k*(1e-2*(x1 - x0).norm())*n)) ++k;
+  const Vector3d x = ps.x(2), expected = mid + k*(1e-2*(x1 - x0).norm())*n;
+  INFO("new node at " << x.transpose() << ", expected " << expected.transpose() << " (" << k << " steps)");
+  REQUIRE( k > 2 );
+  REQUIRE( (x - expected).norm() < 1e-14 );
+  REQUIRE( x[2] == 0. );
+  REQUIRE( !below(x) );
+  REQUIRE( ps.get_cell_id(2) == 0 );
 }
 
 TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {
   // The unit square as two triangles across the diagonal 0-2
   ParticleSet ps(nullptr, 64);
   ps.add({{0., 0., 0.}, {1., 0., 0.}, {1., 1., 0.}, {0., 1., 0.}}, 0);
-  EdgesType edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}, {{0, 2}, std::sqrt(2.)}, {{2, 3}, 1.0}, {{0, 3}, 1.0}};
-  FacesType faces = {{{0, 1, 2}, 0.5}, {{2, 3, 4}, 0.5}};
-  Edge2FacesType edge2faces;
-  Node2EdgesType node2edges;
+  Connectivity m;
+  m.edges = {{{0, 1}, 1.0}, {{1, 2}, 1.0}, {{0, 2}, std::sqrt(2.)}, {{2, 3}, 1.0}, {{0, 3}, 1.0}};
+  m.faces = {{{0, 1, 2}, 0.5}, {{2, 3, 4}, 0.5}};
+  EdgesType& edges = m.edges;
+  FacesType& faces = m.faces;
+  Edge2FacesType& edge2faces = m.edge2faces;
+  Node2EdgesType& node2edges = m.node2edges;
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
-  EdgesListType edges_inlet;
-  NodesListType nodes_inlet;
-  std::vector<Vector3d> pos_inj;
-  EdgesType edges_inj;
 
   // Only the diagonal is longer than 1.2
-  const Uint n_add = sheet_refinement(faces, edges, edge2faces, node2edges, edges_inlet, nodes_inlet,
-                                      pos_inj, edges_inj, ps, 1.2, 0., false, false);
+  const Uint n_add = sheet_refinement(m, ps, 1.2, 0., StuckEdge::Keep, false);
   REQUIRE( n_add == 1 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( faces.size() == 4 );
@@ -174,17 +227,11 @@ TEST_CASE("a field a particle set does not have is an error, by name", "[mesh][e
   for (const char* what : {"scalar", "vector", "tensor"}){
     INFO(what);
     const std::string w = what;
-    const auto dump = [&]{
-      if (w == "scalar") ps.dump_scalar("unused.h5", "no_such_field");
-      if (w == "vector") ps.dump_vector("unused.h5", "no_such_field");
-      if (w == "tensor") ps.dump_tensor("unused.h5", "no_such_field");
-    };
     const auto load = [&]{
       if (w == "scalar") ps.load_scalar("unused.h5", "no_such_field");
       if (w == "vector") ps.load_vector("unused.h5", "no_such_field");
       if (w == "tensor") ps.load_tensor("unused.h5", "no_such_field");
     };
-    REQUIRE_THROWS_WITH( dump(), Catch::Contains("no field 'no_such_field'") );
     REQUIRE_THROWS_WITH( load(), Catch::Contains("no field 'no_such_field'") );
   }
   REQUIRE_THROWS_AS( ps.dump_as("no_such_field", "name"), partrac::Error );

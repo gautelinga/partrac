@@ -6,6 +6,8 @@
 #include <vector>
 #include "typedefs.hpp"
 #include "Params.hpp"
+#include "interpol_factory.hpp"
+#include "AppParams.hpp"
 #include "strings.hpp"
 
 // Parameters accepted by this app
@@ -27,41 +29,24 @@ inline partrac::Schema weighted_walkers_schema(){
   s.opt<double>("refine_intv", 100.0, "resampling interval");
   s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
   s.opt<double>("t0", 0.0, "start time");
-  s.opt<double>("U", 1.0, "velocity scale");
+  s.opt<bool>("frozen_fields", false, "freeze the velocity field");
+  s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
+  add_run_params(s, "current time");
   s.opt<double>("x0", 0.0, "initial position");
   s.opt<double>("y0", 0.0, "initial position");
   s.opt<double>("z0", 0.0, "initial position");
-  s.opt<double>("dump_intv", 100.0, "dump interval");
-  s.opt<double>("stat_intv", 100.0, "statistics interval");
-  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
-  s.opt<int>("seed", 0, "random seed");
-  s.opt<bool>("random", true, "draw the seed randomly");
-  s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
-  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
-  s.opt<bool>("minimal_output", false, "dump less");
+  add_intervals(s, "dt", {"refine_intv"});
   s.opt<bool>("output_all_props", true, "accepted as before; a walker dumps no more for it");
-  s.opt<bool>("verbose", false, "print the parameters");
-  s.opt<std::string>("tag", "", "appended to the folder name");
-  s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.opt<bool>("inject", false, "accepted as before; walkers are never injected");
   s.opt<bool>("clear_initial_edges", false, "accepted as before; walkers have no edges");
-  s.runtime<std::string>("folder", "", "output folder");
-  s.runtime<double>("t", 0.0, "current time");
-  s.runtime<Uint>("it", 0, "current step");
-  s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
-  s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
   s.runtime<Uint>("Nrw_init", 0, "particles the initializer placed");
   s.runtime<Uint>("Nrw_current", 0, "particles in the set when this was written");
   // Cloud: no edges
   s.runtime<double>("ds_min", 0.0, "a cloud: no edges");
-  s.runtime<bool>("inject_edges", true, "a cloud: no injection");
-  s.runtime<bool>("cut_if_stuck", true, "a cloud: no edges");
-  s.runtime<double>("curv_refine_factor", 0.0, "a cloud: no refinement");
-  s.runtime<int>("filter_target", 0, "a cloud: no filtering");
+  // Written by older runs; a cloud's Topology takes none of them
+  s.retired({"inject_edges", "cut_if_stuck", "curv_refine_factor", "filter_target"});
 
-  s.choices("mode", {"analytic", "structured", "lbm", "felbm", "fenics",
-                     "tet", "triangle", "trianglefreq", "xdmftriangle", "xdmftet"});
+  s.choices("mode", interpol_modes());
   s.choices("exit_plane", {"none", "x", "y", "z"});
   // Strip or circle, two direction tokens
   s.check([](const partrac::Params& p){
@@ -80,22 +65,6 @@ inline partrac::Schema weighted_walkers_schema(){
           "int_order must be 1 or 2");
   s.check([](const partrac::Params& p){ return !p.get<bool>("inject"); },
           "weighted_walkers does not inject");
-  // Intervals: 0 is off, negative is an error
-  s.check([](const partrac::Params& p){
-            for (const auto& key : {"checkpoint_intv", "dump_intv", "stat_intv", "refine_intv"})
-              if (p.get<double>(key) < 0.) return false;
-            return true;
-          },
-          "intervals cannot be negative");
-  // Floor output intervals at one step
-  s.finalize([](partrac::Params& p){
-    const double dt = p.get<double>("dt");
-    if (p.get<double>("dump_intv") > 0.)
-      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), dt));
-    if (p.get<double>("stat_intv") > 0.)
-      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), dt));
-    p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
-  });
   return s;
 }
 

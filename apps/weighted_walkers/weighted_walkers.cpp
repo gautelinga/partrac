@@ -3,7 +3,6 @@
 #include <cmath>
 #include <iostream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -129,10 +128,7 @@ inline SepdataSelection sepdata_selection(const partrac::Params& prm, const std:
 inline void write_separation_data(const std::string& folder, const double t, const ParticleSet& ps,
                                   const SepdataSelection& sel){
     const std::string sepdatafname = folder + "/sepdata_from_t" + std::to_string(t) + ".h5";
-    H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
-
     const std::string groupname = std::to_string(t);
-    sepdata_h5f.createGroup(groupname + "/");
 
     std::vector<Vector3d> xyz_;
     std::vector<double> w_;
@@ -150,10 +146,15 @@ inline void write_separation_data(const std::string& folder, const double t, con
             }
         }
     }
-    vector2hdf5(sepdata_h5f, groupname + "/x", xyz_, xyz_.size());
-    scalar2hdf5(sepdata_h5f, groupname + "/w", w_, w_.size());
-
-    sepdata_h5f.close();
+    try {
+        H5::H5File sepdata_h5f(sepdatafname.c_str(), H5F_ACC_TRUNC);
+        sepdata_h5f.createGroup(groupname + "/");
+        vector2hdf5(sepdata_h5f, groupname + "/x", xyz_, xyz_.size());
+        scalar2hdf5(sepdata_h5f, groupname + "/w", w_, w_.size());
+        sepdata_h5f.close();
+    } catch (const H5::Exception&){
+        partrac::fail("cannot write ", sepdatafname);
+    }
 }
 
 static int run(int argc, char* argv[])
@@ -174,14 +175,15 @@ static int run(int argc, char* argv[])
 
     Run run = start_run(prm, "WeightedWalkers");
     const std::string sepdatafolder = run.out.run + "Sepdata/";
-    create_folder(sepdatafolder);
+    if (!prm.check_only())
+        create_folder(sepdatafolder);
 
     ExplicitIntegrator integrator(prm.get<double>("Dm"), prm.get<int>("int_order"), run.gens);
 
     // Generation per walker
     ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
     ps.record_generation();
-    Topology mesh(ps, prm);
+    Topology mesh(ps, cloud_options(prm));
 
     // Gaussian strip or circle
     const std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
@@ -189,19 +191,18 @@ static int run(int argc, char* argv[])
     if (prm.get<std::string>("restart_folder") != ""){
         mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
     }
+    else if (dim == 2){
+        mesh.load_initial_state(init_gaussian_strip(key, run.intp, prm, run.gens[0]), prm);
+    }
     else {
-        std::shared_ptr<Initializer> init_state = make_gaussian_initializer(dim, key, run.intp, prm, run.gens[0]);
-        mesh.load_initial_state(init_state, prm);
+        mesh.load_initial_state(init_gaussian_circle(key, run.intp, prm, run.gens[0]), prm);
     }
     mesh.compute_maps();
+    if (check_only(run, ps, mesh))
+        return 0;
 
-    std::map<std::string, bool> output_fields;
-    output_fields["u"] = false;
-    output_fields["c"] = !prm.get<bool>("minimal_output");
-    output_fields["p"] = false;
-    output_fields["rho"] = false;
-    output_fields["H"] = false;
-    output_fields["n"] = false;
+    OutputFields output_fields;
+    output_fields.c = !prm.get<bool>("minimal_output");
 
     const double dt = prm.get<double>("dt");
     const double refine_intv = prm.get<double>("refine_intv");
@@ -231,7 +232,7 @@ static int run(int argc, char* argv[])
         write_separation_data(sepdatafolder, t, ps, selection);
     };
     // Resampling
-    hooks.after_step = [&](const int it, const double t, const std::vector<Uint>&){
+    hooks.after_step = [&](const int it, const double t){
         if (!at_interval(it, refine_intv, dt))
             return;
         get_exited_nodes(exited_nodes, exit_buffers, ps, axes, Ln, Lt);

@@ -3,15 +3,16 @@ a parameter error does: exit code 2 and a message on stderr, from the one
 place each app reports (partrac::report_errors), not an exit() where it was
 found. The schema knows the keys, not what they name: an initial state that
 misses the domain, a file that is not there, an expression or an element the
-loader does not know, an XDMF grid without a time."""
+loader does not know, an XDMF grid without a time. And a misspelt key in an
+expression file, which that expression's schema refuses by name."""
 
 import os
-import shutil
-import subprocess
+import re
 
 import pytest
 
-from paths import REPO, app, built_with_dolfin
+from paths import REPO, app
+from runs import copy_case, copy_example, run_app
 
 PARTRAC = app("partrac")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -20,10 +21,6 @@ ARGS = ("mode=analytic dt=0.01 T=0.02 Nrw=10 Nrw_max=100 ds_max=0.1 ds_min=1e-9 
         "stat_intv=1e9 checkpoint_intv=1e9").split()
 
 needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
-# the mesh and XDMF loaders are not in a build without dolfin, which refuses
-# their modes before it reaches the error under test
-needs_dolfin = pytest.mark.skipif(not built_with_dolfin(),
-                                  reason="partrac was built without dolfin")
 
 
 SEED = ["init_mode=strip_x", "La=0.1", "x0=0", "y0=0", "z0=0"]
@@ -32,12 +29,8 @@ SEED = ["init_mode=strip_x", "La=0.1", "x0=0", "y0=0", "z0=0"]
 def run(tmp_path, extra, params=None):
     """partrac on a copy of the Poiseuille example, or on the parameter file `params`."""
     if params is None:
-        shutil.copy(POISEUILLE, tmp_path / "expr_params.dat")
-        params = tmp_path / "expr_params.dat"
-    keys = {a.split("=")[0] for a in extra}   # the apps refuse a repeated key
-    argv = [a for a in ARGS if a.split("=")[0] not in keys] + extra
-    return subprocess.run([PARTRAC, str(params)] + argv,
-                          capture_output=True, text=True, timeout=120)
+        params = copy_example(POISEUILLE, tmp_path)
+    return run_app(PARTRAC, params, ARGS, extra, check=False, timeout=120)
 
 
 def reported(r, message):
@@ -49,10 +42,12 @@ def reported(r, message):
 
 @needs_partrac
 @pytest.mark.parametrize("extra,message", [
-    (["init_mode=strip_x", "x0=100", "y0=100", "z0=100", "La=0.1"], "strip not inside domain"),
+    (["init_mode=strip_x", "x0=100", "y0=100", "z0=100", "La=0.1"],
+     "init_mode strip_x: no point of the strip inside the domain"),
     (["init_mode=ellipsoid_z", "x0=100", "y0=100", "z0=100", "La=0.1", "Lb=0.1"],
-     "ellipsoid not inside domain"),
-    (["init_mode=pairs_xy", "x0=100", "y0=100", "z0=100"], "pair centre is not inside the domain"),
+     "init_mode ellipsoid_z: the ellipsoid is not inside the domain"),
+    (["init_mode=pairs_xy", "x0=100", "y0=100", "z0=100"],
+     "init_mode pairs_xy: the pair centre is not inside the domain"),
     (["init_mode=randomgaussiancircle_x", "La=0.1", "Lb=0.01", "x0=100", "y0=100", "z0=100"],
      "no points inside the domain"),
 ])
@@ -64,7 +59,7 @@ def test_an_initial_state_outside_the_domain_is_reported(tmp_path, extra, messag
 def test_an_init_mode_the_schema_lets_through_is_reported(tmp_path):
     """The schema checks the number of directions, not the mode's name."""
     reported(run(tmp_path, ["init_mode=bogus_x", "La=0.1", "x0=0", "y0=0", "z0=0"]),
-             "unknown init_mode: bogus_x")
+             "init_mode bogus_x: no such mode")
 
 
 @needs_partrac
@@ -74,7 +69,20 @@ def test_a_missing_parameter_file_is_reported(tmp_path):
 
 @needs_partrac
 def test_a_missing_positions_file_is_reported(tmp_path):
-    reported(run(tmp_path, ["init_mode=from_file:%s" % (tmp_path / "none.h5")]), "no such file")
+    reported(run(tmp_path, ["init_mode=file:%s" % (tmp_path / "none.h5")]), "no such file")
+
+
+@needs_partrac
+def test_a_positions_file_hdf5_cannot_read_is_reported(tmp_path):
+    """HDF5's own exceptions are not standard ones: a file without nodes, or
+    not HDF5 at all, must still end as a reported error, not an abort."""
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(tmp_path / "no_nodes.h5", "w") as f:
+        f["points"] = [[0., 0., 0.]]
+    (tmp_path / "text.h5").write_text("not HDF5\n")
+    for name in ("no_nodes.h5", "text.h5"):
+        reported(run(tmp_path, ["init_mode=file:%s" % (tmp_path / name)]),
+                 "cannot read the dataset 'nodes'")
 
 
 @needs_partrac
@@ -86,21 +94,39 @@ def test_a_missing_positions_file_is_reported(tmp_path):
      "unknown expression nonsense"),
 ])
 def test_an_analytic_file_without_a_known_expression_is_reported(tmp_path, edit, message):
-    (tmp_path / "expr_params.dat").write_text(edit(open(POISEUILLE).read()))
+    with open(POISEUILLE) as f:
+        (tmp_path / "expr_params.dat").write_text(edit(f.read()))
     reported(run(tmp_path, SEED, params=tmp_path / "expr_params.dat"), message)
+
+
+@needs_partrac
+def test_a_misspelt_key_in_the_expression_file_stops_the_run(tmp_path):
+    """A key the expression does not read stops partrac before it runs, naming
+    the key and the one it resembles.
+
+    Read loosely, u_innf would be ignored and the flow would run with whatever
+    u_inf the file also sets, or stop later on a missing key without saying
+    which line was wrong.
+    """
+    with open(POISEUILLE) as f:
+        (tmp_path / "expr_params.dat").write_text(f.read().replace("u_inf=", "u_innf="))
+    r = run(tmp_path, SEED, params=tmp_path / "expr_params.dat")
+    assert r.returncode != 0
+    out = r.stdout + r.stderr
+    assert "unknown parameter 'u_innf'" in out, out
+    assert "did you mean 'u_inf'" in out, out
+    assert "missing required parameter 'u_inf'" in out, out
+    assert not list(tmp_path.rglob("tdata_from_t*.dat"))
 
 
 def mesh_case(src, tmp_path, edit):
     """A copy of the mesh case in src with dolfin_params.dat passed through edit."""
-    d = tmp_path / "case"
-    shutil.copytree(src, d)
-    f = d / "dolfin_params.dat"
+    f = copy_case(src, tmp_path / "case") / "dolfin_params.dat"
     f.write_text(edit(f.read_text()))
     return f
 
 
 @needs_partrac
-@needs_dolfin
 def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
     f = mesh_case(mesh_dir("tet"), tmp_path,
                   lambda t: "".join("velocity_space=P7\n" if l.startswith("velocity_space") else l
@@ -111,13 +137,55 @@ def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
 
 
 @needs_partrac
-@needs_dolfin
 def test_an_xdmf_grid_without_a_time_is_reported(xdmf_dir, tmp_path):
-    d = tmp_path / "case"
-    shutil.copytree(xdmf_dir, d)
-    import re
+    d = copy_case(xdmf_dir, tmp_path / "case")
     u = d / "u.xdmf"
     u.write_text(re.sub(r"<Time [^>]*/>", "", u.read_text(), count=1))
     reported(run(tmp_path, ["mode=xdmftriangle", "init_mode=points_xy", "init_weight=uniform",
                             "x0=0.5", "y0=0.5", "z0=0"], params=d / "dolfin_params.dat"),
              "XDMF: a grid without a time")
+
+
+# The Stokes flow around the sphere of radius 1 at (0, 0, 1): its interior is
+# outside the fluid and an analytic flow has no wall normal to steer a point by
+SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
+
+
+@needs_partrac
+@pytest.mark.parametrize("cut", ["false", "true"])
+def test_an_edge_across_the_sphere_is_stuck_and_cut_only_if_asked(tmp_path, cut):
+    """A line from z = 2.5 through the sphere to -0.5, then on to -1.2: the
+    first edge is longer than ds_max and its midpoint is in the sphere, so it
+    cannot be refined. With cut_if_stuck=false the run stops and says how to
+    go on; with true it cuts that edge and finishes on the other."""
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(tmp_path / "edge.h5", "w") as f:
+        f["nodes"] = [[0., 0., 2.5], [0., 0., -0.5], [0., 0., -1.2]]
+    params = copy_example(SPHERE, tmp_path)
+    r = run(tmp_path, ["init_mode=file:%s" % (tmp_path / "edge.h5"), "refine=true", "ds_max=1",
+                       "cut_if_stuck=" + cut], params=params)
+    if cut == "false":
+        reported(r, "an edge is stuck; cut_if_stuck=true cuts it and goes on")
+    else:
+        assert r.returncode == 0, r.stdout[-1000:] + r.stderr[-1000:]
+
+
+@needs_partrac
+def test_pairs_that_cannot_fit_beside_the_sphere_are_reported(tmp_path):
+    """Pairs along x of length 1 centred just off the sphere at (1.001, 0, 1):
+    one end always falls in it, so after its attempts the initializer stops."""
+    params = copy_example(SPHERE, tmp_path)
+    reported(run(tmp_path, ["init_mode=pairs_x", "x0=1.001", "y0=0", "z0=1", "ds_init=1", "Nrw=2"],
+                 params=params),
+             "init_mode pairs_x: could not place all pairs inside the domain")
+
+
+@needs_partrac
+def test_points_along_a_direction_the_domain_is_flat_in_are_reported(tmp_path):
+    """A box of zero height in z: points_z has nowhere to spread."""
+    params = copy_example(os.path.join(REPO, "data_example", "linear_flow", "expr_params.dat"), tmp_path)
+    text = re.sub(r"^z_min=.*$", "z_min=0.0", params.read_text(), flags=re.M)
+    text = re.sub(r"^z_max=.*$", "z_max=0.0", text, flags=re.M)
+    params.write_text(re.sub(r"^Lz=.*$", "Lz=0.0", text, flags=re.M))
+    reported(run(tmp_path, ["init_mode=points_z", "ds_init=0.1", "init_weight=none"], params=params),
+             "the domain has no extent along its directions")

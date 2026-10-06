@@ -1,8 +1,24 @@
 import dolfin as df
 
+DIRS = (0, 1)   # the periodic directions dolfin_params.dat declares
+
+
+class PBC(df.SubDomain):
+    """The min faces of the periodic directions are the masters; each max face
+    maps onto its image, so a node and its image share one dof."""
+    def inside(self, x, on):
+        return bool(on and any(df.near(x[k], 0) for k in DIRS)
+                    and not any(df.near(x[k], 1) for k in DIRS))
+
+    def map(self, x, y):
+        for k in range(len(x)):
+            y[k] = x[k] - 1 if k in DIRS and df.near(x[k], 1) else x[k]
+
+
 mesh = df.UnitSquareMesh(10, 10)
-V = df.VectorFunctionSpace(mesh, "CG", 2)
-P = df.FunctionSpace(mesh, "CG", 1)
+pbc = PBC()
+V = df.VectorFunctionSpace(mesh, "CG", 2, constrained_domain=pbc)
+P = df.FunctionSpace(mesh, "CG", 1, constrained_domain=pbc)
 
 u_ = df.interpolate(df.Expression(("0", "0.8"), degree=2), V)
 p_ = df.interpolate(df.Expression("0", degree=2), P)

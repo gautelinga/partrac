@@ -5,8 +5,6 @@
 #ifndef __EXPR_SINEFLOW_HPP
 #define __EXPR_SINEFLOW_HPP
 
-//using namespace std;
-
 // Comma separated lists
 inline std::vector<int> int_list(const std::string& s){
   std::vector<int> v;

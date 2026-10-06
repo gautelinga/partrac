@@ -8,14 +8,13 @@ the first dump.
 """
 
 import os
-import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
-from dumps import by_id
+from dumps import all_dumps, by_id
 from paths import REPO, app
+from runs import checkpoint_folder, continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 SPATIAL = app("tracervectors_spatial")
 STEPPER = app("static_space_stepper")
@@ -24,38 +23,22 @@ POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params
 BASE = {
     SPATIAL: ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=400 Nrw_max=400 "
               "stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"),
-    # the stepper floors its intervals to multiples of dt, so dt is set to a
-    # value that divides every interval used here
     STEPPER: ("mode=analytic init_mode=points_x x0=0 y0=0 z0=0 Nrw=400 Nrw_max=400 "
-              "ds_init=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 dt=0.005 "
+              "ds_init=0 ds_max=1 ds_min=0 init_weight=uniform int_order=1 dx_max=1e9 T=1e9 "
               "stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"),
 }
 
 
 def run(binary, d, extra):
     """Run binary on plane Poiseuille in d, with BASE overridden by extra; returns d."""
-    d.mkdir(parents=True, exist_ok=True)
-    shutil.copy(POISEUILLE, d / "expr_params.dat")
-    argv = {}
-    for a in (BASE[binary] + " " + extra).split():
-        argv[a.split("=")[0]] = a
-    r = subprocess.run([binary, str(d / "expr_params.dat")] + list(argv.values()),
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(binary, copy_example(POISEUILLE, d), BASE[binary], extra, timeout=600)
     return d
 
 
 def groups(d):
     """Path length -> the dump's datasets in id order, with the sorted ids."""
-    import h5py
-    out = {}
-    for f in sorted(d.rglob("data_from_t*.h5")):
-        with h5py.File(f, "r") as h:
-            for g in h:
-                data = by_id(h[g])
-                data["id"] = np.sort(np.array(h[g]["id"])[:, 0])
-                out[round(float(g), 9)] = data
-    return out
+    return {xn: dict(by_id(g), id=np.sort(g["id"][:, 0]))
+            for xn, g in all_dumps(d, raw=True).items()}
 
 
 @pytest.mark.skipif(not os.path.exists(SPATIAL), reason="tracervectors_spatial is not built")
@@ -87,22 +70,20 @@ def test_a_particle_slower_than_u_eps_follows_outside(tmp_path, outside):
         assert not np.any(c == 2.0)
 
 
-@pytest.mark.parametrize("binary", [SPATIAL, STEPPER],
-                         ids=["tracervectors_spatial", "static_space_stepper"])
-def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary):
+@pytest.mark.parametrize("binary,fmt", [(SPATIAL, "hdf5"), (STEPPER, "hdf5"), (SPATIAL, "text")],
+                         ids=["tracervectors_spatial", "static_space_stepper", "tracervectors_spatial-text"])
+def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary, fmt):
     """A march stopped at a checkpoint and resumed must give bit-identical dumps
     to one run straight through. The checkpoint carries each particle's
     integration time and the step count resumes; otherwise a long march split
     over several jobs would restart its integration times from zero or dump at
-    the wrong path lengths."""
+    the wrong path lengths. An old text checkpoint carries them too."""
     if not os.path.exists(binary):
         pytest.skip(os.path.basename(binary) + " is not built")
-    common = "dxn=0.01 dump_intv=0.1"
-    cont = run(binary, tmp_path / "cont", common + " Ln=0.4")
-    split = run(binary, tmp_path / "split", common + " Ln=0.19")
     # the final checkpoint is written one step past Ln: xn = 0.2, step 20
-    folder = os.path.dirname(os.path.dirname(next(split.rglob("Checkpoints/positions.pos"))))
-    run(binary, tmp_path / "split", common + " Ln=0.4 restart_folder=" + folder)
+    cont, split = continuous_and_resumed(binary, POISEUILLE, tmp_path,
+                                         [BASE[binary], "dxn=0.01 dump_intv=0.1"],
+                                         "Ln=0.19", "Ln=0.4", text=fmt == "text")
     a, b = groups(cont), groups(split)
     for xn in (0.3, 0.4):
         assert xn in a, "the march never reached xn = %g: the loop end dropped its last steps" % xn
@@ -111,3 +92,21 @@ def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary):
         assert set(a[xn]) == set(b[xn])
         for k in a[xn]:
             assert np.array_equal(a[xn][k], b[xn][k]), "%s differs at xn = %g after a restart" % (k, xn)
+
+
+@pytest.mark.skipif(not os.path.exists(STEPPER), reason="static_space_stepper is not built")
+def test_a_resumed_march_skips_the_initial_passes(tmp_path):
+    """static_space_stepper refines and coarsens a new line before its first
+    step, but not a line restored from a checkpoint: the checkpoint holds the
+    line as the march left it, and reshaping it again on resuming would make a
+    resumed march differ from one never stopped."""
+    line = ("init_mode=strip_x La=1.6 Nrw=20 ds_max=0.1 ds_min=0.01 refine=true coarsen=true "
+            "dxn=0.01 dump_intv=0.1")
+    params = copy_example(POISEUILLE, tmp_path)
+    first = run_app(STEPPER, params, BASE[STEPPER], line, "Ln=0.05")
+    assert "Initial refinement" in first.stdout and "Initial coarsening" in first.stdout
+    assert len(read_checkpoint(tmp_path)["edges"]) > 0, "no line left to resume"
+    resumed = run_app(STEPPER, params, BASE[STEPPER], line, "Ln=0.1",
+                      ["restart_folder=%s" % checkpoint_folder(tmp_path)])
+    assert "Initial refinement" not in resumed.stdout
+    assert "Initial coarsening" not in resumed.stdout

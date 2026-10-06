@@ -1,7 +1,9 @@
 #include "Params.hpp"
+#include "Error.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -11,6 +13,14 @@
 #include <sstream>
 
 namespace partrac {
+
+bool try_parse_bool(const std::string& s, bool& out) {
+  if (s == "true"  || s == "True"  || s == "TRUE"  || s == "1" ||
+      s == "yes"   || s == "on")  { out = true;  return true; }
+  if (s == "false" || s == "False" || s == "FALSE" || s == "0" ||
+      s == "no"    || s == "off") { out = false; return true; }
+  return false;
+}
 
 // Small helpers
 
@@ -46,14 +56,6 @@ bool try_parse_int(const std::string& s, long long& out) {
   if (std::fabs(d) > 9007199254740992.0) return false;  // 2^53
   out = static_cast<long long>(d);
   return true;
-}
-
-bool try_parse_bool(const std::string& s, bool& out) {
-  if (s == "true"  || s == "True"  || s == "TRUE"  || s == "1" ||
-      s == "yes"   || s == "on")  { out = true;  return true; }
-  if (s == "false" || s == "False" || s == "FALSE" || s == "0" ||
-      s == "no"    || s == "off") { out = false; return true; }
-  return false;
 }
 
 // Damerau-Levenshtein, so a transposition such as Nwr for Nrw costs 1
@@ -307,8 +309,7 @@ void Params::print() const { print(std::cout); }
 void Params::write_to(const std::string& filename) const {
   std::ofstream f(filename);
   if (!f)
-    throw ParamError(m_schema ? m_schema->app : "params",
-                     {"could not open '" + filename + "' for writing"});
+    partrac::fail("could not open '", filename, "' for writing");
   if (m_schema) {
     for (const auto& e : m_schema->entries) {
       const auto it = m_values.find(e.key);
@@ -316,10 +317,25 @@ void Params::write_to(const std::string& filename) const {
       f << e.key << "=" << value_to_string(it->second) << "\n";
     }
   }
+  f.close();
+  if (f.fail())
+    partrac::fail("could not write '", filename, "'");
 }
 
+void Params::dump_tmp(const std::string& folder) const {
+  write_to(folder + "/params.dat.tmp");
+}
+
+void Params::commit_dump(const std::string& folder) const {
+  const std::string path = folder + "/params.dat";
+  if (std::rename((path + ".tmp").c_str(), path.c_str()) != 0)
+    partrac::fail("could not move '", path, ".tmp' to '", path, "'");
+}
+
+// Written beside, then moved over the last one
 void Params::dump(const std::string& folder) const {
-  write_to(folder + "/params.dat");
+  dump_tmp(folder);
+  commit_dump(folder);
 }
 
 void Params::dump(const std::string& folder, const double t) const {
@@ -371,6 +387,11 @@ Schema& Schema::finalize(std::function<void(Params&)> f) {
 
 Schema& Schema::strict_file(bool on) {
   m_impl->strict_file = on;
+  return *this;
+}
+
+Schema& Schema::retired(const std::vector<std::string>& keys) {
+  m_impl->retired.insert(keys.begin(), keys.end());
   return *this;
 }
 
@@ -453,6 +474,7 @@ Params Schema::parse(const std::vector<std::string>& args) const {
         if (!seen.insert(key).second)
           problems.push_back("parameter '" + key + "' given more than once in " + path);
         const detail::Entry* e = m_impl->find(key);
+        if (!e && m_impl->retired.count(key)) continue;
         if (!e) {
           const std::string msg = "unknown parameter '" + key + "' in " + path;
           if (m_impl->strict_file) problems.push_back(msg);
@@ -639,6 +661,10 @@ std::string Schema::help() const {
 void Schema::validate_self() const {
   std::vector<std::string> problems;
 
+  for (const auto& key : m_impl->retired)
+    if (m_impl->find(key))
+      problems.push_back("'" + key + "' is declared and retired");
+
   for (const auto& e : m_impl->entries) {
     if (e.def) {
       const Kind actual =
@@ -708,6 +734,11 @@ std::string peek_file(const std::string& path, const std::string& key) {
     if (trim(t.substr(0, eq)) == key) return trim(t.substr(eq + 1));
   }
   return "";
+}
+
+bool peek_bool(const std::string& path, const std::string& key) {
+  bool b = false;
+  return try_parse_bool(peek_file(path, key), b) && b;
 }
 
 Params parse_or_exit(const Schema& s, int argc, char* argv[]) {

@@ -1,9 +1,10 @@
 """Shared fixtures that build the non-analytic inputs the apps read.
 
 The mesh examples ship a generator rather than the mesh, so the cases that need
-a mesh build it here, once per session, and skip when dolfin is missing. The
-FELBM and XDMF cases are small synthetic inputs written directly in the formats
-StructuredInterpol and XDMFTriangleInterpol read.
+a mesh build it here, once per session and shared by the xdist workers, and
+skip when dolfin is missing. The FELBM and XDMF cases are small synthetic inputs
+written directly in the formats StructuredInterpol and the XDMF loaders read;
+stamp_mesh is a P1 square holding exact fields, put in time by cases.stamp_case.
 """
 
 import os
@@ -12,6 +13,7 @@ import subprocess
 
 import pytest
 
+from cases import LINEAR, UNIFORM, shared_dir, write_felbm
 from paths import REPO
 
 DATA = os.path.join(REPO, "data_example")
@@ -26,6 +28,9 @@ if "PYTEST_XDIST_WORKER_COUNT" in os.environ:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: left out of the quick run, pytest -m 'not slow'")
+    # mode=fenics is the only mode a build without dolfin does not have; a run
+    # against such a build names what it leaves out, pytest -m 'not fenics'
+    config.addinivalue_line("markers", "fenics: needs mode=fenics, so a build with dolfin")
 
 
 # kind -> (example folder, generator arguments)
@@ -33,29 +38,34 @@ MESH_KINDS = {
     "triangle": ("ppf_triangle_p2", ["-dim", "1"]),
     "tet": ("test_tet_p2", []),
     "trianglefreq": ("sine_trianglefreq_p2", []),
+    "tetfreq": ("sine_tetfreq_p2", []),
 }
 
 
 @pytest.fixture(scope="session")
 def mesh_dir(tmp_path_factory):
-    """mesh_dir(kind) -> a folder holding dolfin_params.dat and its generated mesh."""
+    """mesh_dir(kind) -> a folder holding dolfin_params.dat and its generated mesh.
+
+    Each mesh is generated once per session, by whichever worker asks first;
+    the folder is shared, so a test copies what it runs on.
+    """
     pytest.importorskip("dolfin", reason="mesh generation needs dolfin")
-    built = {}
 
     def get(kind):
-        if kind not in built:
-            folder, args = MESH_KINDS[kind]
-            d = tmp_path_factory.mktemp(folder)
+        folder, args = MESH_KINDS[kind]
+
+        def build(d):
             for f in os.listdir(os.path.join(DATA, folder)):
                 shutil.copy(os.path.join(DATA, folder, f), d / f)
             r = subprocess.run(["python3", "generate_up.py"] + args,
                                cwd=d, capture_output=True, text=True, timeout=900)
             assert r.returncode == 0, r.stdout + r.stderr
             assert (d / "mesh.h5").exists(), "the generator wrote no mesh"
-            built[kind] = d
-        return built[kind]
+
+        return shared_dir(tmp_path_factory, folder, build)
 
     return get
+
 
 @pytest.fixture(scope="session")
 def felbm_dir(tmp_path_factory):
@@ -68,66 +78,100 @@ def felbm_dir(tmp_path_factory):
     The grid is cubic so that the index order is unambiguous.
     """
     np = pytest.importorskip("numpy")
-    h5py = pytest.importorskip("h5py")
-    d = tmp_path_factory.mktemp("felbm")
+    pytest.importorskip("h5py")
 
-    # 16^3 cell centres; u_y varies with x only, so the flow is a steady shear
-    n = 16
-    x = np.arange(n) + 0.5
-    X = np.meshgrid(x, x, x, indexing="ij")[0]
-    zero = np.zeros((n, n, n))
-    fields = {"u_x": zero, "u_y": 0.05 * np.sin(2 * np.pi * X / n), "u_z": zero,
-              "density": np.ones((n, n, n)), "pressure": zero}
+    def build(d):
+        # 16^3 cell centres; u_y varies with x only, so the flow is a steady shear
+        n = 16
+        x = np.arange(n) + 0.5
+        X = np.meshgrid(x, x, x, indexing="ij")[0]
+        zero = np.zeros((n, n, n))
+        fields = {"u_x": zero, "u_y": 0.05 * np.sin(2 * np.pi * X / n), "u_z": zero,
+                  "density": np.ones((n, n, n)), "pressure": zero}
+        # solid walls at both z ends, open elsewhere
+        solid = np.zeros((n, n, n), dtype=np.int32)
+        solid[0, :, :] = 1
+        solid[-1, :, :] = 1
+        # two identical timesteps, so the field is steady
+        write_felbm(d, [fields, fields], solid)
 
-    # solid walls at both z ends, open elsewhere: is_solid is not transposed,
-    # so its first h5 axis is z
-    solid = np.zeros((n, n, n), dtype=np.int32)
-    solid[0, :, :] = 1
-    solid[-1, :, :] = 1
-    with h5py.File(d / "output_is_solid.h5", "w") as f:
-        f.create_dataset("is_solid", data=solid)
+    return shared_dir(tmp_path_factory, "felbm", build)
 
-    # two identical timesteps, so the field is steady
-    for name in ("output_0.h5", "output_1.h5"):
-        with h5py.File(d / name, "w") as f:
-            for field, a in fields.items():
-                f.create_dataset(field, data=np.transpose(a, (2, 1, 0)).astype(float))
-
-    (d / "timestamps.dat").write_text("0\toutput_0.h5\n100\toutput_1.h5\n")
-    (d / "felbm_params.dat").write_text(
-        "timestamps=timestamps.dat\nis_solid_file=output_is_solid.h5\n")
-    return d
 
 @pytest.fixture(scope="session")
-def xdmf_dir(tmp_path_factory):
-    """A folder holding a dolfin-written XDMF case, the input XDMFTriangleInterpol reads.
+def stamp_mesh(tmp_path_factory):
+    """A folder holding the P1 square mesh, one field file per entry of LINEAR and UNIFORM,
+    and dolfin_params.dat; a test writes its own timestamps.dat."""
+    df = pytest.importorskip("dolfin", reason="mesh generation needs dolfin")
 
-    dolfin_params.dat names one xdmf per field; each xdmf carries the topology
-    and geometry paths into its h5 and one Grid per timestep. The velocity is
-    u = (0, sin(2 pi x)) on the unit square, written unchanged at t = 0 and 1.
-    """
-    df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
-    d = tmp_path_factory.mktemp("xdmf")
-    cwd = os.getcwd()
-    os.chdir(d)
-    try:
-        mesh = df.UnitSquareMesh(8, 8)
+    def build(d):
+        mesh = df.RectangleMesh(df.Point(-2.0, -2.0), df.Point(2.0, 2.0), 8, 8)
         V = df.VectorFunctionSpace(mesh, "CG", 1)
         P = df.FunctionSpace(mesh, "CG", 1)
-        fields = {
-            "u": df.interpolate(df.Expression(("0.0", "sin(2*M_PI*x[0])"), degree=1), V),
-            "p": df.interpolate(df.Expression("0.0", degree=1), P),
-        }
-        for name, f in fields.items():
-            xf = df.XDMFFile(name + ".xdmf")
-            # one mesh in the h5, referenced by every timestep's Grid
-            xf.parameters["functions_share_mesh"] = True
-            xf.parameters["rewrite_function_mesh"] = False
-            for t in (0.0, 1.0):
-                xf.write(f, t)
-            xf.close()
-        with open("dolfin_params.dat", "w") as f:
-            f.write("u=u.xdmf\np=p.xdmf\nperiodic_x=false\nperiodic_y=false\n")
-    finally:
-        os.chdir(cwd)
-    return d
+        p = df.interpolate(df.Expression("0.0", degree=1), P)
+        exprs = {k: ("%r*x[0] + %r*x[1]" % tuple(A[0]), "%r*x[0] + %r*x[1]" % tuple(A[1]))
+                 for k, A in LINEAR.items()}
+        exprs.update({k: ("%r" % U[0], "%r" % U[1]) for k, U in UNIFORM.items()})
+        with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as h:
+            h.write(mesh, "mesh")
+        for name, e in exprs.items():
+            u = df.interpolate(df.Expression(e, degree=1), V)
+            with df.HDF5File(mesh.mpi_comm(), str(d / (name + ".h5")), "w") as h:
+                h.write(u, "u")
+                h.write(p, "p")
+        (d / "dolfin_params.dat").write_text(
+            "velocity_space=P1\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
+            "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
+
+    return shared_dir(tmp_path_factory, "stamp_mesh", build)
+
+
+@pytest.fixture(scope="session")
+def xdmf(tmp_path_factory):
+    """xdmf(kind, n) -> a folder holding a dolfin-written XDMF case, the input the XDMF loaders read.
+
+    dolfin_params.dat names one xdmf per field; each xdmf carries the topology
+    and geometry paths into its h5 and one Grid per timestep. The mesh is the
+    unit square (kind "triangle") or the unit cube ("tet"), the velocity
+    u = (0, sin(2 pi x)[, 0]) and p = 0, written unchanged at t = 0 and, for
+    n = 2, at t = 1.
+    """
+    df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
+
+    def get(kind, n):
+        def build(d):
+            if kind == "triangle":
+                mesh, uexpr = df.UnitSquareMesh(8, 8), ("0.0", "sin(2*M_PI*x[0])")
+            else:
+                mesh, uexpr = df.UnitCubeMesh(4, 4, 4), ("0.0", "sin(2*M_PI*x[0])", "0.0")
+            fields = {
+                "u": df.interpolate(df.Expression(uexpr, degree=1),
+                                    df.VectorFunctionSpace(mesh, "CG", 1)),
+                "p": df.interpolate(df.Expression("0.0", degree=1),
+                                    df.FunctionSpace(mesh, "CG", 1)),
+            }
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                for name, f in fields.items():
+                    xf = df.XDMFFile(name + ".xdmf")
+                    # one mesh in the h5, referenced by every timestep's Grid
+                    xf.parameters["functions_share_mesh"] = True
+                    xf.parameters["rewrite_function_mesh"] = False
+                    for t in (0.0, 1.0)[:n]:
+                        xf.write(f, t)
+                    xf.close()
+            finally:
+                os.chdir(cwd)
+            (d / "dolfin_params.dat").write_text(
+                "u=u.xdmf\np=p.xdmf\n" + "".join("periodic_%s=false\n" % a for a in "xyz"))
+
+        return shared_dir(tmp_path_factory, "xdmf_%s_%d" % (kind, n), build)
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def xdmf_dir(xdmf):
+    """The two-stamp XDMF case on the unit square."""
+    return xdmf("triangle", 2)

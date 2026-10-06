@@ -1,6 +1,6 @@
 from analyze_eulerian_timeseries import *
 
-from scipy.ndimage import measurements, filters
+from scipy import ndimage
 import matplotlib.pyplot as plt
 from skimage import feature
 from scipy import spatial
@@ -19,7 +19,7 @@ def parse_args():
 
 
 def get_cluster_sizes(phase):
-    lw, num = measurements.label(phase)
+    lw, num = ndimage.label(phase)
     # periodic boundaries
     for y in range(lw.shape[0]):
         if lw[y, 0] > 0 and lw[y, -1] > 0:
@@ -33,7 +33,7 @@ def get_cluster_sizes(phase):
     lw = old2new[lw]
 
     label_list = np.arange(lw.max())
-    S = measurements.sum(phase, lw, label_list)
+    S = ndimage.sum(phase, lw, label_list)
     return S, lw
 
 def get_pores(is_solid_xy):
@@ -51,10 +51,10 @@ def get_pores(is_solid_xy):
         is_solid_xy_embed[:, :n_buf] = is_solid_xy_embed[:, nx:-n_buf]
         is_solid_xy_embed[:, -n_buf:] = is_solid_xy_embed[:, n_buf:2*n_buf]
         
-        lw, num = measurements.label(is_solid_xy_embed)
+        lw, num = ndimage.label(is_solid_xy_embed)
         label_list = np.arange(lw.max())
-        S = measurements.sum(is_solid_xy_embed, lw, label_list)
-        x_cm = measurements.center_of_mass(is_solid_xy_embed, lw, label_list[S > 0])
+        S = ndimage.sum(is_solid_xy_embed, lw, label_list)
+        x_cm = ndimage.center_of_mass(is_solid_xy_embed, lw, label_list[S > 0])
         x_ = np.array(x_cm)[:, ::-1]
         #plt.imshow(is_solid_xy_embed)
         #plt.plot(x_[:, 1], x_[:, 0], '.')
@@ -167,7 +167,7 @@ if __name__ == "__main__":
         #rho2_mean = rho[phase2].mean()
         #eps = (rho2_mean - rho1_mean) / 10
         #interface = np.logical_and(np.logical_and(rho > rho1_mean + eps, rho < rho2_mean - eps), is_fluid_xy)
-        #interface = np.logical_and(filters.gaussian_filter(interface.astype(float), sigma=.3, mode='wrap').astype(bool), is_fluid_xy)
+        #interface = np.logical_and(ndimage.gaussian_filter(interface.astype(float), sigma=.3, mode='wrap').astype(bool), is_fluid_xy)
 
         #dp = np.ma.masked_where(np.logical_not(interface), np.zeros_like(p))
         #dp[interface] = p[interface]

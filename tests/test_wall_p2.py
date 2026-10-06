@@ -24,7 +24,8 @@ force in a periodic unit box:
   fluid vertex, vanishing on the walls up to round-off;
 - in 3D, a sphere (radius 0.25) in the periodic unit cube, cell size 0.1,
   under a force whose cross-stream part varies in time, so tracers pass the
-  sphere along ever different paths.
+  sphere along ever different paths; and on the same mesh a synthetic field
+  at rest on the sphere, for the local properties of the tet rule.
 
 A velocity is probed by restarting tracers from a checkpoint whose positions
 are the probe points: the restarted run dumps the velocity before it steps.
@@ -39,8 +40,9 @@ import subprocess
 import numpy as np
 import pytest
 
-from dumps import dump_at
-from paths import app, built_with_dolfin
+from dumps import all_dumps, dump_at, read_stats
+from paths import app
+from runs import cells_counts, checkpoint_folder, put_points, read_checkpoint
 
 
 def need_gmsh():
@@ -59,11 +61,7 @@ def need_gmsh():
 
 TRACERS = app("tracers")
 
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(not built_with_dolfin(), reason="partrac was built without dolfin"),
-    pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built"),
-]
+pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
 
 H = 0.04               # cell size of the gmsh meshes
 DT = 0.05
@@ -174,12 +172,14 @@ def stokes_past_cylinders(df, X, cells, centres, radius, force):
     scale = (df.assemble(df.Constant(1) * df.dx(domain=mesh))
              / df.assemble((u2[0] * force[0] + u2[1] * force[1]) * df.dx))
 
-    V1 = df.VectorFunctionSpace(mesh, "CG", 1)
+    # the P1 output is written from a constrained space too, so a vertex and
+    # its image hold one value, as the case's parameter file claims
+    V1 = df.VectorFunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
     u1 = df.interpolate(u2, V1)
     vals = scale * u1.vector().get_local()
     vals[wall(V1.tabulate_dof_coordinates())] = 0.
     u1.vector().set_local(vals)
-    p1 = df.interpolate(p1, df.FunctionSpace(mesh, "CG", 1))
+    p1 = df.interpolate(p1, df.FunctionSpace(mesh, "CG", 1, constrained_domain=Periodic()))
     p1.vector()[:] *= scale
     return {"u": u1, "p": p1}
 
@@ -356,14 +356,43 @@ def on_sphere(X):
 
 
 @pytest.fixture(scope="module")
-def sphere(tmp_path_factory):
+def sphere_mesh():
+    """periodic_sphere_mesh, built once."""
+    return periodic_sphere_mesh(need_gmsh())
+
+
+@pytest.fixture(scope="module")
+def ball(tmp_path_factory, sphere_mesh):
+    """A synthetic field on the sphere case's mesh, as write_case returns it:
+    the distance to the sphere times a smooth periodic field, so at rest on the
+    sphere up to round-off, and periodic since the sphere is centred in the
+    box."""
+    df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
+    X, cells = sphere_mesh
+    mesh = dolfin_mesh(df, X, cells)
+    V = df.VectorFunctionSpace(mesh, "CG", 1)
+    x, y, z = X.T
+    d = np.linalg.norm(X - SPHERE_C, axis=1) - SPHERE_R
+    U = d[:, None] * np.c_[1 + 0.5 * np.sin(2 * np.pi * y), 0.6 * np.cos(2 * np.pi * z),
+                           0.4 * np.sin(2 * np.pi * x)]
+    u = df.Function(V)
+    vals = np.zeros(V.dim())
+    vals[df.vertex_to_dof_map(V)] = U.ravel()
+    u.vector().set_local(vals)
+    p = df.interpolate(df.Constant(0.), df.FunctionSpace(mesh, "CG", 1))
+    return write_case(df, tmp_path_factory.mktemp("ball"), {"u": u, "p": p},
+                      ("true", "true", "true"), on_sphere, (0.5, 0.1, 0.5))
+
+
+@pytest.fixture(scope="module")
+def sphere(tmp_path_factory, sphere_mesh):
     """The sphere case, as write_case returns it: the Stokes solutions for a
     unit force along each axis, combined at each stamp (every 0.25 up to
     t = 110) with the weights of crossflow(t), and scaled to unit mean u_x
     under a unit force along x."""
     df = pytest.importorskip("dolfin", reason="writing XDMF needs dolfin")
-    gmsh = need_gmsh()
-    X, cells = periodic_sphere_mesh(gmsh)
+    from petsc4py import PETSc
+    X, cells = sphere_mesh
     mesh = dolfin_mesh(df, X, cells)
 
     class Periodic(df.SubDomain):
@@ -386,20 +415,40 @@ def sphere(tmp_path_factory):
     u, p = df.TrialFunctions(W)
     v, q = df.TestFunctions(W)
     a = (df.inner(df.grad(u), df.grad(v)) - p * df.div(v) - q * df.div(u)) * df.dx
-    bcs = [df.DirichletBC(W.sub(0), df.Constant((0, 0, 0)), Wall()),
-           df.DirichletBC(W.sub(1), df.Constant(0), "near(x[0], 0) && near(x[1], 0) && near(x[2], 0)",
-                          "pointwise")]
-    V1 = df.VectorFunctionSpace(mesh, "CG", 1)
-    Q1 = df.FunctionSpace(mesh, "CG", 1)
+    bc = df.DirichletBC(W.sub(0), df.Constant((0, 0, 0)), Wall())
+    # MINRES preconditioned by GAMG on the velocity Laplacian and Jacobi on the
+    # pressure mass; the pressure's constant is the null space
+    L = df.inner(df.Constant((1., 0., 0.)), v) * df.dx
+    A, _ = df.assemble_system(a, L, bc)
+    B, _ = df.assemble_system((df.inner(df.grad(u), df.grad(v)) + p * q) * df.dx, L, bc)
+    ones = df.Function(W).vector()
+    W.sub(1).dofmap().set(ones, 1.0)
+    df.as_backend_type(A).set_nullspace(df.VectorSpaceBasis([ones / ones.norm("l2")]))
+    ksp = PETSc.KSP().create()
+    ksp.setOptionsPrefix("sphere_")
+    ksp.setOperators(df.as_backend_type(A).mat(), df.as_backend_type(B).mat())
+    ksp.setType("minres")
+    ksp.setTolerances(rtol=1e-8, max_it=1000)
+    pc = ksp.getPC()
+    pc.setType("fieldsplit")
+    pc.setFieldSplitIS(*[(f, PETSc.IS().createGeneral(W.sub(i).dofmap().dofs())) for i, f in enumerate("up")])
+    opts = PETSc.Options("sphere_")
+    opts["pc_fieldsplit_type"] = "additive"
+    opts["fieldsplit_u_ksp_type"] = opts["fieldsplit_p_ksp_type"] = "preonly"
+    opts["fieldsplit_u_pc_type"], opts["fieldsplit_p_pc_type"] = "gamg", "jacobi"
+    ksp.setFromOptions()
+    # the P1 output is written from a constrained space too, so a vertex and
+    # its image hold one value, as the case's parameter file claims
+    V1 = df.VectorFunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
+    Q1 = df.FunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
     wall = on_sphere(V1.tabulate_dof_coordinates())
-    solver = None
     U, P = [], []
     for k in range(3):
-        L = df.inner(df.Constant(tuple(np.eye(3)[k])), v) * df.dx
-        A, b = df.assemble_system(a, L, bcs)
-        solver = solver or df.LUSolver(A, "mumps")
+        b = df.assemble(df.inner(df.Constant(tuple(np.eye(3)[k])), v) * df.dx)
+        bc.apply(b)
         w = df.Function(W)
-        solver.solve(w.vector(), b)
+        ksp.solve(df.as_backend_type(b).vec(), df.as_backend_type(w.vector()).vec())
+        assert ksp.getConvergedReason() > 0
         u2, p2 = w.split(deepcopy=True)
         vals = df.interpolate(u2, V1).vector().get_local()
         vals[wall] = 0.
@@ -430,15 +479,16 @@ def case(request):
 
 
 def run(case, args):
-    """Run tracers on the case's parameter file with args; assert it succeeded."""
+    """Run tracers on the case's parameter file with args; assert it succeeded; its stdout."""
     r = subprocess.run([TRACERS, str(case / "dolfin_params.dat")] + args,
                        capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
 
 
-def restart_from(case, mode, points, args):
-    """Run tracers on case(mode) from a checkpoint holding `points`; returns
-    the run folder.
+def restart_from(case, mode, points, args, scheme="RK4", out=None, dt=DT):
+    """Run tracers on case(mode) from a checkpoint holding `points`, stepped
+    by scheme at dt; returns the run folder, and appends the run's stdout to out.
 
     A short run with positions drawn around case.seed_point (from a fixed
     seed) writes the checkpoint, at t = 2 DT and step 2, and its positions
@@ -450,24 +500,26 @@ def restart_from(case, mode, points, args):
     dim = points.shape[1]
     seed = list(case.seed_point) + [0.0] * (3 - dim)
     base = ["mode=" + case.mode, "init_mode=points_" + "xyz"[:dim], "int_order=1", "Dm=0",
-            "dt=%g" % DT, "Nrw=%d" % len(points), "Nrw_max=%d" % len(points),
+            "dt=%g" % dt, "Nrw=%d" % len(points), "Nrw_max=%d" % len(points),
             "x0=%g" % seed[0], "y0=%g" % seed[1], "z0=%g" % seed[2],
-            "random=false", "seed=1", "scheme=RK4"]
-    run(folder, base + ["T=%g" % DT, "dump_intv=1000", "stat_intv=1000",
-                        "checkpoint_intv=%g" % DT])
-    [pos] = list(folder.rglob("Checkpoints/positions.pos"))
-    np.savetxt(pos, np.c_[points, np.zeros((len(points), 3 - dim))], fmt="%.17g")
-    run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(pos.parent.parent)])
-    return pos.parent.parent
+            "random=false", "seed=1", "scheme=" + scheme]
+    run(folder, base + ["T=%g" % dt, "dump_intv=1000", "stat_intv=1000",
+                        "checkpoint_intv=%g" % dt])
+    put_points(folder, points)
+    ck = checkpoint_folder(folder)
+    stdout = run(folder, base + args + ["checkpoint_intv=1e9", "restart_folder=" + str(ck)])
+    if out is not None:
+        out.append(stdout)
+    return ck
 
 
 def probe(case, mode, points):
     """The velocity at each point, in the order given, with wall_p2=mode."""
     folder = restart_from(case, mode, points,
                           ["T=%g" % (2 * DT), "dump_intv=%g" % (2 * DT), "stat_intv=1000"])
-    ids = np.loadtxt(folder / "Checkpoints" / "id.list", dtype=int)
+    ids = read_checkpoint(folder)["id"][:, 0].astype(int)
     g = dump_at(folder, 2 * DT)
-    # dump_at orders by id; the probe points were written in id.list order
+    # dump_at orders by id; the probe points were written in the checkpoint's id order
     dim = points.shape[1]
     assert np.allclose(g["points"][ids][:, :dim], points, rtol=0, atol=1e-12)
     return g["u"][ids][:, :dim]
@@ -608,6 +660,7 @@ def lattice_run(case, mode, n, T):
     return d[:, 0], d[:, 7:10], np.mean(np.linalg.norm(u, axis=1) < 1e-3)
 
 
+@pytest.mark.slow
 def test_tracers_keep_the_eulerian_mean_velocity_between_obstacles(obstacles):
     """Tracers seeded uniformly in an incompressible flow with impermeable
     walls stay uniform, so their mean velocity stays at the Eulerian mean.
@@ -637,14 +690,14 @@ def tet_faces(case):
     return faces
 
 
-def test_the_tet_field_is_continuous_across_faces_near_the_wall(sphere):
+def test_the_tet_field_is_continuous_across_faces_near_the_wall(ball):
     """Across every face of a tet with a wall vertex, points a hair apart on
     either side see the same velocity with wall_p2=edge, and the quadratic
     field differs from the P1 one there."""
-    X, _ = sphere.geometry
-    wall = sphere.wall(X)
+    X, _ = ball.geometry
+    wall = ball.wall(X)
     pts = []
-    for f, opposite in tet_faces(sphere).items():
+    for f, opposite in tet_faces(ball).items():
         if len(opposite) != 2 or not wall[list(f)].any() or wall[list(f)].all():
             continue
         a, b, c = X[list(f)]
@@ -654,22 +707,21 @@ def test_the_tet_field_is_continuous_across_faces_near_the_wall(sphere):
             x = w[0] * a + w[1] * b + w[2] * c
             pts += [x + 1e-9 * n, x - 1e-9 * n]
     pts = np.array(pts)
-    u = probe(sphere, "edge", pts)
+    u = probe(ball, "edge", pts)
     assert np.abs(u[0::2] - u[1::2]).max() < 1e-6
-    assert np.abs(u - probe(sphere, "none", pts)).max() > 1e-3
+    assert np.abs(u - probe(ball, "none", pts)).max() > 1e-2
 
 
-def test_tet_facet_normal_velocity_is_nearly_quadratic(sphere):
+def test_tet_facet_normal_velocity_is_nearly_quadratic(ball):
     """Just above the sphere's facets (delta = 1e-5) the velocity through a
     facet is a small fraction of the velocity along it with wall_p2=edge:
     below 1e-3, of order delta as the quadratic law has it, where the facet's
     cell has no side edge above another facet, and elsewhere, in median and at
-    the 95th percentile, a quarter or less of what it is in the P1 field
-    (about a seventh on this mesh). Tets with all four vertices on the sphere
-    carry no flow and are left out."""
-    X, _ = sphere.geometry
-    wall = sphere.wall(X)
-    facets = [(f, o[0]) for f, o in tet_faces(sphere).items()
+    the 95th percentile, an eighth or less of what it is in the P1 field. Tets
+    with all four vertices on the sphere carry no flow and are left out."""
+    X, _ = ball.geometry
+    wall = ball.wall(X)
+    facets = [(f, o[0]) for f, o in tet_faces(ball).items()
               if len(o) == 1 and wall[list(f)].all() and not wall[o[0]]]
     apexes = {}
     for f, v in facets:
@@ -691,15 +743,16 @@ def test_tet_facet_normal_velocity_is_nearly_quadratic(sphere):
     assert single.any() and not single.all()
     leak = {}
     for mode in ("edge", "none"):
-        u = probe(sphere, mode, pts)
+        u = probe(ball, mode, pts)
         un = np.abs(np.sum(u * normals, axis=1))
         leak[mode] = un / np.linalg.norm(u - np.sum(u * normals, axis=1)[:, None] * normals, axis=1)
     assert leak["edge"][single].max() < 1e-3, leak["edge"][single].max()
     for q in (50, 95):
         edge, none = np.percentile(leak["edge"], q), np.percentile(leak["none"], q)
-        assert edge < 0.25 * none, (q, edge, none)
+        assert edge < 0.125 * none, (q, edge, none)
 
 
+@pytest.mark.slow
 def test_tracers_keep_the_eulerian_mean_velocity_past_a_sphere(sphere):
     """As between the cylinders, tracers in the P1 field collect on the
     sphere's upstream side and stop: by t = 100 most are at rest. With
@@ -713,3 +766,68 @@ def test_tracers_keep_the_eulerian_mean_velocity_past_a_sphere(sphere):
     assert stuck["none"] > 0.5 and ux["none"][late].mean() < 0.5, (stuck, ux["none"][late].mean())
     assert stuck["edge"] < 0.1, stuck
     assert ux["edge"][late].mean() > 0.85, ux["edge"][late].mean()
+
+
+def cells_against_rk4(case, mode, points, T, dt):
+    """tracers from points to T with wall_p2=mode at dt under RK4 and
+    RK4cells: {scheme: (steps declined, fraction at rest at T, fallbacks a
+    particle-step or None)}, and the positions RK4cells stored at its step
+    ends that no cell holds. Such a position dumps zero u and p, which no
+    position in the fluid does: p is nowhere zero."""
+    res, outside = {}, None
+    for scheme in ("RK4", "RK4cells"):
+        out = []
+        every = scheme == "RK4cells"
+        args = ["T=%g" % T, "dump_intv=%g" % (dt if every else T), "stat_intv=%g" % T]
+        if every:
+            args.append("output_all_props=true")
+        folder = restart_from(case, mode, points, args, scheme=scheme, out=out, dt=dt)
+        u = dump_at(folder, T)["u"]
+        [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
+        res[scheme] = (read_stats(f)["n_declined"][-1], np.mean(np.linalg.norm(u, axis=1) < 1e-3),
+                       cells_counts(out[0]).get("fallbacks"))
+        if every:
+            dumps = all_dumps(folder)
+            assert len(dumps) >= T / dt - 2
+            outside = sum(int(np.sum((g["p"].ravel() == 0) & (g["u"] == 0).all(axis=1))) for g in dumps.values())
+    return res, outside
+
+
+@pytest.mark.slow
+def test_rk4cells_past_the_sphere_declines_as_rk4_does(sphere):
+    """RK4cells on the sphere case (a periodic box, the no-slip sphere, stamps
+    every 0.25), tracers on the 10^3 lattice to T = 50, with wall_p2=edge and
+    none, dt from 0.05 to 0.5. A step meeting the sphere falls back to RK4's
+    substeps and RK4's outside rule, so RK4cells declines no more steps than
+    RK4. With wall_p2=none tracers come to rest on the sphere under both,
+    within the band of its facets and moving into them: a wall never makes
+    them cross before they step, so they step held in their cell and the
+    fallbacks stay rare. An end below a wall is moved onto it and nudged
+    inside, so every position stored at a step's end is in a cell."""
+    n, T = 10, 50.0
+    x = (np.arange(n) + 0.5) / n
+    points = np.stack(np.meshgrid(*[x] * 3, indexing="ij"), axis=-1).reshape(-1, 3)
+    points = points[inside(sphere.geometry, points)]
+    runs = {(mode, dt): cells_against_rk4(sphere, mode, points, T, dt)
+            for mode in ("edge", "none") for dt in (DT, 0.2, 0.5)}
+    table = "\n".join("%s dt=%g: %s, %d outside" % (k + v) for k, v in runs.items())
+    for (mode, dt), (res, outside) in runs.items():
+        (d4, rest4, _), (dc, restc, fbc) = res["RK4"], res["RK4cells"]
+        assert dc <= d4 and fbc < 1e-3 and outside == 0, table
+        if mode == "edge":
+            assert rest4 < 0.02 and restc < rest4 + 0.01, table
+        else:
+            assert rest4 > 0.5 and restc > 0.5, table
+
+
+def test_rk4cells_between_the_cylinders_declines_none(obstacles):
+    """The four cylinders in the P1 field (wall_p2=none), tracers on a 30^2
+    lattice to T = 100 at dt = 0.5: RK4 declines steps of tracers resting on
+    the walls when the flow turns them; RK4cells, which keeps every stored
+    position in a cell, declines none."""
+    n = 30
+    x = (np.arange(n) + 0.5) / n
+    points = np.stack(np.meshgrid(x, x, indexing="ij"), axis=-1).reshape(-1, 2)
+    points = points[inside(obstacles.geometry, points)]
+    res, outside = cells_against_rk4(obstacles, "none", points, 100.0, 0.5)
+    assert res["RK4cells"][0] == 0 and outside == 0, (res, outside)

@@ -28,7 +28,7 @@ def app(name):
     return os.path.join(BIN, name)
 
 def built_with_dolfin():
-    """Whether the binaries support the mesh modes.
+    """Whether the binaries have mode=fenics, the one mode that needs dolfin.
 
     Having dolfin importable in python says nothing about how partrac was
     configured; CMake writes build_features.txt next to the apps with the

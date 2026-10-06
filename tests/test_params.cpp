@@ -601,6 +601,29 @@ TEST_CASE("peek_file reads one key before the schema is chosen", "[params]") {
   REQUIRE(partrac::peek_file(path, "B") == "");
 }
 
+// The factory chooses a loader from a key it peeks at, so the peek must accept
+// every spelling the schema would: a rejected one picks the other loader
+TEST_CASE("peek_bool takes every spelling a declared bool takes", "[params]") {
+  TempDir d;
+  for (const char* yes : {"true", "True", "TRUE", "1", "yes", "on"}){
+    const auto path = write_file(d, std::string("divfree = ") + yes + "\n");
+    Schema s("f", "");
+    s.opt<bool>("divfree", false, "");
+    REQUIRE(partrac::peek_bool(path, "divfree"));
+    REQUIRE(s.parse_file(path).get<bool>("divfree"));
+  }
+  for (const char* no : {"false", "False", "FALSE", "0", "no", "off"}){
+    const auto path = write_file(d, std::string("divfree = ") + no + "\n");
+    Schema s("f", "");
+    s.opt<bool>("divfree", false, "");
+    REQUIRE(!partrac::peek_bool(path, "divfree"));
+    REQUIRE(!s.parse_file(path).get<bool>("divfree"));
+  }
+  // Absent, and a value no schema would take either
+  REQUIRE(!partrac::peek_bool(write_file(d, "rho=1\n"), "divfree"));
+  REQUIRE(!partrac::peek_bool(write_file(d, "divfree=maybe\n"), "divfree"));
+}
+
 TEST_CASE("fail throws partrac::Error with its arguments streamed into the message", "[errors]") {
   try {
     partrac::fail("cell ", 7, " has ", 2.5, " dofs");

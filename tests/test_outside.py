@@ -11,27 +11,32 @@ still returns a velocity that is not the flow's.
 
 Two things are pinned:
 
-- an RK4 stage whose point is outside contributes zero velocity, and a step
-  that ends outside is declined; positions after one step match the reference
-  for every transport element, since the position update does not depend on
-  what else a particle carries;
+- an RK4 step with a stage point or its end outside is taken again in 2, 4,
+  then 8 substeps whose every stage is inside, and declined if none is; a
+  failed stage used to contribute zero velocity, which froze a tracer whose
+  second stage left the fluid on the start point for good. Positions after
+  one step match the reference for every transport element, since the
+  position update does not depend on what else a particle carries;
 - a particle placed outside the fluid (by editing a checkpoint) reports zero
   velocity, pressure and density in the dumps and does not move, under both
-  schemes.
+  schemes;
+- with outside=reinject, a particle that no offset along init_mode's
+  directions can bring back into the fluid is refused after a bounded number
+  of draws, rather than drawing for ever.
 """
 
 import math
 import os
-import shutil
-import subprocess
 
-import h5py
 import numpy as np
 import pytest
 
+from dumps import all_dumps
 from paths import REPO, app
+from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
+POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 APPS = ["tracers", "tracervectors", "tracertensors"]
 DT = 8.0
 
@@ -59,32 +64,22 @@ def params():
 
 def run(name, case_dir, extra):
     """Run app `name` on the case's parameter file with BASE and extra; assert it succeeded."""
-    keys = {a.split("=")[0] for a in extra}
-    argv = [a for a in BASE if a.split("=")[0] not in keys] + list(extra)
-    r = subprocess.run([app(name), str(case_dir / "expr_params.dat")] + argv,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
+    run_app(app(name), case_dir / "expr_params.dat", BASE, extra, timeout=600)
 
 
 def case(tmp_path, name):
     """A new case folder holding the sphere example."""
-    d = tmp_path / name
-    d.mkdir()
-    shutil.copy(SPHERE, d / "expr_params.dat")
-    return d
+    return copy_example(SPHERE, tmp_path / name).parent
 
 
 def dumps(case_dir):
-    """{t: {dataset: array in id order}} for every dump under case_dir."""
+    """{t: {dataset: array in id order}} for every dump under case_dir, where every id is there once."""
     out = {}
-    for f in sorted(case_dir.rglob("data_from_t*.h5")):
-        with h5py.File(f, "r") as h:
-            for key in h:
-                g = h[key]
-                ids = np.array(g["id"])[:, 0]
-                order = np.argsort(ids, kind="stable")
-                assert np.array_equal(ids[order], np.arange(len(ids)))
-                out[float(key)] = {k: np.array(g[k])[order] for k in g if k != "id"}
+    for t, g in all_dumps(case_dir, raw=True).items():
+        ids = g.pop("id")[:, 0]
+        order = np.argsort(ids, kind="stable")
+        assert np.array_equal(ids[order], np.arange(len(ids)))
+        out[t] = {k: a[order] for k, a in g.items()}
     return out
 
 
@@ -108,29 +103,41 @@ class Axis:
         f_theta = -1.0 + 1. / 4. * eta3 + 3. / 4. * eta
         return rz * rz / r2 * (f_r + f_theta) * self.u_inf - f_theta * self.u_inf
 
-    def rk4(self, z, dt, gated=True):
-        """One RK4 step from z; a stage outside contributes zero unless gated is
-        False; a step ending outside is declined. Returns (z, an outside stage)."""
-        def k(zz):
-            return self.u(zz) if (self.inside(zz) or not gated) else 0.0
-        k1 = k(z)
-        k2 = k(z + k1 * dt / 2)
-        k3 = k(z + k2 * dt / 2)
-        k4 = k(z + k3 * dt)
-        crossed = not all(self.inside(zz) for zz in
-                          (z, z + k1 * dt / 2, z + k2 * dt / 2, z + k3 * dt))
+    def rk4_once(self, z, dt):
+        """One RK4 step from z with the formula everywhere: (end, every stage and the end inside)."""
+        k1 = self.u(z)
+        k2 = self.u(z + k1 * dt / 2)
+        k3 = self.u(z + k2 * dt / 2)
+        k4 = self.u(z + k3 * dt)
         dz = (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
-        return (z + dz if self.inside(z + dz) else z), crossed
+        inside = all(self.inside(zz) for zz in (z, z + k1 * dt / 2, z + k2 * dt / 2, z + k3 * dt, z + dz))
+        return z + dz, inside
+
+    def rk4(self, z, dt):
+        """One step from z as the apps take it: whole, else in 2, 4, then 8
+        substeps that stay inside, else declined. Returns (z, substeps used)."""
+        end, ok = self.rk4_once(z, dt)
+        if ok:
+            return end, 1
+        for m in (2, 4, 8):
+            zz, ok = z, True
+            for _ in range(m):
+                zz, ok = self.rk4_once(zz, dt / m)
+                if not ok:
+                    break
+            if ok:
+                return zz, m
+        return z, 0
 
 
 @needs_apps
 @pytest.mark.parametrize("name", APPS)
-def test_an_rk4_stage_outside_the_fluid_contributes_zero_velocity(tmp_path, name):
-    """After one long RK4 step every particle is where a step that zeroes the
-    velocity at its outside stage points puts it. Some particles must cross
-    into the sphere at a stage and still end in the fluid, and their positions
-    must differ from those of a step that uses the formula inside the sphere;
-    otherwise the flow would not test the rule."""
+def test_an_rk4_step_with_a_stage_outside_the_fluid_is_taken_in_substeps(tmp_path, name):
+    """After one long RK4 step every particle is where the reference puts it:
+    the whole step where every stage is in the fluid, else the first of 2, 4
+    or 8 substeps that stays in it, else its start. Some particles must need
+    substeps and move, and some must need more than two; otherwise the flow
+    would not test the rule."""
     d = case(tmp_path, name)
     run(name, d, ["scheme=RK4", "dt=%g" % DT, "T=%g" % DT, "dump_intv=%g" % DT,
                   "checkpoint_intv=1e9"])
@@ -139,14 +146,13 @@ def test_an_rk4_stage_outside_the_fluid_contributes_zero_velocity(tmp_path, name
     assert np.abs(p0[:, :2]).max() == 0 and np.abs(p1[:, :2]).max() == 0
 
     axis = Axis(params())
-    expected, discriminating = [], 0
+    expected, used = [], []
     for z in p0[:, 2]:
-        zg, crossed = axis.rk4(z, DT)
-        zu, _ = axis.rk4(z, DT, gated=False)
-        expected.append(zg)
-        if crossed and axis.inside(zg) and abs(zg - zu) > 1e-6:
-            discriminating += 1
-    assert discriminating > 0, "no particle crossed the sphere at a stage"
+        zz, m = axis.rk4(z, DT)
+        expected.append(zz)
+        used.append(m)
+    used = np.array(used)
+    assert np.sum(used > 1) > 0 and np.sum(used > 2) > 0, np.bincount(used)
     assert np.allclose(p1[:, 2], expected, rtol=0, atol=1e-12)
 
 
@@ -160,21 +166,39 @@ def test_a_particle_outside_the_fluid_has_zero_fields_and_stays(tmp_path, scheme
     d = case(tmp_path, scheme)
     run("tracers", d, ["scheme=%s" % scheme, "dt=%g" % DT, "T=%g" % DT,
                        "dump_intv=%g" % DT, "checkpoint_intv=%g" % DT])
-    [pos] = list(d.rglob("Checkpoints/positions.pos"))
-    ids = np.loadtxt(pos.parent / "id.list", dtype=int)
-    lines = pos.read_text().splitlines()
+    ck = read_checkpoint(d)
     zc = params()["z0"]
-    lines[0] = "0 0 %.17g" % (zc - 0.5)                  # inside the sphere
-    pos.write_text("\n".join(lines) + "\n")
-    moved = ids[0]
+    ck["points"][0] = [0., 0., zc - 0.5]                # inside the sphere
+    put_points(d, ck["points"])
+    moved = int(ck["id"][0, 0])
 
     # the checkpoint is at t = 2 DT; the resumed run dumps from there on
     run("tracers", d, ["scheme=%s" % scheme, "dt=%g" % DT, "T=%g" % (4 * DT),
                        "dump_intv=%g" % DT, "checkpoint_intv=1e9",
-                       "restart_folder=" + str(pos.parent.parent)])
+                       "restart_folder=" + str(checkpoint_folder(d))])
     later = {t: g for t, g in dumps(d).items() if t > 1.5 * DT}
     assert later, "the resumed run dumped nothing"
     for t, g in sorted(later.items()):
         assert np.array_equal(g["points"][moved], [0., 0., zc - 0.5]), t
         assert np.all(g["u"][moved] == 0), t
         assert np.all(g["p"][moved] == 0) and np.all(g["rho"][moved] == 0), t
+
+
+@needs_apps
+def test_a_particle_reinjection_cannot_reach_is_refused(tmp_path):
+    """Plane Poiseuille flow, fluid where |x| <= 1: a particle moved to
+    x = 1.5, in the wall, with init_mode=points_z. Reinjection offsets it
+    along z only, so no draw is inside; the resumed run stops with a message
+    naming the directions instead of drawing for ever. The timeout catches
+    the hang."""
+    d = copy_example(POISEUILLE, tmp_path / "reinject").parent
+    run("tracers", d, ["scheme=RK4", "dt=0.1", "T=0.1", "dump_intv=0.1", "checkpoint_intv=0.1"])
+    x = read_checkpoint(d)["points"]
+    x[0] = [1.5, 0., 0.]
+    put_points(d, x)
+    r = run_app(app("tracers"), d / "expr_params.dat", BASE,
+                ["scheme=RK4", "dt=0.1", "T=0.3", "dump_intv=0.1", "checkpoint_intv=1e9",
+                 "outside=reinject", "restart_folder=" + str(checkpoint_folder(d))],
+                check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
+    assert "outside=reinject: no position inside the domain along z in 1000000 draws" in r.stderr, r.stderr

@@ -2,11 +2,10 @@
 #define __INTERPOL_HPP
 
 #include <iostream>
+#include <limits>
 #include <string>
 #include "typedefs.hpp"
 #include "PointValues.hpp"
-
-//using namespace std;
 
 // Time weight and rate between stamps; zero rate on a single stamp
 inline double stamp_weight(const double t, const double t_prev, const double t_next){
@@ -20,8 +19,17 @@ inline Vector3d stamp_rate(const Vector3d& next, const Vector3d& prev, const dou
   return Vector3d::Zero();
 }
 inline Matrix3d stamp_rate(const Matrix3d& next, const Matrix3d& prev, const double t_prev, const double t_next){
-  if (t_next > t_prev) return (next - prev)/(t_next - t_prev);
-  return Matrix3d::Zero();
+  if (t_next <= t_prev) return Matrix3d::Zero();
+  // Elementwise, so an evaluation inlines it instead of calling Eigen's loop
+  Matrix3d rate;
+  for (int i = 0; i < 9; ++i)
+    rate.data()[i] = (next.data()[i] - prev.data()[i])/(t_next - t_prev);
+  return rate;
+}
+// t in the bracket, up to the run loop's snap at a stamp and rounding
+inline bool in_bracket(const double t, const double t_prev, const double t_next, const double snap){
+  const double tol = snap + 1e-6*(t_next - t_prev);
+  return t_next == t_prev || (t >= t_prev - tol && t <= t_next + tol);
 }
 
 class Interpol {  // Abstract base class
@@ -66,6 +74,12 @@ public:
   virtual double get_t_max() = 0;
   //
   virtual void update(const double t) = 0;
+  // The fields at t for every later time
+  virtual void freeze(const double t) = 0;
+  // First stamp after t, where the blend's rate changes; +inf: none
+  virtual double next_stamp_after(const double t) const { return std::numeric_limits<double>::infinity(); }
+  // The run loop's snap at a stamp: how far a stage may lie outside the bracket
+  void set_stamp_snap(const double s) { stamp_snap = s; }
   // After locate, pos describes x in pos.id, inside or not; on failure id is unchanged
   virtual bool locate(const Vector3d &x, const double t, CellPos& pos) = 0;
   // Only after a successful locate: outside the fluid the velocity is zero
@@ -78,6 +92,10 @@ public:
   virtual void enable_reflection() {};
   bool can_reflect = false;
   virtual double hmin() const { return 0.; };   // 0: no mesh scale
+  virtual double cell_size(const int cell_id) const { return hmin(); };   // of a located cell
+  virtual bool has_phase_field() const { return false; };      // evaluate fills Phi
+  virtual bool has_phase_gradient() const { return false; };   // evaluate_phase_gradient fills g
+  virtual void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) { g.setZero(); };
 protected:
   std::string infilename;
   std::string folder;
@@ -85,13 +103,11 @@ protected:
   bool verbose = true;
   int int_order = 1;
   bool needs_gradient_ = false;
-  //double Lx = 0;
-  //double Ly = 0;
-  //double Lz = 0;
   Vector3d x_min;
   Vector3d x_max;
   double U0 = 1.0;
   double t_update;
+  double stamp_snap = 0.;
 };
 
 

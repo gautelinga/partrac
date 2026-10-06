@@ -1,10 +1,12 @@
-#ifdef USE_DOLFIN
 #ifndef TET_HPP
 #define TET_HPP
 
-#include <dolfin.h>
 #include <array>
 #include "typedefs.hpp"
+
+#ifdef USE_DOLFIN
+namespace dolfin { class Cell; }
+#endif
 
 class alignas(64) Tet
 {
@@ -15,7 +17,11 @@ public:
   static constexpr std::size_t n_dofs_max = 10;   // quadbasis writes this many
 
   Tet() {}
+  // The four vertex coordinate triples, in dolfin's local vertex order
+  Tet(const double* x0, const double* x1, const double* x2, const double* x3);
+#ifdef USE_DOLFIN
   Tet(const dolfin::Cell& cell);
+#endif
 
   void xyz2bary(double x, double y, double z,
                 double &r, double &s, double &t, double &u) const;
@@ -60,6 +66,33 @@ public:
 };
 
 // Per-point functions
+
+inline Tet::Tet(const double* x0, const double* x1, const double* x2, const double* x3)
+{
+  x0_ = x0[0];
+  y0_ = x0[1];
+  z0_ = x0[2];
+
+  double j11 = x1[0]-x0[0];
+  double j12 = x1[1]-x0[1];
+  double j13 = x1[2]-x0[2];
+  double j21 = x2[0]-x0[0];
+  double j22 = x2[1]-x0[1];
+  double j23 = x2[2]-x0[2];
+  double j31 = x3[0]-x0[0];
+  double j32 = x3[1]-x0[1];
+  double j33 = x3[2]-x0[2];
+
+  g2x_ = j22*j33-j23*j32;  g3x_ = j13*j32-j12*j33;  g4x_ = j12*j23-j13*j22;
+  g2y_ = j23*j31-j21*j33;  g3y_ = j11*j33-j13*j31;  g4y_ = j13*j21-j11*j23;
+  g2z_ = j21*j32-j22*j31;  g3z_ = j12*j31-j11*j32;  g4z_ = j11*j22-j12*j21;
+  double det = j11 * g2x_ + j12 * g2y_ + j13 * g2z_;
+  double d = 1.0/det;
+  g2x_ *= d;  g3x_ *= d;  g4x_ *= d;
+  g2y_ *= d;  g3y_ *= d;  g4y_ *= d;
+  g2z_ *= d;  g3z_ *= d;  g4z_ *= d;
+  g1x_ = -g2x_-g3x_-g4x_;  g1y_ = -g2y_-g3y_-g4y_;  g1z_ = -g2z_-g3z_-g4z_;
+}
 
 inline void Tet::xyz2bary(double x, double y, double z,
                           double &r,double &s,double &t,double &u) const
@@ -188,5 +221,4 @@ inline void Tet::quadderiv(double r,
   Nz[perm_[9]] = 4*(t*g4z_+u*g3z_);
 }
 
-#endif
 #endif

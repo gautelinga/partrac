@@ -1,23 +1,23 @@
 #ifndef __XDMF_HELPERS_HPP
 #define __XDMF_HELPERS_HPP
 
-#include "typedefs.hpp"
-#include "H5Cpp.h"
+// The XDMF side of the XDMF loaders: the xml a field's .xdmf holds (the mesh's
+// datasets and one grid per stamp) and the values of one stamp. Nothing here
+// needs dolfin.
 
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/xml_parser.hpp>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include "dolfin/io/HDF5Interface.h"
+// The first ncols of each row of a rank-2 dataset: dolfin writes a field as
+// rows of columns and pads a 2D vector with a third column no one reads
+void read_dataset_columns(const std::string& h5filename, const std::string& field,
+                          std::vector<double>& data, const int ncols);
 
-void read_dataset_scalar(std::string& h5filename, std::string& field, std::vector<double>& data);
-
-void reorder_indices(std::vector<double>& data_, const std::vector<double>& xdata, const std::vector<Uint>& j2i, const int dim);
-
-void read_dataset_vector(std::string& h5filename_u, std::string& field, std::vector<double>& data, const int dim);
-
-std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename, 
+// Each grid's time and (file, dataset), with the mesh's datasets of the first
+std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename,
                                                                     std::string& h5filename,
-                                                                    std::string& topology_path, 
+                                                                    std::string& topology_path,
                                                                     std::string& geometry_path);
 
 std::vector<std::pair<double, std::vector<std::string>>> parse_xdmf(const std::string& xdmffilename);

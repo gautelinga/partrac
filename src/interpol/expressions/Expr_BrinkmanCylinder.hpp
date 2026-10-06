@@ -5,8 +5,6 @@
 #ifndef __EXPR_BRINKMANCYLINDER_HPP
 #define __EXPR_BRINKMANCYLINDER_HPP
 
-//using namespace std;
-
 inline double beta(double zeta, double r){
   return 2*std::cyl_bessel_k(1.0, zeta * r)/(zeta * std::cyl_bessel_k(0.0, zeta));
 }

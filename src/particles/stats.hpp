@@ -137,7 +137,6 @@ inline std::vector<StatsColumn> mesh_stats_columns(
     for (Uint i = 0; i < faces.size(); ++i){
       Uint iedge = faces[i].first[0];
       Uint jedge = faces[i].first[1];
-      // Uint kedge = faces[i].first[2];
       double dA0 = faces[i].second;
       if (!(dA0 > 0.))
         continue;                 // degenerate, culled later
@@ -175,7 +174,6 @@ inline std::vector<StatsColumn> mesh_stats_columns(
 inline std::vector<StatsColumn> vector_stats_columns(
                  const double t,
                  const ParticleSet& ps,
-                 const bool has_phi,
                  const unsigned long int n_declined)
 {
   const Uint Nrw = ps.N();
@@ -186,7 +184,7 @@ inline std::vector<StatsColumn> vector_stats_columns(
   #pragma omp parallel for reduction(+:xm0,xm1,xm2,um0,um1,um2,wm,Sm,phim,u1m0,u1m1,u1m2,w1m,S1m,u2m0,u2m1,u2m2,w2m,S2m,Nrw1)
   for (Uint i = 0; i < Nrw; ++i){
     const Vector3d xi = ps.x(i), ui = ps.u(i);
-    const double wi = ps.w(i), Si = ps.S(i), phii = has_phi ? ps.phi(i) : 1.;
+    const double wi = ps.w(i), Si = ps.S(i), phii = ps.phi(i);
     xm0 += xi[0]; xm1 += xi[1]; xm2 += xi[2];
     um0 += ui[0]; um1 += ui[1]; um2 += ui[2];
     wm += wi; Sm += Si; phim += phii;
@@ -204,7 +202,7 @@ inline std::vector<StatsColumn> vector_stats_columns(
   #pragma omp parallel for reduction(+:xv0,xv1,xv2,uv0,uv1,uv2,wv,u1v0,u1v1,u1v2,w1v,u2v0,u2v1,u2v2,w2v)
   for (Uint i = 0; i < Nrw; ++i){
     const Vector3d xi = ps.x(i), ui = ps.u(i);
-    const double wi = ps.w(i), phii = has_phi ? ps.phi(i) : 1.;
+    const double wi = ps.w(i), phii = ps.phi(i);
     xv0 += pow(xi[0]-xm0, 2); xv1 += pow(xi[1]-xm1, 2); xv2 += pow(xi[2]-xm2, 2);
     uv0 += pow(ui[0]-um0, 2); uv1 += pow(ui[1]-um1, 2); uv2 += pow(ui[2]-um2, 2);
     wv += pow(wi-wm, 2);
@@ -266,6 +264,101 @@ inline std::vector<StatsColumn> cloud_stats_columns(
           {"dx2_mean", dx0}, {"dy2_mean", dx1}, {"dz2_mean", dx2},
           {"ux_mean", um0}, {"uy_mean", um1}, {"uz_mean", um2},
           {"Nrw", double(Nrw), true}, {"n_declined", double(n_declined), true}};
+}
+
+// At rest: at most this fraction of the mean speed
+constexpr double rest_fraction = 1e-3;
+
+// Tracers at rest, a trap's signature: wall layers and stagnation points
+inline StatsColumn at_rest_column(const ParticleSet& ps){
+  const Uint Nrw = ps.N();
+  double speed = 0.;
+  #pragma omp parallel for reduction(+:speed)
+  for (Uint i = 0; i < Nrw; ++i)
+    speed += ps.u(i).norm();
+  const double slow = Nrw > 0 ? rest_fraction*speed/Nrw : 0.;
+  Uint n = 0;
+  #pragma omp parallel for reduction(+:n)
+  for (Uint i = 0; i < Nrw; ++i)
+    if (ps.u(i).norm() <= slow) ++n;
+  return {"n_at_rest", double(n), true};
+}
+
+// log det F, the stretches' sum, zero in an incompressible flow: its drift is
+// the field's divergence; and each stretch, whose mean over t estimates a
+// Lyapunov exponent
+inline void push_logdetF_columns(std::vector<StatsColumn>& cols, const ParticleSet& ps){
+  const Uint Nrw = ps.N();
+  double m = 0., m0 = 0., m1 = 0., m2 = 0.;
+  #pragma omp parallel for reduction(+:m,m0,m1,m2)
+  for (Uint i = 0; i < Nrw; ++i){
+    const Vector3d s = ps.logstretch(i);
+    m += s.sum(); m0 += s[0]; m1 += s[1]; m2 += s[2];
+  }
+  if (Nrw > 0){
+    for (double* a : {&m, &m0, &m1, &m2}) *a /= Nrw;
+  }
+  double v = 0., v0 = 0., v1 = 0., v2 = 0.;
+  #pragma omp parallel for reduction(+:v,v0,v1,v2)
+  for (Uint i = 0; i < Nrw; ++i){
+    const Vector3d s = ps.logstretch(i);
+    v += pow(s.sum() - m, 2); v0 += pow(s[0] - m0, 2); v1 += pow(s[1] - m1, 2); v2 += pow(s[2] - m2, 2);
+  }
+  if (Nrw > 1){
+    for (double* a : {&v, &v0, &v1, &v2}) *a /= (Nrw-1);
+  }
+  else v = v0 = v1 = v2 = 0.;
+  cols.push_back({"logdetF_mean", m});
+  cols.push_back({"logdetF_var", v});
+  cols.push_back({"logstretch1_mean", m0});
+  cols.push_back({"logstretch1_var", v0});
+  cols.push_back({"logstretch2_mean", m1});
+  cols.push_back({"logstretch2_var", v1});
+  cols.push_back({"logstretch3_mean", m2});
+  cols.push_back({"logstretch3_var", v2});
+}
+
+// Stretching rates, after n_at_rest: S's variance for a line element (its mean
+// is S_mean), each rate's mean and variance for the deformation's frame
+inline void push_S_columns(std::vector<StatsColumn>& cols, const ParticleSet& ps){
+  const Uint Nrw = ps.N();
+  if (ps.carries() == TransportElement::Vector){
+    double m = 0.;
+    #pragma omp parallel for reduction(+:m)
+    for (Uint i = 0; i < Nrw; ++i)
+      m += ps.S(i);
+    if (Nrw > 0) m /= Nrw;
+    double v = 0.;
+    #pragma omp parallel for reduction(+:v)
+    for (Uint i = 0; i < Nrw; ++i)
+      v += pow(ps.S(i) - m, 2);
+    v = Nrw > 1 ? v/(Nrw-1) : 0.;
+    cols.push_back({"S_var", v});
+  }
+  if (ps.carries() == TransportElement::Tensor){
+    double m0 = 0., m1 = 0., m2 = 0.;
+    #pragma omp parallel for reduction(+:m0,m1,m2)
+    for (Uint i = 0; i < Nrw; ++i){
+      const Vector3d S = ps.S3(i);
+      m0 += S[0]; m1 += S[1]; m2 += S[2];
+    }
+    if (Nrw > 0){
+      for (double* a : {&m0, &m1, &m2}) *a /= Nrw;
+    }
+    double v0 = 0., v1 = 0., v2 = 0.;
+    #pragma omp parallel for reduction(+:v0,v1,v2)
+    for (Uint i = 0; i < Nrw; ++i){
+      const Vector3d S = ps.S3(i);
+      v0 += pow(S[0] - m0, 2); v1 += pow(S[1] - m1, 2); v2 += pow(S[2] - m2, 2);
+    }
+    for (double* a : {&v0, &v1, &v2}) *a = Nrw > 1 ? *a/(Nrw-1) : 0.;
+    cols.push_back({"S1_mean", m0});
+    cols.push_back({"S1_var", v0});
+    cols.push_back({"S2_mean", m1});
+    cols.push_back({"S2_var", v1});
+    cols.push_back({"S3_mean", m2});
+    cols.push_back({"S3_var", v2});
+  }
 }
 
 // Cloud statistics plus edge elongation with doublings

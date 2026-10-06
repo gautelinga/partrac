@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include "Error.hpp"
 #include "Timestamps.hpp"
 #include "files.hpp"
@@ -30,10 +33,6 @@ void Timestamps::initialize(const std::string& infilename){
   filename = infilename.substr(botDirPos+1, extPos-botDirPos-1);
 }
 
-void Timestamps::update(const double){
-  partrac::fail("Timestamps::update is not implemented");
-}
-
 void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
   for ( auto & item : items ){
     double tkey = item.first;
@@ -51,33 +50,22 @@ void Timestamps::initialize(std::vector<std::pair<double, std::string>>& items){
 }
 
 StampPair Timestamps::get(const double t){
-  // TODO: Make more efficient
-  double t_prev, t_next;
-  std::string filename_prev, filename_next;
-  filename_next = stamps.begin()->second;
-  t_next = stamps.begin()->first;
-  for (std::map<double, std::string>::iterator it=stamps.begin()++;
-       it!=stamps.end(); ++it){
-    filename_prev = filename_next;
-    filename_next = it->second;
-    t_prev = t_next;
-    t_next = it->first;
-    if (t_prev <= t && t_next > t){
-      StampPair Pair(t_prev, filename_prev,
-                     t_next, filename_next);
-      return Pair;
-    }
-  }
-  double t_last = (--stamps.end())->first;
-  std::string filename_last = (--stamps.end())->second;
-  if (t >= t_last){
-    StampPair Pair(t_last, filename_last, t_last, filename_last);
-    return Pair;
-  }
-  double t_first = stamps.begin()->first;
-  std::string filename_first = stamps.begin()->second;
-  StampPair Pair(t_first, filename_first, t_first, filename_first);
-  return Pair;
+  if (stamps.empty())
+    partrac::fail("Timestamps: no time stamps");
+  // First stamp after t
+  const auto next = stamps.upper_bound(t);
+  // Before the first or past the last: that stamp twice
+  if (next == stamps.begin())
+    return StampPair(next->first, next->second, next->first, next->second);
+  const auto prev = std::prev(next);
+  if (next == stamps.end())
+    return StampPair(prev->first, prev->second, prev->first, prev->second);
+  return StampPair(prev->first, prev->second, next->first, next->second);
+}
+
+double Timestamps::next_after(const double t) const {
+  const auto next = stamps.upper_bound(t);
+  return next == stamps.end() ? std::numeric_limits<double>::infinity() : next->first;
 }
 
 //
@@ -96,11 +84,14 @@ void MultiTimestamps::initialize(const std::vector<std::pair<double, std::vector
       t_max = tkey;
     }
   }
-  //folder = "";
-  //filename = "";
+  // Searched by bisection
+  if (!std::is_sorted(t_.begin(), t_.end()))
+    partrac::fail("XDMF: the time keys are not in increasing order");
 }
 
 void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<double, std::vector<std::string>>>& items){
+  if (items.size() != t_.size())
+    partrac::fail("XDMF: field ", field, " has ", items.size(), " time steps, u has ", t_.size());
   stamps[field].resize(items.size()); // initialize vector
   for (Uint i=0; i < items.size(); ++i){
     auto tkey = items[i].first;
@@ -113,24 +104,19 @@ void MultiTimestamps::add(const std::string& field, const std::vector<std::pair<
 }
 
 MultiStampPair MultiTimestamps::get(const double t){
-  if (t_.size() > 0)
-  {
-    for (Uint _it=1; _it < t_.size(); ++_it)
-    {
-      if (t_[_it-1] <= t && t_[_it] > t)
-      {
-        MultiStampPair Pair(t_[_it-1], _it-1, t_[_it], _it);
-        return Pair;
-      }
-    }
-  }
-  Uint it_last = t_.size()-1;
-  double t_last = t_[it_last];
-  if (t >= t_last){
-    MultiStampPair Pair(t_last, it_last, t_last, it_last);
-    return Pair;
-  }
-  double t_first = t_[0];
-  MultiStampPair Pair(t_first, 0, t_first, 0);
-  return Pair;
+  if (t_.empty())
+    partrac::fail("XDMF: no time stamps");
+  // First stamp after t
+  const Uint next = std::upper_bound(t_.begin(), t_.end(), t) - t_.begin();
+  // Before the first or past the last: that stamp twice
+  if (next == 0)
+    return MultiStampPair(t_[0], 0, t_[0], 0);
+  if (next == t_.size())
+    return MultiStampPair(t_[next-1], next-1, t_[next-1], next-1);
+  return MultiStampPair(t_[next-1], next-1, t_[next], next);
+}
+
+double MultiTimestamps::next_after(const double t) const {
+  const auto next = std::upper_bound(t_.begin(), t_.end(), t);
+  return next == t_.end() ? std::numeric_limits<double>::infinity() : *next;
 }

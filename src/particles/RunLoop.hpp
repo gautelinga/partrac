@@ -4,11 +4,9 @@
 // Shared run loop: setup and per-step cadence
 
 #include <algorithm>
-#include <ctime>
 #include <fstream>
 #include <functional>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -61,26 +59,29 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   intp->set_U0(prm.get<double>("U"));
   intp->set_int_order(prm.get<int>("int_order"));
 
-  std::cout << "Creating folders..." << std::endl;
-  RunFolders out = make_run_folders(intp->get_folder(), name, prm, folder_opts);
-
-  if (prm.get<bool>("verbose"))
-    prm.print();
-
-  // Parallel generators
+  // Parallel generators; before the folders, which name the seed
   std::vector<std::mt19937> gens = make_generators(prm);
 
-  // TODO: These should not be stored in particle tracker parameters.
+  // Domain size for the dumped parameters: runtime entries, refused as input
   prm.set<double>("Lx", intp->get_Lx());
   prm.set<double>("Ly", intp->get_Ly());
   prm.set<double>("Lz", intp->get_Lz());
 
+  // The fields loaded or frozen before any folder is made, so a failure leaves none
   const double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
   prm.set<double>("t0", t0);
+  const auto folders = [&](){
+    std::cout << "Creating folders..." << std::endl;
+    RunFolders out = make_run_folders(intp->get_folder(), name, prm,
+                                      prm.check_only() ? folder_opts | DryRun : folder_opts);
+    if (prm.get<bool>("verbose"))
+      prm.print();
+    return out;
+  };
   if (marches){
     // Fields frozen at t0; T is the integration time
     intp->update(t0);
-    return Run{prm, intp, out, std::move(gens), prm.get<double>("xn0"), prm.get<double>("Ln"),
+    return Run{prm, intp, folders(), std::move(gens), prm.get<double>("xn0"), prm.get<double>("Ln"),
                true, true, t0};
   }
   const bool frozen_fields = prm.has("frozen_fields") && prm.get<bool>("frozen_fields");
@@ -89,7 +90,16 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
     T = prm.get<double>("T");
   prm.set<double>("T", T);
 
-  intp->update(frozen_fields ? prm.get<double>("t_frozen") : t0);
+  if (frozen_fields){
+    // Unset: the start time; past the fields' times, their end; recorded so a
+    // resume freezes there too
+    const double t_frozen = std::clamp(prm.get_or<double>("t_frozen", t0), intp->get_t_min(), intp->get_t_max());
+    prm.set<double>("t_frozen", t_frozen);
+    intp->freeze(t_frozen);
+  }
+  else
+    intp->update(t0);
+  RunFolders out = folders();
 
   // Walls for the explicit diffusive step
   const bool diffuses = prm.has("Dm") && prm.get<double>("Dm") > 0.;
@@ -112,12 +122,31 @@ inline bool load_or_initialize(Run& run, Topology& mesh){
     mesh.load_checkpoint(run.prm.get<std::string>("restart_folder") + "/Checkpoints", run.prm);
   }
   else {
-    std::shared_ptr<Initializer> init_state;
-    set_initial_state(init_state, run.intp, run.prm, run.gens[0]);
-    mesh.load_initial_state(init_state, run.prm);
+    mesh.load_initial_state(set_initial_state(run.intp, run.prm, run.gens[0]), run.prm);
   }
   mesh.compute_maps();
   return restarting;
+}
+
+// --check: loaded and initialized, nothing run or written
+inline bool check_only(const Run& run, const ParticleSet& ps, Topology& mesh){
+  if (!run.prm.check_only())
+    return false;
+  std::cout << "Check OK: " << ps.N() << " particles, dim = " << mesh.dim() << std::endl;
+  return true;
+}
+
+// Dumped fields of a mesh app; H and n need the curvature
+inline OutputFields mesh_output_fields(const partrac::Params& prm, Topology& mesh){
+  const bool full = !prm.get<bool>("minimal_output");
+  OutputFields f;
+  f.u = full;
+  f.c = full;
+  f.p = full && prm.get<bool>("output_all_props");
+  f.rho = full && prm.get<bool>("output_all_props");
+  f.H = full && mesh.dim() > 0 && mesh.computes_curvature();
+  f.n = full && mesh.dim() > 1 && mesh.computes_curvature();
+  return f;
 }
 
 // Particles that could not step: ignore, reinject, mark or remove
@@ -126,19 +155,25 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
   if (nodes.empty())
     return;
   if (outside == "reinject"){
-    const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
-    const std::string dirs = key.size() > 1 ? key[1] : "xyz";
+    // Along init_mode's directions; positions from a file have none: all three
+    const std::string init_mode = run.prm.get<std::string>("init_mode");
+    const auto key = split_string(init_mode, "_");
+    const std::string dirs = init_mode_is_file(init_mode) || key.size() < 2 ? "xyz" : key[1];
     const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
     std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
     const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
+    const Uint max_draws = 1000000;
     for (const Uint i : nodes){
       Vector3d Dx = {0., 0., 0.};
+      Uint draws = 0;
       do {
+        if (++draws > max_draws)
+          partrac::fail("outside=reinject: no position inside the domain along ", dirs, " in ", max_draws, " draws");
         if (rx) Dx[0] = ux(run.gens[0]);
         if (ry) Dx[1] = uy(run.gens[0]);
         if (rz) Dx[2] = uz(run.gens[0]);
       } while (!run.intp->locate(ps.x(i) + Dx));
-      ps.set_x(i, ps.x(i) + Dx);
+      ps.move(i, ps.x(i) + Dx);
     }
   }
   if (outside == "mark")
@@ -161,13 +196,40 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
   }
 }
 
+// A step over several cells, once, from the fields just updated: it cuts across
+// streamlines and the walls' layers
+inline void note_step_size(Run& run, const ParticleSet& ps, const double t_fields, const double dt){
+  double worst = 0.;
+  Uint over = 0, counted = 0;
+  #pragma omp parallel for reduction(max:worst) reduction(+:over,counted)
+  for (Uint i = 0; i < ps.N(); ++i){
+    CellPos pos;
+    pos.id = ps.get_cell_id(i);
+    if (!run.intp->locate(ps.x(i), t_fields, pos))
+      continue;
+    const double h = run.intp->cell_size(pos.id);
+    if (!(h > 0.))
+      continue;
+    // A march steps in path length
+    const double cells = (run.marches ? 1. : ps.u(i).norm())*dt/h;
+    worst = std::max(worst, cells);
+    ++counted;
+    if (cells > 1.) ++over;
+  }
+  if (worst > 1.)
+    std::cout << "Note: a step crosses up to " << worst << " cells, more than one for "
+              << over << " of " << counted << " particles (dt = " << dt << ")" << std::endl;
+}
+
 // App hooks
 struct RunHooks {
   // After field update: injection, remeshing, resizing, removal
   std::function<void(int it, double t)> reshape = [](int, double){};
-  // After step
-  std::function<void(int it, double t, const std::vector<Uint>& outside)> after_step =
-      [](int, double, const std::vector<Uint>&){};
+  // After each piece of a step: the particles that could not step
+  std::function<void(const std::vector<Uint>& nodes, double t)> outside =
+      [](const std::vector<Uint>&, double){};
+  // After step, once
+  std::function<void(int it, double t)> after_step = [](int, double){};
   // Statistics columns; unset: mesh statistics
   std::function<std::vector<StatsColumn>(double t, Integrator& counters)> statistics;
   // After statistics row
@@ -179,13 +241,21 @@ struct RunHooks {
 // Simulation loop
 template<typename Stepper>
 void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
-              std::map<std::string, bool>& output_fields, const double dt,
+              const OutputFields& output_fields, const double dt,
               const RunHooks& hooks = RunHooks()){
   partrac::Params& prm = run.prm;
   const bool restarting = prm.get<std::string>("restart_folder") != "";
-  double t = restarting ? prm.get<double>("t") : run.t0;
   // Resume step count
   int it = restarting ? static_cast<int>(prm.get<Uint>("it")) : 0;
+  // Time from the step count since the run's start, else since the restart
+  double t_start = run.t0;
+  int it_start = 0;
+  if (restarting && t_start + it*dt != prm.get<double>("t")){
+    t_start = prm.get<double>("t");
+    it_start = it;
+  }
+  const auto time_at = [&](const int k){ return t_start + (k - it_start)*dt; };
+  double t = time_at(it);
 
   const std::string& newfolder = run.out.run;
   prm.dump(newfolder, t);
@@ -194,7 +264,9 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   const double dump_intv = prm.get<double>("dump_intv");
   const double stat_intv = prm.get<double>("stat_intv");
   const double checkpoint_intv = prm.get<double>("checkpoint_intv");
-  const double chunk_intv = dump_intv*prm.get<int>("dump_chunk_size");
+  // A new dump file every dump_chunk_size dumps
+  const int chunk_size = prm.get<int>("dump_chunk_size");
+  const Uint chunk_steps = dump_intv > 0. && chunk_size > 0 ? steps_per(dump_intv, dt)*Uint(chunk_size) : 0;
   const double ds_max = prm.get<double>("ds_max");
   const int sort_every = prm.has("sort_every") ? prm.get<int>("sort_every") : 0;
   // S is computed in the refresh
@@ -204,8 +276,12 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // No dump file when dumping is off
   H5::H5File h5f;
   if (dump_intv > 0.){
-    { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
-    h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+    try {
+      { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+      h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+    } catch (const H5::Exception&){
+      partrac::fail("cannot create the dump file ", h5fname);
+    }
   }
 
   std::ofstream statfile;
@@ -215,10 +291,18 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
                                                   : mesh.stats_header_columns(ds_max));
   }
 
+  bool step_noted = false;
+
+  // Steps cut at stamps, the last too (held past it); a stamp within snap of
+  // a piece's end makes no piece
+  const bool cuts = !run.frozen_fields;
+  const double snap = 1e-9*dt;
+  run.intp->set_stamp_snap(snap);
+
   // Counted from the second step: the first refreshes and checkpoints
   PerfWindow counters;
   const int it_counted = it + 1;
-  std::clock_t clock_0 = std::clock();
+  const double wall_0 = omp_get_wtime();   // wall clock, not the threads' summed CPU time
   while (t < run.T + dt/2 && hooks.keep_going()){
     if (it == it_counted)
       counters.enable();
@@ -236,6 +320,10 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
         || (refresh_S && at_interval(it, checkpoint_intv, dt))){
       const double t_fields = run.marches ? run.t_fields : t;
       update_fields(ps, *run.intp, t_fields, output_fields);
+      if (!step_noted){
+        note_step_size(run, ps, t_fields, dt);
+        step_noted = true;
+      }
     }
 
     // Statistics
@@ -257,29 +345,54 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     // Dump detailed data
     if (at_interval(it, dump_intv, dt)){
       std::string groupname = std::to_string(t);
-      // Clear file if it exists, otherwise create
-      if (at_interval(it, chunk_intv, dt) && it > 0){
-        h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-        h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
-      }
-      else {
+      try {
+        // A new file at each chunk, the first made at the start
+        if (chunk_steps > 0 && it % chunk_steps == 0 && it > 0){
+          h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
+          { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+        }
         h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
+        h5f.createGroup(groupname + "/");
+        mesh.dump_hdf5(h5f, groupname, output_fields);
+        h5f.close();
+      } catch (const H5::Exception&){
+        partrac::fail("cannot write the dump at t = ", t, " to ", h5fname);
       }
-      h5f.createGroup(groupname + "/");
-      mesh.dump_hdf5(h5f, groupname, output_fields);
-      h5f.close();
     }
 
-    auto outside_nodes = stepper.step(*run.intp, ps, t, dt);
+    // Pieces between stamps
+    const double t_end = time_at(it + 1);
+    double ta = t;
+    while (true){
+      double tb = t_end;
+      if (cuts){
+        // Stamps just after the piece's start: taken as its start
+        double s = run.intp->next_stamp_after(ta), t_upd = ta;
+        while (s <= ta + snap){
+          t_upd = s;
+          s = run.intp->next_stamp_after(s);
+        }
+        if (t_upd != t)
+          run.intp->update(t_upd);
+        if (s < t_end - snap)
+          tb = s;
+      }
+      // A whole step is dt
+      const double h = (ta == t && tb == t_end) ? dt : tb - ta;
+      const auto outside_nodes = stepper.step(*run.intp, ps, ta, h);
+      hooks.outside(outside_nodes, ta);
+      if (tb == t_end)
+        break;
+      ta = tb;
+    }
 
-    hooks.after_step(it, t, outside_nodes);
+    hooks.after_step(it, t);
 
-    t += dt;
     it += 1;
+    t = time_at(it);
   }
-  std::clock_t clock_1 = std::clock();
+  const double duration = omp_get_wtime() - wall_0;
   counters.disable();
-  double duration = (clock_1-clock_0) / (double) CLOCKS_PER_SEC;
   std::cout << "Total simulation time: " << duration << " seconds" << std::endl;
 
   if (refresh_S){

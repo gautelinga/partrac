@@ -1,12 +1,11 @@
-# partrac_add_app(<target> SOURCE <file> [NEEDS_DOLFIN])
+# partrac_add_app(<target> SOURCE <file>)
 function(partrac_add_app name)
-  cmake_parse_arguments(APP "NEEDS_DOLFIN" "SOURCE" "" ${ARGN})
-  if (APP_NEEDS_DOLFIN AND NOT PARTRAC_ENABLE_DOLFIN)
-    message(STATUS "Skipping app ${name}: needs dolfin.")
-    return()
-  endif()
+  cmake_parse_arguments(APP "" "SOURCE" "" ${ARGN})
 
-  add_executable(${name} ${APP_SOURCE})
+  # its unit an object library, compiled before the libraries are linked
+  add_library(${name}_objects OBJECT ${APP_SOURCE})
+  target_link_libraries(${name}_objects PRIVATE ${PROJECT_NAME}_core)
+  add_executable(${name} $<TARGET_OBJECTS:${name}_objects>)
   target_link_libraries(${name} PRIVATE ${PROJECT_NAME}_core)
 
   # in the build tree, so two configurations can coexist
@@ -46,8 +45,9 @@ function(partrac_add_wrapper name)
   endif()
   set(src ${PROJECT_BINARY_DIR}/wrappers/${name}.cpp)
   configure_file(${PROJECT_SOURCE_DIR}/apps/wrapper/wrapper.cpp.in ${src} @ONLY)
-  add_executable(${name} ${src})
-  target_compile_features(${name} PRIVATE cxx_std_17)
+  add_library(${name}_objects OBJECT ${src})
+  target_compile_features(${name}_objects PRIVATE cxx_std_17)
+  add_executable(${name} $<TARGET_OBJECTS:${name}_objects>)
   add_dependencies(${name} ${W_TARGET})
   set_target_properties(${name} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin/")

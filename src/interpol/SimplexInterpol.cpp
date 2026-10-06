@@ -1,183 +1,178 @@
-#ifdef USE_DOLFIN
 #include "SimplexInterpol.hpp"
+#include "StampedInterpol_impl.hpp"
 #include "loader_params.hpp"
-#include "dolfin_spaces.hpp"
-#include "p12_eval.hpp"
-#include "geometry.hpp"
-#include "PeriodicBC.hpp"
-#include "dolfin_helpers.hpp"
-#include <array>
-#include <numeric>
-#include <cassert>
+#include "mesh_tables.hpp"
+#include "simplex_load.hpp"
+#include "phase_timing.hpp"
+#include <algorithm>
+#include <cstdio>
+#include <iostream>
 
-template<typename Cell>
-SimplexInterpol<Cell>::SimplexInterpol(const std::string& infilename)
-  : MeshInterpol<Cell>(infilename)
+partrac::Schema DolfinH5Format::schema(const int D)
 {
-  dolfin_params = partrac::parse_file_or_exit(dolfin_h5_schema(mode), infilename);
+  return dolfin_h5_schema(D == 2 ? "triangle" : "tet");
+}
 
-  std::size_t botDirPos = infilename.find_last_of("/");
-  set_folder(infilename.substr(0, botDirPos));
+template<typename I>
+void DolfinH5Format::load(I& intp, const std::string& infilename)
+{
+  using Cell = std::decay_t<decltype(intp.cells_[0])>;
+  constexpr int nv = Cell::n_verts;
+  const char* mode = nv == 3 ? "triangle" : "tet";
+  auto& prm = intp.dolfin_params;
+  // The split field is a class of its own, which the factory picks; this loader
+  // would read the same file and evaluate it as plain P2
+  if (prm.template get<bool>("divfree"))
+    partrac::fail(infilename, ": divfree = true is read by SplitInterpol, which the factory "
+                  "picks from this key; reached here, the key was not seen as a boolean");
+  const std::string folder = intp.get_folder();
+  const bool include_pressure = intp.include_pressure;
+  const bool include_phi = intp.include_phi;
 
-  ts.initialize(get_folder() + "/" + dolfin_params.template get<std::string>("timestamps"));
+  ts.initialize(folder + "/" + prm.template get<std::string>("timestamps"));
+  partrac::phase("params");
 
-  read_mesh_params();
+  // The first stamp, by the path update builds for every other one
+  const std::string first = folder + "/" + ts.get(ts.get_t_min()).prev.filename;
+  simplex_load::Request req;
+  req.infilename = infilename;
+  req.field_file = first;
+  req.what = "SimplexInterpol";
+  req.nv = nv;
+  req.include_pressure = include_pressure;
+  req.include_phi = include_phi;
+  req.n_dofs_max = Cell::n_dofs_max;
+  req.periodic = intp.periodic;
+  req.periodic_tol = intp.periodic_tol;
+  // The declared elements are checked whether the tables are rebuilt or read
+  // from the cache
+  simplex_load::request_from_params(req, prm, folder);
+  u_field = req.u_field;
+  p_field = req.p_field;
+  phi_field = req.phi_field;
+  const std::string& mesh_file = req.mesh_file;
 
-  std::string meshfilename = get_folder() + "/" + dolfin_params.template get<std::string>("mesh");
-  dolfin::HDF5File meshfile(MPI_COMM_WORLD, meshfilename, "r");
-
-  dolfin::Mesh mesh_in;
-  meshfile.read(mesh_in, "mesh", false);
-
-  mesh = std::make_shared<dolfin::Mesh>(mesh_in);
-  init_mesh_geometry();
-
-  auto constrained_domain = std::make_shared<PeriodicBC>(periodic, x_min, x_max, dim);
-
-  std::string u_el = dolfin_params.template get<std::string>("velocity_space");
-  std::string p_el = dolfin_params.template get<std::string>("pressure_space");
-
-  taylor_hood_spaces<Cell>(u_el, p_el, include_pressure, mesh, constrained_domain,
-                           u_space_, p_space_, ncoeffs_u, ncoeffs_p);
-
-  build_cells(*u_space_->dofmap());
-
-  u_prev_ = std::make_shared<dolfin::Function>(u_space_);
-  u_next_ = std::make_shared<dolfin::Function>(u_space_);
-
-  if (include_pressure){
-    p_prev_ = std::make_shared<dolfin::Function>(p_space_);
-    p_next_ = std::make_shared<dolfin::Function>(p_space_);
+  // The native cache, opt-in: everything below is deterministic from the two
+  // input files, so a later run reads the tables back instead of rebuilding
+  const bool use_cache = prm.template get<bool>("mesh_cache");
+  const std::string cache_file = mesh_file.substr(0, mesh_file.find_last_of('.'))
+                               + "_partrac_" + mode + ".h5";
+  std::string key;
+  if (use_cache){
+    key = simplex_load::cache_key({mesh_file, first});
+    if (!key.empty()){
+      // The facet table and the node tables are built from the periodicity too
+      char tol[32];
+      std::snprintf(tol, sizeof tol, "%.17g", intp.periodic_tol);
+      key += "|u=" + u_field + "|p=" + (include_pressure ? p_field : std::string())
+           + "|phi=" + (include_phi ? phi_field : std::string())
+           + "|periodic=" + (intp.periodic[0] ? "1" : "0") + (intp.periodic[1] ? "1" : "0")
+                          + (intp.periodic[2] ? "1" : "0")
+           + "|periodic_tol=" + tol;
+    }
   }
-
-  check_dofs_fit(ncoeffs_u, ncoeffs_p, Cell::n_dofs_max, "SimplexInterpol");
-
-  // Precompute dofs of all cells
-  u_dofs_.build(*u_space_->dofmap(), dolfin_cells_, "SimplexInterpol");
-  u_dofs_.check_stride(D*ncoeffs_u, "SimplexInterpol");
-  if (include_pressure){
-    p_dofs_.build(*p_space_->dofmap(), dolfin_cells_, "SimplexInterpol");
-    p_dofs_.check_stride(ncoeffs_p, "SimplexInterpol");
-  }
-
-  std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
-}
-
-template<typename Cell>
-void SimplexInterpol<Cell>::update(const double t)
-{
-  StampPair sp = ts.get(t);
-
-  // Always load once; keep last bracket past t_max
-  if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) ){
-    const std::string u_field = dolfin_params.template get<std::string>("velocity_field");
-    const std::string p_field = dolfin_params.template get<std::string>("pressure_field");
-
-    // Swap if possible
-    if (is_initialized && t_next == sp.prev.t){
-      std::cout << "Prev: Timestep = " << sp.prev.t << ", swapping... " << std::endl;
-      u_prev_data_.swap(u_next_data_);
-      if (include_pressure)
-        p_prev_data_.swap(p_next_data_);
-    }
-    else {
-      std::cout << "Prev: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
-      dolfin::HDF5File prevfile(MPI_COMM_WORLD, get_folder() + "/" + sp.prev.filename, "r");
-      prevfile.read(*u_prev_, u_field);
-      u_prev_->vector()->get_local(u_prev_data_);
-      if (include_pressure){
-        prevfile.read(*p_prev_, p_field);
-        p_prev_->vector()->get_local(p_prev_data_);
-      }
-    }
-
-    std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
-    // Single stamp: copy prev
-    if (sp.next.filename == sp.prev.filename){
-      u_next_data_ = u_prev_data_;
-      if (include_pressure)
-        p_next_data_ = p_prev_data_;
-    }
-    else {
-      dolfin::HDF5File nextfile(MPI_COMM_WORLD, get_folder() + "/" + sp.next.filename, "r");
-      nextfile.read(*u_next_, u_field);
-      u_next_->vector()->get_local(u_next_data_);
-      if (include_pressure){
-        nextfile.read(*p_next_, p_field);
-        p_next_->vector()->get_local(p_next_data_);
-      }
-    }
-
-    is_initialized = true;
-    t_prev = sp.prev.t;
-    t_next = sp.next.t;
-  }
-  t_update = t;
-}
-
-template<typename Cell>
-void SimplexInterpol<Cell>::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  evaluate_impl<true>(x, t, pos, fields);
-}
-
-template<typename Cell>
-void SimplexInterpol<Cell>::evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  evaluate_impl<false>(x, t, pos, fields);
-}
-
-template<typename Cell>
-template<bool Scalars>
-void SimplexInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  // Assuming inside fluid
-  assert(t <= t_next && t >= t_prev);
-  const double alpha_t = stamp_weight(t, t_prev, t_next);
-
-  // Compute Pk-Pl basis at x
-  const int id = pos.id;
-  std::array<double, Cell::n_dofs_max> _Nu_, _Np_, _Nux_, _Nuy_, _Nuz_;   // _Nuz_ unused in 2D
-
-  cell_basis(cells_[id], pos.bary, ncoeffs_u, _Nu_.data(), "u");
-  if constexpr (Scalars)
-    if (include_pressure)
-      cell_basis(cells_[id], pos.bary, ncoeffs_p, _Np_.data(), "p");
-
-  // Gathered: restrict() is not thread-safe
-  std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
-  gather_stamps<D*Cell::n_verts, D*Cell::n_dofs_max>(u_dofs_[id], u_dofs_.stride(), u_prev_data_, u_next_data_,
-                u_prev_block.data(), u_next_block.data());
-
-  // Evaluate
-  const Vector3d U_prev = block_value<D>(_Nu_.data(), u_prev_block.data(), ncoeffs_u);
-  const Vector3d U_next = block_value<D>(_Nu_.data(), u_next_block.data(), ncoeffs_u);
-
-  // Update
-  fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
-  fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
-
-  if constexpr (Scalars){
+  auto& a = intp.stamps_.a();
+  simplex_load::CacheTables cache;
+  const bool cached = use_cache && simplex_load::cache_read(cache_file, key, cache)
+                   && (!include_pressure || cache.ncoeffs_p > 0)
+                   && (!include_phi || cache.ncoeffs_phi > 0);
+  if (cached){
+    std::cout << "Mesh cache: read from " << cache_file << std::endl;
+    intp.dim = cache.gdim;
+    intp.x_min = cache.x_min;
+    intp.x_max = cache.x_max;
+    intp.hmin_ = cache.hmin;
+    intp.ncoeffs_u = cache.ncoeffs_u;
+    intp.ncoeffs_p = include_pressure ? cache.ncoeffs_p : 0;
+    intp.ncoeffs_phi = include_phi ? cache.ncoeffs_phi : 0;
+    check_dofs_fit(intp.ncoeffs_u, std::max(intp.ncoeffs_p, intp.ncoeffs_phi), Cell::n_dofs_max, "SimplexInterpol");
+    intp.topo_ = std::move(cache.topo);
+    intp.coords_ = std::move(cache.coords);
+    intp.facet_neigh_ = std::move(cache.facets);
+    intp.u_dofs_.adopt(std::move(cache.u_nodes), intp.ncoeffs_u);
+    a.u = std::move(cache.u_values);
+    u_map = std::move(cache.u_map);
     if (include_pressure){
-      std::array<double, Cell::n_dofs_max> p_prev_block, p_next_block;
-      gather_stamps<Cell::n_verts, Cell::n_dofs_max>(p_dofs_[id], p_dofs_.stride(), p_prev_data_, p_next_data_,
-                    p_prev_block.data(), p_next_block.data());
-      const double P_prev = block_scalar(_Np_.data(), p_prev_block.data(), ncoeffs_p);
-      const double P_next = block_scalar(_Np_.data(), p_next_block.data(), ncoeffs_p);
-      fields.P = alpha_t * P_next + (1-alpha_t) * P_prev;
+      intp.p_dofs_.adopt(std::move(cache.p_nodes), intp.ncoeffs_p);
+      a.p = std::move(cache.p_values);
+      p_map = std::move(cache.p_map);
     }
+    if (include_phi){
+      intp.phi_dofs_.adopt(std::move(cache.phi_nodes), intp.ncoeffs_phi);
+      a.phi = std::move(cache.phi_values);
+      phi_map = std::move(cache.phi_map);
+    }
+    intp.stamps_.hold_a(cache.stamp);
+    intp.ncells_ = intp.topo_.size()/nv;
+    intp.nverts_ = intp.coords_.size()/intp.dim;
+    intp.set_period();
+    partrac::phase("mesh cache");
+    return;
   }
 
-  if (wants_gradient()){
-    cell_deriv(cells_[id], pos.bary, ncoeffs_u, _Nux_.data(), _Nuy_.data(), _Nuz_.data(), "u");
-    const Matrix3d gradU_prev = block_gradient<D>(_Nux_.data(), _Nuy_.data(), _Nuz_.data(), u_prev_block.data(), ncoeffs_u);
-    const Matrix3d gradU_next = block_gradient<D>(_Nux_.data(), _Nuy_.data(), _Nuz_.data(), u_next_block.data(), ncoeffs_u);
-    fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
-    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
+  simplex_load::Tables t;
+  simplex_load::build_tables(req, t);
+
+  intp.adopt_tables(t);
+  intp.ncoeffs_phi = t.ncoeffs_phi;
+  intp.phi_dofs_ = std::move(t.phi_dofs);
+  intp.ncells_ = t.mesh.ncells;
+  intp.nverts_ = t.mesh.nverts;
+
+  simplex_load::read_field_by_node(first, u_field, t, t.el_u, t.node_order(t.el_u), a.u, u_map);
+  if (include_pressure)
+    simplex_load::read_field_by_node(first, p_field, t, t.el_p, t.node_order(t.el_p), a.p, p_map);
+  if (include_phi)
+    simplex_load::read_field_by_node(first, phi_field, t, t.el_phi, t.node_order(t.el_phi), a.phi, phi_map);
+  intp.stamps_.hold_a(first);
+
+  intp.topo_ = std::move(t.mesh.topo);
+  intp.coords_ = std::move(t.mesh.coords);
+
+  if (use_cache){
+    simplex_load::CacheTables out;
+    out.topo = intp.topo_;
+    out.coords = intp.coords_;
+    out.facets = intp.facet_neigh_;
+    out.u_nodes = intp.u_dofs_.table();
+    out.u_values = a.u;
+    out.u_map = u_map;
+    out.p_nodes = intp.p_dofs_.table();
+    out.p_values = a.p;
+    out.p_map = p_map;
+    out.phi_nodes = intp.phi_dofs_.table();
+    out.phi_values = a.phi;
+    out.phi_map = phi_map;
+    out.ncells = intp.ncells_;
+    out.nverts = intp.nverts_;
+    out.gdim = intp.dim;
+    out.ncoeffs_u = intp.ncoeffs_u;
+    out.ncoeffs_p = intp.ncoeffs_p;
+    out.ncoeffs_phi = intp.ncoeffs_phi;
+    out.ncomp_u = std::size_t(nv - 1);
+    out.hmin = intp.hmin_;
+    out.x_min = intp.x_min;
+    out.x_max = intp.x_max;
+    out.stamp = intp.stamps_.key_a();
+    simplex_load::cache_write(cache_file, key, out);
+    partrac::phase("mesh cache written");
   }
 }
 
-template class SimplexInterpol<Triangle>;
-template class SimplexInterpol<Tet>;
+template<typename I>
+void DolfinH5Format::read(I& intp, const Key& file, typename I::Stamp& s)
+{
+  // The node counts every stamp shares
+  const auto& a = intp.stamps_.a();
+  simplex_load::read_into(file, u_field, u_map, a.u, s.u);
+  if (intp.include_pressure) simplex_load::read_into(file, p_field, p_map, a.p, s.p);
+  if (intp.include_phi)      simplex_load::read_into(file, phi_field, phi_map, a.phi, s.phi);
+}
 
-#endif
+template void DolfinH5Format::load(SimplexInterpol<Triangle>&, const std::string&);
+template void DolfinH5Format::load(SimplexInterpol<Tet>&, const std::string&);
+template void DolfinH5Format::read(SimplexInterpol<Triangle>&, const Key&, SimplexInterpol<Triangle>::Stamp&);
+template void DolfinH5Format::read(SimplexInterpol<Tet>&, const Key&, SimplexInterpol<Tet>::Stamp&);
+
+template class StampedInterpol<Triangle, DolfinH5Format>;
+template class StampedInterpol<Tet, DolfinH5Format>;
