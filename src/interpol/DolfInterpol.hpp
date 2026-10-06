@@ -25,6 +25,8 @@ class DolfInterpol final
 public:
   DolfInterpol(const std::string& infilename);
   void update(const double t);
+  // The two stamps blended at t, held for every later time
+  void freeze(const double t) override;
   // The walk first; the fallback is dolfin's tree, not MeshCore's
   bool locate(const Vector3d &x, const double t, CellPos& pos){
     assert(in_bracket(t, t_prev, t_next, this->stamp_snap));

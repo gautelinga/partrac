@@ -24,7 +24,7 @@ inline void add_app_params(partrac::Schema& s){
 // t is what the run counts, a time or a path length
 inline void add_run_params(partrac::Schema& s, const std::string& t_doc){
   add_app_params(s);
-  s.opt<int>("dump_chunk_size", 0, "particles per dump chunk");
+  s.opt<int>("dump_chunk_size", 0, "dumps per dump file, 0 = one file");
   s.opt<bool>("minimal_output", false, "dump less");
   s.opt<bool>("verbose", false, "print the parameters");
   s.runtime<double>("t", 0.0, t_doc);

@@ -33,6 +33,8 @@ class SplitInterpol final
 public:
   SplitInterpol(const std::string& infilename);
   void update(const double t);
+  // The two stamps blended at t, held for every later time
+  void freeze(const double t) override;
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
@@ -162,6 +164,7 @@ protected:
 
   // The stamps the fields are blended between, keyed by the stamp's file
   partrac::StampBuffer<Stamp, std::string> stamps_;
+  Stamp frozen_;   // a blend frozen between two stamps
   const double* u_prev_ = nullptr;
   const double* u_next_ = nullptr;
   const double* int_prev_ = nullptr;

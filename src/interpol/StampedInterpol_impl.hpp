@@ -64,8 +64,7 @@ void StampedInterpol<Cell, Format>::update(const double t)
 {
   const auto sp = fmt_.ts.get(t);
 
-  if (partrac::stamp_reload(is_initialized, t, fmt_.ts.get_t_max(),
-                            {t_prev, t_next}, {sp.prev.t, sp.next.t})){
+  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
     partrac::phase_begin("update");
     const auto fill = stamps_.load(fmt_.key(*this, sp.prev), fmt_.key(*this, sp.next),
                                    [&](const typename Format::Key& key, Stamp& s){
@@ -100,10 +99,6 @@ void StampedInterpol<Cell, Format>::update(const double t)
 template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::freeze(const double t)
 {
-  const double t_min = fmt_.ts.get_t_min(), t_max = fmt_.ts.get_t_max();
-  if (t < t_min || t > t_max)
-    partrac::fail(this->infilename, ": the fields cannot be frozen at t = ", t, ", outside the stamps' ",
-                  t_min, " to ", t_max);
   update(t);
   const double a = stamp_weight(t, t_prev, t_next);
   if (a != 0.){

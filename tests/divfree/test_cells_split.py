@@ -133,3 +133,48 @@ def test_at_the_walls_rk4cells_declines_no_more_than_rk4_and_stays_in_the_fluid(
                 z = g["points"][:, 2]
                 assert (z >= 0).all() and (z <= 1).all(), t
     assert declined["RK4cells"] <= declined["RK4"], declined
+
+
+@needs_apps
+@pytest.mark.parametrize("case", ["in", "out"])
+@pytest.mark.parametrize("scheme", ["explicit", "RK4", "RK4cells"])
+def test_past_the_last_stamp_the_field_is_held(channel, tmp_path, case, scheme):
+    """T beyond the stamps is cut to the last one, t = 1; the loop's last step,
+    0.9 to 1.2, is cut at that stamp and goes on past it on the last stamp's
+    field held, for every scheme, on the plain field ("in") and the split one
+    ("out"): its checkpoint at 1.2 is that of a run to T = 0.9 on the same
+    case with the last stamp repeated at t = 2. A Debug build also checks
+    that every evaluation lies in its bracket."""
+    h5py = pytest.importorskip("h5py")
+    runs = {}
+    for name, extra, T in (("held", None, 2.0), ("repeated", "2 ", 0.9)):
+        d = tmp_path / name
+        shutil.copytree(channel.parent / case, d)
+        stamps = d / "timestamps.dat"
+        if extra:
+            last = stamps.read_text().split("\n")[-2].split()[1]
+            stamps.write_text(stamps.read_text() + extra + last + "\n")
+        run_app(TRACERS, d / "dolfin_params.dat", ARGS, "scheme=" + scheme, "dt=0.3", "T=%r" % T,
+                "dump_intv=0.3")
+        runs[name] = d
+    assert max(all_dumps(runs["held"])) == pytest.approx(0.9)
+    with h5py.File(checkpoint_file(runs["held"]), "r") as h:
+        assert h.attrs["t"] == pytest.approx(1.2)
+    held, repeated = (read_checkpoint(runs[k])["points"] for k in ("held", "repeated"))
+    assert np.abs(held - repeated).max() < 1e-12
+
+
+@needs_apps
+def test_frozen_fields_on_the_split_do_not_depend_on_the_time(channel, tmp_path):
+    """Fields frozen between the two stamps, interior values too, are their
+    blend at t_frozen at every time: a run from t0 = 0 and the same run from
+    t0 = 2, past the last stamp, end at the same points bit for bit."""
+    ends = []
+    for t0 in (0.0, 2.0):
+        d, _ = run(channel, tmp_path, "t0_%g" % t0, "scheme=RK4 dt=0.05 frozen_fields=true t_frozen=0.5",
+                   "t0=%r T=%r dump_intv=0.4" % (t0, t0 + 0.4), binary=TRACERS)
+        start, end = dump_at(d, t0)["points"], dump_at(d, t0 + 0.4)["points"]
+        assert np.abs(end - start).max() > 1e-3
+        ends.append(end)
+    assert np.array_equal(ends[0], ends[1])
+

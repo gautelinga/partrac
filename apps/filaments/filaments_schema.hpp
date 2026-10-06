@@ -38,7 +38,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<std::string>("resize_target", "ds_max", "the length a resize brings an edge back to: ds_max or ds_init");
   s.opt<std::string>("outside", "ignore", "an edge with a node that cannot take its step: ignore, or reinject the whole edge at a random offset");
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
-  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
+  s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
   s.opt<int>("filter_target", 0, "filter target");
   s.opt<bool>("filter", false, "filter the filament");

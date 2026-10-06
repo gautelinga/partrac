@@ -54,7 +54,7 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   : MeshCore<Cell>(infilename)
 {
   constexpr int nv = Cell::n_verts;
-  id_ = next_id++;
+  new_id();
   partrac::phase_begin("load");
   dolfin_params = partrac::parse_file_or_exit(simplex_freq_schema(mode), infilename);
 
@@ -139,6 +139,12 @@ void SimplexFreqInterpol<Cell>::update(const double t)
 {
   is_initialized = true;
   t_update = t;
+}
+
+template<typename Cell>
+void SimplexFreqInterpol<Cell>::new_id()
+{
+  id_ = next_id++;
 }
 
 template<typename Cell>

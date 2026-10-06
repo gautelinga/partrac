@@ -25,7 +25,7 @@ import pytest
 
 from cases import LINEAR, UNIFORM, stamp_case
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
-from paths import app
+from paths import app, built_with_dolfin
 from runs import checkpoint_file, checkpoint_folder, run_app
 
 PARTRAC = app("partrac")
@@ -34,6 +34,8 @@ TENSORS = app("tracertensors")
 
 needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (PARTRAC, TRACERS, TENSORS)),
                                 reason="partrac, tracers or tracertensors is not built")
+needs_fenics = [pytest.mark.fenics,
+                pytest.mark.skipif(not built_with_dolfin(), reason="mode=fenics needs a build with dolfin")]
 
 # Alternating stamps off the dt grid of every dt below; the last far past T
 ALTERNATING = [(0.0, "a"), (0.37, "b"), (0.61, "a"), (1.13, "b"), (3.0, "a")]
@@ -202,6 +204,22 @@ def test_frozen_fields_are_not_cut(stamp_mesh, tmp_path):
     d = partrac_case(stamp_mesh, tmp_path, [(0.0, "lin_a"), (0.35, "lin_b"), (3.0, "lin_a")],
                      "frozen_fields=true t_frozen=0.2")
     assert n_accepted(d) == 250
+
+
+@needs_apps
+@pytest.mark.parametrize("mode", ["triangle", pytest.param("fenics", marks=needs_fenics)])
+def test_frozen_fields_do_not_depend_on_the_time(stamp_mesh, tmp_path, mode):
+    """Fields frozen between two stamps are their blend at t_frozen at every
+    time: a run from t0 = 0 and the same run from t0 = 2, past the last
+    stamp, end at the same points bit for bit."""
+    ends = []
+    for t0 in (0.0, 2.0):
+        params = stamp_case(stamp_mesh, tmp_path, [(0.0, "lin_a"), (1.0, "lin_b")], name="t0_%g" % t0)
+        run_app(TRACERS, params, TENSOR_BASE, "mode=" + mode, "scheme=RK4 dt=0.05 frozen_fields=true t_frozen=0.5",
+                "t0=%r T=%r dump_intv=0.4" % (t0, t0 + 0.4))
+        ends.append(dump_at(params.parent, t0 + 0.4)["points"])
+    assert np.abs(ends[0][:, :2]).max() > 0.1
+    assert np.array_equal(ends[0], ends[1])
 
 
 @needs_apps

@@ -15,10 +15,9 @@ struct StampTimes {
   double next = 0.;
 };
 
-// Always load once; keep the last bracket past t_max
-inline bool stamp_reload(const bool held, const double t, const double t_max,
-                         const StampTimes& have, const StampTimes& want){
-  return !held || ((have.prev != want.prev || have.next != want.next) && t < t_max);
+// Always load once; past the last stamp both ends are the last stamp, held
+inline bool stamp_reload(const bool held, const StampTimes& have, const StampTimes& want){
+  return !held || have.prev != want.prev || have.next != want.next;
 }
 
 // What holding a wanted stamp took

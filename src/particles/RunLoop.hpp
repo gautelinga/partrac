@@ -7,7 +7,6 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <random>
 #include <set>
@@ -63,24 +62,26 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   // Parallel generators; before the folders, which name the seed
   std::vector<std::mt19937> gens = make_generators(prm);
 
-  std::cout << "Creating folders..." << std::endl;
-  RunFolders out = make_run_folders(intp->get_folder(), name, prm,
-                                    prm.check_only() ? folder_opts | DryRun : folder_opts);
-
-  if (prm.get<bool>("verbose"))
-    prm.print();
-
   // Domain size for the dumped parameters: runtime entries, refused as input
   prm.set<double>("Lx", intp->get_Lx());
   prm.set<double>("Ly", intp->get_Ly());
   prm.set<double>("Lz", intp->get_Lz());
 
+  // The fields loaded or frozen before any folder is made, so a failure leaves none
   const double t0 = std::max(intp->get_t_min(), prm.get<double>("t0"));
   prm.set<double>("t0", t0);
+  const auto folders = [&](){
+    std::cout << "Creating folders..." << std::endl;
+    RunFolders out = make_run_folders(intp->get_folder(), name, prm,
+                                      prm.check_only() ? folder_opts | DryRun : folder_opts);
+    if (prm.get<bool>("verbose"))
+      prm.print();
+    return out;
+  };
   if (marches){
     // Fields frozen at t0; T is the integration time
     intp->update(t0);
-    return Run{prm, intp, out, std::move(gens), prm.get<double>("xn0"), prm.get<double>("Ln"),
+    return Run{prm, intp, folders(), std::move(gens), prm.get<double>("xn0"), prm.get<double>("Ln"),
                true, true, t0};
   }
   const bool frozen_fields = prm.has("frozen_fields") && prm.get<bool>("frozen_fields");
@@ -89,10 +90,16 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
     T = prm.get<double>("T");
   prm.set<double>("T", T);
 
-  if (frozen_fields)
-    intp->freeze(prm.get<double>("t_frozen"));
+  if (frozen_fields){
+    // Unset: the start time; past the fields' times, their end; recorded so a
+    // resume freezes there too
+    const double t_frozen = std::clamp(prm.get_or<double>("t_frozen", t0), intp->get_t_min(), intp->get_t_max());
+    prm.set<double>("t_frozen", t_frozen);
+    intp->freeze(t_frozen);
+  }
   else
     intp->update(t0);
+  RunFolders out = folders();
 
   // Walls for the explicit diffusive step
   const bool diffuses = prm.has("Dm") && prm.get<double>("Dm") > 0.;
@@ -257,7 +264,9 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   const double dump_intv = prm.get<double>("dump_intv");
   const double stat_intv = prm.get<double>("stat_intv");
   const double checkpoint_intv = prm.get<double>("checkpoint_intv");
-  const double chunk_intv = dump_intv*prm.get<int>("dump_chunk_size");
+  // A new dump file every dump_chunk_size dumps
+  const int chunk_size = prm.get<int>("dump_chunk_size");
+  const Uint chunk_steps = dump_intv > 0. && chunk_size > 0 ? steps_per(dump_intv, dt)*Uint(chunk_size) : 0;
   const double ds_max = prm.get<double>("ds_max");
   const int sort_every = prm.has("sort_every") ? prm.get<int>("sort_every") : 0;
   // S is computed in the refresh
@@ -284,15 +293,11 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
 
   bool step_noted = false;
 
-  // Steps cut at stamps; a stamp within snap of a piece's end makes no piece
+  // Steps cut at stamps, the last too (held past it); a stamp within snap of
+  // a piece's end makes no piece
   const bool cuts = !run.frozen_fields;
   const double snap = 1e-9*dt;
   run.intp->set_stamp_snap(snap);
-  const double t_last = run.intp->get_t_max();
-  const auto next_stamp = [&](const double ta){
-    const double s = run.intp->next_stamp_after(ta);
-    return s < t_last ? s : std::numeric_limits<double>::infinity();
-  };
 
   // Counted from the second step: the first refreshes and checkpoints
   PerfWindow counters;
@@ -341,14 +346,12 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     if (at_interval(it, dump_intv, dt)){
       std::string groupname = std::to_string(t);
       try {
-        // Clear file if it exists, otherwise create
-        if (at_interval(it, chunk_intv, dt) && it > 0){
+        // A new file at each chunk, the first made at the start
+        if (chunk_steps > 0 && it % chunk_steps == 0 && it > 0){
           h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
-          h5f.openFile(h5fname.c_str(), H5F_ACC_TRUNC);
+          { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
         }
-        else {
-          h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
-        }
+        h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
         h5f.createGroup(groupname + "/");
         mesh.dump_hdf5(h5f, groupname, output_fields);
         h5f.close();
@@ -364,10 +367,10 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
       double tb = t_end;
       if (cuts){
         // Stamps just after the piece's start: taken as its start
-        double s = next_stamp(ta), t_upd = ta;
+        double s = run.intp->next_stamp_after(ta), t_upd = ta;
         while (s <= ta + snap){
           t_upd = s;
-          s = next_stamp(s);
+          s = run.intp->next_stamp_after(s);
         }
         if (t_upd != t)
           run.intp->update(t_upd);

@@ -70,6 +70,10 @@ public:
     omega_given_ = width == 4;
   };
   FreqStamp& get(const int i) { return ordered_stamps[i]; };
+  // One component of weight 1 at every time, rate 0
+  void make_steady(){
+    ordered_stamps.assign(1, FreqStamp(0., 0., 1., ordered_stamps[0].filename));
+  };
   int size() const { return ordered_stamps.size(); };
   // Lines of `omega phi a file`, which need no base frequency
   bool omega_given() const { return omega_given_; };

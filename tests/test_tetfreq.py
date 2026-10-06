@@ -229,3 +229,33 @@ def test_tracers_run_and_stay_in_the_box(freq_case):
         assert col.min() > -1e-9 and col.max() < 1 + 1e-9, \
             "%s: a particle left the box along %s: %g to %g" % (mode, name,
                                                                 col.min(), col.max())
+
+
+def test_frozen_fields_sum_the_modes_once(freq_case):
+    """Frozen at t = 0.362, the modes are summed once at that time: the dumped
+    velocity and pressure are the closed form at 0.362 at every time, and a
+    run from t0 = 0 and the same run from t0 = 0.55 end at the same points bit
+    for bit."""
+    pytest.importorskip("h5py")
+    mode, d, cfg, exact, centre, _ = freq_case
+    if not os.path.exists(TRACERS):
+        pytest.skip("tracers is not built")
+    t_frozen = 0.362
+    ends = []
+    for t0 in (0.0, 0.55):
+        run_app(TRACERS, cfg, "mode=" + mode,
+                "Dm=0 dt=0.005 Nrw=200 Nrw_max=2000 stat_intv=1e9 checkpoint_intv=1e9 "
+                "init_mode=points_xy int_order=2 scheme=RK4 random=false seed=1 "
+                "frozen_fields=true dump_intv=0.05 t_frozen=%r" % t_frozen,
+                "t0=%r T=%r" % (t0, t0 + 0.05), centre)
+        dumps = all_dumps(d, raw=True)
+        start, end = (dumps[round(t, 9)] for t in (t0, t0 + 0.05))
+        for g in (start, end):
+            x = g["points"]
+            want = exact({"y": x[:, 1], "z": x[:, 2]}, t_frozen)
+            for i, name in enumerate(("ux", "uy", "uz")):
+                assert np.abs(g["u"][:, i] - want[name]).max() < 1e-10, (t0, name)
+            assert np.abs(g["p"].ravel() - want["p"]).max() < 1e-10, t0
+        assert np.abs(end["points"] - start["points"]).max() > 1e-4
+        ends.append(end["points"])
+    assert np.array_equal(ends[0], ends[1])

@@ -362,8 +362,8 @@ template<typename Cell>
 void DolfInterpol<Cell>::update(const double t){
   StampPair sp = ts.get(t);
 
-  // Always load once; keep last bracket past t_max
-  if ( !is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max()) ){
+  // Always load once; past the last stamp both ends are the last stamp, held
+  if ( !is_initialized || t_prev != sp.prev.t || t_next != sp.next.t ){
     const std::string u_field = dolfin_params.template get<std::string>("velocity_field");
     const std::string p_field = dolfin_params.template get<std::string>("pressure_field");
     // A stamp's velocity and pressure
@@ -402,6 +402,23 @@ void DolfInterpol<Cell>::update(const double t){
     t_next = sp.next.t;
   }
   t_update = t;
+}
+
+template<typename Cell>
+void DolfInterpol<Cell>::freeze(const double t){
+  update(t);
+  const double a = stamp_weight(t, t_prev, t_next);
+  // Blend the two stamps into both
+  const auto hold = [a](std::vector<double>& prev, std::vector<double>& next){
+    if (a != 0.)
+      for (std::size_t i = 0; i < prev.size(); ++i) prev[i] = a*next[i] + (1 - a)*prev[i];
+    next = prev;
+  };
+  hold(u_prev_data_, u_next_data_);
+  hold(p_prev_data_, p_next_data_);
+  t_prev = t;
+  t_next = t;
+  std::cout << "Fields frozen at t = " << t << std::endl;
 }
 
 // Basis from dolfin at x; bary unused

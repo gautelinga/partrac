@@ -360,7 +360,7 @@ def test_frozen_fields_hold_the_stamp_at_t_frozen_whatever_the_time(tmp_path, na
     on stamps at t = 5 and 10 with the fields frozen at either, the tracers
     see that stamp's field at every step, bit for bit what they see on a case
     holding that stamp alone, and not the time weight's blend of the two. A
-    time outside the stamps is refused."""
+    time past the stamps freezes the last one."""
     app_ = app(name)
     ends = {}
     for tf in (5, 10):
@@ -385,8 +385,8 @@ def test_frozen_fields_hold_the_stamp_at_t_frozen_whatever_the_time(tmp_path, na
     run_app(app_, one, FROZEN[name], ["t0=10", "T=10.2", "t_frozen=10"], timeout=300)
     a, b = all_dumps(tmp_path / "mid")[5.2], all_dumps(tmp_path / "quarter")[10.2]
     assert np.abs(a["points"] - b["points"]).max() < 1e-12
-    r = run_app(app_, two, FROZEN[name], ["t0=5", "T=5.2", "t_frozen=20"], check=False, timeout=300)
-    assert r.returncode == 2 and "cannot be frozen at t = 20, outside the stamps' 5 to 10" in r.stderr, r.stderr
+    run_app(app_, two_stamp_cavity(tmp_path / "past"), FROZEN[name], ["t0=5", "T=5.2", "t_frozen=20"], timeout=300)
+    assert np.array_equal(all_dumps(tmp_path / "past")[5.2]["points"], ends[10])
 
 
 def refused(params, message, *args):

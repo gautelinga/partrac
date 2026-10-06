@@ -40,7 +40,7 @@ inline partrac::Schema partrac_schema(){
   add_run_params(s, "current time");
   s.opt<double>("T_inject", 1e10, "time to stop injecting at");
   s.opt<double>("tau_max", 0.0, "max tau");
-  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
+  s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   add_intervals(s, "dt", {"coarsen_intv", "filter_intv", "inject_intv", "refine_intv", "tau_intv"});
   s.opt<double>("refine_intv", 100.0, "refinement interval");
   s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");

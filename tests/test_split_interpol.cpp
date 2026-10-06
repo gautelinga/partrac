@@ -324,6 +324,8 @@ void check_returns_polynomial(const std::string& tag, const std::size_t n){
   for (const double t : {0., 0.4, 1.}){
     intp.update(t);
     const double s = 1. + t;   // stamp k is the polynomial times 1 + k
+    // the bracket starting at t: at the last stamp, that stamp held, at rest in time
+    const double rate = t < 1. ? 1. : 0.;
     for (const Vector3d& x : pts){
       CellPos pos;
       REQUIRE(intp.locate(x, t, pos));
@@ -334,10 +336,10 @@ void check_returns_polynomial(const std::string& tag, const std::size_t n){
       for (Uint d = 0; d < gdim; ++d){
         REQUIRE(got.get_u()[d] == Approx(s*u[d]).margin(1e-11));
         // Stamp k is (1 + k) times one field, so the rate in time is the field
-        REQUIRE(got.get_a()[d] == Approx(u[d]).margin(1e-11));
+        REQUIRE(got.get_a()[d] == Approx(rate*u[d]).margin(1e-11));
         for (Uint j = 0; j < gdim; ++j){
           REQUIRE(got.gradU(d, j) == Approx(s*g(d, j)).margin(1e-9));
-          REQUIRE(got.gradA(d, j) == Approx(g(d, j)).margin(1e-9));
+          REQUIRE(got.gradA(d, j) == Approx(rate*g(d, j)).margin(1e-9));
         }
       }
       // div u = 0 is what the construction is for

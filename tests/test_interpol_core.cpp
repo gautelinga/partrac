@@ -460,6 +460,7 @@ struct BareMesh : public MeshCore<Cell> {
   }
   using MeshCore<Cell>::locate;
   void update(const double) {}
+  void freeze(const double) {}
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) {}
   double get_t_min() { return 0.; }
   double get_t_max() { return 1.; }

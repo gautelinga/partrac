@@ -81,7 +81,7 @@ inline void add_tracer_params(partrac::Schema& s, const TracerDefaults& d){
   s.require<double>("dt", "timestep");
   s.require<double>("T", "final time");
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
-  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
+  s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   add_scheme(s, "RK4");
   s.opt<std::string>("outside", d.outside, "a particle that cannot take its step: ignore (it stays), reinject at a random offset, or mark (c = 2)");
   s.choices("outside", {"ignore", "reinject", "mark"});

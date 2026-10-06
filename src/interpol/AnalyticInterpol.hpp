@@ -17,10 +17,31 @@
 #ifndef __ANALYTICINTERPOL_HPP
 #define __ANALYTICINTERPOL_HPP
 
+// An expression evaluated at one time whatever the time asked
+class FrozenExpr final : public Expr {
+public:
+  FrozenExpr(const partrac::Params& expr_params, std::shared_ptr<Expr> e, const double t)
+    : Expr(expr_params), e(std::move(e)), t(t) {}
+  void eval(const Vector3d &x, const double, PointValues& ptvals) { e->eval(x, t, ptvals); }
+  bool inside(const Vector3d &x, const double) { return e->inside(x, t); }
+  bool has_wall() const { return e->has_wall(); }
+  double sdf(const Vector3d &x) const { return e->sdf(x); }
+  Vector3d sdf_grad(const Vector3d &x) const { return e->sdf_grad(x); }
+private:
+  std::shared_ptr<Expr> e;
+  double t;
+};
+
 class AnalyticInterpol final : public Interpol {
 public:
   AnalyticInterpol(const std::string infilename);
   void update(const double t) { this->t_update=t; };
+  // The expression at t for every later time
+  void freeze(const double t) override {
+    update(t);
+    expr = std::make_shared<FrozenExpr>(expr_params, expr, t);
+    std::cout << "Fields frozen at t = " << t << std::endl;
+  }
   bool locate(const Vector3d &x, const double t, CellPos& pos) {
     return expr->inside(x, t);
   };

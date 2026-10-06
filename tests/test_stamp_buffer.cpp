@@ -160,24 +160,23 @@ TEST_CASE("An empty buffer is not the stamp its key defaults to", "[stamp_buffer
   REQUIRE(read == std::vector<std::string>{""});
 }
 
-TEST_CASE("The bracket is loaded once, and kept past t_max", "[stamp_buffer]") {
+TEST_CASE("The bracket is loaded once, and the last stamp held past t_max", "[stamp_buffer]") {
   const partrac::StampTimes first{0., 1.};
   const partrac::StampTimes second{1., 2.};
+  const partrac::StampTimes last{2., 2.};
 
-  // Nothing held: the first update loads whatever the time asks for, even at
-  // or past the end of the field data
-  REQUIRE(partrac::stamp_reload(false, 0., 2., {0., 0.}, first));
-  REQUIRE(partrac::stamp_reload(false, 2., 2., {0., 0.}, second));
-  REQUIRE(partrac::stamp_reload(false, 9., 2., {0., 0.}, second));
+  // Nothing held: the first update loads whatever the time asks for
+  REQUIRE(partrac::stamp_reload(false, {0., 0.}, first));
+  REQUIRE(partrac::stamp_reload(false, {0., 0.}, last));
 
   // The bracket held is the bracket wanted: nothing to do
-  REQUIRE_FALSE(partrac::stamp_reload(true, 0.5, 2., first, first));
+  REQUIRE_FALSE(partrac::stamp_reload(true, first, first));
 
-  // A step into the next bracket, within the field data: load it
-  REQUIRE(partrac::stamp_reload(true, 1.5, 2., first, second));
+  // A step into the next bracket: load it
+  REQUIRE(partrac::stamp_reload(true, first, second));
 
-  // At and past t_max the last bracket is kept, so a run that ends there still
-  // has two stamps to take a rate from
-  REQUIRE_FALSE(partrac::stamp_reload(true, 2., 2., first, second));
-  REQUIRE_FALSE(partrac::stamp_reload(true, 3., 2., first, second));
+  // At and past t_max the timestamps give the last stamp at both ends: it is
+  // loaded and held, so no time beyond the data extrapolates the last pair
+  REQUIRE(partrac::stamp_reload(true, second, last));
+  REQUIRE_FALSE(partrac::stamp_reload(true, last, last));
 }

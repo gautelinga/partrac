@@ -75,6 +75,7 @@ struct EverywhereInterpol final : public Interpol {
   double get_t_min() override { return 0.; }
   double get_t_max() override { return 1.; }
   void update(const double) override {}
+  void freeze(const double) override {}
   bool locate(const Vector3d&, const double, CellPos&) override { return true; }
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) override {}
   using Interpol::locate;
@@ -88,6 +89,7 @@ struct HumpInterpol final : public Interpol {
   double get_t_min() override { return 0.; }
   double get_t_max() override { return 1.; }
   void update(const double) override {}
+  void freeze(const double) override {}
   bool locate(const Vector3d& x, const double, CellPos& pos) override {
     if (x[1] < hump(x[0])) return false;
     pos.id = 0;

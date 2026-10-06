@@ -24,6 +24,7 @@ from runs import run_app
 
 FILAMENTS = app("filaments")
 INTERPOL = app("interpol")
+TRACERS = app("tracers")
 
 
 def three_stamp_felbm(d, shear=False, extra=""):
@@ -66,6 +67,23 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     # z(t) = t^2/2; first-order Euler at dt = 0.01 falls short by t*dt/2, well inside 0.05
     t = max(z)
     assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
+
+
+@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+def test_frozen_fields_hold_the_blend_at_t_frozen(tmp_path):
+    """Frozen at t = 0.5, the field is u_z = 0.5 at every time, also past
+    the last stamp, and the tracers move at that speed."""
+    d = tmp_path / "felbm"
+    d.mkdir()
+    three_stamp_felbm(d)
+    run_app(TRACERS, d / "felbm_params.dat",
+            "mode=felbm init_mode=points_xyz x0=8 y0=8 z0=8 Nrw=4 Nrw_max=4 Dm=0 int_order=1 dt=0.1 T=3 "
+            "dump_intv=1 stat_intv=1e9 checkpoint_intv=1e9 frozen_fields=true t_frozen=0.5 random=false seed=1")
+    dumps = all_dumps(d, raw=True)
+    assert sorted(dumps) == [0.0, 1.0, 2.0, 3.0]
+    for g in dumps.values():
+        assert np.allclose(g["u"][:, 2], 0.5, rtol=0, atol=1e-12)
+    assert np.allclose(dumps[3.0]["points"][:, 2] - dumps[0.0]["points"][:, 2], 1.5, rtol=0, atol=1e-9)
 
 
 def run_probe(d, t0, int_order, check=True):

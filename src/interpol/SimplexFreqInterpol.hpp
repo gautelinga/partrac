@@ -33,6 +33,8 @@ class SimplexFreqInterpol final
 public:
   SimplexFreqInterpol(const std::string& infilename);
   void update(const double t);
+  // The components summed at t into one, held for every later time
+  void freeze(const double t) override;
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
@@ -67,6 +69,7 @@ protected:
   __attribute__((noinline)) const FreqWeights& fill_weights(const double t);
 
   std::uint64_t id_ = 0;   // tells this loader from one later at the same address
+  void new_id();
   FreqStamps fs;   // frequencies holder
   double omega0 = 0.;
 

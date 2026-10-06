@@ -30,7 +30,7 @@ inline partrac::Schema weighted_walkers_schema(){
   s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
   s.opt<double>("t0", 0.0, "start time");
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
-  s.opt<double>("t_frozen", 0.0, "time to freeze the fields at");
+  s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   add_run_params(s, "current time");
   s.opt<double>("x0", 0.0, "initial position");
   s.opt<double>("y0", 0.0, "initial position");

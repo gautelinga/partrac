@@ -74,9 +74,8 @@ public:
   virtual double get_t_max() = 0;
   //
   virtual void update(const double t) = 0;
-  // The fields at t for every later time; the default only brackets t, so a
-  // loader without its own still evaluates at each step's time
-  virtual void freeze(const double t) { update(t); }
+  // The fields at t for every later time
+  virtual void freeze(const double t) = 0;
   // First stamp after t, where the blend's rate changes; +inf: none
   virtual double next_stamp_after(const double t) const { return std::numeric_limits<double>::infinity(); }
   // The run loop's snap at a stamp: how far a stage may lie outside the bracket

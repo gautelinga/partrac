@@ -164,3 +164,43 @@ def test_a_run_resumed_at_another_dt_goes_on_from_the_checkpoints_time(tmp_path)
     # the resumed run's own file, named by the time it starts at
     resumed = sorted(all_dumps(tmp_path, "data_from_t0.6*.h5"))
     assert len(resumed) == 5 and np.allclose(resumed, [0.6, 0.7, 0.8, 0.9, 1.0], rtol=0, atol=1e-9), resumed
+
+
+# --- dump files ------------------------------------------------------------------
+
+POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
+POINTS = ("mode=analytic init_mode=points_xyz x0=0 y0=0 z0=0 Nrw=20 Nrw_max=20 Dm=0 int_order=1 "
+          "scheme=RK4 dt=0.1 stat_intv=1e9 random=false seed=1")
+needs_tracers = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+
+
+@needs_tracers
+def test_a_dump_file_holds_dump_chunk_size_dumps(tmp_path):
+    """dump_chunk_size counts dumps: with a dump every two steps (dump_intv =
+    0.25 floored to 0.2) and three dumps a file, the files start at 0, 0.6 and
+    1.2 and hold 0, 0.2, 0.4; 0.6, 0.8, 1.0; and 1.2."""
+    h5py = pytest.importorskip("h5py")
+    params = copy_example(POISEUILLE, tmp_path)
+    run_app(TRACERS, params, POINTS, "T=1.2 dump_intv=0.25 dump_chunk_size=3")
+    files = sorted(tmp_path.rglob("data_from_t*.h5"))
+    assert [f.name for f in files] == ["data_from_t%f.h5" % t for t in (0., 0.6, 1.2)]
+    sizes = []
+    for f in files:
+        with h5py.File(f, "r") as h:
+            sizes.append(len(h))
+    assert sizes == [3, 3, 1]
+
+
+@needs_tracers
+def test_chunked_dumps_survive_a_resume(tmp_path):
+    """A run with dump files of two dumps each, stopped and resumed: the
+    resumed run starts its own file and the next chunk after it, and every
+    time is dumped once."""
+    args = [POINTS, "dump_intv=0.1 dump_chunk_size=2"]
+    params = copy_example(POISEUILLE, tmp_path)
+    run_app(TRACERS, params, args, "T=0.4")
+    run_app(TRACERS, params, args, "T=0.7", "restart_folder=%s" % checkpoint_folder(tmp_path))
+    files = sorted(f.name for f in tmp_path.rglob("data_from_t*.h5"))
+    assert files == ["data_from_t%f.h5" % t for t in (0., 0.2, 0.4, 0.5, 0.6)], files
+    assert sorted(all_dumps(tmp_path)) == pytest.approx([0.1 * k for k in range(8)])
+

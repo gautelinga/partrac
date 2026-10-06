@@ -271,6 +271,8 @@ class StructuredLattice
 public:
   StructuredLattice(const std::string& infilename, const std::string& interpolation);
   void update(const double t);
+  // The two stamps blended at t, held for every later time
+  void freeze(const double t) override;
   bool locate(const Vector3d &x, const double t, CellPos& pos);
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection() { can_reflect = true; };
@@ -499,11 +501,36 @@ inline Vector3d StructuredLattice::get_boundary_normal(const Vector3d &x, int&){
   });
 }
 
+inline void StructuredLattice::freeze(const double t){
+  update(t);
+  const double a = stamp_weight(t, t_prev, t_next);
+  const auto hold = [&](Grid3<double>& prev, Grid3<double>& next){
+    for (Uint i=0; i<n[0]; ++i)
+      for (Uint j=0; j<n[1]; ++j)
+        for (Uint k=0; k<n[2]; ++k){
+          if (a != 0.)
+            prev(i, j, k) = a*next(i, j, k) + (1 - a)*prev(i, j, k);
+          next(i, j, k) = prev(i, j, k);
+        }
+  };
+  hold(ux_prev, ux_next);
+  hold(uy_prev, uy_next);
+  if (!ignore_uz)
+    hold(uz_prev, uz_next);
+  if (!ignore_density)
+    hold(rho_prev, rho_next);
+  if (!ignore_pressure)
+    hold(p_prev, p_next);
+  t_prev = t;
+  t_next = t;
+  std::cout << "Fields frozen at t = " << t << std::endl;
+}
+
 inline void StructuredLattice::update(const double t){
   StampPair sp = ts.get(t);
 
-  // Always load once; keep last bracket past t_max
-  if (!is_initialized || ((t_prev != sp.prev.t || t_next != sp.next.t) && t < ts.get_t_max())){
+  // Always load once; past the last stamp both ends are the last stamp, held
+  if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
     if (is_initialized && t_next == sp.prev.t){
       std::swap(ux_prev, ux_next);
       std::swap(uy_prev, uy_next);

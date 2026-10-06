@@ -247,8 +247,7 @@ void SplitInterpol<Cell>::update(const double t)
   const std::string prev_file = get_folder() + "/" + sp.prev.filename;
   const std::string next_file = get_folder() + "/" + sp.next.filename;
 
-  if (partrac::stamp_reload(is_initialized, t, ts_.get_t_max(),
-                            {t_prev, t_next}, {sp.prev.t, sp.next.t})){
+  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
     partrac::phase_begin("update");
     const auto fill = stamps_.load(prev_file, next_file,
                                    [&](const std::string& key, Stamp& s){ read_stamp(key, s); });
@@ -274,6 +273,37 @@ void SplitInterpol<Cell>::update(const double t)
     t_next = sp.next.t;
   }
   t_update = t;
+}
+
+template<typename Cell>
+void SplitInterpol<Cell>::freeze(const double t)
+{
+  update(t);
+  const double a = stamp_weight(t, t_prev, t_next);
+  if (a != 0.){
+    // Blend the two stamps into one; the interior values are linear in the stamp's
+    const auto blend = [a](const std::vector<double>& prev, const std::vector<double>& next,
+                           std::vector<double>& out){
+      out.resize(prev.size());
+      for (std::size_t i = 0; i < prev.size(); ++i) out[i] = a*next[i] + (1 - a)*prev[i];
+    };
+    blend(stamps_.prev().u, stamps_.next().u, frozen_.u);
+    blend(stamps_.prev().u_int, stamps_.next().u_int, frozen_.u_int);
+    blend(stamps_.prev().p, stamps_.next().p, frozen_.p);
+    blend(stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
+    u_prev_ = frozen_.u.data();
+    int_prev_ = frozen_.u_int.data();
+    p_prev_ = frozen_.p.data();
+    phi_prev_ = frozen_.phi.data();
+  }
+  u_next_ = u_prev_;
+  int_next_ = int_prev_;
+  p_next_ = p_prev_;
+  phi_next_ = phi_prev_;
+  // A single stamp: the weight is zero and the rate too at every t
+  t_prev = t;
+  t_next = t;
+  std::cout << "Fields frozen at t = " << t << std::endl;
 }
 
 template class SplitInterpol<Triangle>;
