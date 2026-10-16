@@ -1,0 +1,6 @@
+# A continuous P4 vector element
+#
+# Compile this form with FFC: ffc -l dolfin vP4_2.ufl
+
+from ufl_legacy import *
+element = VectorElement("Lagrange", triangle, 4)

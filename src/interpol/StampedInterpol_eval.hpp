@@ -6,6 +6,7 @@
 #include <array>
 #include <cassert>
 #include "StampedInterpol.hpp"
+#include "near_wall.hpp"
 #include "p12_eval.hpp"
 
 // A cell without the near-wall rule: velocity and its rate at bary from the gathered nodes
@@ -43,9 +44,9 @@ inline std::array<bool, 2> StampedInterpol<Cell, Format>::wall_blocks(const int 
                                                                       double* next2) const
 {
   const WallEdges& w = wall_cells_[wall_index_[id]];
-  const bool quad_prev = near_wall::wall_block<Cell>(prev, prev2, w, rest_tol_prev_);
-  const bool quad_next = near_wall::wall_block<Cell>(next, next2, w, rest_tol_next_);
-  return {quad_prev, quad_next};
+  const bool at_rest_prev = near_wall::wall_block<Cell>(prev, prev2, w, rest_tol_prev_);
+  const bool at_rest_next = near_wall::wall_block<Cell>(next, next2, w, rest_tol_next_);
+  return {at_rest_prev, at_rest_next};
 }
 
 // A wall cell: P2 for a stamp whose wall vertices are at rest, else P1
@@ -55,35 +56,35 @@ __attribute__((always_inline))
 inline void StampedInterpol<Cell, Format>::wall_at(const int id, const std::array<double, 4>& bary,
                                                    const double alpha_t, const double* prev,
                                                    const double* next, const double* prev2,
-                                                   const double* next2, const bool quad_prev,
-                                                   const bool quad_next, PointValues& fields) const
+                                                   const double* next2, const bool at_rest_prev,
+                                                   const bool at_rest_next, PointValues& fields) const
 {
-  if (!(quad_prev || quad_next)){
+  if (!(at_rest_prev || at_rest_next)){
     plain_at<Velocity>(id, bary, alpha_t, prev, next, fields);
     return;
   }
   // P1 only for a stamp not at rest
   const Uint n2 = Cell::n_dofs_max;
-  const bool p1 = !(quad_prev && quad_next);
+  const bool p1 = !(at_rest_prev && at_rest_next);
   std::array<double, Cell::n_dofs_max> _Nu_, _Nux_, _Nuy_, _Nuz_;       // _Nuz_ unused in 2D
   std::array<double, Cell::n_dofs_max> _Nu2_, _Nu2x_, _Nu2y_, _Nu2z_;   // _Nu2z_ unused in 2D
   if (p1) cell_basis(cells_[id], bary, ncoeffs_u, _Nu_.data(), "u");
   cell_basis(cells_[id], bary, n2, _Nu2_.data(), "u");
 
-  const Vector3d U_prev = quad_prev ? block_value<D>(_Nu2_.data(), prev2, n2)
-                                    : block_value<D>(_Nu_.data(), prev, ncoeffs_u);
-  const Vector3d U_next = quad_next ? block_value<D>(_Nu2_.data(), next2, n2)
-                                    : block_value<D>(_Nu_.data(), next, ncoeffs_u);
+  const Vector3d U_prev = at_rest_prev ? block_value<D>(_Nu2_.data(), prev2, n2)
+                                       : block_value<D>(_Nu_.data(), prev, ncoeffs_u);
+  const Vector3d U_next = at_rest_next ? block_value<D>(_Nu2_.data(), next2, n2)
+                                       : block_value<D>(_Nu_.data(), next, ncoeffs_u);
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
   fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);
 
   if (!Velocity && wants_gradient()){
     if (p1) cell_deriv(cells_[id], bary, ncoeffs_u, _Nux_.data(), _Nuy_.data(), _Nuz_.data(), "u");
     cell_deriv(cells_[id], bary, n2, _Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), "u");
-    const Matrix3d gradU_prev = quad_prev
+    const Matrix3d gradU_prev = at_rest_prev
       ? block_gradient<D>(_Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), prev2, n2)
       : block_gradient<D>(_Nux_.data(), _Nuy_.data(), _Nuz_.data(), prev, ncoeffs_u);
-    const Matrix3d gradU_next = quad_next
+    const Matrix3d gradU_next = at_rest_next
       ? block_gradient<D>(_Nu2x_.data(), _Nu2y_.data(), _Nu2z_.data(), next2, n2)
       : block_gradient<D>(_Nux_.data(), _Nuy_.data(), _Nuz_.data(), next, ncoeffs_u);
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
@@ -98,24 +99,37 @@ void StampedInterpol<Cell, Format>::wall_motion(const int id, const CellPos& pos
   std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
   gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
                       u_prev_, u_next_, u_prev_block.data(), u_next_block.data());
+  if constexpr (!Format::vertex_fields){
+    if (upgrade_p2_){
+      upgrade_at(id, pos.bary, alpha_t, u_prev_block.data(), u_next_block.data(),
+                 term_view(std::size_t(wall_index_[id])), fields);
+      return;
+    }
+  }
   std::array<double, D*Cell::n_dofs_max> u_prev_block_2, u_next_block_2;
-  const std::array<bool, 2> quad = wall_blocks(id, u_prev_block.data(), u_next_block.data(),
+  const std::array<bool, 2> at_rest = wall_blocks(id, u_prev_block.data(), u_next_block.data(),
                                                u_prev_block_2.data(), u_next_block_2.data());
   wall_at(id, pos.bary, alpha_t, u_prev_block.data(), u_next_block.data(), u_prev_block_2.data(),
-          u_next_block_2.data(), quad[0], quad[1], fields);
+          u_next_block_2.data(), at_rest[0], at_rest[1], fields);
 }
 
 template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::hold(const Region& R, Held& h) const
 {
   const int id = R.id;
-  h.wall = wall_p2_ == WallP2::Edge && wall_index_[id] >= 0;
+  h.wall = wall_upgrade_ && wall_index_[id] >= 0;
   gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
                       u_prev_, u_next_, h.prev.data(), h.next.data());
   if (h.wall){
-    const std::array<bool, 2> quad = wall_blocks(id, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data());
-    h.quad_prev = quad[0];
-    h.quad_next = quad[1];
+    if constexpr (!Format::vertex_fields){
+      if (upgrade_p2_){
+        h.terms = term_view(std::size_t(wall_index_[id]));
+        return;
+      }
+    }
+    const std::array<bool, 2> at_rest = wall_blocks(id, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data());
+    h.at_rest_prev = at_rest[0];
+    h.at_rest_next = at_rest[1];
   }
 }
 
@@ -127,9 +141,16 @@ inline void StampedInterpol<Cell, Format>::held_at(const int id, const std::arra
 {
   assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
   const double alpha_t = stamp_weight(t, t_prev, t_next);
-  if (h.wall)
+  if (h.wall){
+    if constexpr (!Format::vertex_fields){
+      if (upgrade_p2_){
+        upgrade_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.terms, fields);
+        return;
+      }
+    }
     wall_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data(),
-                      h.quad_prev, h.quad_next, fields);
+                      h.at_rest_prev, h.at_rest_next, fields);
+  }
   else
     plain_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), fields);
 }
@@ -170,7 +191,7 @@ void StampedInterpol<Cell, Format>::evaluate_impl(const Vector3d &x, const doubl
 
   // Quadratic near walls, else P1
   const int id = pos.id;
-  if (wall_p2_ == WallP2::Edge && wall_index_[id] >= 0){
+  if (wall_upgrade_ && wall_index_[id] >= 0){
     wall_motion(id, pos, alpha_t, fields);
   }
   else {

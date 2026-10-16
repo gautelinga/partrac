@@ -675,8 +675,10 @@ TEST_CASE("The held evaluator is the loader's evaluation, and u is continuous ac
   SECTION("P2 triangles, periodic"){ check_stamped<Triangle>("reg_p2_tri", 6, "P2", {true, true, false}, false, ""); }
   SECTION("P1 tets, periodic"){ check_stamped<Tet>("reg_p1_tet", 3, "P1", {true, true, true}, false, ""); }
   SECTION("P2 tets, periodic"){ check_stamped<Tet>("reg_p2_tet", 3, "P2", {true, false, false}, false, ""); }
-  SECTION("near-wall P2 triangles"){ check_stamped<Triangle>("reg_wall_tri", 6, "P1", {false, false, false}, true, "wall_p2=edge\n"); }
-  SECTION("near-wall P2 tets"){ check_stamped<Tet>("reg_wall_tet", 3, "P1", {false, false, false}, true, "wall_p2=edge\n"); }
+  SECTION("near-wall P2 triangles"){ check_stamped<Triangle>("reg_wall_tri", 6, "P1", {false, false, false}, true, "wall_upgrade=true\n"); }
+  SECTION("near-wall P2 tets"){ check_stamped<Tet>("reg_wall_tet", 3, "P1", {false, false, false}, true, "wall_upgrade=true\n"); }
+  SECTION("upgraded P2 triangles, periodic in x"){ check_stamped<Triangle>("reg_up_tri", 6, "P2", {true, false, false}, true, "wall_upgrade=true\n"); }
+  SECTION("upgraded P2 tets"){ check_stamped<Tet>("reg_up_tet", 3, "P2", {false, false, false}, true, "wall_upgrade=true\n"); }
   SECTION("frequency triangles"){ check_freq<Triangle, TriangleFreqInterpol>("reg_freq_tri", 6); }
   SECTION("frequency tets"){ check_freq<Tet, TetFreqInterpol>("reg_freq_tet", 3); }
 }

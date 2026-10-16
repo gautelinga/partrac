@@ -50,6 +50,7 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/SimplexInterpol.cpp
   interpol/SimplexInterpol_eval.cpp
   interpol/SimplexInterpol_held.cpp
+  interpol/SimplexInterpol_wall.cpp
   interpol/SplitInterpol.cpp
   interpol/SplitInterpol_eval.cpp
   interpol/SplitInterpol_held.cpp
@@ -57,7 +58,7 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/XDMFInterpol_held.cpp
   interpol/simplex_load.cpp
   interpol/SimplexFreqInterpol.cpp
-  interpol/SimplexFreqFreeze.cpp
+  interpol/SimplexFreqInterpol_freeze.cpp
   interpol/XDMFInterpol.cpp
   interpol/near_wall.cpp
   interpol/xdmf_helpers.cpp

@@ -44,6 +44,8 @@ Passive tracers example:
 `./build/bin/partrac data_example/plane_poiseuille/expr_params.dat mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=10000 ds_max=0.4 ds_min=0.1 Dm=0 dt=0.01 T=1.0 int_order=1 dump_intv=0.1 stat_intv=0.1`
 This creates the folder `data_example/plane_poiseuille/RandomWalkers/Dm0..../` and puts the simulation data into it.
 
+`tracers`, `tracervectors`, `tracertensors` and `tracervectors_spatial` end with `Steps declined: N (outside=...)`: the steps declined because they would leave the fluid, each declined piece counted where stamp cuts split a step, and what `outside=` did with them; `verbose=true` adds the running total to every `Time =` line.
+
 ### Restarting
 A run writes `Checkpoints/checkpoint.h5` every `checkpoint_intv` and at the end. To continue a run, specify the folder that contains `Checkpoints/`:
 ```
@@ -91,6 +93,8 @@ Each app declares the parameters it accepts, so the set differs between them and
 ```
 Parameters are given as `key=value` after the input file. A parameter is either required, optional with a default, or computed by the program (`folder`, `t`, `Lx`, `Ly`, `Lz`) and then only read back when restarting. Some are required only in certain configurations, for instance `La` when `init_mode` is a strip, sheet or ellipsoid.
 
+`wall_upgrade=true` raises the order of the velocity next to walls at rest: P1 to quadratic, P2 by quartic terms. It is accepted by modes `tet` and `triangle` (default `false`) and by `xdmftet`, `xdmftriangle` and `openfoam` (default `true`), and not together with `divfree=true`.
+
 ### Initialization modes
 Set with `init_mode`. The trailing axes select the direction(s) involved.
 
@@ -120,3 +124,5 @@ mpirun -n 8 python3 python/divfree/divfree_clean.py CASE/dolfin_params.dat --out
 python3 python/divfree/divfree_clean.py CLEANED/dolfin_params.dat --check
 ```
 It needs `h5py`, `scipy`, `petsc4py` and `mpi4py`, not dolfin; `--help` lists the options. Under `mpirun` each rank holds its part of the mesh; run it with `OMP_NUM_THREADS=1`.
+
+A tracer run on a cleaned case whose every boundary is a wall at rest declines no step; if it does, it warns: the case was most likely cleaned with walls that are not the mesh's.

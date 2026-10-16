@@ -101,6 +101,7 @@ struct SchemaImpl {
   std::vector<std::function<void(Params&)>> finalizers;
   bool strict_file = true;
   std::set<std::string> retired;
+  std::map<std::string, std::string> replaced;
 
   const Entry* find(const std::string& key) const;
   Entry& add(Entry e);
@@ -203,6 +204,8 @@ public:
   Schema& strict_file(bool on);
   // Keys an older checkpoint file may hold, read past on a restart
   Schema& retired(const std::vector<std::string>& keys);
+  // A key no longer read, and what an unknown-key error says replaced it
+  Schema& replaced(const std::string& key, std::string by);
 
   Params parse(int argc, char* argv[]) const;
   Params parse(const std::vector<std::string>& args) const;  // args[0] is the program
@@ -221,6 +224,8 @@ public:
 private:
   detail::Entry& entry(const std::string& key);
   Params resolve(Params p, std::vector<std::string> problems) const;
+  // What an unknown key's error adds: its replacement, or a near key
+  std::string unknown_hint(const std::string& key) const;
   std::shared_ptr<detail::SchemaImpl> m_impl;
 };
 

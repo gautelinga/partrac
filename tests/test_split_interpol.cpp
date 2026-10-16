@@ -7,7 +7,7 @@
 // field is then the polynomial itself, so the loader must return it to
 // round-off at every point, value and gradient. Beside that, what a loader owes
 // its parameter file: a P1 velocity, an unprepared file, a non-finite value,
-// wall_p2 and mesh_cache refused; a phase field in an element of its own; a
+// wall_upgrade and mesh_cache refused; a phase field in an element of its own; a
 // periodic mesh.
 #ifdef USE_DOLFIN
 #include <catch2/catch.hpp>
@@ -463,7 +463,7 @@ void check_refusals(const std::string& tag, const std::size_t n){
     // The near-wall rule is what div u = 0 replaces
     CaseDir c(tag + "_wall");
     write_case<Cell>(c, n, CaseOpts{});
-    append(c.params(), "wall_p2=edge\n");
+    append(c.params(), "wall_upgrade=true\n");
     REQUIRE_THROWS_AS(SplitInterpol<Cell>(c.params()), partrac::Error);
   }
   {
@@ -499,6 +499,21 @@ TEST_CASE("SplitInterpol's evaluate_motion is its evaluate without the scalars",
 TEST_CASE("SplitInterpol on a single stamp aliases it", "[split]"){
   check_one_stamp<Triangle>("one2d", 6);
   check_one_stamp<Tet>("one3d", 3);
+}
+
+// The square's or cube's field crosses its sides: an open boundary, which may decline steps
+template<typename Cell>
+void check_open(const std::string& tag, const std::size_t n){
+  CaseDir c(tag);
+  write_case<Cell>(c, n, CaseOpts());
+  SplitInterpol<Cell> intp(c.params());
+  intp.update(0.);
+  REQUIRE_FALSE(intp.sealed);
+}
+
+TEST_CASE("SplitInterpol is not sealed where its velocity crosses the boundary", "[split]"){
+  check_open<Triangle>("open2d", 4);
+  check_open<Tet>("open3d", 2);
 }
 
 TEST_CASE("SplitInterpol reads a periodic mesh", "[split]"){

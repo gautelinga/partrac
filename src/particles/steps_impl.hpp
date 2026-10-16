@@ -47,49 +47,222 @@ struct LocatedEval {
   bool end(const Vector3d& x, const double t){ return intp.locate(x, t, pos); }
 };
 
-// A step with a stage or its end outside, again in 2, 4, then 8 substeps with
-// every stage inside; false: the particle leaves the fluid. Out of the loop:
-// rare and bulky
-template<TransportElement E, typename Interp>
-__attribute__((noinline))
-bool rk4_substeps(Interp& intp, ParticleSet& ps, const Uint i, const double t, const double dt){
-  for (int m = 2; m <= 8; m *= 2){
-    const double h = dt/m;
-    Vector3d x = ps.x(i);
-    CellPos pos;
+// Pieces of a step that left the fluid: halves, down to this fraction
+constexpr int max_pieces = 64;
+
+// A piece: taken, failed (halved again), or stopped at its start, which halving keeps
+enum class Piece { taken, failed, stopped };
+
+// The step from t over dt in halves, a failed piece halved again down to
+// dt/max_pieces; piece(t, h) takes one. Failed: a smallest piece failed
+template<typename Fn>
+inline Piece in_pieces(Fn&& piece, const double t, const double dt){
+  constexpr int units = max_pieces;
+  const double unit = dt/units;
+  int u = 0, size = units/2;
+  while (u < units){
+    const Piece r = piece(t + u*unit, size*unit);
+    if (r == Piece::taken){
+      u += size;
+      // The largest piece aligned here
+      while (size < units/2 && u % (2*size) == 0)
+        size *= 2;
+    }
+    else if (r == Piece::stopped || size == 1)
+      return r;
+    else
+      size /= 2;
+  }
+  return Piece::taken;
+}
+
+// The carried element after h from the gradients at its start: el from n, or
+// the frame Fel from F
+template<typename M>
+__attribute__((always_inline))
+inline M carried(PointValues& pv, const int int_order, const double h, const M& n){
+  const Matrix3d J1 = pv.get_J();
+  M e = n;
+  e += J1 * e * h;
+  if (int_order >= 2)
+    e += 0.5*(J1*(J1*n) + pv.get_grada()*n) * h * h;
+  return e;
+}
+
+template<TransportElement E>
+__attribute__((always_inline))
+inline void carry(PointValues& pv, const int int_order, const double h, [[maybe_unused]] const Vector3d& n,
+                  [[maybe_unused]] const Matrix3d& F, [[maybe_unused]] Vector3d& el,
+                  [[maybe_unused]] Matrix3d& Fel){
+  if constexpr (E == TransportElement::Vector) el = carried(pv, int_order, h, n);
+  if constexpr (E == TransportElement::Tensor) Fel = carried(pv, int_order, h, F);
+}
+
+// Particle i through the pieces of a step; pos: the cell of the piece's start
+template<TransportElement E>
+struct PieceState {
+  Vector3d x;
+  CellPos pos;
+  Vector3d n = Vector3d::Zero();
+  double w = 0.;
+  Matrix3d F = Matrix3d::Identity();
+  PieceState(ParticleSet& ps, const Uint i) : x(ps.x(i)) {
     pos.id = ps.get_cell_id(i);
-    Vector3d n = Vector3d::Zero();
-    double w = 0.;
-    Matrix3d F = Matrix3d::Identity();
     if constexpr (E == TransportElement::Vector){ n = ps.rhohat(i); w = ps.w(i); }
     if constexpr (E == TransportElement::Tensor) F = ps.frame(i);
-    PointValues ptvals(intp.get_U0());
-    LocatedEval<Interp> ev{intp, ptvals, pos};
-    bool ok = true;
-    for (int s = 0; s < m && ok; ++s){
-      Vector3d dx, el;
-      Matrix3d dF;
-      ok = rk_stages<RK4Tableau, E, true>(ev, x, n, F, t + s*h, h, dx, el, dF);
-      if (!ok)
-        break;
-      if constexpr (E == TransportElement::Vector){
-        const double len = el.norm();
-        n = el/len;
-        w += log(len);
-      }
-      if constexpr (E == TransportElement::Tensor) F += dF;
-      x += dx;
+  }
+  // A piece over dx, its end in p
+  void advance(const Vector3d& dx, const CellPos& p, const Vector3d& el, const Matrix3d& Fel){
+    x += dx;
+    pos = p;
+    if constexpr (E == TransportElement::Vector){
+      const double len = el.norm();
+      n = el/len;
+      w += log(len);
     }
-    if (!ok)
-      continue;
+    if constexpr (E == TransportElement::Tensor) F = Fel;
+  }
+  void store(ParticleSet& ps, const Uint i, const double dt_loc) const {
     ps.set_x(i, x);
-    ps.set_t_loc(i, ps.t_loc(i) + dt);
+    ps.set_t_loc(i, ps.t_loc(i) + dt_loc);
     ps.set_cell_id(i, pos.id);
     if constexpr (E == TransportElement::Vector){ ps.set_rhohat(i, n); ps.set_w(i, w); }
     if constexpr (E == TransportElement::Tensor) ps.advance_frame(i, F);
-    return true;
   }
-  return false;
+};
+
+// A step with a stage or its end outside, again in pieces with every stage
+// inside; false: the particle leaves the fluid. Out of the loop: rare and bulky
+template<TransportElement E, typename Interp>
+__attribute__((noinline))
+bool rk4_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, const double dt){
+  PieceState<E> s(ps, i);
+  PointValues ptvals(intp.get_U0());
+  // The first stage at the start, kept while its piece is halved
+  bool first = false, located = false;
+  Vector3d u1;
+  [[maybe_unused]] Matrix3d J1;
+  const Piece r = in_pieces([&](const double ta, const double h){
+    if (!first){
+      // Later starts: the last piece's end
+      if (!located && !intp.locate(s.x, ta, s.pos))
+        return Piece::stopped;
+      evaluate_motion(intp, s.x, ta, s.pos, ptvals);
+      u1 = ptvals.get_u();
+      if constexpr (E != TransportElement::Point) J1 = ptvals.get_J();
+      first = located = true;
+    }
+    CellPos p = s.pos;
+    LocatedEval<Interp> ev{intp, ptvals, p};
+    Vector3d dx, el;
+    Matrix3d dF;
+    if (!rk_stages_from<RK4Tableau, E, true>(ev, u1, J1, s.x, s.n, s.F, ta, h, dx, el, dF))
+      return Piece::failed;
+    [[maybe_unused]] Matrix3d Fel;
+    if constexpr (E == TransportElement::Tensor) Fel = s.F + dF;
+    s.advance(dx, p, el, Fel);
+    first = false;
+    return Piece::taken;
+  }, t, dt);
+  if (r == Piece::taken)
+    s.store(ps, i, dt);
+  return r == Piece::taken;
+}
+
+// An explicit step with its end outside, again in pieces of the same order,
+// each with its share of the step's noise; start: the fields at x, dx_rw: the
+// step. Declined: a start outside, or noisy on an interpolator that
+// reflects. Out of the loop: rare and bulky
+template<TransportElement E, typename Interp>
+__attribute__((noinline))
+bool explicit_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, const double dt,
+                     const int int_order, const double Dm, PointValues& start,
+                     const Vector3d& dx_rw){
+  const bool noisy = Dm > 0.0;
+  if (noisy && intp.can_reflect)
+    return false;
+  PieceState<E> s(ps, i);
+  // A start outside: declined
+  if (!intp.locate(s.x, t, s.pos))
+    return false;
+  // Noise: the step less its drift
+  Vector3d noise = Vector3d::Zero();
+  if (noisy){
+    Vector3d drift = start.get_u() * dt;
+    if (int_order >= 2)
+      drift += 0.5 * (start.get_a() + start.get_Ju()) * dt * dt;
+    noise = dx_rw - drift;
+  }
+  PointValues ptvals(intp.get_U0());
+  // The fields at the piece's start, kept while it is halved
+  PointValues* at = &start;
+  const Piece r = in_pieces([&](const double ta, const double h){
+    if (!at){
+      evaluate_motion(intp, s.x, ta, s.pos, ptvals);
+      at = &ptvals;
+    }
+    Vector3d dx = at->get_u() * h;
+    if (int_order >= 2)
+      dx += 0.5 * (at->get_a() + at->get_Ju()) * h * h;
+    if (noisy)
+      dx += noise * (h/dt);
+    CellPos p = s.pos;
+    if (!intp.locate(s.x + dx, ta + h, p))
+      return Piece::failed;
+    Vector3d el = s.n;
+    Matrix3d Fel = s.F;
+    carry<E>(*at, int_order, h, s.n, s.F, el, Fel);
+    s.advance(dx, p, el, Fel);
+    at = nullptr;
+    return Piece::taken;
+  }, t, dt);
+  if (r == Piece::taken)
+    s.store(ps, i, dt);
+  return r == Piece::taken;
+}
+
+// A spatial step from a start inside with its end outside, again in pieces of
+// the path length, fields frozen at t; start: the fields at x. left: a
+// smallest piece's end outside, not a start at rest. Out of the loop: rare
+// and bulky
+template<TransportElement E, typename Interp>
+__attribute__((noinline))
+bool spatial_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, const double ds,
+                    const int int_order, const double u_min, PointValues& start, bool& left){
+  PieceState<E> s(ps, i);
+  PointValues ptvals(intp.get_U0());
+  // The fields at the piece's start, kept while it is halved
+  PointValues* at = &start;
+  double t_loc = 0.;
+  const Piece r = in_pieces([&](const double, const double dsp){
+    if (!at){
+      evaluate_motion(intp, s.x, t, s.pos, ptvals);
+      at = &ptvals;
+    }
+    const Vector3d u_1 = at->get_u();
+    const double uabs = u_1.norm();
+    // At rest: no path
+    if (!(uabs > u_min))
+      return Piece::stopped;
+    const double h = dsp / uabs;
+    Vector3d dx = u_1 * h;
+    if (int_order >= 2)
+      dx += 0.5 * (at->get_a() + at->get_Ju()) * h * h;
+    CellPos p = s.pos;
+    if (!intp.locate(s.x + dx, t, p))
+      return Piece::failed;
+    Vector3d el = s.n;
+    Matrix3d Fel = s.F;
+    carry<E>(*at, int_order, h, s.n, s.F, el, Fel);
+    s.advance(dx, p, el, Fel);
+    t_loc += h;
+    at = nullptr;
+    return Piece::taken;
+  }, 0., ds);
+  left = r == Piece::failed;
+  if (r == Piece::taken)
+    s.store(ps, i, t_loc);
+  return r == Piece::taken;
 }
 
 template<TransportElement E, typename Interp>
@@ -117,7 +290,7 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
         [[maybe_unused]] Matrix3d dF;
 
         LocatedEval<Interp> ev{intp, ptvals, pos};
-        // An outside stage or end: substeps
+        // An outside stage or end: pieces
         if (rk_stages<RK4Tableau, E, false>(ev, x, n, F, t, dt, dx, el, dF)){
             ps.set_x(i, x + dx);
             ps.set_t_loc(i, ps.t_loc(i) + dt);
@@ -131,7 +304,7 @@ std::vector<Uint> RK4Integrator::step(Interp& intp, ParticleSet& ps, const doubl
             ps.set_cell_id(i, pos.id);
             ++n_accepted_loc;
         }
-        else if (rk4_substeps<E>(intp, ps, i, t, dt))
+        else if (rk4_pieces<E>(intp, ps, i, t, dt))
             ++n_accepted_loc;
         else {
             outside_nodes_loc.push_back(i);
@@ -228,6 +401,9 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
                     ps.advance_frame(i, Fel);
                 ++n_accepted_loc;
             }
+            // An end outside: pieces
+            else if (explicit_pieces<E>(intp, ps, i, t, dt, int_order, Dm, ptvals, dx_rw))
+                ++n_accepted_loc;
             else {
                 outside_nodes_loc.push_back(i);
                 ++n_declined_loc;
@@ -255,7 +431,8 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
     std::vector<Uint> outside_nodes_loc;
     Uint n_accepted_loc = 0;
     Uint n_declined_loc = 0;
-    bool is_inside;
+    Uint n_left_loc = 0;
+    bool is_inside, tried;
     double uabs_est, dt;
     Vector3d dx;
     Vector3d el;
@@ -274,15 +451,16 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
         pos.id = ps.get_cell_id(i);
 
         PointValues ptvals(intp.get_U0());
-        // Outside: zero velocity, so declined below
-        if (intp.locate(x, t, pos))
+        // Outside: zero velocity, so declined below, as left
+        bool left = !intp.locate(x, t, pos);
+        if (!left)
             evaluate_motion(intp, x, t, pos, ptvals);
 
         Vector3d u_1 = ptvals.get_u();
 
         uabs_est = u_1.norm();
 
-        is_inside = false;
+        is_inside = tried = false;
         if (uabs_est > m_u_min){
             dt = ds / uabs_est;
 
@@ -292,24 +470,16 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
             if (m_int_order >= 2){
                 dx += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
             }
-            if constexpr (E == TransportElement::Vector){
-                const Vector3d n = ps.rhohat(i);
-                const Matrix3d J1 = ptvals.get_J();
-                el = n + J1 * n * dt;
-                if (m_int_order >= 2)
-                    el += 0.5 * (J1 * (J1 * n) + ptvals.get_grada() * n) * dt * dt;
-            }
-            if constexpr (E == TransportElement::Tensor){
-                const Matrix3d F0 = ps.frame(i);
-                const Matrix3d J1 = ptvals.get_J();
-                F = F0 + J1 * F0 * dt;
-                if (m_int_order >= 2)
-                    F += 0.5 * (J1 * (J1 * F0) + ptvals.get_grada() * F0) * dt * dt;
-            }
+            [[maybe_unused]] Vector3d n;
+            [[maybe_unused]] Matrix3d F0;
+            if constexpr (E == TransportElement::Vector){ n = ps.rhohat(i); el = n; }
+            if constexpr (E == TransportElement::Tensor){ F0 = ps.frame(i); F = F0; }
+            carry<E>(ptvals, m_int_order, dt, n, F0, el, F);
 
             if (dx.norm() < m_dl_max){
                 // Frozen time, otherwise: locate(x+dx, t+dt, pos)
                 is_inside = intp.locate(x + dx, t, pos);
+                tried = true;
             }
             else {
                 #pragma omp critical
@@ -330,9 +500,13 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
             if constexpr (E == TransportElement::Tensor)
                 ps.advance_frame(i, F);
         }
+        // An end outside: pieces
+        else if (tried && spatial_pieces<E>(intp, ps, i, t, ds, m_int_order, m_u_min, ptvals, left))
+            ++n_accepted_loc;
         else {
             outside_nodes_loc.push_back(i);
             ++n_declined_loc;
+            n_left_loc += left;
         }
     }
     #pragma omp critical
@@ -340,6 +514,7 @@ std::vector<Uint> SpatialIntegrator::step(InterpolType& intp, ParticleSet& ps, c
         outside_nodes.insert(outside_nodes.end(), outside_nodes_loc.begin(), outside_nodes_loc.end());
         n_accepted += n_accepted_loc;
         n_declined += n_declined_loc;
+        n_left += n_left_loc;
     }
     }
     // Sort: threads merge out of order

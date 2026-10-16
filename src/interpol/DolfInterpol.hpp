@@ -3,7 +3,7 @@
 #define __DOLFINTERPOL_HPP
 
 // Velocity and pressure stamps as dolfin HDF5 checkpoints, in any of the
-// compiled Lagrange elements (P1-P3), evaluated by dolfin's own basis: the
+// compiled Lagrange elements (P1-P3, P4 velocity), evaluated by dolfin's own basis: the
 // reference the other loaders are compared with. The only loader left that
 // builds its tables from a dolfin mesh and a dofmap; what a step reads once
 // they exist is MeshCore's.
@@ -94,7 +94,7 @@ protected:
   Uint u_dim_ = 0, p_dim_ = 0;           // p_dim_ stays 0 when pressure is ignored
   // Read out whole at each load: dolfin's vector is not safe to read in parallel
   std::vector<double> u_prev_data_, u_next_data_, p_prev_data_, p_next_data_;
-  // P3 on a periodic mesh: unconstrained spaces, their dofs paired across the seam
+  // P3 or P4 on a periodic mesh: unconstrained spaces, their dofs paired across the seam
   bool u_by_cells_ = false, p_by_cells_ = false;
   std::vector<std::array<std::uint32_t, 2>> u_seam_, p_seam_;
 };

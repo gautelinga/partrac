@@ -127,6 +127,8 @@ inline partrac::Schema expression_schema(const ExprKind& kind){
   s.require<std::string>("expression", "the flow");
   s.require<double>("t_min", "start of the flow's time interval");
   s.require<double>("t_max", "end of the flow's time interval");
+  s.check([](const partrac::Params& p){ return p.get<double>("t_max") >= p.get<double>("t_min"); },
+          "t_max is before t_min");
   s.require<double>("x_min", "domain box");
   s.require<double>("y_min", "domain box");
   s.require<double>("z_min", "domain box");

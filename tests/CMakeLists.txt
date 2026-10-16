@@ -36,6 +36,7 @@ add_library(unittest_objects OBJECT
   test_tableau.cpp
   test_regions.cpp
   test_cells.cpp
+  test_explicit_pieces.cpp
   region_cases.cpp
 )
 

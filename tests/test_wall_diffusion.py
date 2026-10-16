@@ -1,6 +1,6 @@
-"""Diffusing tracers on the wall meshes of test_wall_p2.py (scheme=explicit, Dm > 0).
+"""Diffusing tracers on the wall meshes of test_wall_edge_rule.py (scheme=explicit, Dm > 0).
 
-- the near-wall rule and the reflecting walk together: wall_p2=edge makes
+- the near-wall rule and the reflecting walk together: wall_upgrade=true makes
   u.n quadratic above the walls so that advected tracers do not reach them
   and stop, and the walk mirrors a diffusive step off the walls instead of
   declining it; in the four cylinders (unit mean speed, a noise step about a
@@ -18,15 +18,15 @@ import pytest
 
 from dumps import all_dumps, dump_at, read_stats
 from runs import checkpoint_folder, put_points
-from test_wall_p2 import (DT, OBSTACLE_R, OBSTACLES, SPHERE_C, SPHERE_R, TRACERS, H,  # noqa: F401
-                          ball, inside, obstacles, sphere_mesh)
+from wall_cases import (DT, OBSTACLE_R, OBSTACLES, SPHERE_C, SPHERE_R, TRACERS, H,  # noqa: F401
+                        ball, inside, obstacles, sphere_mesh)
 
 DM = 1e-4
 
 
 def diffusive_run(case, mode, points, T, dt=DT, Dm=DM, extra=()):
     """tracers from `points` (through a checkpoint) with Dm, explicit steps and
-    wall_p2=mode to T; returns the run folder."""
+    wall_upgrade=mode to T; returns the run folder."""
     folder = case(mode)
     for old in folder.glob("Tracers*"):
         shutil.rmtree(old)
@@ -82,10 +82,10 @@ def test_the_rule_still_evens_the_density_of_diffusing_tracers_at_walls(obstacle
     of the P1 field drives tracers into the wall layer faster than the noise
     spreads them out; the quadratic one does not."""
     rest, dens = {}, {}
-    for mode in ("edge", "none"):
+    for mode in ("true", "false"):
         rest[mode], dens[mode] = measure(obstacles, mode, 200.0)
     assert max(rest.values()) < 0.01, rest
-    assert dens["none"] > 4 and dens["edge"] < 3 and dens["none"] > 2 * dens["edge"], dens
+    assert dens["false"] > 4 and dens["true"] < 3 and dens["false"] > 2 * dens["true"], dens
 
 
 def test_the_reflecting_walk_crosses_periodic_faces_in_a_run(ball):
@@ -99,7 +99,7 @@ def test_the_reflecting_walk_crosses_periodic_faces_in_a_run(ball):
     P = np.stack(np.meshgrid(x, x, x, indexing="ij"), axis=-1).reshape(-1, 3)
     P = P[np.linalg.norm(P - SPHERE_C, axis=1) > SPHERE_R + 0.02]
     dt, T = 0.01, 4.0
-    folder = diffusive_run(ball, "edge", P, T, dt=dt, Dm=0.03 ** 2 / (2 * dt),
+    folder = diffusive_run(ball, "true", P, T, dt=dt, Dm=0.03 ** 2 / (2 * dt),
                            extra=["dump_intv=0.1", "stat_intv=0.5"])
     [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
     assert np.all(read_stats(f)["n_declined"] == 0)

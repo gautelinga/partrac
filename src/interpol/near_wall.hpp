@@ -1,11 +1,14 @@
 #ifndef __NEAR_WALL_HPP
 #define __NEAR_WALL_HPP
 
-// The near-wall P2 scheme of the XDMF loaders: where a cell's wall vertices are
-// at rest, the midpoint of every edge rising from one of them is a fixed linear
-// map of the velocity at the edge's fluid end, so u.n grows as delta^2 above
-// the facet. The map differs by dimension -- a matrix in 2D, u_v/2 + (u_v.n) q
-// in 3D -- so the per-end record and the table are specialised. Nothing here
+// The near-wall rules of StampedInterpol, which raise the velocity's order in
+// the cells with a wall vertex where the wall is at rest. A P1 velocity becomes
+// P2 by the edge rule: the midpoint of every edge rising from a wall vertex is
+// a fixed linear map of the velocity at the edge's fluid end, so u.n grows as
+// delta^2 above the facet. The map differs by dimension -- a matrix in 2D,
+// u_v/2 + (u_v.n) q in 3D -- so the per-end record and the table are
+// specialised. A P2 velocity gains quartic terms that vanish at every P2 node,
+// their coefficients linear in the cell's P2 values (UpgradeRule). Nothing here
 // needs dolfin: the wall facets are the facet table's walls and their normals
 // come from the coordinates.
 
@@ -128,6 +131,203 @@ inline bool wall_block<Tet>(const double* u, double* u2, const WallEdges<Tet>& w
   }
   return true;
 }
+
+// Entry i of a table
+template<typename A>
+constexpr auto& at(A& a, const int i){ return a[std::size_t(i)]; }
+
+// An edge's vertex pairs, in WallRule's order: edge_of[a][b], -1 for a == b
+template<typename Cell>
+constexpr auto edge_table(){
+  constexpr int nv = Cell::n_verts;
+  std::array<std::array<int, nv>, nv> t{};
+  for (int a = 0; a < nv; ++a)
+    for (int b = 0; b < nv; ++b) t[std::size_t(a)][std::size_t(b)] = -1;
+  for (std::size_t e = 0; e < WallRule<Cell>::edge_ends.size(); ++e){
+    const int a = WallRule<Cell>::edge_ends[e][0], b = WallRule<Cell>::edge_ends[e][1];
+    t[std::size_t(a)][std::size_t(b)] = t[std::size_t(b)][std::size_t(a)] = int(e);
+  }
+  return t;
+}
+
+// The vertices off each edge, ascending
+template<typename Cell>
+constexpr auto apex_table(){
+  constexpr int nv = Cell::n_verts;
+  std::array<std::array<int, nv - 2>, WallRule<Cell>::edge_ends.size()> t{};
+  for (std::size_t e = 0; e < t.size(); ++e){
+    std::size_t j = 0;
+    for (int v = 0; v < nv; ++v)
+      if (v != WallRule<Cell>::edge_ends[e][0] && v != WallRule<Cell>::edge_ends[e][1]) t[e][j++] = v;
+  }
+  return t;
+}
+
+// The face terms' face (the vertex it lacks; 2D: nv, the cell) and vertex, by face then vertex
+template<typename Cell>
+constexpr auto face_table(){
+  constexpr int nv = Cell::n_verts, nf = nv == 3 ? 1 : nv;
+  std::array<std::array<int, 2>, std::size_t(nf*3)> t{};
+  std::size_t j = 0;
+  for (int f = 0; f < nf; ++f){
+    const int k = nv == 3 ? nv : f;
+    for (int x = 0; x < nv; ++x)
+      if (x != k) t[j++] = {k, x};
+  }
+  return t;
+}
+
+// The wall upgrade of a P2 velocity: in a cell with a wall vertex at rest, P2
+// plus quartic terms that vanish at every P2 node -- per edge end at a wall
+// vertex w, lambda_w^2 lambda_v (lambda_w - lambda_v); per face over a wall
+// edge, its three barycentrics' product times one of them; in 3D the cell's
+// bubble. The terms' coefficients are linear in the cell's P2 values.
+template<typename Cell> struct UpgradeRule {
+  static constexpr int nv = Cell::n_verts;
+  static constexpr int n_edges = nv*(nv - 1)/2, n_apex = nv - 2;
+  // Face terms: three a face, the face lacking vertex k first by k; 2D the cell's
+  static constexpr int n_faces = nv == 3 ? 3 : 3*nv, n_bubble = nv == 3 ? 0 : 1;
+  static constexpr auto edge_of = edge_table<Cell>();
+  static constexpr auto apex = apex_table<Cell>();
+  static constexpr auto face_term = face_table<Cell>();
+  // The slot of face k's term at vertex x
+  static constexpr int face_slot(const int k, const int x){ return 3*(k < nv ? k : 0) + (x < k ? x : x - 1); }
+};
+
+// The face of a, b and v by the vertex it lacks; 2D: nv, the cell
+template<typename Cell>
+constexpr int off_vertex(const int a, const int b, const int v){
+  return Cell::n_verts == 3 ? 3 : 6 - a - b - v;
+}
+
+// Terms a cell: edge ends, faces, bubble
+template<typename Cell>
+constexpr int n_terms = 2*UpgradeRule<Cell>::n_edges + UpgradeRule<Cell>::n_faces + UpgradeRule<Cell>::n_bubble;
+
+// The edge end at vertex a of the edge to b
+template<typename Cell>
+constexpr int end_of(const int a, const int b){
+  const int e = UpgradeRule<Cell>::edge_of[std::size_t(a)][std::size_t(b)];
+  return 2*e + (WallRule<Cell>::edge_ends[std::size_t(e)][0] == a ? 0 : 1);
+}
+
+// A P2 wall cell's terms: where its coefficients start in a stamp's table, D
+// a term, and which it has by bit (ends, faces, bubble)
+struct TermSpan {
+  std::uint32_t offset, mask;
+};
+
+// A P2 wall cell's terms at the two stamps in play: their coefficients and which terms
+struct TermView {
+  const double* prev;
+  const double* next;
+  std::uint32_t mask;
+};
+
+// A P2 wall cell. Its normals are consecutive in the table's pool, in the order
+// of the bits that name them: the edge ends' by term, the faces' by triple,
+// then each bubble facet's normal and its column of the facet rows' pseudo-inverse
+struct UpgradeCell {
+  std::uint32_t cell;      // the cell's id
+  std::uint32_t normals;   // its first normal in the pool
+  std::uint16_t triples;   // bit: an edge and apex with a face normal
+  std::uint8_t facets;     // bit k: facet k a bubble row
+  std::uint8_t wall;       // bit k: vertex k lies on a wall
+};
+
+// The P2 wall cells, their terms and their normals
+template<typename Cell>
+struct UpgradeTable {
+  using Normal = std::array<double, Cell::n_verts - 1>;
+  std::vector<UpgradeCell> cells;
+  std::vector<TermSpan> spans;   // by wall cell
+  std::vector<Normal> normals;
+  std::uint32_t n_coef = 0;      // a stamp's coefficients
+};
+
+// The coefficients of the cell's terms, D a term at its index, from its P2
+// block; false where no wall vertex is at rest
+template<typename Cell>
+bool upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, const std::uint32_t terms,
+                          const typename UpgradeTable<Cell>::Normal* n, const double tol);
+
+// The barycentric products the terms are made of: each face's, and the cell's
+template<typename Cell>
+struct TermProducts {
+  std::array<double, 4> face;   // the face lacking vertex k; 2D: the cell's at 3
+  double cell;
+  TermProducts(const std::array<double, 4>& l){
+    if constexpr (Cell::n_verts == 3){
+      face = {0., 0., 0., l[0]*l[1]*l[2]};
+      cell = 0.;
+    }
+    else {
+      const double l01 = l[0]*l[1], l23 = l[2]*l[3];
+      face[0] = l[1]*l23;
+      face[1] = l[0]*l23;
+      face[2] = l01*l[3];
+      face[3] = l01*l[2];
+      cell = l01*l23;
+    }
+  }
+};
+
+// Every term at the barycentrics l
+template<typename Cell>
+inline void term_weights(const std::array<double, 4>& l, const TermProducts<Cell>& P, double* W)
+{
+  using R = UpgradeRule<Cell>;
+  constexpr auto edge_ends = WallRule<Cell>::edge_ends;
+  constexpr int f0 = 2*R::n_edges;
+  for (int e = 0; e < R::n_edges; ++e){
+    const double la = at(l, at(edge_ends, e)[0]), lb = at(l, at(edge_ends, e)[1]);
+    const double ab = la*lb;
+    W[2*e] = la*ab*(la - lb);
+    W[2*e + 1] = lb*ab*(lb - la);
+  }
+  for (int t = 0; t < R::n_faces; ++t)
+    W[f0 + t] = at(P.face, at(R::face_term, t)[0])*at(l, at(R::face_term, t)[1]);
+  if constexpr (R::n_bubble > 0) W[f0 + R::n_faces] = P.cell;
+}
+
+// Term t's gradient, from the barycentrics' gradients g
+template<typename Cell>
+inline Vector3d term_gradient(const int t, const std::array<double, 4>& l, const TermProducts<Cell>& P,
+                              const std::array<Vector3d, Cell::n_verts>& g)
+{
+  constexpr int nv = Cell::n_verts;
+  using R = UpgradeRule<Cell>;
+  constexpr auto edge_ends = WallRule<Cell>::edge_ends;
+  constexpr int f0 = 2*R::n_edges, b0 = f0 + R::n_faces;
+  if (t < f0){
+    const int w = at(at(edge_ends, t/2), t%2), v = at(at(edge_ends, t/2), 1 - t%2);
+    const double lw = at(l, w), lv = at(l, v);
+    return (3.*lw*lw*lv - 2.*lw*lv*lv)*at(g, w) + (lw*lw*lw - 2.*lw*lw*lv)*at(g, v);
+  }
+  if (t < b0){
+    // B l_x: dB/dl_m l_x for m on the face, and B at x
+    const int k = at(R::face_term, t - f0)[0], x = at(R::face_term, t - f0)[1];
+    int f[3], q = 0;
+    for (int j = 0; j < nv; ++j) if (j != k) f[q++] = j;
+    const double lx = at(l, x);
+    const double l0 = at(l, f[0]), l1 = at(l, f[1]), l2 = at(l, f[2]);
+    return (l1*l2*lx)*at(g, f[0]) + (l0*l2*lx)*at(g, f[1]) + (l0*l1*lx)*at(g, f[2]) + at(P.face, k)*at(g, x);
+  }
+  Vector3d out = Vector3d::Zero();
+  if constexpr (R::n_bubble > 0)
+    for (int m = 0; m < nv; ++m) out += at(P.face, m)*at(g, m);
+  return out;
+}
+
+// The upgrade's wall cells and the normals of their terms, by the rules of
+// build_wall_edges; a facet at a corner vertex carries no bubble
+template<typename Cell>
+void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
+                      const std::size_t ncells, const std::size_t nverts, const Uint gdim,
+                      const std::vector<std::int32_t>& facet_neigh,
+                      const std::vector<std::uint32_t>& vclass,
+                      std::vector<std::int32_t>& wall_index,
+                      UpgradeTable<Cell>& table, const bool verbose);
 
 // The wall cells and their edge ends, from the mesh arrays and the facet table.
 // A wall facet is a facet_wall entry, and its normal is the outward one the

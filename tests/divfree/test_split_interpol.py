@@ -8,6 +8,7 @@ their own, in parallel, so the thread count must not change the field.
 
 import glob
 import os
+import re
 import shutil
 import subprocess
 
@@ -16,7 +17,7 @@ import pytest
 
 from divfree_cases import (D, channel2d, channel3d, interpol_probe,
                            relabel_by_global_id, smooth_noslip, write_case)
-from paths import app
+from paths import REPO, app
 
 PER = [True, True, False]
 
@@ -119,3 +120,89 @@ def test_the_loader_gives_the_field_the_cleaner_writes_on_the_split_mesh(tmp_pat
     assert sorted(a) == sorted(b) and len(a["x"]) > 0
     for k in a:
         assert np.abs(a[k] - b[k]).max() <= 1e-12 * max(1.0, np.abs(a[k]).max()), k
+
+
+def walled_run(params, dim, mode, scheme):
+    """tracers on the cleaned channel, 2000 particles from a grid, outside=reinject: the process."""
+    folder = params.parent
+    return subprocess.run([app("tracers"), str(params), "mode=" + mode,
+                           "init_mode=points_" + "xyz"[:dim], "x0=0.5", "y0=0.5", "z0=0.5",
+                           "random=false", "seed=1", "Nrw=2000", "Nrw_max=2000", "int_order=1",
+                           "Dm=0", "dt=0.01", "scheme=" + scheme, "T=1", "dump_intv=1e9",
+                           "stat_intv=0.5", "checkpoint_intv=1e9", "outside=reinject"],
+                          capture_output=True, text=True, timeout=600, cwd=folder)
+
+
+SEALED_WARNING = "steps declined on a divfree = true field with no open boundary"
+
+
+@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@pytest.mark.parametrize("scheme", ["RK4", "explicit"])
+@pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
+def test_a_cleaned_closed_channel_declines_no_step(tmp_path, dim, mode, scheme):
+    """On a cleaned channel whose every exterior facet is a wall at rest, the
+    split field has no velocity into a wall, so nothing leaves: the run
+    reports zero declined and reinjected steps and no warning."""
+    r = walled_run(cleaned_channel(tmp_path, dim), dim, mode, scheme)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Steps declined: 0 (outside=reinject: reinjected)" in r.stdout, r.stdout[-2000:]
+    assert SEALED_WARNING not in r.stderr
+
+
+@pytest.mark.skipif(not os.path.exists(app("tracervectors_spatial")), reason="tracervectors_spatial is not built")
+def test_a_spatial_march_on_a_cleaned_closed_channel_leaves_none(tmp_path):
+    """The march in path length on the same channel declines the steps of
+    particles done with their time T and of particles at rest, which have not
+    left the fluid: the run counts none as declined and does not warn."""
+    params = cleaned_channel(tmp_path, 2)
+    r = subprocess.run([app("tracervectors_spatial"), str(params), "mode=triangle",
+                        "init_mode=points_xy", "x0=0.5", "y0=0.5", "random=false", "seed=1",
+                        "Nrw=200", "Nrw_max=200", "dxn=0.01", "Ln=2", "T=0.5", "dump_intv=1e9",
+                        "stat_intv=0.5", "checkpoint_intv=1e9", "outside=ignore", "verbose=true"],
+                       capture_output=True, text=True, timeout=600, cwd=params.parent)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"declined [1-9]", r.stdout) is None, r.stdout[-2000:]
+    assert "Steps declined: 0 (outside=ignore: left in place)" in r.stdout, r.stdout[-2000:]
+    assert SEALED_WARNING not in r.stderr
+
+
+@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
+def test_a_closed_channel_cleaned_with_open_walls_warns_of_its_declined_steps(tmp_path, dim, mode):
+    """The channel's field with the midpoints of its wall facets given a
+    velocity across the walls, out at the bottom and in at the top, while the
+    wall vertices stay at rest: the cleaner holds only nodes at rest, so it
+    keeps those midpoints near their values and cleans a field that leaks
+    through walls the mesh's vertices say are closed. The run declines steps
+    and reinjects them, says how many, and warns that a closed divfree = true
+    domain should decline none, naming the cleaner's wall set."""
+    X, cells = channel2d(6) if dim == 2 else channel3d(3)
+    per = PER[3 - dim:]
+    t = D.Topo(X, cells, per)
+    U = smooth_noslip(t.node_x)
+    last = t.node_x[:, -1]
+    wall_mid = (np.arange(len(U)) >= t.nverts) & ((last < 1e-12) | (last > 1 - 1e-12))
+    U[wall_mid, -1] -= 0.3
+    cfg = write_case(tmp_path / "in", X, cells, [U, U], per)
+    D.clean_case(cfg, tmp_path / "out", verbose=False)
+    params = tmp_path / "out" / "dolfin_params.dat"
+    assert "divfree=true" in params.read_text()
+    r = walled_run(params, dim, mode, "RK4")
+    assert r.returncode == 0, r.stdout + r.stderr
+    m = re.search(r"Steps declined: (\d+) \(outside=reinject: reinjected\)", r.stdout)
+    assert m, r.stdout[-2000:]
+    assert int(m.group(1)) > 0
+    assert SEALED_WARNING in r.stderr and "cleaned with walls that do not match" in r.stderr, r.stderr
+    # once
+    assert r.stderr.count(SEALED_WARNING) == 1
+
+
+def test_the_loader_takes_a_wall_at_rest_as_the_cleaner_does():
+    """SplitInterpol says a field is sealed when every wall vertex is at rest
+    by the cleaner's measure, |u| at most REST_TOL of the stamp's largest
+    component; the loader's own constant must be the cleaner's, or a sealed
+    field would be missed or a leaking one taken as sealed."""
+    src = open(os.path.join(REPO, "src", "interpol", "SplitInterpol.cpp")).read()
+    m = re.search(r"constexpr double rest_tol = ([0-9.eE+-]+);", src)
+    assert m, "rest_tol not found in SplitInterpol.cpp"
+    assert float(m.group(1)) == D.REST_TOL

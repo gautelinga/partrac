@@ -13,7 +13,7 @@
 // names a stamp), vertex_fields (every field on the velocity's vertex table),
 // schema(D), the timestamps ts, load (the mesh, its tables and any first stamp),
 // read (one stamp into a buffer), key and name (a timestamp's Key and its name
-// in the log). Its schema declares include_phi and wall_p2, which are read here.
+// in the log). Its schema declares include_phi and wall_upgrade, which are read here.
 
 #include <array>
 #include <cstdint>
@@ -51,7 +51,8 @@ public:
   struct Held {
     std::array<double, Cell::n_dofs_max*3> prev, next;
     std::array<double, (Cell::n_verts - 1)*Cell::n_dofs_max> prev2, next2;   // a wall cell's P2 blocks
-    bool wall, quad_prev, quad_next;
+    near_wall::TermView terms;   // a P2 wall cell's
+    bool wall, at_rest_prev, at_rest_next;
   };
   void hold(const Region& R, Held& h) const;
   // evaluate_motion at the barycentrics of cell id from its held nodes
@@ -81,6 +82,8 @@ protected:
   struct Stamp {
     std::vector<double> u, p, phi;   // phi: nverts_ values, then with phase_gradient_ D a vertex
     double rest_tol = 0.;   // |u| at rest on a wall
+    // P2 walls: the upgrade terms' coefficients, zero in a cell with no wall vertex at rest
+    std::vector<double> coef;
   };
 
   // The node tables of the scalar fields; a format that reads every field by
@@ -109,12 +112,28 @@ protected:
 
   std::vector<int> cell_type_;
 
-  enum class WallP2 { Edge, None };
-  WallP2 wall_p2_ = WallP2::None;
+  // Near walls: P1 to P2 by the edge rule, or P2 plus the quartic terms
+  bool wall_upgrade_ = false;
+  bool upgrade_p2_ = false;   // never read where every field is by vertex
 
   using WallEdges = near_wall::WallEdges<Cell>;
   std::vector<std::int32_t> wall_index_;   // -1: no wall vertex
   std::vector<WallEdges> wall_cells_;
+  near_wall::UpgradeTable<Cell> upgrade_;
+  // The stamps in play's coefficients
+  const double* coef_prev_ = nullptr;
+  const double* coef_next_ = nullptr;
+  // A stamp's terms, from its velocity
+  void stamp_terms(Stamp& s) const;
+  // What a stamp read needs computed: the rest tolerance and the terms
+  void prepare(Stamp& s) const;
+  // The stamps in play
+  void point(const Stamp& prev, const Stamp& next);
+  // A P2 wall cell's terms at the stamps in play
+  near_wall::TermView term_view(const std::size_t w) const {
+    const near_wall::TermSpan sp = upgrade_.spans[w];
+    return {coef_prev_ + sp.offset, coef_next_ + sp.offset, sp.mask};
+  }
 
   // A wall cell, out of line: gathers, then wall_at
   __attribute__((noinline))
@@ -128,8 +147,13 @@ protected:
                                   double* next2) const;
   template<bool Velocity = false>
   void wall_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const double* prev,
-               const double* next, const double* prev2, const double* next2, const bool quad_prev,
-               const bool quad_next, PointValues& fields) const;
+               const double* next, const double* prev2, const double* next2, const bool at_rest_prev,
+               const bool at_rest_next, PointValues& fields) const;
+  // A P2 wall cell, out of line: the P2 field plus the terms
+  template<bool Velocity = false>
+  __attribute__((noinline))
+  void upgrade_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const double* prev,
+                  const double* next, const near_wall::TermView& c, PointValues& fields) const;
   template<bool Velocity = false>
   void held_at(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
                PointValues& fields) const;

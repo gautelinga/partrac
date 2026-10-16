@@ -5,6 +5,7 @@
 #include "dolfin_ref.hpp"
 #include "Params.hpp"
 #include "phase_timing.hpp"
+#include "stamp_buffer.hpp"
 #include "H5Cpp.h"
 #include <algorithm>
 #include <cassert>
@@ -178,7 +179,7 @@ void DolfInterpol<Cell>::check_seam(const dolfin::Function& f, const std::vector
   if (excess > 0.){
     partrac::fail("DolfInterpol: in ", filename, " the ", what, " differs between periodic images by ",
                   jump, " (", jump / range, " of its range, more than 1e-6). dolfin's periodic "
-                  "P3 space is wrong at the seam on a mesh whose vertex numbering reverses a seam edge "
+                  "P3 or P4 space is wrong at the seam on a mesh whose vertex numbering reverses a seam edge "
                   "against its image: number the vertices so that images keep their orientation, or "
                   "write the field from a space without the periodic constraint.");
   }
@@ -299,10 +300,10 @@ DolfInterpol<Cell>::DolfInterpol(const std::string& infilename)
 
   const std::string u_el = dolfin_params.template get<std::string>("velocity_space");
   const std::string p_el = dolfin_params.template get<std::string>("pressure_space");
-  // P3 seam edge dofs pair by edge orientation under the constraint: read unconstrained
+  // P3 and P4 seam edge dofs pair by edge orientation under the constraint: read unconstrained
   const bool any_periodic = std::any_of(periodic.begin(), periodic.begin() + dim, [](bool b){ return b; });
   const auto domain_of = [&](const std::string& el){
-    return any_periodic && el == "P3" ? nullptr : constrained_domain;
+    return any_periodic && (el == "P3" || el == "P4") ? nullptr : constrained_domain;
   };
   u_space_ = lagrange_space<D, true>(u_el, mesh, domain_of(u_el), "velocity");
   if (include_pressure)
@@ -362,8 +363,7 @@ template<typename Cell>
 void DolfInterpol<Cell>::update(const double t){
   StampPair sp = ts.get(t);
 
-  // Always load once; past the last stamp both ends are the last stamp, held
-  if ( !is_initialized || t_prev != sp.prev.t || t_next != sp.next.t ){
+  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
     const std::string u_field = dolfin_params.template get<std::string>("velocity_field");
     const std::string p_field = dolfin_params.template get<std::string>("pressure_field");
     // A stamp's velocity and pressure
@@ -410,8 +410,7 @@ void DolfInterpol<Cell>::freeze(const double t){
   const double a = stamp_weight(t, t_prev, t_next);
   // Blend the two stamps into both
   const auto hold = [a](std::vector<double>& prev, std::vector<double>& next){
-    if (a != 0.)
-      for (std::size_t i = 0; i < prev.size(); ++i) prev[i] = a*next[i] + (1 - a)*prev[i];
+    if (a != 0.) partrac::blend(a, prev, next, prev);
     next = prev;
   };
   hold(u_prev_data_, u_next_data_);

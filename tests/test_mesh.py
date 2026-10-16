@@ -224,6 +224,50 @@ def test_fenics_reads_a_p3_p2_field_exactly(fenics_case, dim):
     assert np.abs(v["uxy"] - 3 * y**2).max() < 1e-9
 
 
+@pytest.mark.parametrize("dim", [2, 3])
+@pytest.mark.fenics
+def test_fenics_reads_a_p4_field_exactly(fenics_case, dim):
+    """mode=fenics takes a P4 velocity, beside a P3 pressure. A quartic
+    velocity and a cubic pressure are held exactly, so the probed values and
+    the velocity gradient must match them to round-off; a wrong dof order or
+    a wrong basis would not."""
+    df, d = fenics_case
+    h5py = pytest.importorskip("h5py")
+    d.mkdir()
+    mesh = df.UnitSquareMesh(3, 3) if dim == 2 else df.UnitCubeMesh(2, 2, 2)
+    V = df.VectorFunctionSpace(mesh, "CG", 4)
+    P = df.FunctionSpace(mesh, "CG", 3)
+    u_expr = ["x[1]*x[1]*x[1]*x[1] + 0.5*x[0]", "x[0]*x[0]*x[0]*x[1] - x[1]"] + \
+        (["0.25*x[2]*x[0]*x[0]*x[1]"] if dim == 3 else [])
+    u = df.interpolate(df.Expression(u_expr, degree=4), V)
+    p = df.interpolate(df.Expression("x[0]*x[0]*x[1] + 1.0", degree=3), P)
+    with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as f:
+        f.write(mesh, "mesh")
+    with df.HDF5File(mesh.mpi_comm(), str(d / "up_0.h5"), "w") as f:
+        f.write(u, "u")
+        f.write(p, "p")
+    (d / "timestamps.dat").write_text("0.0\tup_0.h5\n")
+    (d / "dolfin_params.dat").write_text(
+        "velocity_space=P4\npressure_space=P3\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
+        "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
+    run_app(INTERPOL, d / "dolfin_params.dat",
+            "mode=fenics Nrw=400 int_order=2 t0=0 random=false seed=1", timeout=600)
+    out = list(d.rglob("interpolation.h5part"))
+    assert len(out) == 1
+    with h5py.File(out[0], "r") as h:
+        v = {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    x, y = v["x"], v["y"]
+    z = v["z"] if dim == 3 else np.zeros_like(x)
+    assert len(x) > 100
+    assert np.abs(v["ux"] - (y**4 + 0.5 * x)).max() < 1e-10
+    assert np.abs(v["uy"] - (x**3 * y - y)).max() < 1e-10
+    if dim == 3:
+        assert np.abs(v["uz"] - 0.25 * z * x * x * y).max() < 1e-10
+    assert np.abs(v["p"] - (x * x * y + 1.0)).max() < 1e-10
+    assert np.abs(v["uxy"] - 4 * y**3).max() < 1e-9
+    assert np.abs(v["uyx"] - 3 * x * x * y).max() < 1e-9
+
+
 def periodic_unit_case(df, d, dim, degree, shuffled, constrained, offset=0.0):
     """A unit square or cube periodic in every direction, with a smooth
     periodic velocity and pressure in P<degree> written to d; the vertices as
@@ -258,7 +302,8 @@ def periodic_unit_case(df, d, dim, degree, shuffled, constrained, offset=0.0):
 
     cu, cp = constrained if isinstance(constrained, tuple) else (constrained, constrained)
     V = df.VectorFunctionSpace(mesh, "CG", degree, **({"constrained_domain": Periodic()} if cu else {}))
-    Q = df.FunctionSpace(mesh, "CG", degree, **({"constrained_domain": Periodic()} if cp else {}))
+    # P4 is velocity only: the pressure stays P3
+    Q = df.FunctionSpace(mesh, "CG", min(degree, 3), **({"constrained_domain": Periodic()} if cp else {}))
     u_expr = ["sin(2*pi*x[1]) + 0.3*cos(2*pi*x[0])", "cos(2*pi*x[0])*sin(2*pi*x[1])"]
     p_expr = "cos(2*pi*x[0])*sin(2*pi*x[1])"
     if dim == 3:
@@ -279,7 +324,7 @@ def periodic_unit_case(df, d, dim, degree, shuffled, constrained, offset=0.0):
     (d / "dolfin_params.dat").write_text(
         "velocity_space=P%d\npressure_space=P%d\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
         "periodic_x=true\nperiodic_y=true\nperiodic_z=%s\nrho=1.0\n"
-        % (degree, degree, "true" if dim == 3 else "false"))
+        % (degree, min(degree, 3), "true" if dim == 3 else "false"))
     return u, p
 
 
@@ -401,12 +446,12 @@ def test_fenics_refuses_a_seam_jump_small_beside_the_values(fenics_case, field):
 
 @pytest.mark.parametrize("dim,degree,shuffled",
                          [(2, 1, False), (2, 1, True), (2, 2, False), (2, 2, True),
-                          (2, 3, False), (3, 2, True), (3, 3, False)])
+                          (2, 3, False), (3, 2, True), (3, 3, False), (2, 4, False), (3, 4, False)])
 @pytest.mark.fenics
 def test_fenics_reads_good_periodic_fields(fenics_case, dim, degree, shuffled):
     """A periodic field in dolfin's periodic space is good in P1 and P2 on any
-    numbering, and in P3 on one that keeps seam edges' orientation: read as
-    written, and the seam check stays quiet."""
+    numbering, and in P3 and P4 on one that keeps seam edges' orientation:
+    read as written, and the seam check stays quiet."""
     df, d = fenics_case
     u, p = periodic_unit_case(df, d, dim, degree, shuffled=shuffled, constrained=True)
     assert seam_jump(df, u, dim) < 1e-12

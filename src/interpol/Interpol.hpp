@@ -91,6 +91,8 @@ public:
   // Build what reflect needs
   virtual void enable_reflection() {};
   bool can_reflect = false;
+  // A divergence-free field whose every exterior facet is at rest: no step may leave
+  bool sealed = false;
   virtual double hmin() const { return 0.; };   // 0: no mesh scale
   virtual double cell_size(const int cell_id) const { return hmin(); };   // of a located cell
   virtual bool has_phase_field() const { return false; };      // evaluate fills Phi

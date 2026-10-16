@@ -8,6 +8,7 @@
 #include "Interpol.hpp"
 #include "Params.hpp"
 #include "loader_params.hpp"
+#include "stamp_buffer.hpp"
 #include "H5Cpp.h"
 #include "files.hpp"
 #include "geometry.hpp"
@@ -509,7 +510,7 @@ inline void StructuredLattice::freeze(const double t){
       for (Uint j=0; j<n[1]; ++j)
         for (Uint k=0; k<n[2]; ++k){
           if (a != 0.)
-            prev(i, j, k) = a*next(i, j, k) + (1 - a)*prev(i, j, k);
+            prev(i, j, k) = partrac::blend(a, prev(i, j, k), next(i, j, k));
           next(i, j, k) = prev(i, j, k);
         }
   };
@@ -529,8 +530,7 @@ inline void StructuredLattice::freeze(const double t){
 inline void StructuredLattice::update(const double t){
   StampPair sp = ts.get(t);
 
-  // Always load once; past the last stamp both ends are the last stamp, held
-  if (!is_initialized || t_prev != sp.prev.t || t_next != sp.next.t){
+  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
     if (is_initialized && t_next == sp.prev.t){
       std::swap(ux_prev, ux_next);
       std::swap(uy_prev, uy_next);

@@ -17,7 +17,7 @@ struct CellsCounts {
   std::uint64_t relocations = 0;
   std::uint64_t immediate = 0;     // crossings without a step
   std::uint64_t rejects = 0;
-  std::uint64_t fallbacks = 0;     // major steps taken by RK4 substeps
+  std::uint64_t fallbacks = 0;     // major steps taken by RK4 pieces
   CellsCounts& operator+=(const CellsCounts& o){
     steps += o.steps; crossings += o.crossings; relocations += o.relocations;
     immediate += o.immediate; rejects += o.rejects; fallbacks += o.fallbacks;

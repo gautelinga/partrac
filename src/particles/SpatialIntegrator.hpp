@@ -18,7 +18,10 @@ public:
   ~SpatialIntegrator() {};
   template<TransportElement E = TransportElement::Point, typename InterpolType>
   std::vector<Uint> step(InterpolType&, ParticleSet&, double t, double ds);
+  // Declined steps that left the fluid, not at rest or done
+  Uint get_left() const { return n_left; }
 protected:
+  Uint     n_left = 0;
   double   m_u_min;
   double   m_dl_max;
   int      m_int_order;
