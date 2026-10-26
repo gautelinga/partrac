@@ -22,6 +22,9 @@ constexpr double flux_floor = 1e-6;
 // warned about: the split field returns what the cell's shape forces
 constexpr double sliver_warn = 50.;
 
+// At rest: |u| at most this of the stamp's largest component, the cleaner's REST_TOL
+constexpr double rest_tol = 1e-8;
+
 // A cell's largest interior node value against its largest boundary one
 inline double amplification(const double* g, const std::size_t nb,
                             const double* u_int, const std::size_t ni){
@@ -82,8 +85,8 @@ SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
 
   read_mesh_params();
   include_phi = dolfin_params.template get<bool>("include_phi");
-  if (dolfin_params.template get<std::string>("wall_p2") == "edge")
-    partrac::fail(infilename, ": wall_p2 = edge is a rule for a P1 velocity at a wall; "
+  if (dolfin_params.template get<bool>("wall_upgrade"))
+    partrac::fail(infilename, ": wall_upgrade = true raises the velocity's order at a wall; "
                   "divfree = true has no slip from div u = 0 and replaces it");
   if (dolfin_params.template get<bool>("mesh_cache"))
     partrac::fail(infilename, ": mesh_cache is not read with divfree = true");
@@ -148,6 +151,7 @@ SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
   partrac::phase("reference matrix");
 
   build_interior(req.field_file, a);
+  this->sealed = walls_at_rest(a);
   partrac::phase("interior values");
   partrac::phase_total();
 
@@ -230,6 +234,29 @@ void SplitInterpol<Cell>::build_interior(const std::string& file, Stamp& s)
 }
 
 template<typename Cell>
+bool SplitInterpol<Cell>::walls_at_rest(const Stamp& s) const
+{
+  constexpr int nv = Cell::n_verts;
+  double big = 0.;
+  for (const double v : s.u) big = std::max(big, std::abs(v));
+  const double tol = rest_tol*big;
+  for (std::size_t c = 0; c < ncells_; ++c){
+    const std::uint32_t* row = u_dofs_[c];
+    for (int o = 0; o < nv; ++o){
+      if (facet_neigh_[c*nv + std::size_t(o)] != facet_wall) continue;
+      for (int k = 0; k < nv; ++k){
+        if (k == o) continue;
+        const double* v = s.u.data() + std::size_t(row[k])*std::size_t(D);
+        double r2 = 0.;
+        for (int d = 0; d < D; ++d) r2 += v[d]*v[d];
+        if (std::sqrt(r2) > tol) return false;
+      }
+    }
+  }
+  return true;
+}
+
+template<typename Cell>
 void SplitInterpol<Cell>::read_stamp(const std::string& file, Stamp& s)
 {
   // The node counts every stamp shares
@@ -238,6 +265,7 @@ void SplitInterpol<Cell>::read_stamp(const std::string& file, Stamp& s)
   if (include_pressure) simplex_load::read_into(file, p_field, p_map_, a.p, s.p);
   if (include_phi)      simplex_load::read_into(file, phi_field, phi_map_, a.phi, s.phi);
   build_interior(file, s);
+  this->sealed = this->sealed && walls_at_rest(s);
 }
 
 template<typename Cell>
@@ -282,15 +310,10 @@ void SplitInterpol<Cell>::freeze(const double t)
   const double a = stamp_weight(t, t_prev, t_next);
   if (a != 0.){
     // Blend the two stamps into one; the interior values are linear in the stamp's
-    const auto blend = [a](const std::vector<double>& prev, const std::vector<double>& next,
-                           std::vector<double>& out){
-      out.resize(prev.size());
-      for (std::size_t i = 0; i < prev.size(); ++i) out[i] = a*next[i] + (1 - a)*prev[i];
-    };
-    blend(stamps_.prev().u, stamps_.next().u, frozen_.u);
-    blend(stamps_.prev().u_int, stamps_.next().u_int, frozen_.u_int);
-    blend(stamps_.prev().p, stamps_.next().p, frozen_.p);
-    blend(stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
+    partrac::blend(a, stamps_.prev().u, stamps_.next().u, frozen_.u);
+    partrac::blend(a, stamps_.prev().u_int, stamps_.next().u_int, frozen_.u_int);
+    partrac::blend(a, stamps_.prev().p, stamps_.next().p, frozen_.p);
+    partrac::blend(a, stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
     u_prev_ = frozen_.u.data();
     int_prev_ = frozen_.u_int.data();
     p_prev_ = frozen_.p.data();

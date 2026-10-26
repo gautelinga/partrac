@@ -147,6 +147,8 @@ protected:
 
   // One stamp's vectors, then its interior values; the reference the failures name
   void read_stamp(const std::string& file, Stamp& s);
+  // Every vertex of every exterior facet at rest in the stamp
+  bool walls_at_rest(const Stamp& s) const;
   // Every cell's net flux against its scale, floored at the stamp's, and the
   // interior values through the reference matrix; cells in parallel and independent
   void build_interior(const std::string& file, Stamp& s);

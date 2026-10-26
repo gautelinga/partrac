@@ -6,6 +6,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace partrac {
 
@@ -18,6 +19,18 @@ struct StampTimes {
 // Always load once; past the last stamp both ends are the last stamp, held
 inline bool stamp_reload(const bool held, const StampTimes& have, const StampTimes& want){
   return !held || have.prev != want.prev || have.next != want.next;
+}
+
+// The blend at weight a of two stamps' values
+inline double blend(const double a, const double prev, const double next){
+  return a*next + (1 - a)*prev;
+}
+
+// The blend of two stamps' tables, into out, which may be prev
+inline void blend(const double a, const std::vector<double>& prev, const std::vector<double>& next,
+                  std::vector<double>& out){
+  out.resize(prev.size());
+  for (std::size_t i = 0; i < prev.size(); ++i) out[i] = blend(a, prev[i], next[i]);
 }
 
 // What holding a wanted stamp took

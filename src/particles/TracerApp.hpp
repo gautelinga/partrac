@@ -102,9 +102,12 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
     handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
+  OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};
+  totals.attach(hooks, verbose);
 
   run_loop(run, ps, mesh, stepper, output_fields, dt, hooks);
   scheme.report(std::cout);
+  totals.finish(std::cout);
   return 0;
 }
 
@@ -151,10 +154,14 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
   hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     handle_outside(run, mesh, ps, outside, nodes, xn, verbose);
   };
+  // Done or at rest: declined, not left
+  OutsideTotals totals{outside, *run.intp, [&]{ return integrator.get_left(); }};
+  totals.attach(hooks, verbose);
   // Stop when no particle is left
   hooks.keep_going = [&]{ return ps.N() > 0; };
 
   run_loop(run, ps, mesh, stepper, output_fields, dxn, hooks);
+  totals.finish(std::cout);
   return 0;
 }
 

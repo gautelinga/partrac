@@ -701,7 +701,7 @@ void check_into_narrower(std::shared_ptr<I> intp, const int D, const double t){
   REQUIRE(largest_difference<TransportElement::Point>(*a, *b, same) < 1e-13);
 }
 
-// Past the cap on steps a major step: the fallback, RK4's substeps from the
+// Past the cap on steps a major step: the fallback, RK4's pieces from the
 // start. A path through many narrow cells into a wide one passes the wide
 // cell's cap
 template<typename I>
@@ -721,7 +721,7 @@ void check_cap(std::shared_ptr<I> intp, const double t, const double dt){
   RK4CellsIntegrator cs;
   REQUIRE(cells_step<TransportElement::Point>(cs, *intp, *b, t, dt).empty());
   for (Uint i = 0; i < a->N(); ++i)
-    REQUIRE(rk4_substeps<TransportElement::Point>(*intp, *a, i, t, dt));
+    REQUIRE(rk4_pieces<TransportElement::Point>(*intp, *a, i, t, dt));
   INFO("crossings " << cs.counts().crossings << ", fallbacks " << cs.counts().fallbacks);
   REQUIRE(cs.counts().fallbacks == pts.size());
   bool same = false;
@@ -1052,7 +1052,7 @@ void check_onto_walls_far(std::shared_ptr<I> intp, const double t){
 
 // Ends below both walls of a corner 1e-4 rad wide: their normals are parallel
 // to round-off, so the walls do not meet for the joint projection, which
-// fails, and the major step falls back, RK4's substeps from the start
+// fails, and the major step falls back, RK4's pieces from the start
 template<typename I>
 void check_projection_fallback(std::shared_ptr<I> intp, const std::vector<Vector3d>& corner, const double t){
   intp->set_needs_gradient(true);
@@ -1075,7 +1075,7 @@ void check_projection_fallback(std::shared_ptr<I> intp, const std::vector<Vector
   const std::vector<Uint> out = cells_step<TransportElement::Point>(cs, *intp, *b, t, 1e-3);
   std::vector<Uint> out_rk4;
   for (Uint i = 0; i < a->N(); ++i)
-    if (!rk4_substeps<TransportElement::Point>(*intp, *a, i, t, 1e-3)) out_rk4.push_back(i);
+    if (!rk4_pieces<TransportElement::Point>(*intp, *a, i, t, 1e-3)) out_rk4.push_back(i);
   INFO("fallbacks " << cs.counts().fallbacks << ", declined " << out.size());
   REQUIRE(cs.counts().fallbacks == pts.size());
   REQUIRE(out == out_rk4);
@@ -1123,15 +1123,29 @@ TEST_CASE("A step that meets no facet is RK4's step bit for bit", "[cells]"){
   SECTION("near-wall P2 tets, XDMF"){
     CaseDir c("cells_wall_tet");
     write_stamped<Tet>(c, 3, "P1", {false, false, false}, true);
-    std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_p2=edge\n";
+    std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_upgrade=true\n";
     check_no_crossing_all(std::make_shared<XDMFInterpol<Tet>>(c.file("xdmf_params.dat")), 3,
                           {false, false, false}, 0.3);
   }
   SECTION("near-wall P2 triangles, XDMF"){
     CaseDir c("cells_wall_tri");
     write_stamped<Triangle>(c, 6, "P1", {false, false, false}, true);
-    std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_p2=edge\n";
+    std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_upgrade=true\n";
     check_no_crossing_all(std::make_shared<XDMFInterpol<Triangle>>(c.file("xdmf_params.dat")), 2,
+                          {false, false, false}, 0.3);
+  }
+  SECTION("upgraded P2 triangles at rest on the walls"){
+    CaseDir c("cells_up_tri");
+    write_stamped<Triangle>(c, 6, "P2", {false, false, false}, true);
+    std::ofstream(c.file("h5_params.dat"), std::ios::app) << "wall_upgrade=true\n";
+    check_no_crossing_all(std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat")), 2,
+                          {false, false, false}, 0.3);
+  }
+  SECTION("upgraded P2 tets at rest on the walls"){
+    CaseDir c("cells_up_tet");
+    write_stamped<Tet>(c, 3, "P2", {false, false, false}, true);
+    std::ofstream(c.file("h5_params.dat"), std::ios::app) << "wall_upgrade=true\n";
+    check_no_crossing_all(std::make_shared<SimplexInterpol<Tet>>(c.file("h5_params.dat")), 3,
                           {false, false, false}, 0.3);
   }
   SECTION("frequency tets"){
@@ -1237,7 +1251,7 @@ TEST_CASE("Into a narrower cell from within the band: crossed once, not back and
   check_into_narrower(std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat")), 2, 0.3);
 }
 
-TEST_CASE("Past the cap on steps a major step: RK4's substeps from the start", "[cells]"){
+TEST_CASE("Past the cap on steps a major step: RK4's pieces from the start", "[cells]"){
   CaseDir c("cells_cap_tri");
   // 39 columns over x < 0.3, one beyond
   write_stamped<Triangle>(c, 40, "P2", {false, false, false}, false,
@@ -1268,7 +1282,7 @@ TEST_CASE("Split triangles: steps landing on predicted planes converge at fourth
 TEST_CASE("XDMF triangles: line elements and frames across facets converge at fourth order", "[cells]"){
   CaseDir c("cells_xdmf_order_tri");
   write_stamped<Triangle>(c, 6, "P1", {false, false, false}, true);
-  std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_p2=edge\n";
+  std::ofstream(c.file("xdmf_params.dat"), std::ios::app) << "wall_upgrade=true\n";
   auto intp = std::make_shared<XDMFInterpol<Triangle>>(c.file("xdmf_params.dat"));
   intp->update(0.3);
   const std::vector<Vector3d> pts = central_points(*intp, 2, 0.3, 100, 0.3, 0.7);
@@ -1293,7 +1307,7 @@ TEST_CASE("onto_walls: onto two walls, nudged until inside; it fails where they 
   }
 }
 
-TEST_CASE("An end below the walls of a sliver corner: the projection fails, RK4's substeps from the start", "[cells]"){
+TEST_CASE("An end below the walls of a sliver corner: the projection fails, RK4's pieces from the start", "[cells]"){
   CaseDir c("cells_sliver_tri");
   // Drifting slowly down: the fallback starts again from the step's start
   write_stamped<Triangle>(c, 2, "P2", {false, false, false}, true,

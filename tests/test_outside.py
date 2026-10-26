@@ -11,8 +11,9 @@ still returns a velocity that is not the flow's.
 
 Two things are pinned:
 
-- an RK4 step with a stage point or its end outside is taken again in 2, 4,
-  then 8 substeps whose every stage is inside, and declined if none is; a
+- an RK4 step with a stage point or its end outside is taken again in
+  halves, a half that fails halved again down to dt/64, every stage of every
+  piece inside, and declined if a piece of dt/64 fails; a
   failed stage used to contribute zero velocity, which froze a tracer whose
   second stage left the fluid on the start point for good. Positions after
   one step match the reference for every transport element, since the
@@ -33,6 +34,7 @@ import pytest
 
 from dumps import all_dumps
 from paths import REPO, app
+from pieces import in_pieces
 from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
@@ -113,31 +115,15 @@ class Axis:
         inside = all(self.inside(zz) for zz in (z, z + k1 * dt / 2, z + k2 * dt / 2, z + k3 * dt, z + dz))
         return z + dz, inside
 
-    def rk4(self, z, dt):
-        """One step from z as the apps take it: whole, else in 2, 4, then 8
-        substeps that stay inside, else declined. Returns (z, substeps used)."""
-        end, ok = self.rk4_once(z, dt)
-        if ok:
-            return end, 1
-        for m in (2, 4, 8):
-            zz, ok = z, True
-            for _ in range(m):
-                zz, ok = self.rk4_once(zz, dt / m)
-                if not ok:
-                    break
-            if ok:
-                return zz, m
-        return z, 0
-
 
 @needs_apps
 @pytest.mark.parametrize("name", APPS)
-def test_an_rk4_step_with_a_stage_outside_the_fluid_is_taken_in_substeps(tmp_path, name):
+def test_an_rk4_step_with_a_stage_outside_the_fluid_is_taken_in_pieces(tmp_path, name):
     """After one long RK4 step every particle is where the reference puts it:
-    the whole step where every stage is in the fluid, else the first of 2, 4
-    or 8 substeps that stays in it, else its start. Some particles must need
-    substeps and move, and some must need more than two; otherwise the flow
-    would not test the rule."""
+    the whole step where every stage is in the fluid, else the pieces of
+    halves that stay in it, else its start. Some particles must need pieces
+    and move, and some must need more than two; otherwise the flow would not
+    test the rule."""
     d = case(tmp_path, name)
     run(name, d, ["scheme=RK4", "dt=%g" % DT, "T=%g" % DT, "dump_intv=%g" % DT,
                   "checkpoint_intv=1e9"])
@@ -148,8 +134,8 @@ def test_an_rk4_step_with_a_stage_outside_the_fluid_is_taken_in_substeps(tmp_pat
     axis = Axis(params())
     expected, used = [], []
     for z in p0[:, 2]:
-        zz, m = axis.rk4(z, DT)
-        expected.append(zz)
+        zz, m = in_pieces(axis.rk4_once, z, DT)
+        expected.append(z if m == 0 else zz)
         used.append(m)
     used = np.array(used)
     assert np.sum(used > 1) > 0 and np.sum(used > 2) > 0, np.bincount(used)

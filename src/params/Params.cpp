@@ -395,6 +395,18 @@ Schema& Schema::retired(const std::vector<std::string>& keys) {
   return *this;
 }
 
+Schema& Schema::replaced(const std::string& key, std::string by) {
+  m_impl->replaced[key] = std::move(by);
+  return *this;
+}
+
+std::string Schema::unknown_hint(const std::string& key) const {
+  const auto r = m_impl->replaced.find(key);
+  if (r != m_impl->replaced.end()) return "; replaced by " + r->second;
+  const std::string s = suggest(key, m_impl->entries);
+  return s.empty() ? "" : "; did you mean '" + s + "'?";
+}
+
 Params Schema::parse(int argc, char* argv[]) const {
   std::vector<std::string> args;
   args.reserve(static_cast<std::size_t>(argc));
@@ -444,9 +456,7 @@ Params Schema::parse(const std::vector<std::string>& args) const {
   for (const auto& kv : cmd) {
     const detail::Entry* e = m_impl->find(kv.first);
     if (!e) {
-      const std::string s = suggest(kv.first, m_impl->entries);
-      problems.push_back("unknown parameter '" + kv.first + "'" +
-                         (s.empty() ? "" : "; did you mean '" + s + "'?"));
+      problems.push_back("unknown parameter '" + kv.first + "'" + unknown_hint(kv.first));
     } else if (e->is_runtime) {
       problems.push_back("parameter '" + kv.first +
                          "' is computed by the program and cannot be given here");
@@ -593,9 +603,7 @@ Params Schema::parse_file(const std::string& path) const {
   for (const auto& kv : given) {
     const detail::Entry* e = m_impl->find(kv.first);
     if (!e) {
-      const std::string sug = suggest(kv.first, m_impl->entries);
-      problems.push_back("unknown parameter '" + kv.first + "' in " + path +
-                         (sug.empty() ? "" : "; did you mean '" + sug + "'?"));
+      problems.push_back("unknown parameter '" + kv.first + "' in " + path + unknown_hint(kv.first));
     }
   }
 
@@ -664,6 +672,9 @@ void Schema::validate_self() const {
   for (const auto& key : m_impl->retired)
     if (m_impl->find(key))
       problems.push_back("'" + key + "' is declared and retired");
+  for (const auto& kv : m_impl->replaced)
+    if (m_impl->find(kv.first))
+      problems.push_back("'" + kv.first + "' is declared and replaced");
 
   for (const auto& e : m_impl->entries) {
     if (e.def) {

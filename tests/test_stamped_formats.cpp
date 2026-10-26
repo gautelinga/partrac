@@ -2,11 +2,12 @@
 // a checkpoint and as XDMF has to read the same through either loader, with
 // the near-wall rule, the phase field and the cell types, since only the
 // reading of the files differs. Around that, what the checkpoint side gained
-// with it: wall_p2 refused on a velocity that is P2 already, a phase field in
+// with it: wall_upgrade on a P2 velocity acting in the wall cells only, a phase field in
 // an element of its own, and a mesh cache that carries the phase field.
 #ifdef USE_DOLFIN
 #include <catch2/catch.hpp>
 
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -23,24 +24,28 @@
 #include "XDMFInterpol.hpp"
 #include "case_dir.hpp"
 #include "dolfin_ref.hpp"
+#include "held_eval.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
 
 // Stamp k of a velocity at rest on the boundary of the unit box, so the
-// near-wall rule applies at every wall; the factors keep it off every symmetry
+// near-wall rule applies at every wall; the factors keep it off every symmetry.
+// A drift added to every component moves the walls
 class UExpr : public dolfin::Expression {
 public:
-  UExpr(const Uint gdim, const int k) : dolfin::Expression(gdim), gdim_(gdim), k_(k) {}
+  UExpr(const Uint gdim, const int k, const double drift = 0.)
+    : dolfin::Expression(gdim), gdim_(gdim), k_(k), drift_(drift) {}
   void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
     double b = 1.;
     for (Uint d = 0; d < gdim_; ++d) b *= x[d]*(1. - x[d]);
     for (Uint d = 0; d < gdim_; ++d)
-      v[d] = b*(1. + double(k_))*(d == 0 ? 4.*(1. + x[1]) : 1. + x[0] + 0.5*double(d));
+      v[d] = b*(1. + double(k_))*(d == 0 ? 4.*(1. + x[1]) : 1. + x[0] + 0.5*double(d)) + drift_;
   }
 private:
   Uint gdim_;
   int k_;
+  double drift_;
 };
 
 class PExpr : public dolfin::Expression {
@@ -73,12 +78,14 @@ private:
   int k_;
 };
 
-// Two stamps, at t = 0 and 1, as a checkpoint (mesh.h5, up_k.h5) and, where
-// every field is P1, as XDMF (u, p, phi .xdmf); the parameter files name
-// neither wall_p2 nor include_phi, which the tests append
+// Stamps at t = 0, 1, ..., two by default, as a checkpoint (mesh.h5, up_k.h5)
+// and, where every field is P1, as XDMF (u, p, phi .xdmf); the parameter files
+// name neither wall_upgrade nor include_phi, which the tests append. Stamp k
+// holds UExpr(ks[k], drift[k])
 template<typename Cell>
 void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
-                const std::string& phi_el){
+                const std::string& phi_el, const std::vector<int>& ks = {0, 1},
+                const std::vector<double>& drift = {0., 0.}){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
   std::shared_ptr<dolfin::Mesh> mesh;
@@ -103,9 +110,11 @@ void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
       xf[i]->parameters["rewrite_function_mesh"] = false;
     }
   }
-  for (int k = 0; k < 2; ++k){
+  std::ofstream ts(c.path / "timestamps.dat");
+  for (int k = 0; k < int(ks.size()); ++k){
+    ts << k << "\tup_" << k << ".h5\n";
     dolfin::Function u(V), p(P), phi(F);
-    const UExpr ue(gdim, k);
+    const UExpr ue(gdim, ks[std::size_t(k)], drift[std::size_t(k)]);
     const PExpr pe(gdim, k);
     const PhiExpr fe(gdim, k);
     u.interpolate(ue);
@@ -123,7 +132,6 @@ void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
   }
   for (auto& f : xf) if (f) f->close();
 
-  std::ofstream(c.path / "timestamps.dat") << "0\tup_0.h5\n1\tup_1.h5\n";
   std::ofstream(c.file("h5_params.dat"))
     << "velocity_space=" << u_el << "\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n";
   if (xdmf)
@@ -185,8 +193,8 @@ void check_formats_agree(const std::string& tag, const std::size_t n){
   // has_phase_field decides interpol's phi column: include_phi's, whatever the file holds
   REQUIRE_FALSE(SimplexInterpol<Cell>(c.file("h5_params.dat")).has_phase_field());
   REQUIRE_FALSE(XDMFInterpol<Cell>(c.file("xdmf_params.dat")).has_phase_field());
-  append(c.file("h5_params.dat"), "include_phi=true\nwall_p2=edge\n");
-  append(c.file("xdmf_params.dat"), "include_phi=true\nwall_p2=edge\n");
+  append(c.file("h5_params.dat"), "include_phi=true\nwall_upgrade=true\n");
+  append(c.file("xdmf_params.dat"), "include_phi=true\nwall_upgrade=true\n");
   const std::vector<Vector3d> pts = points(gdim, 200, 0.5/double(n));
 
   SimplexInterpol<Cell> h5(c.file("h5_params.dat"));
@@ -224,13 +232,165 @@ TEST_CASE("A P1 field reads the same as a checkpoint and as XDMF", "[stamped]") 
   SECTION("tets"){ check_formats_agree<Tet>("tet_agree", 4); }
 }
 
-TEST_CASE("wall_p2 = edge on a P2 checkpoint is refused", "[stamped]") {
-  // The rule makes a P1 velocity quadratic next to the walls; a P2 one is
-  // already, so the key would do nothing
-  CaseDir c("p2_edge");
-  write_case<Triangle>(c, 4, "P2", "P1");
-  append(c.file("h5_params.dat"), "wall_p2=edge\n");
-  REQUIRE_THROWS_AS(SimplexInterpol<Triangle>(c.file("h5_params.dat")), partrac::Error);
+// The upgraded and the plain P2 field of one case, at the same points
+template<typename Cell>
+void check_upgrade_p2(const std::string& tag, const std::size_t n){
+  constexpr Uint gdim = Cell::n_verts - 1;
+  CaseDir c(tag);
+  write_case<Cell>(c, n, "P2", "P1");
+  CaseDir d(tag + "_plain");
+  write_case<Cell>(d, n, "P2", "P1");
+  append(c.file("h5_params.dat"), "wall_upgrade=true\n");
+  const std::vector<Vector3d> pts = points(gdim, 400, 0.5/double(n));
+  SimplexInterpol<Cell> up(c.file("h5_params.dat")), plain(d.file("h5_params.dat"));
+  const Sample a = sample(up, pts, gdim), b = sample(plain, pts, gdim);
+  // Off the boundary's layer of lattice boxes, no cell has a wall vertex
+  const double reach = 1./double(n) + 1e-9;
+  std::size_t far = 0, changed = 0;
+  for (std::size_t q = 0; q < a.cell_type.size(); ++q){
+    const Vector3d& x = pts[q % pts.size()];
+    double dist = 1.;
+    for (Uint k = 0; k < gdim; ++k) dist = std::min({dist, x[k], 1. - x[k]});
+    bool same = true;
+    for (Uint k = 0; k < gdim; ++k) same = same && a.u[q*gdim + k] == b.u[q*gdim + k];
+    for (Uint k = 0; k < gdim*gdim; ++k) same = same && a.gradu[q*gdim*gdim + k] == b.gradu[q*gdim*gdim + k];
+    if (dist > reach){
+      REQUIRE(same);
+      ++far;
+    }
+    else if (!same) ++changed;
+  }
+  REQUIRE(far > 0);
+  REQUIRE(changed > 0);
+  // No slip on the walls: every term vanishes on a facet at rest
+  up.update(0.3);
+  std::mt19937 rng(3);
+  std::uniform_real_distribution<double> any(0.05, 0.95);
+  for (int i = 0; i < 50; ++i){
+    Vector3d x = Vector3d::Zero();
+    for (Uint k = 0; k < gdim; ++k) x[k] = any(rng);
+    x[Uint(i) % gdim] = i % 2 ? 0. : 1.;
+    CellPos pos;
+    REQUIRE(up.locate(x, 0.3, pos));
+    PointValues got(1.);
+    up.evaluate(x, 0.3, pos, got);
+    REQUIRE(got.get_u().norm() < 1e-14);
+  }
+}
+
+TEST_CASE("wall_upgrade = true on a P2 checkpoint changes the wall cells only", "[stamped]") {
+  // The quartic terms live in the cells with a wall vertex at rest; every
+  // other cell reads the plain P2 field bit for bit, and the wall stays at rest
+  SECTION("triangles"){ check_upgrade_p2<Triangle>("p2_up_tri", 6); }
+  SECTION("tets"){ check_upgrade_p2<Tet>("p2_up_tet", 4); }
+}
+
+// The fields of a located point
+template<typename Cell>
+PointValues located(SimplexInterpol<Cell>& intp, const Vector3d& x, const double t){
+  CellPos pos;
+  REQUIRE(intp.locate(x, t, pos));
+  PointValues got(1.);
+  intp.evaluate(x, t, pos, got);
+  return got;
+}
+
+// The same held in its cell, as RK4cells evaluates
+template<typename Cell>
+PointValues held(SimplexInterpol<Cell>& intp, const Vector3d& x, const double t){
+  CellPos pos;
+  REQUIRE(intp.locate(x, t, pos));
+  PointValues got(1.);
+  HeldEval<SimplexInterpol<Cell>> ev(intp, got);
+  ev.bind(intp.region_in(pos.id, x));
+  ev.at(x, t);
+  return got;
+}
+
+template<typename M>
+double largest(const Eigen::MatrixBase<M>& m){ return m.cwiseAbs().maxCoeff(); }
+
+// intp at t between its stamps at tp and tn, whose fields prev and next hold at
+// t_ref: the blend of the two, their rate, and the held evaluation the same
+template<typename Cell>
+void check_blend(SimplexInterpol<Cell>& intp, SimplexInterpol<Cell>& prev, SimplexInterpol<Cell>& next,
+                 const double tp, const double tn, const double t, const double t_ref,
+                 const std::vector<Vector3d>& pts){
+  const double a = (t - tp)/(tn - tp);
+  double scale = 0., err = 0., err_held = 0.;
+  for (const Vector3d& x : pts){
+    const PointValues b = located(intp, x, t), h = held(intp, x, t);
+    const PointValues p = located(prev, x, t_ref), n = located(next, x, t_ref);
+    const Vector3d u = (1. - a)*p.U + a*n.U, A = (n.U - p.U)/(tn - tp);
+    const Matrix3d g = (1. - a)*p.gradU + a*n.gradU, gA = (n.gradU - p.gradU)/(tn - tp);
+    scale = std::max({scale, largest(u), largest(g), largest(A), largest(gA)});
+    err = std::max({err, largest(b.U - u), largest(b.gradU - g), largest(b.A - A), largest(b.gradA - gA)});
+    err_held = std::max({err_held, largest(h.U - b.U), largest(h.gradU - b.gradU), largest(h.A - b.A),
+                         largest(h.gradA - b.gradA)});
+  }
+  INFO("t = " << t << ", scale " << scale);
+  REQUIRE(scale > 0.);
+  REQUIRE(err <= 1e-13*scale);
+  REQUIRE(err_held <= 1e-13*scale);
+}
+
+// Stamps at rest on the walls blended with ones whose walls move: a moving
+// stamp's terms are zero, and between two stamps the field is the blend of the
+// one at rest's upgraded field and the moving one's plain P2, and its rate
+// their difference over the interval, in either order, located or held; past
+// a stamp, the buffer's swap keeps each stamp's terms with its values
+template<typename Cell>
+void check_upgrade_moving(const std::string& tag, const std::size_t n){
+  constexpr Uint gdim = Cell::n_verts - 1;
+  constexpr double drift = 0.05, t = 0.3, t_ref = 0.5;
+  const auto params = [&](const CaseDir& c, const std::vector<int>& ks, const std::vector<double>& d,
+                          const bool upgrade){
+    write_case<Cell>(c, n, "P2", "P1", ks, d);
+    append(c.file("h5_params.dat"), upgrade ? "wall_upgrade=true\n" : "wall_upgrade=false\n");
+    return c.file("h5_params.dat");
+  };
+  CaseDir cb(tag), cv(tag + "_reverse"), c3(tag + "_three"), cr(tag + "_rest"), cr2(tag + "_rest2"),
+          cm(tag + "_moving"), cp(tag + "_moving_plain"), cq(tag + "_rest_plain");
+  SimplexInterpol<Cell> both(params(cb, {0, 1}, {0., drift}, true));
+  SimplexInterpol<Cell> reverse(params(cv, {1, 0}, {drift, 0.}, true));
+  SimplexInterpol<Cell> three(params(c3, {0, 1, 2}, {0., drift, 0.}, true));
+  SimplexInterpol<Cell> rest(params(cr, {0, 0}, {0., 0.}, true));
+  SimplexInterpol<Cell> rest2(params(cr2, {2, 2}, {0., 0.}, true));
+  SimplexInterpol<Cell> moving(params(cm, {1, 1}, {drift, drift}, true));
+  SimplexInterpol<Cell> moving_plain(params(cp, {1, 1}, {drift, drift}, false));
+  SimplexInterpol<Cell> rest_plain(params(cq, {0, 0}, {0., 0.}, false));
+  const std::vector<Vector3d> pts = points(gdim, 400, 0.5/double(n));
+  for (auto* i : {&both, &reverse, &three, &rest, &rest2, &moving, &moving_plain, &rest_plain}){
+    i->set_int_order(2);
+    i->set_needs_gradient(true);
+    i->update(t_ref);
+  }
+  std::size_t terms = 0;
+  for (const Vector3d& x : pts){
+    const PointValues r = located(rest, x, t_ref), m = located(moving, x, t_ref);
+    const PointValues mp = located(moving_plain, x, t_ref), rp = located(rest_plain, x, t_ref);
+    // Where the wall moves the terms are zero: the plain P2 field, bit for bit
+    REQUIRE(m.U == mp.U);
+    REQUIRE(m.gradU == mp.gradU);
+    if (r.gradU != rp.gradU) ++terms;
+  }
+  REQUIRE(terms > 0);
+  both.update(t);
+  check_blend(both, rest, moving, 0., 1., t, t_ref, pts);
+  reverse.update(t);
+  check_blend(reverse, moving, rest, 0., 1., t, t_ref, pts);
+  three.update(t);
+  check_blend(three, rest, moving, 0., 1., t, t_ref, pts);
+  // Past stamp 1: the moving stamp becomes prev
+  three.update(1. + t);
+  check_blend(three, moving, rest2, 1., 2., 1. + t, t_ref, pts);
+}
+
+TEST_CASE("wall_upgrade = true blends stamps at rest with ones whose walls move", "[stamped]") {
+  // Whether the walls are at rest is a stamp's own: the terms of the one at
+  // rest are blended with the plain P2 field of the moving one
+  SECTION("triangles"){ check_upgrade_moving<Triangle>("p2_move_tri", 6); }
+  SECTION("tets"){ check_upgrade_moving<Tet>("p2_move_tet", 4); }
 }
 
 TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") {

@@ -7,9 +7,11 @@
 #include "dolfin_elements/vP1_2.h"
 #include "dolfin_elements/vP2_2.h"
 #include "dolfin_elements/vP3_2.h"
+#include "dolfin_elements/vP4_2.h"
 #include "dolfin_elements/vP1_3.h"
 #include "dolfin_elements/vP2_3.h"
 #include "dolfin_elements/vP3_3.h"
+#include "dolfin_elements/vP4_3.h"
 #include "dolfin_elements/P1_2.h"
 #include "dolfin_elements/P2_2.h"
 #include "dolfin_elements/P3_2.h"
@@ -30,6 +32,7 @@ std::shared_ptr<dolfin::FunctionSpace> lagrange_space(const std::string& el,
     if (el == "P1") return std::make_shared<vP1_2::FunctionSpace>(mesh, cd);
     if (el == "P2") return std::make_shared<vP2_2::FunctionSpace>(mesh, cd);
     if (el == "P3") return std::make_shared<vP3_2::FunctionSpace>(mesh, cd);
+    if (el == "P4") return std::make_shared<vP4_2::FunctionSpace>(mesh, cd);
   }
   else if constexpr (D == 2){
     if (el == "P1") return std::make_shared<P1_2::FunctionSpace>(mesh, cd);
@@ -40,6 +43,7 @@ std::shared_ptr<dolfin::FunctionSpace> lagrange_space(const std::string& el,
     if (el == "P1") return std::make_shared<vP1_3::FunctionSpace>(mesh, cd);
     if (el == "P2") return std::make_shared<vP2_3::FunctionSpace>(mesh, cd);
     if (el == "P3") return std::make_shared<vP3_3::FunctionSpace>(mesh, cd);
+    if (el == "P4") return std::make_shared<vP4_3::FunctionSpace>(mesh, cd);
   }
   else {
     if (el == "P1") return std::make_shared<P1_3::FunctionSpace>(mesh, cd);

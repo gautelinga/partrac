@@ -129,7 +129,7 @@ private:
   double dim;
 };
 
-// A Lagrange space P1-P3 by name, vector or scalar, of dimension D
+// A Lagrange space P1-P3 by name, vector or scalar, of dimension D; P4 vector only
 template<int D, bool Vector>
 std::shared_ptr<dolfin::FunctionSpace> lagrange_space(const std::string& el,
                                                       std::shared_ptr<dolfin::Mesh> mesh,

@@ -5,7 +5,7 @@
 // the values belong to the vertices the topology names, a vertex on a periodic
 // max face reads its master's value, and every stamp -- not only the first --
 // reaches the cells on a periodic face. The near-wall P2 scheme is checked
-// physically in tests/test_wall_p2.py; here both settings have to load and to
+// physically in tests/test_wall_edge_rule.py; here both settings have to load and to
 // differ only where a wall vertex is at rest.
 #ifdef USE_DOLFIN
 #include <catch2/catch.hpp>
@@ -88,7 +88,7 @@ private:
 // grid per stamp, as dolfin's XDMFFile writes it
 template<typename Cell>
 void write_xdmf_case(const CaseDir& c, const std::size_t n, const bool periodic,
-                     const std::string& wall_p2, const int nstamps,
+                     const bool wall_upgrade, const int nstamps,
                      const bool at_rest_on_walls = false){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
@@ -133,7 +133,7 @@ void write_xdmf_case(const CaseDir& c, const std::size_t n, const bool periodic,
     << "periodic_x=" << (periodic ? "true" : "false")
     << "\nperiodic_y=" << (periodic ? "true" : "false")
     << "\nperiodic_z=" << (periodic && gdim == 3 ? "true" : "false")
-    << "\nwall_p2=" << wall_p2 << "\n";
+    << "\nwall_upgrade=" << (wall_upgrade ? "true" : "false") << "\n";
 }
 
 // The cell centroids of the case's mesh, and how many sit in a cell with a
@@ -236,30 +236,30 @@ void check_two_stamps(XDMFInterpol<Cell>& intp, const std::vector<Vector3d>& pts
 
 TEST_CASE("The XDMF loader's values are the stored vertex values", "[xdmf_load]") {
   // The P1 dofs are the vertices, so a cell reads the rows of its own three or
-  // four of them; wall_p2=none keeps the evaluation P1 everywhere
+  // four of them; wall_upgrade=false keeps the evaluation P1 everywhere
   SECTION("triangles"){
     CaseDir c("tri_values");
-    write_xdmf_case<Triangle>(c, 8, false, "none", 2);
+    write_xdmf_case<Triangle>(c, 8, false, false, 2);
     XDMFTriangleInterpol intp(c.params());
     check_against_stored(intp, c, 0);
     check_against_stored(intp, c, 1);
   }
   SECTION("tets"){
     CaseDir c("tet_values");
-    write_xdmf_case<Tet>(c, 4, false, "none", 2);
+    write_xdmf_case<Tet>(c, 4, false, false, 2);
     XDMFTetInterpol intp(c.params());
     check_against_stored(intp, c, 0);
   }
 }
 
 TEST_CASE("Both near-wall settings load, and differ only at a wall at rest", "[xdmf_load]") {
-  // wall_p2=edge replaces the P1 velocity of a cell whose wall vertices are at
+  // wall_upgrade=true replaces the P1 velocity of a cell whose wall vertices are at
   // rest by a quadratic one; away from such a cell the two settings agree
   SECTION("a field that is nowhere at rest reads the same either way"){
     CaseDir c("tri_nowall");
-    write_xdmf_case<Triangle>(c, 8, false, "edge", 1);
+    write_xdmf_case<Triangle>(c, 8, false, true, 1);
     CaseDir n("tri_nowall_none");
-    write_xdmf_case<Triangle>(n, 8, false, "none", 1);
+    write_xdmf_case<Triangle>(n, 8, false, false, 1);
     std::size_t touching = 0;
     const std::vector<Vector3d> pts = centroids<3>(c, touching);
     XDMFTriangleInterpol edge(c.params());
@@ -279,9 +279,9 @@ TEST_CASE("Both near-wall settings load, and differ only at a wall at rest", "[x
   }
   SECTION("a field at rest on the walls is quadratic there and P1 inside"){
     CaseDir c("tri_wall");
-    write_xdmf_case<Triangle>(c, 8, false, "edge", 1, true);
+    write_xdmf_case<Triangle>(c, 8, false, true, 1, true);
     CaseDir n("tri_wall_none");
-    write_xdmf_case<Triangle>(n, 8, false, "none", 1, true);
+    write_xdmf_case<Triangle>(n, 8, false, false, 1, true);
     XDMFTriangleInterpol edge(c.params());
     XDMFTriangleInterpol none(n.params());
     edge.update(0.);
@@ -309,7 +309,7 @@ TEST_CASE("A later XDMF stamp reaches the cells on a periodic face", "[xdmf_load
   // period one on this mesh; a cell left on the wrong stamp is off by order one.
   SECTION("triangles"){
     CaseDir c("per_tri");
-    write_xdmf_case<Triangle>(c, 16, true, "edge", 2);
+    write_xdmf_case<Triangle>(c, 16, true, true, 2);
     std::size_t touching = 0;
     const std::vector<Vector3d> pts = centroids<3>(c, touching);
     REQUIRE(touching > 0);
@@ -318,7 +318,7 @@ TEST_CASE("A later XDMF stamp reaches the cells on a periodic face", "[xdmf_load
   }
   SECTION("tets"){
     CaseDir c("per_tet");
-    write_xdmf_case<Tet>(c, 8, true, "edge", 2);
+    write_xdmf_case<Tet>(c, 8, true, true, 2);
     std::size_t touching = 0;
     const std::vector<Vector3d> pts = centroids<4>(c, touching);
     REQUIRE(touching > 0);

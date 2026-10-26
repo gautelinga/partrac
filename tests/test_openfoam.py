@@ -109,7 +109,7 @@ def against_cellpoint(src, d, dim, *args):
     """The largest difference between interpol and OpenFOAM's cellPoint over
     the points both find inside, and how many they are; args after t0 go to
     the parameter file."""
-    params = case_copy(src, d, ["velocity_field=U", "pressure_field=p", "wall_p2=none",
+    params = case_copy(src, d, ["velocity_field=U", "pressure_field=p", "wall_upgrade=false",
                                 "nodes=inverse_distance"] + list(args[1:]))
     args = args[:1]
     X, U, log = probe(params, *args)
@@ -972,7 +972,7 @@ def test_the_pressure_is_cellpoints(tmp_path):
     p at every probed point of the cavity, its zeroGradient walls included."""
     import h5py
     src = solved("cavity_p")
-    params = linked(src, "10", tmp_path / "c", ["velocity_field=U", "pressure_field=p", "wall_p2=none",
+    params = linked(src, "10", tmp_path / "c", ["velocity_field=U", "pressure_field=p", "wall_upgrade=false",
                                                  "nodes=inverse_distance"])
     X, U, log = probe(params, "t0=10", "Nrw=2000")
     [out] = list(params.parent.rglob("interpolation.h5part"))
@@ -992,7 +992,7 @@ def test_a_symmetry_plane_is_cellpoints_and_mirrors_exactly(tmp_path):
     which fit over the cells and their mirror images, are exact for a linear
     field with the plane's symmetry, u = (1, -0.5, 2 (z - 0.5))."""
     src = solved("halfchannel")
-    params = linked(src, "3000", tmp_path / "a", ["velocity_field=U", "ignore_pressure=true", "wall_p2=none",
+    params = linked(src, "3000", tmp_path / "a", ["velocity_field=U", "ignore_pressure=true", "wall_upgrade=false",
                                                    "nodes=inverse_distance"])
     X, U, log = probe(params, "t0=3000", "Nrw=2000")
     assert "2048 other (top)" in log, log
@@ -1001,7 +1001,7 @@ def test_a_symmetry_plane_is_cellpoints_and_mirrors_exactly(tmp_path):
     assert np.isfinite(ref).all()
     assert np.abs(U[i] - ref).max() < 1e-13, np.abs(U[i] - ref).max()
     params = linked(os.path.join(src, "mf_symlinear"), "0", tmp_path / "b",
-                    ["velocity_field=U", "ignore_pressure=true", "wall_p2=none"])
+                    ["velocity_field=U", "ignore_pressure=true", "wall_upgrade=false"])
     X, U, J, log = probe(params, "t0=0", "Nrw=2000", gradient=True)
     assert "1024 mirrored" in log, log
     ue = np.c_[np.ones(len(X)), -0.5 * np.ones(len(X)), 2 * (X[:, 2] - 0.5)]
@@ -1150,7 +1150,7 @@ def at_rest(params, points, dim, c, run):
 @needs_openfoam
 @pytest.mark.slow
 @pytest.mark.parametrize("nodes", ["least_squares", "inverse_distance"])
-@pytest.mark.parametrize("wall", ["none", "edge"])
+@pytest.mark.parametrize("wall", ["false", "true"])
 def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
     """Between obstacles met obliquely, a P1 field's u.n grows linearly above
     each wall facet and tracers reach the walls and stop there (three
@@ -1168,7 +1168,7 @@ def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
     X, tris, mids, normals, sizes, lo, hi = front_plane(src, c["time"])
     tri = mtri.Triangulation(X[:, 0], X[:, 1], tris)
     params = linked(src, c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
-                                                      "nodes=" + nodes, "wall_p2=" + wall])
+                                                      "nodes=" + nodes, "wall_upgrade=" + wall])
     run = ["mode=openfoam", "Dm=0", "scheme=RK4"]
     # |u.n|/|u.t| at 1e-3 and 1e-2 of each facet's length along its inward normal
     median = {}
@@ -1185,7 +1185,7 @@ def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
         median[rel] = float(np.median(np.abs(un) / ut))
         shutil.rmtree(tmp_path / "c" / "Tracers")
     print("rsa2d %s %s: |u.n|/|u.t| median %.4g at 1e-3, %.4g at 1e-2" % (nodes, wall, median[1e-3], median[1e-2]))
-    if wall == "edge":
+    if wall == "true":
         assert abs(median[1e-3] / 2.2e-4 - 1) < 0.02 and abs(median[1e-2] / 2.2e-3 - 1) < 0.02, median
         assert abs(median[1e-2] / median[1e-3] - 10) < 0.1, median
     else:
@@ -1198,7 +1198,7 @@ def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
         rest.append(at_rest(params, P, 2, c, run)[0])
         shutil.rmtree(tmp_path / "c" / "Tracers")
     print("rsa2d %s %s: at rest %s, mean %.4f" % (nodes, wall, rest, np.mean(rest)))
-    if wall == "edge":
+    if wall == "true":
         assert abs(np.mean(rest) - 0.075) < 0.012, rest
     else:
         assert abs(np.mean(rest) - 0.76) < 0.02, rest
@@ -1206,13 +1206,13 @@ def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
 
 @needs_openfoam
 @pytest.mark.slow
-@pytest.mark.parametrize("wall", ["none", "edge"])
+@pytest.mark.parametrize("wall", ["false", "true"])
 def test_tracers_at_rest_near_the_spheres(tmp_path, wall):
     """The 3D obstacle case: with P1 about one tracer in sixty stops at a
     sphere in five throughflows, with the near-wall rule none."""
     c = NEAR_WALL["spheres3d"]
     params = linked(solved("spheres3d"), c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
-                                                                      "wall_p2=" + wall])
+                                                                      "wall_upgrade=" + wall])
     centres = np.array([(0.30, 0.30, 0.30), (0.70, 0.35, 0.65), (0.35, 0.70, 0.70), (0.68, 0.68, 0.32)])
     rest = []
     for off in OFFSETS:
@@ -1221,7 +1221,7 @@ def test_tracers_at_rest_near_the_spheres(tmp_path, wall):
         rest.append(at_rest(params, P, 3, c, ["mode=openfoam", "Dm=0", "scheme=RK4"])[0])
         shutil.rmtree(tmp_path / "c" / "Tracers")
     print("spheres3d %s: at rest %s, mean %.4f" % (wall, rest, np.mean(rest)))
-    if wall == "edge":
+    if wall == "true":
         assert max(rest) <= 0.0005, rest
     else:
         assert abs(np.mean(rest) - 0.016) < 0.003, rest

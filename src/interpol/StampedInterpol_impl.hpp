@@ -27,28 +27,33 @@ StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
 
   read_mesh_params();
   include_phi = dolfin_params.template get<bool>("include_phi");
-  // P2 near walls: edge or none
-  wall_p2_ = dolfin_params.template get<std::string>("wall_p2") == "edge" ? WallP2::Edge : WallP2::None;
+  // Near walls: the velocity's order raised or not
+  wall_upgrade_ = dolfin_params.template get<bool>("wall_upgrade");
 
   // The mesh, its tables, and the first stamp where the format reads it here
   fmt_.load(*this, infilename);
 
-  if (wall_p2_ == WallP2::Edge && ncoeffs_u != Uint(Cell::n_verts))
-    partrac::fail(infilename, ": wall_p2 = edge is for a P1 velocity, and this one has ",
+  upgrade_p2_ = wall_upgrade_ && ncoeffs_u == Uint(Cell::n_dofs_max);
+  if (wall_upgrade_ && !upgrade_p2_ && ncoeffs_u != Uint(Cell::n_verts))
+    partrac::fail(infilename, ": wall_upgrade = true is for a P1 or P2 velocity, and this one has ",
                   ncoeffs_u, " dofs a cell");
 
   // Identify edge cells
   near_wall::label_cell_type(cell_type_, facet_neigh_, Cell::n_verts);
   std::cout << "Built neighbour list" << std::endl;
 
-  if (wall_p2_ == WallP2::Edge){
+  if (wall_upgrade_){
     if (vclass_.empty())
       vclass_ = mesh_tables::match_periodic_vertices(coords_, nverts_, dim, periodic,
                                                      x_min, x_max, periodic_tol);
-    near_wall::build_wall_edges<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_,
-                                      vclass_, wall_index_, wall_cells_, verbose);
-    if (!stamps_.a().u.empty())
-      stamps_.a().rest_tol = rest_tol(stamps_.a().u);
+    if (upgrade_p2_){
+      near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_,
+                                        vclass_, wall_index_, upgrade_, verbose);
+    }
+    else
+      near_wall::build_wall_edges<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_,
+                                        vclass_, wall_index_, wall_cells_, verbose);
+    if (!stamps_.a().u.empty()) prepare(stamps_.a());
     partrac::phase("wall edges");
   }
 
@@ -69,22 +74,14 @@ void StampedInterpol<Cell, Format>::update(const double t)
     const auto fill = stamps_.load(fmt_.key(*this, sp.prev), fmt_.key(*this, sp.next),
                                    [&](const typename Format::Key& key, Stamp& s){
       fmt_.read(*this, key, s);
-      if (wall_p2_ == WallP2::Edge)
-        s.rest_tol = rest_tol(s.u);
+      prepare(s);
     });
     std::cout << "Prev: Timestep = " << sp.prev.t << ", "
               << partrac::stamp_note(fill.first, fmt_.name(sp.prev)) << std::endl;
     std::cout << "Next: Timestep = " << sp.next.t << ", "
               << partrac::stamp_note(fill.second, fmt_.name(sp.next)) << std::endl;
 
-    u_prev_ = stamps_.prev().u.data();
-    u_next_ = stamps_.next().u.data();
-    p_prev_ = stamps_.prev().p.data();
-    p_next_ = stamps_.next().p.data();
-    phi_prev_ = stamps_.prev().phi.data();
-    phi_next_ = stamps_.next().phi.data();
-    rest_tol_prev_ = stamps_.prev().rest_tol;
-    rest_tol_next_ = stamps_.next().rest_tol;
+    point(stamps_.prev(), stamps_.next());
 
     partrac::phase("vector read");
     partrac::phase_total();
@@ -103,28 +100,64 @@ void StampedInterpol<Cell, Format>::freeze(const double t)
   const double a = stamp_weight(t, t_prev, t_next);
   if (a != 0.){
     // Blend the two stamps into one
-    const auto blend = [a](const std::vector<double>& prev, const std::vector<double>& next,
-                           std::vector<double>& out){
-      out.resize(prev.size());
-      for (std::size_t i = 0; i < prev.size(); ++i) out[i] = a*next[i] + (1 - a)*prev[i];
-    };
-    blend(stamps_.prev().u, stamps_.next().u, frozen_.u);
-    blend(stamps_.prev().p, stamps_.next().p, frozen_.p);
-    blend(stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
-    frozen_.rest_tol = wall_p2_ == WallP2::Edge ? rest_tol(frozen_.u) : 0.;
-    u_prev_ = frozen_.u.data();
-    p_prev_ = frozen_.p.data();
-    phi_prev_ = frozen_.phi.data();
-    rest_tol_prev_ = frozen_.rest_tol;
+    partrac::blend(a, stamps_.prev().u, stamps_.next().u, frozen_.u);
+    partrac::blend(a, stamps_.prev().p, stamps_.next().p, frozen_.p);
+    partrac::blend(a, stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
+    prepare(frozen_);
+    point(frozen_, frozen_);
   }
-  u_next_ = u_prev_;
-  p_next_ = p_prev_;
-  phi_next_ = phi_prev_;
-  rest_tol_next_ = rest_tol_prev_;
+  else
+    point(stamps_.prev(), stamps_.prev());
   // A single stamp: the weight is zero and the rate too at every t
   t_prev = t;
   t_next = t;
   std::cout << "Fields frozen at t = " << t << std::endl;
+}
+
+template<typename Cell, typename Format>
+void StampedInterpol<Cell, Format>::prepare(Stamp& s) const
+{
+  if (!wall_upgrade_) return;
+  s.rest_tol = rest_tol(s.u);
+  if constexpr (!Format::vertex_fields)
+    if (upgrade_p2_) stamp_terms(s);
+}
+
+template<typename Cell, typename Format>
+void StampedInterpol<Cell, Format>::point(const Stamp& prev, const Stamp& next)
+{
+  u_prev_ = prev.u.data();
+  u_next_ = next.u.data();
+  p_prev_ = prev.p.data();
+  p_next_ = next.p.data();
+  phi_prev_ = prev.phi.data();
+  phi_next_ = next.phi.data();
+  rest_tol_prev_ = prev.rest_tol;
+  rest_tol_next_ = next.rest_tol;
+  coef_prev_ = prev.coef.data();
+  coef_next_ = next.coef.data();
+}
+
+template<typename Cell, typename Format>
+void StampedInterpol<Cell, Format>::stamp_terms(Stamp& s) const
+{
+  constexpr int nt = near_wall::n_terms<Cell>;
+  const std::size_t ncw = upgrade_.cells.size();
+  s.coef.resize(upgrade_.n_coef);
+#pragma omp parallel for schedule(dynamic, 1024)
+  for (std::size_t w = 0; w < ncw; ++w){
+    const near_wall::UpgradeCell& wc = upgrade_.cells[w];
+    const near_wall::TermSpan sp = upgrade_.spans[w];
+    std::array<double, Cell::n_dofs_max*3> u;
+    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[wc.cell], u_dofs_.stride(), s.u.data(), u.data());
+    std::array<double, D*nt> c;
+    const bool rest = near_wall::upgrade_coefficients<Cell>(u.data(), c.data(), wc, sp.mask,
+                                                            upgrade_.normals.data() + wc.normals, s.rest_tol);
+    // The cell's terms only, in their order; none at rest: zero
+    double* out = s.coef.data() + sp.offset;
+    for (std::uint32_t m = sp.mask; m; m &= m - 1, out += D)
+      for (int d = 0; d < D; ++d) out[d] = rest ? c[std::size_t(D*__builtin_ctz(m) + d)] : 0.;
+  }
 }
 
 template<typename Cell, typename Format>

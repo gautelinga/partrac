@@ -4,5 +4,5 @@
 @INTERP_ALIAS@
 
 template std::vector<Uint> RK4Integrator::step<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const double, const double);
-// Its substeps, which RK4cells falls back to
-template bool rk4_substeps<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const Uint, const double, const double);
+// Its pieces, which RK4cells falls back to
+template bool rk4_pieces<TransportElement::@ELEMENT@, @INTERP@>(@INTERP@&, ParticleSet&, const Uint, const double, const double);

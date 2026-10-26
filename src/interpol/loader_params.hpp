@@ -6,6 +6,12 @@
 #include <string>
 #include "Params.hpp"
 
+// The near-wall upgrade; wall_p2 is refused, naming it
+inline void add_wall_upgrade(partrac::Schema& s, const bool def, const std::string& doc){
+  s.opt<bool>("wall_upgrade", def, doc);
+  s.replaced("wall_p2", "wall_upgrade = true (wall_p2 = edge) or false (wall_p2 = none)");
+}
+
 // Every mesh loader
 inline void add_mesh_params(partrac::Schema& s, const bool three_d){
   s.opt<bool>("periodic_x", false, "periodic along x");
@@ -27,7 +33,8 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   add_mesh_params(s, mode != "triangle");
   s.require<std::string>("timestamps", "file listing each stamp's time and field file");
   s.require<std::string>("mesh", "mesh file");
-  s.require<std::string>("velocity_space", "velocity element, as P1 or P2");
+  s.require<std::string>("velocity_space", mode == "fenics" ? "velocity element, P1 to P4"
+                                                            : "velocity element, P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
   if (mode == "fenics"){
     // Read by DolfInterpol only
@@ -39,13 +46,13 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
     s.opt<bool>("mesh_cache", false, "keep the loaded tables beside the mesh and read them back");
     s.opt<bool>("include_phi", false, "read a phase field");
     s.opt<std::string>("phase_field", "phi", "phase field dataset in the field files");
-    s.opt<std::string>("wall_p2", "none", "P1 velocity next to walls at rest: edge (quadratic) or none; "
-                                           "the XDMF modes default to edge");
-    s.choices("wall_p2", {"edge", "none"});
+    add_wall_upgrade(s, false, "raise the velocity's order next to walls at rest: a P1 velocity to P2 "
+                               "(the edge rule), a P2 one by quartic terms; modes xdmftet, xdmftriangle "
+                               "and openfoam default to true");
     s.opt<bool>("divfree", false, "evaluate a P2 velocity on each cell's barycentric split, where it is "
                                   "pointwise divergence-free; every cell's net flux must already be zero, "
-                                  "which python/divfree/divfree_clean.py prepares; refuses wall_p2 = edge and "
-                                  "mesh_cache = true beside it");
+                                  "which python/divfree/divfree_clean.py prepares; refuses wall_upgrade = true "
+                                  "and mesh_cache = true beside it");
   }
   add_field_names(s);
   return s;
@@ -65,6 +72,8 @@ inline partrac::Schema simplex_freq_schema(const std::string& mode){
   s.optional<double>("tau", "base period of `t_k a_k file` lines, 0 or less for none; not read with omega_k");
   s.require<double>("t_min", "start of the time interval");
   s.require<double>("t_max", "end of the time interval");
+  s.check([](const partrac::Params& p){ return p.get<double>("t_max") >= p.get<double>("t_min"); },
+          "t_max is before t_min");
   return s;
 }
 
@@ -79,9 +88,8 @@ inline partrac::Schema xdmf_schema(const std::string& mode){
   s.require_if<std::string>("phi", [](const partrac::Params& p){ return p.get<bool>("include_phi"); },
                             "include_phi is true", "phase field XDMF file");
   s.opt<bool>("include_pf", false, "not read");
-  s.opt<std::string>("wall_p2", "edge", "velocity next to walls at rest: edge (quadratic) or none (P1); "
-                                           "modes tet and triangle default to none");
-  s.choices("wall_p2", {"edge", "none"});
+  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1); "
+                            "the dolfin modes tet and triangle default to false");
   return s;
 }
 
@@ -98,8 +106,7 @@ inline partrac::Schema openfoam_schema(){
   s.opt<std::string>("nodes", "least_squares", "values of U and p at the mesh points: least_squares (exact for "
                                                "linear fields) or inverse_distance (cellPoint's)");
   s.choices("nodes", {"least_squares", "inverse_distance"});
-  s.opt<std::string>("wall_p2", "edge", "velocity next to walls at rest: edge (quadratic) or none (P1)");
-  s.choices("wall_p2", {"edge", "none"});
+  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1)");
   s.optional<std::string>("phase_field", "phase field in the time directories, a volScalarField such as "
                                           "alpha.water; none read without it");
   s.opt<bool>("include_phi", false, "not read: phase_field names the phase field");

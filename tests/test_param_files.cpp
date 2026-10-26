@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <unistd.h>
 
@@ -97,7 +98,7 @@ TEST_CASE("mode openfoam refuses the keys the case itself says", "[params][inter
   };
   REQUIRE_NOTHROW(parse("velocity_field=U\nsplit=6\n"));
   REQUIRE(parse("").get<std::string>("split") == "12");
-  REQUIRE(parse("").get<std::string>("wall_p2") == "edge");
+  REQUIRE(parse("").get<bool>("wall_upgrade"));
   REQUIRE_THROWS_AS(parse("periodic_x=true\n"), partrac::ParamError);
   REQUIRE_THROWS_AS(parse("periodic_z=false\n"), partrac::ParamError);
   REQUIRE_THROWS_AS(parse("split=5\n"), partrac::ParamError);
@@ -106,4 +107,76 @@ TEST_CASE("mode openfoam refuses the keys the case itself says", "[params][inter
   REQUIRE(parse("phase_field=alpha.water\n").get<std::string>("phase_field") == "alpha.water");
   REQUIRE_FALSE(parse("").has("phase_field"));
   REQUIRE_THROWS_AS(parse("include_phi=true\n"), partrac::ParamError);
+}
+
+TEST_CASE("wall_p2 is refused by name, pointing at wall_upgrade", "[params][interpol]") {
+  // The key is gone without an alias: a file that still holds it must say
+  // what replaced it, in every schema that had it
+  const std::string path = (std::filesystem::temp_directory_path()
+                            / ("partrac_wall_p2_" + std::to_string(::getpid()) + ".dat")).string();
+  const auto message = [&](const partrac::Schema& s, const std::string& text){
+    { std::ofstream f(path); f << text; }
+    std::string all;
+    try { s.parse_file(path); }
+    catch (const partrac::ParamError& e){ for (const auto& p : e.problems()) all += p + "\n"; }
+    std::filesystem::remove(path);
+    return all;
+  };
+  const std::string h5 = "velocity_space=P2\npressure_space=P1\ntimestamps=t.dat\nmesh=m.h5\n";
+  const std::string xdmf = "u=u.xdmf\np=p.xdmf\n";
+  for (const auto& [schema, base] : std::vector<std::pair<partrac::Schema, std::string>>{
+         {dolfin_h5_schema("tet"), h5}, {dolfin_h5_schema("triangle"), h5},
+         {xdmf_schema("xdmftet"), xdmf}, {openfoam_schema(), ""}}){
+    for (const std::string v : {"edge", "none"}){
+      const std::string m = message(schema, base + "wall_p2=" + v + "\n");
+      REQUIRE(m.find("wall_p2") != std::string::npos);
+      REQUIRE(m.find("wall_upgrade") != std::string::npos);
+    }
+    REQUIRE(message(schema, base + "wall_upgrade=true\n").empty());
+    schema.validate_self();
+  }
+  // The defaults: true where the velocity is P1 by construction
+  { std::ofstream f(path); f << h5; }
+  REQUIRE_FALSE(dolfin_h5_schema("tet").parse_file(path).get<bool>("wall_upgrade"));
+  REQUIRE_FALSE(dolfin_h5_schema("triangle").parse_file(path).get<bool>("wall_upgrade"));
+  { std::ofstream f(path); f << xdmf; }
+  REQUIRE(xdmf_schema("xdmftriangle").parse_file(path).get<bool>("wall_upgrade"));
+  REQUIRE(xdmf_schema("xdmftet").parse_file(path).get<bool>("wall_upgrade"));
+  std::filesystem::remove(path);
+}
+
+TEST_CASE("A flow's time interval may be one instant but not run backwards", "[params][interpol]") {
+  // t_min and t_max bound the times a run can start at; t_max before t_min
+  // leaves none, and is refused when the file is read
+  const std::string path = (std::filesystem::temp_directory_path()
+                            / ("partrac_t_interval_" + std::to_string(::getpid()) + ".dat")).string();
+  const auto parses = [&](const partrac::Schema& s, const std::string& text){
+    { std::ofstream f(path); f << text; }
+    bool ok = true;
+    try { s.parse_file(path); }
+    catch (const partrac::ParamError& e){
+      ok = false;
+      bool named = false;
+      for (const auto& p : e.problems()) named = named || p.find("t_max is before t_min") != std::string::npos;
+      REQUIRE(named);
+    }
+    std::filesystem::remove(path);
+    return ok;
+  };
+  const ExprKind* sine = find_expr_kind("sine_flow");
+  REQUIRE(sine);
+  std::string expr;
+  {
+    std::ifstream in(std::string(PARTRAC_SOURCE_DIR) + "/data_example/sine_flow/expr_params.dat");
+    for (std::string line; std::getline(in, line); )
+      if (line.rfind("t_min=", 0) != 0 && line.rfind("t_max=", 0) != 0) expr += line + "\n";
+  }
+  const std::string freq = "freqstamps=f.dat\nmesh=m.h5\nvelocity_space=P1\npressure_space=P1\n";
+  for (const auto& [schema, base] : std::vector<std::pair<partrac::Schema, std::string>>{
+         {expression_schema(*sine), expr}, {simplex_freq_schema("trianglefreq"), freq}}){
+    REQUIRE(parses(schema, base + "t_min=0\nt_max=2\n"));
+    REQUIRE(parses(schema, base + "t_min=1.5\nt_max=1.5\n"));
+    REQUIRE_FALSE(parses(schema, base + "t_min=2\nt_max=1\n"));
+    schema.validate_self();
+  }
 }

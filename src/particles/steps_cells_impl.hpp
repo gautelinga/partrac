@@ -432,9 +432,9 @@ std::vector<Uint> RK4CellsIntegrator::step(Interp& intp, ParticleSet& ps, const 
         ++n_accepted_loc;
         continue;
       }
-      // At a wall, a failed region or projection, or past the cap: RK4 substeps from the start
+      // At a wall, a failed region or projection, or past the cap: RK4 pieces from the start
       ++c.fallbacks;
-      if (rk4_substeps<E>(intp, ps, i, t, dt))
+      if (rk4_pieces<E>(intp, ps, i, t, dt))
         ++n_accepted_loc;
       else {
         outside_nodes_loc.push_back(i);

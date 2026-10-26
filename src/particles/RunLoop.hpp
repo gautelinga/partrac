@@ -234,8 +234,46 @@ struct RunHooks {
   std::function<std::vector<StatsColumn>(double t, Integrator& counters)> statistics;
   // After statistics row
   std::function<void(int it, double t)> after_statistics = [](int, double){};
+  // The rest of the progress line
+  std::function<void(std::ostream& os)> progress = [](std::ostream&){};
   // Continue?
   std::function<bool()> keep_going = []{ return true; };
+};
+
+// Steps declined over the run, and what outside= did with them
+struct OutsideTotals {
+  const std::string& outside;
+  const Interpol& intp;
+  std::function<Uint()> declined;   // steps that left the fluid
+  bool warned = false;
+  static const char* verb(const std::string& outside){
+    if (outside == "reinject") return "reinjected";
+    if (outside == "remove") return "removed";
+    if (outside == "mark") return "marked";
+    return "left in place";
+  }
+  // Verbose: on the progress line; the check after every statistics row
+  void attach(RunHooks& hooks, const bool verbose){
+    if (verbose)
+      hooks.progress = [this](std::ostream& os){ os << ", declined " << declined(); };
+    hooks.after_statistics = [this](int, double){ check(); };
+  }
+  void finish(std::ostream& os){
+    os << "Steps declined: " << declined() << " (outside=" << outside << ": " << verb(outside) << ")"
+       << std::endl;
+    check();
+  }
+  // Once: a sealed field declines nothing
+  void check(){
+    const Uint n = declined();
+    if (warned || n == 0 || !intp.sealed)
+      return;
+    warned = true;
+    std::cerr << "Warning: " << n << " steps declined on a divfree = true field with no open "
+              << "boundary (every exterior facet at rest), where none can leave: the field was likely "
+              << "cleaned with walls that do not match the mesh's, or not cleaned "
+              << "(python/divfree/divfree_clean.py)" << std::endl;
+  }
 };
 
 // Simulation loop
@@ -328,7 +366,9 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
 
     // Statistics
     if (at_interval(it, stat_intv, dt)){
-      std::cout << "Time = " << t << std::endl;
+      std::cout << "Time = " << t;
+      hooks.progress(std::cout);
+      std::cout << std::endl;
       if (hooks.statistics)
         write_stats_row(statfile, hooks.statistics(t, stepper.counters()));
       else

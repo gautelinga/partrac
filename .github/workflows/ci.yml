@@ -109,6 +109,28 @@ jobs:
           grep "warning:" build.log | sort -u || true
           test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
 
+  # Unoptimised: a call the optimiser drops as dead still needs its definition
+  # at -O0, so a template referenced where it is never instantiated links in
+  # the other jobs and fails here. Built only; -O0 comes last and wins.
+  unoptimised:
+    name: links at -O0 (dolfin OFF)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DCMAKE_BUILD_TYPE=Debug \
+            "-DCMAKE_CXX_FLAGS_DEBUG=-g -O0"
+      - name: Build
+        run: make -C build -j$(nproc)
+
   # The other jobs build with dolfin off, which skips eight of the fourteen apps
   # and every mesh test. The image is pinned: this repository publishes no
   # "latest" tag, so an unpinned reference does not resolve.
@@ -206,7 +228,7 @@ jobs:
       - name: Tools the tests and the report need
         # xdist because instrumented apps are slower and ctest runs pytest
         # serially; curl because codecov-action downloads its uploader with it;
-        # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_p2.py
+        # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_edge_rule.py
         # builds its meshes with it and would otherwise skip, leaving the
         # near-wall code unmeasured; numpy held at the image's, which dolfin
         # and petsc4py are built against
