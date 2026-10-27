@@ -273,7 +273,9 @@ jobs:
   # mode=openfoam reads cases through OpenFOAM's own libraries, a plugin built
   # against OpenFOAM.org 14 from its apt repository, a large install; the split
   # and the node values are OpenFOAM-free and tested in every job, the reader
-  # here. The tests on solved cases too large to check in skip.
+  # here. The tests on solved cases too large to check in skip. The coverage
+  # job has no OpenFOAM, so the reader's coverage is measured here, in a
+  # build of its own, and reported to Codecov with the coverage job's.
   openfoam:
     name: OpenFOAM reader (dolfin OFF)
     runs-on: ubuntu-24.04
@@ -308,6 +310,35 @@ jobs:
         env:
           PARTRAC_REQUIRE_OPENFOAM: 1
         run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q tests/test_openfoam.py -m "not slow" -rs
+      - name: Coverage build
+        # as the coverage job's, in build-cov where gcovr.cfg looks
+        run: |
+          cmake -S . -B build-cov \
+            -DPARTRAC_ENABLE_DOLFIN=OFF \
+            -DPARTRAC_ENABLE_OPENFOAM=ON \
+            -DOPENFOAM_DIR=/opt/openfoam14 \
+            -DPARTRAC_COVERAGE=ON
+          make -C build-cov -j$(nproc)
+      - name: Coverage of the reader
+        # every OpenFOAM test, the slow ones too
+        env:
+          PARTRAC_REQUIRE_OPENFOAM: 1
+        run: |
+          build-cov/tests/unittest "[openfoam]"
+          PARTRAC_BIN=$PWD/build-cov/bin python3 -m pytest -q tests/test_openfoam.py -rs
+      - name: Coverage report
+        if: always()
+        run: |
+          pipx install gcovr
+          mkdir -p build-cov/report
+          gcovr --cobertura build-cov/report/coverage.xml
+      - uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: build-cov/report/coverage.xml
+          disable_search: true
+          fail_ci_if_error: false
 
   # PARTRAC_NATIVE_ARCH is off by default because -march=native crashes with
   # SIGILL on an older machine. Check the option still reaches the compiler.

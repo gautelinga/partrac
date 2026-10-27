@@ -335,17 +335,18 @@ void check_blend(SimplexInterpol<Cell>& intp, SimplexInterpol<Cell>& prev, Simpl
 }
 
 // Stamps at rest on the walls blended with ones whose walls move: a moving
-// stamp's terms are zero, and between two stamps the field is the blend of the
-// one at rest's upgraded field and the moving one's plain P2, and its rate
+// stamp reads its plain field (P1, or P2 without terms), and between two
+// stamps the field is the blend of the one at rest's raised field (the edge
+// rule on P1, the terms on P2) and the moving one's plain field, and its rate
 // their difference over the interval, in either order, located or held; past
-// a stamp, the buffer's swap keeps each stamp's terms with its values
+// a stamp, the buffer's swap keeps each stamp's raised reading with its values
 template<typename Cell>
-void check_upgrade_moving(const std::string& tag, const std::size_t n){
+void check_upgrade_moving(const std::string& tag, const std::size_t n, const std::string& u_el){
   constexpr Uint gdim = Cell::n_verts - 1;
   constexpr double drift = 0.05, t = 0.3, t_ref = 0.5;
   const auto params = [&](const CaseDir& c, const std::vector<int>& ks, const std::vector<double>& d,
                           const bool upgrade){
-    write_case<Cell>(c, n, "P2", "P1", ks, d);
+    write_case<Cell>(c, n, u_el, "P1", ks, d);
     append(c.file("h5_params.dat"), upgrade ? "wall_upgrade=true\n" : "wall_upgrade=false\n");
     return c.file("h5_params.dat");
   };
@@ -365,16 +366,16 @@ void check_upgrade_moving(const std::string& tag, const std::size_t n){
     i->set_needs_gradient(true);
     i->update(t_ref);
   }
-  std::size_t terms = 0;
+  std::size_t raised = 0;
   for (const Vector3d& x : pts){
     const PointValues r = located(rest, x, t_ref), m = located(moving, x, t_ref);
     const PointValues mp = located(moving_plain, x, t_ref), rp = located(rest_plain, x, t_ref);
-    // Where the wall moves the terms are zero: the plain P2 field, bit for bit
+    // Where the wall moves: the plain field, bit for bit
     REQUIRE(m.U == mp.U);
     REQUIRE(m.gradU == mp.gradU);
-    if (r.gradU != rp.gradU) ++terms;
+    if (r.U != rp.U || r.gradU != rp.gradU) ++raised;
   }
-  REQUIRE(terms > 0);
+  REQUIRE(raised > 0);
   both.update(t);
   check_blend(both, rest, moving, 0., 1., t, t_ref, pts);
   reverse.update(t);
@@ -387,10 +388,12 @@ void check_upgrade_moving(const std::string& tag, const std::size_t n){
 }
 
 TEST_CASE("wall_upgrade = true blends stamps at rest with ones whose walls move", "[stamped]") {
-  // Whether the walls are at rest is a stamp's own: the terms of the one at
-  // rest are blended with the plain P2 field of the moving one
-  SECTION("triangles"){ check_upgrade_moving<Triangle>("p2_move_tri", 6); }
-  SECTION("tets"){ check_upgrade_moving<Tet>("p2_move_tet", 4); }
+  // Whether the walls are at rest is a stamp's own: the raised field of the
+  // one at rest is blended with the plain field of the moving one
+  SECTION("P2 triangles"){ check_upgrade_moving<Triangle>("p2_move_tri", 6, "P2"); }
+  SECTION("P2 tets"){ check_upgrade_moving<Tet>("p2_move_tet", 4, "P2"); }
+  SECTION("P1 triangles"){ check_upgrade_moving<Triangle>("p1_move_tri", 6, "P1"); }
+  SECTION("P1 tets"){ check_upgrade_moving<Tet>("p1_move_tet", 4, "P1"); }
 }
 
 TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") {

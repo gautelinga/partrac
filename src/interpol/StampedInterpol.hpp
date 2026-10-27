@@ -123,8 +123,6 @@ protected:
   // The stamps in play's coefficients
   const double* coef_prev_ = nullptr;
   const double* coef_next_ = nullptr;
-  // A stamp's terms, from its velocity
-  void stamp_terms(Stamp& s) const;
   // What a stamp read needs computed: the rest tolerance and the terms
   void prepare(Stamp& s) const;
   // The stamps in play
@@ -160,7 +158,6 @@ protected:
 
   double rest_tol_prev_ = 0.;   // the tolerance of the stamps in play
   double rest_tol_next_ = 0.;
-  double rest_tol(const std::vector<double>& u_data) const;
 
   // The arrays the tree addresses; the cells hold the geometry
   std::vector<std::uint32_t> topo_;

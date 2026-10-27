@@ -18,6 +18,11 @@ step are recomputed here with the same rule from the exact field, so they are
 pinned to round-off; and every tracer must move, end inside, and keep its line
 element of unit length or its frame finite.
 
+A march, tracervectors_spatial, steps by path length ds in the rotation
+frozen at t, at both orders, from where a step ends beyond every wall. Each is
+taken in halves of ds, every piece's time from the speed at its start, and the
+ends and integration times are recomputed here the same way.
+
 Outflowing tracers leave the fluid within the step, so a piece of dt/64 fails
 too: their steps are declined and go to outside=, and the run reports the total
 declined and what outside= did with them, at the end and, verbose, on every
@@ -34,6 +39,7 @@ from dumps import all_dumps, read_stats
 from paths import app
 from pieces import in_pieces
 from runs import checkpoint_folder, put_points, run_app
+from wall_cases import dolfin_mesh
 
 APPS = ["tracers", "tracervectors", "tracertensors"]
 N_SIDES = 12
@@ -96,22 +102,12 @@ def fan_mesh(dim):
     return X, np.array(cells)
 
 
-def write_case(folder, dim, field):
+def write_fan_case(folder, dim, field):
     """A dolfin HDF5 case of the fan mesh holding the P1 field u = field(x), at
     two stamps: its parameter file."""
     df = pytest.importorskip("dolfin", reason="writing the mesh needs dolfin")
     folder.mkdir(parents=True)
-    X, cells = fan_mesh(dim)
-    mesh = df.Mesh()
-    ed = df.MeshEditor()
-    ed.open(mesh, "triangle" if dim == 2 else "tetrahedron", dim, dim)
-    ed.init_vertices(len(X))
-    ed.init_cells(len(cells))
-    for i, x in enumerate(X):
-        ed.add_vertex(i, x)
-    for i, c in enumerate(cells):
-        ed.add_cell(i, c)
-    ed.close()
+    mesh = dolfin_mesh(df, *fan_mesh(dim))
     V = df.VectorFunctionSpace(mesh, "CG", 1)
     u = df.Function(V)
     vals = np.zeros(V.dim())
@@ -152,29 +148,32 @@ def euler_once(x, h):
     return end, inside(x) and inside(end)
 
 
-def run_ring(tmp_path, name, dim, field, extra, r0=R0):
+def run_ring(tmp_path, name, dim, field, extra, r0=R0, march=None):
     """Run app name from the ring on the fan mesh holding field: a run places
     and checkpoints particles, the ring replaces their positions, and the
-    resumed run dumps at its start and after one step. Returns (the resumed
-    process, {0 and DT: {dataset: array in id order}}, its statistics)."""
-    params = write_case(tmp_path / "case", dim, field)
+    resumed run dumps at its start and after one step, of DT or, for a march
+    app, of path length march. Returns (the resumed process, {0 and the step:
+    {dataset: array in id order}}, its statistics)."""
+    params = write_fan_case(tmp_path / "case", dim, field)
     case = params.parent
+    step, end = ("dxn", "Ln") if march else ("dt", "T")
+    h = march or DT
     common = ["mode=" + ("triangle" if dim == 2 else "tet"), "Nrw=%d" % N_TRACERS,
-              "Nrw_max=%d" % N_TRACERS, "Dm=0", "int_order=1", "dt=%g" % DT, "random=false", "seed=1"]
+              "Nrw_max=%d" % N_TRACERS, "Dm=0", "int_order=1", "%s=%g" % (step, h), "random=false", "seed=1"]
     run_app(app(name), params, common,
             ["init_mode=points_xy" + ("z" if dim == 3 else ""), "x0=0", "y0=0", "z0=0.5",
-             "T=0", "dump_intv=1e9", "stat_intv=1e9", "checkpoint_intv=1e9", "outside=ignore"])
+             "%s=0" % end, "dump_intv=1e9", "stat_intv=1e9", "checkpoint_intv=1e9", "outside=ignore"])
     put_points(case, ring(dim, r0))
     r = run_app(app(name), params, common,
-                ["init_mode=points_xy", "T=%g" % (2 * DT), "dump_intv=%g" % DT, "stat_intv=%g" % DT,
+                ["init_mode=points_xy", "%s=%g" % (end, 2 * h), "dump_intv=%g" % h, "stat_intv=%g" % h,
                  "checkpoint_intv=1e9", "restart_folder=" + str(checkpoint_folder(case))], extra)
     out = {}
     for t, g in all_dumps(case, raw=True).items():
-        if t < DT / 2:
+        if t < h / 2:
             continue                                  # the placing run's
         ids = g.pop("id")[:, 0]
         order = np.argsort(ids, kind="stable")
-        out[round(t - DT, 12)] = {k: a[order] for k, a in g.items()}
+        out[round(t - h, 12)] = {k: a[order] for k, a in g.items()}
     stats = [f for f in case.rglob("tdata_from_t*.dat") if not f.name.startswith("tdata_from_t0.000000")]
     assert len(stats) == 1, stats
     return r, out, read_stats(stats[0])
@@ -189,21 +188,36 @@ def check_element(name, g):
             assert np.all(np.isfinite(a)), k
 
 
+# Per scheme: its arguments, the ring's radius, one step of it here, and
+# whether enough tracers needed pieces for the ring to test the rule
+IN_PIECES = {
+    "RK4": (["scheme=RK4", "outside=ignore"], R0, rk4_once,
+            lambda pieces: sum(m > 1 for m in pieces) > N_TRACERS // 4),
+    "explicit": (["scheme=explicit", "int_order=1", "outside=ignore"], R0_EULER, euler_once,
+                 lambda pieces: min(pieces) > 1),
+}
+
+
+@pytest.mark.parametrize("scheme", list(IN_PIECES))
 @pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
 @pytest.mark.parametrize("name", APPS)
-def test_an_rk4_step_whose_stage_crosses_a_convex_wall_edge_is_taken_in_pieces(tmp_path, name, dim):
-    """One RK4 step of the rotation: every tracer moves to where the rule of
-    halves puts it, inside the fluid, and some needed pieces; otherwise the
-    ring would not test the rule."""
-    r, D, stats = run_ring(tmp_path, name, dim, rotation, ["scheme=RK4", "outside=ignore"])
+def test_a_step_leaving_the_fluid_is_taken_in_pieces(tmp_path, name, dim, scheme):
+    """One step of the rotation that leaves the fluid -- RK4 from radius 0.95,
+    a stage crossing a convex wall edge, or explicit Euler at Dm = 0 from
+    radius 0.92, ending a factor 1.12 further out, beyond every wall -- is
+    taken again in halves, a failed half halved again. Every tracer moves to
+    where the rule of halves puts it, inside the fluid, and enough of them
+    needed pieces (under Euler every one) that the ring tests the rule."""
+    extra, r0, once, enough = IN_PIECES[scheme]
+    r, D, stats = run_ring(tmp_path, name, dim, rotation, extra, r0)
     p0, p1 = D[0.0]["points"], D[DT]["points"]
     expected, pieces = [], []
     for x in p0:
-        end, m = in_pieces(rk4_once, x, DT)
+        end, m = in_pieces(once, x, DT)
         assert end is not None, x
         expected.append(end)
         pieces.append(m)
-    assert sum(m > 1 for m in pieces) > N_TRACERS // 4, np.bincount(pieces)
+    assert enough(pieces), np.bincount(pieces)
     assert np.allclose(p1, expected, rtol=0, atol=1e-12)
     assert all(inside(x) for x in p1)
     assert np.all(np.linalg.norm(p1 - p0, axis=1) > 0.4)
@@ -211,27 +225,55 @@ def test_an_rk4_step_whose_stage_crosses_a_convex_wall_edge_is_taken_in_pieces(t
     assert list(stats["n_declined"]) == [0, 0]
 
 
+def spatial_once(int_order):
+    """One march step of the rotation on (x, the integration time) over path
+    length ds: h = ds/|u|, dx = u h, + J u h^2/2 at second order (a = 0, the
+    field is steady). Returns (the end and the time plus h, the end inside)."""
+    def once(xt, ds):
+        x = xt[:3]
+        u = rotation(x)
+        h = ds / np.linalg.norm(u)
+        dx = u * h
+        if int_order >= 2:
+            dx = dx + 0.5 * rotation(u) * h * h      # J u: the rotation of u
+        return np.r_[x + dx, xt[3] + h], inside(x + dx)
+    return once
+
+
+# Per order: a march step's path length from radius 0.92, whose end lies a
+# factor 1.12 further out, beyond every wall: h = 0.5 at first order, h = 1 at
+# second, where dx = u h - x h^2/2
+MARCH_DS = {1: 0.46, 2: 0.92}
+
+
+@pytest.mark.skipif(not os.path.exists(app("tracervectors_spatial")),
+                    reason="tracervectors_spatial is not built")
+@pytest.mark.parametrize("int_order", [1, 2])
 @pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
-@pytest.mark.parametrize("name", APPS)
-def test_an_explicit_step_ending_beyond_a_wall_is_taken_in_pieces(tmp_path, name, dim):
-    """One explicit Euler step of the rotation at Dm = 0 from radius 0.92 ends
-    a factor 1.12 further out, beyond every wall; in halves, a second half
-    near a facet's middle halved again, it stays inside. Every tracer moves
-    to where the rule of halves puts it, inside the fluid."""
-    r, D, stats = run_ring(tmp_path, name, dim, rotation, ["scheme=explicit", "int_order=1", "outside=ignore"],
-                           R0_EULER)
-    p0, p1 = D[0.0]["points"], D[DT]["points"]
+def test_a_march_step_leaving_the_fluid_is_taken_in_pieces(tmp_path, dim, int_order):
+    """A march step of the rotation that ends beyond every wall is taken
+    again in halves of its path length, the fields frozen at t,
+    each piece's time h = ds_piece/|u| from the speed at its start. Every
+    tracer moves to where that rule puts it, inside the fluid, its integration
+    time advanced by the pieces' h, its line element of unit length, and no
+    step is declined; else a march near a convex wall would stall or lose
+    tracers a smaller step keeps."""
+    ds = MARCH_DS[int_order]
+    r, D, stats = run_ring(tmp_path, "tracervectors_spatial", dim, rotation,
+                           ["int_order=%d" % int_order, "outside=ignore"], R0_EULER, march=ds)
+    a, b = D[0.0], D[ds]
     expected, pieces = [], []
-    for x in p0:
-        end, m = in_pieces(euler_once, x, DT)
+    for x, t in zip(a["points"], a["tau"][:, 0]):
+        end, m = in_pieces(spatial_once(int_order), np.r_[x, t], ds)
         assert end is not None, x
         expected.append(end)
         pieces.append(m)
+    expected = np.array(expected)
     assert min(pieces) > 1, np.bincount(pieces)
-    assert np.allclose(p1, expected, rtol=0, atol=1e-12)
-    assert all(inside(x) for x in p1)
-    assert np.all(np.linalg.norm(p1 - p0, axis=1) > 0.4)
-    check_element(name, D[DT])
+    assert np.allclose(b["points"], expected[:, :3], rtol=0, atol=1e-12)
+    assert np.allclose(b["tau"][:, 0], expected[:, 3], rtol=0, atol=1e-12)
+    assert all(inside(x) for x in b["points"])
+    check_element("tracervectors", b)   # the spatial march carries tracervectors' element
     assert list(stats["n_declined"]) == [0, 0]
 
 

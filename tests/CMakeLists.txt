@@ -30,6 +30,7 @@ add_library(unittest_objects OBJECT
   test_xdmf_load.cpp
   test_stamped_formats.cpp
   test_freq_load.cpp
+  test_freq_wall.cpp
   test_split_eval.cpp
   test_split_interpol.cpp
   test_wall_edges.cpp

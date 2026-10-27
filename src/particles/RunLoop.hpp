@@ -255,8 +255,8 @@ struct OutsideTotals {
   // Verbose: on the progress line; the check after every statistics row
   void attach(RunHooks& hooks, const bool verbose){
     if (verbose)
-      hooks.progress = [this](std::ostream& os){ os << ", declined " << declined(); };
-    hooks.after_statistics = [this](int, double){ check(); };
+      hooks.progress = [this, prev = hooks.progress](std::ostream& os){ prev(os); os << ", declined " << declined(); };
+    hooks.after_statistics = [this, prev = hooks.after_statistics](int it, double t){ prev(it, t); check(); };
   }
   void finish(std::ostream& os){
     os << "Steps declined: " << declined() << " (outside=" << outside << ": " << verb(outside) << ")"

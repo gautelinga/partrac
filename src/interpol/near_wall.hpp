@@ -1,11 +1,11 @@
 #ifndef __NEAR_WALL_HPP
 #define __NEAR_WALL_HPP
 
-// The near-wall rules of StampedInterpol, which raise the velocity's order in
-// the cells with a wall vertex where the wall is at rest. A P1 velocity becomes
-// P2 by the edge rule: the midpoint of every edge rising from a wall vertex is
-// a fixed linear map of the velocity at the edge's fluid end, so u.n grows as
-// delta^2 above the facet. The map differs by dimension -- a matrix in 2D,
+// The near-wall rules, which raise the velocity's order in the cells with a
+// wall vertex where the wall is at rest. A P1 velocity becomes P2 by the edge
+// rule: the midpoint of every edge rising from a wall vertex is a fixed linear
+// map of the velocity at the edge's fluid end, so u.n grows as delta^2 above
+// the facet. The map differs by dimension -- a matrix in 2D,
 // u_v/2 + (u_v.n) q in 3D -- so the per-end record and the table are
 // specialised. A P2 velocity gains quartic terms that vanish at every P2 node,
 // their coefficients linear in the cell's P2 values (UpgradeRule). Nothing here
@@ -21,7 +21,20 @@
 #include "Triangle.hpp"
 #include "typedefs.hpp"
 
+class CellDofs;
+
 namespace near_wall {
+
+// Whether wall_upgrade reads the velocity as P2, else P1
+template<typename Cell>
+bool velocity_p2(const Uint ncoeffs){ return ncoeffs == Uint(Cell::n_dofs_max); }
+
+// The rest tolerance of a velocity field: round-off of the largest value a cell can read
+double rest_tolerance(const std::vector<double>& u);
+// The same for a field on the vertex table, where an image vertex's own value
+// is never gathered, its master's is
+double rest_tolerance_by_vertex(const std::vector<double>& u, const std::vector<std::uint32_t>& vclass,
+                                const std::size_t nverts, const Uint dim);
 
 // What an edge end stores, and how many ends a cell has
 template<typename Cell> struct WallRule;
@@ -49,6 +62,20 @@ struct WallEdges {
   std::uint8_t wall;   // bit k: vertex k lies on a wall
   WallEdges() {}       // unset: build_wall_edges fills the table in parallel
 };
+
+// A block's wall vertices at rest, by bit: those of wall whose values are all
+// within tol, n values a direction
+template<typename Cell>
+inline unsigned rest_vertices(const double* u, const Uint n, const std::uint8_t wall, const double tol)
+{
+  unsigned rest = 0;
+  for (int k = 0; k < Cell::n_verts; ++k){
+    bool r = wall >> k & 1;
+    for (int d = 0; d < Cell::n_verts - 1; ++d) r = r && std::abs(u[d*n + k]) <= tol;
+    if (r) rest |= 1u << k;
+  }
+  return rest;
+}
 
 // The near-wall rule, per dimension: the P2 block of a P1 one whose wall
 // vertices are at rest, false where none is
@@ -130,6 +157,69 @@ inline bool wall_block<Tet>(const double* u, double* u2, const WallEdges<Tet>& w
     }
   }
   return true;
+}
+
+// wall_block with the wall vertices at rest given, by bit
+template<typename Cell>
+void raise_block(const double* u, double* u2, const WallEdges<Cell>& w, const unsigned rest);
+
+template<>
+inline void raise_block<Triangle>(const double* u, double* u2, const WallEdges<Triangle>& w,
+                                  const unsigned rest)
+{
+  constexpr int n1 = 3;
+  constexpr auto edge_ends = WallRule<Triangle>::edge_ends;
+  for (int k = 0; k < 3; ++k){
+    const bool r = rest >> k & 1;
+    u2[k] = r ? 0. : u[k];
+    u2[6 + k] = r ? 0. : u[n1 + k];
+  }
+  for (int e = 0; e < 3; ++e){
+    const int a = edge_ends[e][0], c = edge_ends[e][1];
+    const int m = Triangle::mid_[e];
+    const bool wa = rest >> a & 1, wc = rest >> c & 1;
+    const WallRule<Triangle>::End& we = w.ends[2*e + (wa ? 0 : 1)];
+    if (wa != wc){
+      const int v = wa ? c : a;
+      const double ux = u[v], uy = u[n1 + v];
+      u2[m] = we.mxx*ux + we.mxy*uy;
+      u2[6 + m] = we.myx*ux + we.myy*uy;
+    }
+    else {
+      u2[m] = 0.5*(u2[a] + u2[c]);
+      u2[6 + m] = 0.5*(u2[6 + a] + u2[6 + c]);
+    }
+  }
+}
+
+template<>
+inline void raise_block<Tet>(const double* u, double* u2, const WallEdges<Tet>& w, const unsigned rest)
+{
+  constexpr int n1 = 4;
+  constexpr auto edge_ends = WallRule<Tet>::edge_ends;
+  for (int k = 0; k < 4; ++k){
+    const bool r = rest >> k & 1;
+    for (int c = 0; c < 3; ++c)
+      u2[10*c + k] = r ? 0. : u[c*n1 + k];
+  }
+  for (int e = 0; e < 6; ++e){
+    const int a = edge_ends[e][0], b = edge_ends[e][1];
+    const int m = Tet::mid_[e];
+    const bool wa = rest >> a & 1, wb = rest >> b & 1;
+    const WallRule<Tet>::End& we = w.ends[2*e + (wa ? 0 : 1)];
+    if (wa != wb){
+      const int v = wa ? b : a;
+      const double ux = u[v], uy = u[n1 + v], uz = u[2*n1 + v];
+      const double un = ux*we.nx + uy*we.ny + uz*we.nz;
+      u2[m] = 0.5*ux + un*we.qx;
+      u2[10 + m] = 0.5*uy + un*we.qy;
+      u2[20 + m] = 0.5*uz + un*we.qz;
+    }
+    else {
+      for (int c = 0; c < 3; ++c)
+        u2[10*c + m] = 0.5*(u2[10*c + a] + u2[10*c + b]);
+    }
+  }
 }
 
 // Entry i of a table
@@ -246,10 +336,17 @@ struct UpgradeTable {
 };
 
 // The coefficients of the cell's terms, D a term at its index, from its P2
-// block; false where no wall vertex is at rest
+// block, its wall vertices at rest by bit
 template<typename Cell>
-bool upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, const std::uint32_t terms,
-                          const typename UpgradeTable<Cell>::Normal* n, const double tol);
+void upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, const std::uint32_t terms,
+                          const typename UpgradeTable<Cell>::Normal* n, const unsigned rest);
+
+// A P2 velocity field's terms in every wall cell, from its values by node (D
+// a node): the cell's terms only, in their order, zero in a cell with no wall
+// vertex at rest
+template<typename Cell>
+void field_terms(const UpgradeTable<Cell>& upgrade, const CellDofs& u_dofs, const double* u,
+                 const double tol, std::vector<double>& coef);
 
 // The barycentric products the terms are made of: each face's, and the cell's
 template<typename Cell>
@@ -319,6 +416,40 @@ inline Vector3d term_gradient(const int t, const std::array<double, 4>& l, const
   return out;
 }
 
+// Two fields' terms at a point, added to their values u and v: D coefficients
+// a term at its index, W every term's weight
+template<typename Cell>
+inline void add_terms(const double* W, const std::uint32_t mask, const double* cu, const double* cv,
+                      Vector3d& u, Vector3d& v)
+{
+  constexpr int D = Cell::n_verts - 1;
+  for (std::uint32_t m = mask; m; m &= m - 1){
+    const int t = __builtin_ctz(m);
+    for (int d = 0; d < D; ++d){
+      u[d] += W[t]*cu[D*t + d];
+      v[d] += W[t]*cv[D*t + d];
+    }
+  }
+}
+
+// The same to their gradients, g the barycentrics' gradients
+template<typename Cell>
+inline void add_term_gradients(const std::array<double, 4>& l, const TermProducts<Cell>& P,
+                               const std::array<Vector3d, Cell::n_verts>& g, const std::uint32_t mask,
+                               const double* cu, const double* cv, Matrix3d& gu, Matrix3d& gv)
+{
+  constexpr int D = Cell::n_verts - 1;
+  for (std::uint32_t m = mask; m; m &= m - 1){
+    const int t = __builtin_ctz(m);
+    const Vector3d gk = term_gradient<Cell>(t, l, P, g);
+    for (int d = 0; d < D; ++d)
+      for (int x = 0; x < D; ++x){
+        gu(d, x) += cu[D*t + d]*gk[x];
+        gv(d, x) += cv[D*t + d]*gk[x];
+      }
+  }
+}
+
 // The upgrade's wall cells and the normals of their terms, by the rules of
 // build_wall_edges; a facet at a corner vertex carries no bubble
 template<typename Cell>
@@ -342,6 +473,18 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
                       const std::vector<std::uint32_t>& vclass,
                       std::vector<std::int32_t>& wall_index,
                       std::vector<WallEdges<Cell>>& wall_cells, const bool verbose);
+
+// The wall tables: vclass where the format left it empty, each cell's wall
+// index (-1: no wall vertex) and, for a P2 velocity, the terms' table, else
+// the P1 edge ends
+template<typename Cell>
+void build_tables(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
+                  const std::size_t ncells, const std::size_t nverts, const Uint gdim,
+                  const std::vector<bool>& periodic, const Vector3d& x_min, const Vector3d& x_max,
+                  const double periodic_tol, const std::vector<std::int32_t>& facet_neigh,
+                  const bool p2, std::vector<std::uint32_t>& vclass,
+                  std::vector<std::int32_t>& wall_index, std::vector<WallEdges<Cell>>& wall_cells,
+                  UpgradeTable<Cell>& upgrade, const bool verbose);
 
 // 0 bulk, 1 on a wall, 2 next to a cell on a wall; from the facet table
 void label_cell_type(std::vector<int>& cell_type, const std::vector<std::int32_t>& across,

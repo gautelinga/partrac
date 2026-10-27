@@ -110,6 +110,24 @@ void poke(const std::string& path, const std::string& dataset, const T value,
   H5Fclose(file);
 }
 
+// Replaces a dataset with values
+template<typename T>
+void rewrite(const std::string& path, const std::string& dataset, const std::vector<T>& values,
+             const hid_t type){
+  const hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+  REQUIRE(file >= 0);
+  REQUIRE(H5Ldelete(file, dataset.c_str(), H5P_DEFAULT) >= 0);
+  const hsize_t n = values.size();
+  const hid_t space = H5Screate_simple(1, &n, nullptr);
+  const hid_t dset = H5Dcreate2(file, dataset.c_str(), type, space, H5P_DEFAULT, H5P_DEFAULT,
+                                H5P_DEFAULT);
+  REQUIRE(dset >= 0);
+  REQUIRE(H5Dwrite(dset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.data()) >= 0);
+  H5Dclose(dset);
+  H5Sclose(space);
+  H5Fclose(file);
+}
+
 // Replaces a group's signature attribute
 void set_signature(const std::string& path, const std::string& group, const std::string& value){
   const hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
@@ -595,6 +613,31 @@ TEST_CASE("A cache whose arrays do not fit its counts is rebuilt", "[simplex_loa
   REQUIRE(std::filesystem::exists(cache));
   // the vertex count, which the coordinates and the values are read against
   poke<double>(cache, "scalars", 7., H5T_NATIVE_DOUBLE, 1);
+  TetInterpol intp(c.params());
+  REQUIRE(sample(intp, pts) == fresh);
+}
+
+TEST_CASE("A cache that names neither a P1 nor a P2 velocity is rebuilt", "[simplex_load]") {
+  // A P3 tet's 20 dofs a cell, with a node table that fits them: every array
+  // fits its counts, and the loaders and the near-wall rule read only P1 and P2
+  CaseDir c("cache_p3");
+  write_periodic_case<Tet>(c, 4, "P1", true);
+  std::size_t touching = 0;
+  const std::vector<Vector3d> pts = centroids<4>(c, touching);
+  std::vector<double> fresh;
+  { TetInterpol intp(c.params()); fresh = sample(intp, pts); }
+  const std::string cache = (c.path / "mesh_partrac_tet.h5").string();
+  REQUIRE(std::filesystem::exists(cache));
+  std::vector<std::uint32_t> nodes;
+  {
+    const partrac::H5Id file = partrac::h5_open_read(cache);
+    partrac::h5_read(file, "u_nodes", nodes);
+  }
+  // P1's 4 dofs a cell made P3's 20: a node table of that size, and the count
+  REQUIRE(nodes.size() % 4 == 0);
+  rewrite<std::uint32_t>(cache, "u_nodes", std::vector<std::uint32_t>(nodes.size()*5, 0),
+                         H5T_NATIVE_UINT32);
+  poke<double>(cache, "scalars", 20., H5T_NATIVE_DOUBLE, 3);   // the velocity's dofs a cell
   TetInterpol intp(c.params());
   REQUIRE(sample(intp, pts) == fresh);
 }

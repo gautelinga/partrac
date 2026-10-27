@@ -104,10 +104,11 @@ else()
   set(CMAKE_CXX_FLAGS "${DOLFIN_CXX_FLAGS} ${CMAKE_CXX_FLAGS} ${PARTRAC_WARNING_FLAGS} -DDEBUG -O2 ${PARTRAC_ARCH_FLAGS} -ggdb3 -pedantic-errors")
 endif()
 
-# gcov counters: atomic for threads, absolute paths; serial, no flatten
+# gcov counters: atomic for threads, absolute paths; serial, no flatten; fewer
+# functions inlined: gcovr loses the lines of a function inlined everywhere
 option(PARTRAC_COVERAGE "Instrument for test coverage (gcov)." OFF)
 if (PARTRAC_COVERAGE)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-update=atomic -fprofile-abs-path")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-update=atomic -fprofile-abs-path -fno-inline-functions -fno-inline-small-functions")
 endif()
 
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")

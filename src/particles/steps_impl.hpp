@@ -76,6 +76,15 @@ inline Piece in_pieces(Fn&& piece, const double t, const double dt){
   return Piece::taken;
 }
 
+// The displacement over h from the fields at its start
+__attribute__((always_inline))
+inline Vector3d drift(PointValues& pv, const int int_order, const double h){
+  Vector3d dx = pv.get_u() * h;
+  if (int_order >= 2)
+    dx += 0.5 * (pv.get_a() + pv.get_Ju()) * h * h;
+  return dx;
+}
+
 // The carried element after h from the gradients at its start: el from n, or
 // the frame Fel from F
 template<typename M>
@@ -139,18 +148,18 @@ bool rk4_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, con
   PieceState<E> s(ps, i);
   PointValues ptvals(intp.get_U0());
   // The first stage at the start, kept while its piece is halved
-  bool first = false, located = false;
+  bool have_stage1 = false, located = false;
   Vector3d u1;
   [[maybe_unused]] Matrix3d J1;
   const Piece r = in_pieces([&](const double ta, const double h){
-    if (!first){
-      // Later starts: the last piece's end
+    if (!have_stage1){
+      // The first start located here; later ones are the last piece's end
       if (!located && !intp.locate(s.x, ta, s.pos))
         return Piece::stopped;
       evaluate_motion(intp, s.x, ta, s.pos, ptvals);
       u1 = ptvals.get_u();
       if constexpr (E != TransportElement::Point) J1 = ptvals.get_J();
-      first = located = true;
+      have_stage1 = located = true;
     }
     CellPos p = s.pos;
     LocatedEval<Interp> ev{intp, ptvals, p};
@@ -161,7 +170,7 @@ bool rk4_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, con
     [[maybe_unused]] Matrix3d Fel;
     if constexpr (E == TransportElement::Tensor) Fel = s.F + dF;
     s.advance(dx, p, el, Fel);
-    first = false;
+    have_stage1 = false;
     return Piece::taken;
   }, t, dt);
   if (r == Piece::taken)
@@ -176,9 +185,8 @@ bool rk4_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, con
 template<TransportElement E, typename Interp>
 __attribute__((noinline))
 bool explicit_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t, const double dt,
-                     const int int_order, const double Dm, PointValues& start,
+                     const int int_order, const bool noisy, PointValues& start,
                      const Vector3d& dx_rw){
-  const bool noisy = Dm > 0.0;
   if (noisy && intp.can_reflect)
     return false;
   PieceState<E> s(ps, i);
@@ -187,12 +195,8 @@ bool explicit_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t
     return false;
   // Noise: the step less its drift
   Vector3d noise = Vector3d::Zero();
-  if (noisy){
-    Vector3d drift = start.get_u() * dt;
-    if (int_order >= 2)
-      drift += 0.5 * (start.get_a() + start.get_Ju()) * dt * dt;
-    noise = dx_rw - drift;
-  }
+  if (noisy)
+    noise = dx_rw - drift(start, int_order, dt);
   PointValues ptvals(intp.get_U0());
   // The fields at the piece's start, kept while it is halved
   PointValues* at = &start;
@@ -201,9 +205,7 @@ bool explicit_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t
       evaluate_motion(intp, s.x, ta, s.pos, ptvals);
       at = &ptvals;
     }
-    Vector3d dx = at->get_u() * h;
-    if (int_order >= 2)
-      dx += 0.5 * (at->get_a() + at->get_Ju()) * h * h;
+    Vector3d dx = drift(*at, int_order, h);
     if (noisy)
       dx += noise * (h/dt);
     CellPos p = s.pos;
@@ -239,15 +241,12 @@ bool spatial_pieces(Interp& intp, ParticleSet& ps, const Uint i, const double t,
       evaluate_motion(intp, s.x, t, s.pos, ptvals);
       at = &ptvals;
     }
-    const Vector3d u_1 = at->get_u();
-    const double uabs = u_1.norm();
+    const double uabs = at->get_u().norm();
     // At rest: no path
     if (!(uabs > u_min))
       return Piece::stopped;
     const double h = dsp / uabs;
-    Vector3d dx = u_1 * h;
-    if (int_order >= 2)
-      dx += 0.5 * (at->get_a() + at->get_Ju()) * h * h;
+    const Vector3d dx = drift(*at, int_order, h);
     CellPos p = s.pos;
     if (!intp.locate(s.x + dx, t, p))
       return Piece::failed;
@@ -402,7 +401,7 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
                 ++n_accepted_loc;
             }
             // An end outside: pieces
-            else if (explicit_pieces<E>(intp, ps, i, t, dt, int_order, Dm, ptvals, dx_rw))
+            else if (explicit_pieces<E>(intp, ps, i, t, dt, int_order, Dm > 0.0, ptvals, dx_rw))
                 ++n_accepted_loc;
             else {
                 outside_nodes_loc.push_back(i);

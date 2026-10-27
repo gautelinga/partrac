@@ -8,6 +8,7 @@
 #include "Error.hpp"
 #include "StampedInterpol.hpp"
 #include "mesh_tables.hpp"
+#include "near_wall.hpp"
 #include "p12_eval.hpp"
 #include "phase_timing.hpp"
 #include <array>
@@ -33,26 +34,16 @@ StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
   // The mesh, its tables, and the first stamp where the format reads it here
   fmt_.load(*this, infilename);
 
-  upgrade_p2_ = wall_upgrade_ && ncoeffs_u == Uint(Cell::n_dofs_max);
-  if (wall_upgrade_ && !upgrade_p2_ && ncoeffs_u != Uint(Cell::n_verts))
-    partrac::fail(infilename, ": wall_upgrade = true is for a P1 or P2 velocity, and this one has ",
-                  ncoeffs_u, " dofs a cell");
+  upgrade_p2_ = wall_upgrade_ && near_wall::velocity_p2<Cell>(ncoeffs_u);
 
   // Identify edge cells
   near_wall::label_cell_type(cell_type_, facet_neigh_, Cell::n_verts);
   std::cout << "Built neighbour list" << std::endl;
 
   if (wall_upgrade_){
-    if (vclass_.empty())
-      vclass_ = mesh_tables::match_periodic_vertices(coords_, nverts_, dim, periodic,
-                                                     x_min, x_max, periodic_tol);
-    if (upgrade_p2_){
-      near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_,
-                                        vclass_, wall_index_, upgrade_, verbose);
-    }
-    else
-      near_wall::build_wall_edges<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_,
-                                        vclass_, wall_index_, wall_cells_, verbose);
+    near_wall::build_tables<Cell>(topo_, coords_, ncells_, nverts_, dim, periodic, x_min, x_max,
+                                  periodic_tol, facet_neigh_, upgrade_p2_, vclass_, wall_index_,
+                                  wall_cells_, upgrade_, verbose);
     if (!stamps_.a().u.empty()) prepare(stamps_.a());
     partrac::phase("wall edges");
   }
@@ -118,9 +109,12 @@ template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::prepare(Stamp& s) const
 {
   if (!wall_upgrade_) return;
-  s.rest_tol = rest_tol(s.u);
-  if constexpr (!Format::vertex_fields)
-    if (upgrade_p2_) stamp_terms(s);
+  if constexpr (Format::vertex_fields)
+    s.rest_tol = near_wall::rest_tolerance_by_vertex(s.u, vclass_, nverts_, dim);
+  else {
+    s.rest_tol = near_wall::rest_tolerance(s.u);
+    if (upgrade_p2_) near_wall::field_terms<Cell>(upgrade_, u_dofs_, s.u.data(), s.rest_tol, s.coef);
+  }
 }
 
 template<typename Cell, typename Format>
@@ -136,46 +130,6 @@ void StampedInterpol<Cell, Format>::point(const Stamp& prev, const Stamp& next)
   rest_tol_next_ = next.rest_tol;
   coef_prev_ = prev.coef.data();
   coef_next_ = next.coef.data();
-}
-
-template<typename Cell, typename Format>
-void StampedInterpol<Cell, Format>::stamp_terms(Stamp& s) const
-{
-  constexpr int nt = near_wall::n_terms<Cell>;
-  const std::size_t ncw = upgrade_.cells.size();
-  s.coef.resize(upgrade_.n_coef);
-#pragma omp parallel for schedule(dynamic, 1024)
-  for (std::size_t w = 0; w < ncw; ++w){
-    const near_wall::UpgradeCell& wc = upgrade_.cells[w];
-    const near_wall::TermSpan sp = upgrade_.spans[w];
-    std::array<double, Cell::n_dofs_max*3> u;
-    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[wc.cell], u_dofs_.stride(), s.u.data(), u.data());
-    std::array<double, D*nt> c;
-    const bool rest = near_wall::upgrade_coefficients<Cell>(u.data(), c.data(), wc, sp.mask,
-                                                            upgrade_.normals.data() + wc.normals, s.rest_tol);
-    // The cell's terms only, in their order; none at rest: zero
-    double* out = s.coef.data() + sp.offset;
-    for (std::uint32_t m = sp.mask; m; m &= m - 1, out += D)
-      for (int d = 0; d < D; ++d) out[d] = rest ? c[std::size_t(D*__builtin_ctz(m) + d)] : 0.;
-  }
-}
-
-template<typename Cell, typename Format>
-double StampedInterpol<Cell, Format>::rest_tol(const std::vector<double>& u_data) const
-{
-  // Round-off of the largest velocity a cell can read: an image vertex's own
-  // value is never gathered, its master's is
-  double u_max = 0.;
-  if constexpr (Format::vertex_fields){
-    for (std::size_t v = 0; v < nverts_; ++v){
-      if (vclass_[v] != v) continue;
-      for (Uint c = 0; c < dim; ++c) u_max = std::max(u_max, std::abs(u_data[v*dim + c]));
-    }
-  }
-  else {
-    for (const double u : u_data) u_max = std::max(u_max, std::abs(u));
-  }
-  return 1e-12*u_max;
 }
 
 #endif

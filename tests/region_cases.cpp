@@ -159,6 +159,14 @@ void write_freq(const CaseDir& c, const std::size_t n){
     << "mesh=mesh.h5\n" << periodic_keys(per) << "tau=1\nt_min=0\nt_max=1e8\n";
 }
 
+void write_freq_of_stamps(const CaseDir& c, const std::string& u_el, const std::vector<bool>& per,
+                          const std::string& lines, const std::string& extra){
+  std::ofstream(c.file("freqstamps.dat")) << lines;
+  std::ofstream(c.file("freq_params.dat")) << "velocity_space=" << u_el
+    << "\npressure_space=P1\nfreqstamps=freqstamps.dat\nmesh=mesh.h5\n" << periodic_keys(per)
+    << "t_min=0\nt_max=1e8\n" << extra;
+}
+
 // Quadratic and divergence-free, so every cell of its P2 interpolant balances;
 // independent of x where the mesh is periodic along x
 template<int D>

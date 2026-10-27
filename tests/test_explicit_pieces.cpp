@@ -1,11 +1,13 @@
 // A noisy explicit step whose end leaves the fluid, on a field that does not
 // reflect, is taken again in pieces: halves, a failed piece halved again down
-// to dt/64, each piece taking its share h/dt of the step's noise. The field is
-// Taylor-Couette with the rolls and the decay off, a uniform azimuthal speed
-// 1 between the cylinders, so a whole step from near the outer cylinder ends
-// beyond it while pieces follow the circle. The noise the step draws is drawn
-// again here from a copy of the generator, and every end, and every declined
-// step, must be the rule's with that noise.
+// to dt/64, each piece taking its share h/dt of the step's noise and its
+// drift, u h, + (a + J u) h^2/2 at second order, from the fields at its start.
+// The field is Taylor-Couette with the rolls and the decay off, a uniform
+// azimuthal speed 1 between the cylinders, so a whole step from near the outer
+// cylinder ends beyond it while pieces follow the circle; steady, so a = 0,
+// but J u is the centripetal -u^2/s. The noise the step draws is drawn again
+// here from a copy of the generator, and every end, and every declined step,
+// must be the rule's with that noise.
 #include <catch2/catch.hpp>
 
 #include <cmath>
@@ -29,13 +31,21 @@ struct OneThread {
   ~OneThread(){ omp_set_num_threads(before); }
 };
 
+// The drift over h from the fields in pv
+Vector3d drift_over(PointValues& pv, const int int_order, const double h){
+  Vector3d d = pv.get_u() * h;
+  if (int_order >= 2)
+    d += 0.5 * (pv.get_a() + pv.get_J() * pv.get_u()) * h * h;
+  return d;
+}
+
 // The end of the step from x with this noise, by the rule of halves; false: declined
-bool rule_end(AnalyticInterpol& intp, Vector3d x, const double t, const double dt, const Vector3d& noise,
-              Vector3d& end, int& pieces){
+bool rule_end(AnalyticInterpol& intp, Vector3d x, const double t, const double dt, const int int_order,
+              const Vector3d& noise, Vector3d& end, int& pieces){
   CellPos pos;
   PointValues pv(intp.get_U0());
   intp.evaluate(x, t, pos, pv);
-  Vector3d dx = pv.get_u() * dt;
+  Vector3d dx = drift_over(pv, int_order, dt);
   dx += noise;
   pieces = 1;
   if (intp.locate(x + dx, t + dt, pos)){
@@ -49,7 +59,7 @@ bool rule_end(AnalyticInterpol& intp, Vector3d x, const double t, const double d
   while (u < units){
     const double ta = t + u*unit, h = size*unit;
     intp.evaluate(x, ta, pos, pv);
-    Vector3d d = pv.get_u() * h;
+    Vector3d d = drift_over(pv, int_order, h);
     d += noise * (h/dt);
     if (intp.locate(x + d, ta + h, pos)){
       x += d;
@@ -67,9 +77,8 @@ bool rule_end(AnalyticInterpol& intp, Vector3d x, const double t, const double d
   return true;
 }
 
-}  // namespace
-
-TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in pieces sharing its noise", "[pieces]"){
+// One noisy step of order int_order and length dt from the ring at radius s0
+void check_noisy_pieces(const int int_order, const double dt, const double s0){
   CaseDir c("explicit_pieces");
   {
     std::ofstream f(c.file("expr_params.dat"));
@@ -80,7 +89,7 @@ TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in
   auto intp = std::make_shared<AnalyticInterpol>(c.file("expr_params.dat"));
   // Not enable_reflection: the field cannot reflect
   REQUIRE(!intp->can_reflect);
-  const double t = 0., dt = 0.5, Dm = 1e-4, s0 = 2.48;
+  const double t = 0., Dm = 1e-4;
   intp->update(t);
 
   const Uint n = 96;
@@ -96,7 +105,7 @@ TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in
   std::vector<std::mt19937> gens(omp_get_max_threads());
   for (std::size_t k = 0; k < gens.size(); ++k) gens[k].seed(7 + k);
   std::mt19937 g = gens[0];
-  ExplicitIntegrator integrator(Dm, 1, gens);
+  ExplicitIntegrator integrator(Dm, int_order, gens);
   std::vector<Uint> out;
   {
     OneThread one;
@@ -113,17 +122,29 @@ TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in
     Vector3d end;
     int pieces = 0;
     INFO("particle " << i);
-    if (!rule_end(*intp, pts[i], t, dt, sigma*eta, end, pieces)){
+    if (!rule_end(*intp, pts[i], t, dt, int_order, sigma*eta, end, pieces)){
       declined.push_back(i);
       REQUIRE(ps.x(i) == pts[i]);
       continue;
     }
     rescued += pieces > 1;
-    REQUIRE((ps.x(i) - end).norm() <= 1e-14);
+    REQUIRE((ps.x(i) - end).norm() <= 1e-13);
     // dt itself, not the sum of the pieces
     REQUIRE(ps.t_loc(i) == dt);
   }
   INFO(rescued << " rescued, " << declined.size() << " declined");
   REQUIRE(out == declined);
   REQUIRE(rescued > n/2);
+}
+
+}  // namespace
+
+// Pieces sharing the noise of a step of either order. From s0 = 2.48 a first
+// order step of dt = 0.5 ends near s0 + dt^2/(2 s0), beyond the outer cylinder
+// at 2.5; a second order step, whose J u term bends it back onto the circle,
+// only near s0 + dt^4/(8 s0^3), so it overshoots at dt = 1.5. Pieces whose
+// drift dropped or misplaced that term would end off the circle, outside
+TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in pieces sharing its noise", "[pieces]"){
+  SECTION("first order"){ check_noisy_pieces(1, 0.5, 2.48); }
+  SECTION("second order"){ check_noisy_pieces(2, 1.5, 2.48); }
 }

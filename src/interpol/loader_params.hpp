@@ -70,6 +70,8 @@ inline partrac::Schema simplex_freq_schema(const std::string& mode){
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
   add_field_names(s);
   s.optional<double>("tau", "base period of `t_k a_k file` lines, 0 or less for none; not read with omega_k");
+  add_wall_upgrade(s, false, "raise the velocity's order next to walls at rest in every component: a P1 "
+                             "velocity to P2 (the edge rule), a P2 one by quartic terms");
   s.require<double>("t_min", "start of the time interval");
   s.require<double>("t_max", "end of the time interval");
   s.check([](const partrac::Params& p){ return p.get<double>("t_max") >= p.get<double>("t_min"); },

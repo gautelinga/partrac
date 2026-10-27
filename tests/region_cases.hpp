@@ -34,6 +34,11 @@ void write_stamped(const CaseDir& c, std::size_t n, const std::string& u_el, con
 template<typename Cell>
 void write_freq(const CaseDir& c, std::size_t n);
 
+// write_stamped's stamps read as frequency components (freq_params.dat), lines
+// of `omega phi a file`
+void write_freq_of_stamps(const CaseDir& c, const std::string& u_el, const std::vector<bool>& per,
+                          const std::string& lines, const std::string& extra);
+
 // Two stamps at t = 0 and 1 for divfree = true (h5_params.dat), periodic along x or walled
 template<typename Cell>
 void write_split(const CaseDir& c, std::size_t n, bool periodic);
