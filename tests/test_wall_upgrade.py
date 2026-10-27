@@ -1,5 +1,6 @@
-"""wall_upgrade=true on a P2 velocity (mode=triangle and tet): the P2 field
-plus quartic terms in the cells with a wall vertex at rest.
+"""wall_upgrade=true on a P2 velocity (mode=triangle and tet, and the
+frequency modes trianglefreq and tetfreq): the P2 field plus quartic terms in
+the cells with a wall vertex at rest.
 
 The terms vanish at every P2 node. Per edge end at a wall vertex w, towards v:
 -((4 u_m - u_v).n) n lambda_w^2 lambda_v (lambda_w - lambda_v), n the edge
@@ -20,7 +21,8 @@ gradient, at random points (interpol), in 2D on a kinked channel periodic
 along it and in 3D around a sphere in a periodic box: cells with a wall facet,
 a wall edge or a wall vertex only, on the periodic seams, at a time between
 two stamps. Away from the wall cells the field is the plain P2 one bit for
-bit.
+bit. The frequency modes read the same two files as components, summed with
+their weights, against the reference summed with the same weights.
 """
 
 import os
@@ -338,29 +340,35 @@ class Case:
             self.U2.append(vec[dofs].transpose(0, 2, 1))
         assert len(self.U2[0][0]) == nv + len(LOCAL_EDGES[dim])
         (base / "timestamps.dat").write_text("0.0 up_0.h5\n1.0 up_1.h5\n")
-        self.params = ("velocity_space=P2\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
-                       + "".join("periodic_%s=%s\n" % (a, "true" if p else "false")
-                                 for a, p in zip("xyz", list(periodic) + [False] * (3 - dim))))
+        self.mesh_params = ("velocity_space=P2\npressure_space=P1\nmesh=mesh.h5\n"
+                            + "".join("periodic_%s=%s\n" % (a, "true" if p else "false")
+                                      for a, p in zip("xyz", list(periodic) + [False] * (3 - dim))))
+        self.params = "timestamps=timestamps.dat\n" + self.mesh_params
         self.up = Upgrade(X, cells, self.slots, periodic_classes(X, periodic))
 
-    def __call__(self, mode):
-        """The case folder read with wall_upgrade=mode ("true" or "false")."""
-        d = self.base / mode
+    def variant(self, name, extra, series="timestamps=timestamps.dat"):
+        """A folder of the case's files, its parameter file naming the time
+        series (series) and holding extra."""
+        d = self.base / name
         if not d.exists():
             d.mkdir()
             for f in os.listdir(self.base):
                 if os.path.isfile(self.base / f):
                     shutil.copy(self.base / f, d / f)
-            (d / "dolfin_params.dat").write_text(self.params + "wall_upgrade=%s\n" % mode)
+            (d / "dolfin_params.dat").write_text(series + "\n" + self.mesh_params + extra)
         return d
 
-    def reference(self, cid, L, terms=True):
-        """u and J at time T0, from the two stamps."""
+    def __call__(self, mode):
+        """The case folder read with wall_upgrade=mode ("true" or "false")."""
+        return self.variant(mode, "wall_upgrade=%s\n" % mode)
+
+    def reference(self, cid, L, terms=True, weights=(1 - T0, T0)):
+        """u and J from the two stamps summed with weights, by default the blend at T0."""
         out = []
         for U2 in self.U2:
             CFD = self.up.coefficients(U2) if terms else None
             out.append(self.up.evaluate(U2, CFD, cid, L, terms=terms))
-        return tuple((1 - T0) * a + T0 * b for a, b in zip(*out))
+        return tuple(weights[0] * a + weights[1] * b for a, b in zip(*out))
 
 
 @pytest.fixture(scope="module")
@@ -389,15 +397,15 @@ def sphere(tmp_path_factory):
                 "tet", (0.5, 0.1, 0.5))
 
 
-def interpolate(case, mode, n):
-    """interpol's probes of case(mode) at T0, n random points: {column: array}."""
+def interpolate(folder, mode, n):
+    """interpol's probes of the case in folder read by mode, at T0, n random
+    points: {column: array}."""
     import h5py
-    d = case(mode)
-    for p in d.glob("Interpolation*"):
+    for p in folder.glob("Interpolation*"):
         shutil.rmtree(p)
-    run_app(INTERPOL, d / "dolfin_params.dat",
-            "mode=%s Nrw=%d int_order=2 t0=%r random=false seed=1" % (case.mode, n, T0), timeout=600)
-    [out] = list(d.rglob("interpolation.h5part"))
+    run_app(INTERPOL, folder / "dolfin_params.dat",
+            "mode=%s Nrw=%d int_order=2 t0=%r random=false seed=1" % (mode, n, T0), timeout=600)
+    [out] = list(folder.rglob("interpolation.h5part"))
     with h5py.File(out, "r") as h:
         return {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
 
@@ -414,7 +422,7 @@ def check_against_reference(case, n):
     """The upgraded field and its gradient at interpol's points against the
     reference, in the wall cells; the counts of the kinds of wall cells reached."""
     dim = case.X.shape[1]
-    x, u, J = probed(interpolate(case, "true", n), dim)
+    x, u, J = probed(interpolate(case("true"), case.mode, n), dim)
     cid, L, depth = locate(case.X, case.cells, x)
     assert depth.min() > -1e-12
     wall = case.up.wall_cell[cid]
@@ -462,7 +470,7 @@ def test_off_the_wall_cells_the_field_is_plain_p2_bit_for_bit(request, name):
     outside the cells with a wall vertex."""
     case = request.getfixturevalue(name)
     dim = case.X.shape[1]
-    a, b = interpolate(case, "true", 5000), interpolate(case, "false", 5000)
+    a, b = interpolate(case("true"), case.mode, 5000), interpolate(case("false"), case.mode, 5000)
     assert all((a[k] == b[k]).all() for k in "xyz")
     x, _, _ = probed(a, dim)
     cid, _, _ = locate(case.X, case.cells, x)
@@ -592,3 +600,35 @@ def test_frozen_fields_between_stamps_carry_the_terms(channel):
         frozen = ends(channel, mode, points, args + ["frozen_fields=true", "t_frozen=%r" % t0], "RK4", dt)
         gap[mode] = np.abs(live - frozen).max()
     assert gap["false"] > 0 and 0.5 < gap["true"] / gap["false"] < 2, gap
+
+
+# ------------------------------------------------------- the frequency loaders
+
+
+@pytest.mark.parametrize("name", ["channel", "sphere"])
+def test_the_frequency_loader_upgrades_the_summed_components(request, name):
+    """wall_upgrade=true in mode=trianglefreq/tetfreq: the stamps' two files
+    read as components, one steady and one oscillating, summed with their
+    weights a cos(omega t + phi) and raised by the rule a stamp is raised by.
+    Both are at rest on the same walls, so that is the reference's upgrade of
+    each stamp summed with the same weights: u and grad u to 1e-12 of their
+    scale, the terms moving the wall cells' gradient."""
+    case = request.getfixturevalue(name)
+    dim = case.X.shape[1]
+    lines = [(0.0, 0.0, 0.7), (2.0, 0.3, -1.3)]
+    d = case.variant("freq", "t_min=0\nt_max=10\nwall_upgrade=true\n", series="freqstamps=freqstamps.dat")
+    (d / "freqstamps.dat").write_text("".join("%r %r %r up_%d.h5\n" % (w, f, a, k)
+                                              for k, (w, f, a) in enumerate(lines)))
+    x, u, J = probed(interpolate(d, case.mode + "freq", 20000), dim)
+    cid, L, depth = locate(case.X, case.cells, x)
+    assert depth.min() > -1e-12
+    weights = [a * np.cos(w * T0 + f) for w, f, a in lines]
+    ur, Jr = case.reference(cid, L, weights=weights)
+    _, J2 = case.reference(cid, L, terms=False, weights=weights)
+    us, Js = np.abs(ur).max(), np.abs(Jr).max()
+    assert (np.abs(u - ur).max(axis=1) / us).max() < 1e-12
+    assert (np.abs(J - Jr).max(axis=(1, 2)) / Js).max() < 1e-12
+    wall = case.up.wall_cell[cid]
+    assert wall.sum() > 1000
+    assert np.abs(J - J2)[wall].max() > 1e-2 * Js
+    assert np.abs(J - J2)[~wall].max() < 1e-12 * Js

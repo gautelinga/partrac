@@ -363,6 +363,18 @@ void check_freq(const std::string& tag, const std::size_t n){
   check_loader(intp, D, {true, true, D == 3}, {0., 0.25, 0.7}, 0.25);
 }
 
+// Two components at rest on the walls of the unit box, read with wall_upgrade
+template<typename Cell, typename I>
+void check_freq_walls(const std::string& tag, const std::size_t n, const std::string& u_el){
+  constexpr int D = dim_of<Cell>;
+  const std::vector<bool> per = {false, false, false};
+  CaseDir c(tag);
+  write_stamped<Cell>(c, n, u_el, per, true);
+  write_freq_of_stamps(c, u_el, per, "1 0.3 0.7 up_0.h5\n2 -0.4 1.3 up_1.h5\n", "wall_upgrade=true\n");
+  I intp(c.file("freq_params.dat"));
+  check_loader(intp, D, per, {0., 0.25, 0.7}, 0.25);
+}
+
 // The split's levels at located points: the sub-cell of the smallest
 // barycentric, its barycentrics mu as the evaluation computes them, and their
 // rates along v the gradients' (the levels are affine in x)
@@ -681,6 +693,10 @@ TEST_CASE("The held evaluator is the loader's evaluation, and u is continuous ac
   SECTION("upgraded P2 tets"){ check_stamped<Tet>("reg_up_tet", 3, "P2", {false, false, false}, true, "wall_upgrade=true\n"); }
   SECTION("frequency triangles"){ check_freq<Triangle, TriangleFreqInterpol>("reg_freq_tri", 6); }
   SECTION("frequency tets"){ check_freq<Tet, TetFreqInterpol>("reg_freq_tet", 3); }
+  SECTION("frequency near-wall P2 triangles"){ check_freq_walls<Triangle, TriangleFreqInterpol>("reg_fwall_tri", 6, "P1"); }
+  SECTION("frequency near-wall P2 tets"){ check_freq_walls<Tet, TetFreqInterpol>("reg_fwall_tet", 3, "P1"); }
+  SECTION("frequency upgraded P2 triangles"){ check_freq_walls<Triangle, TriangleFreqInterpol>("reg_fup_tri", 6, "P2"); }
+  SECTION("frequency upgraded P2 tets"){ check_freq_walls<Tet, TetFreqInterpol>("reg_fup_tet", 3, "P2"); }
 }
 
 TEST_CASE("The divergence-free split: sub-cells, their planes, the held evaluator and continuity", "[regions][split]"){

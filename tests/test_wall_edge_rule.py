@@ -42,10 +42,6 @@ from dumps import all_dumps, dump_at, read_stats
 from runs import cells_counts
 from wall_cases import DT, OBSTACLE_FORCE, TRACERS, inside, probe, restart_from
 from wall_cases import ball, cylinder, kinked, obstacles, sphere, sphere_mesh  # noqa: F401  (fixtures)
-# for the scripts that import the builders from here
-from wall_cases import (H, OBSTACLE_R, OBSTACLES, SPHERE_C, SPHERE_H, SPHERE_R, crossflow,  # noqa: F401
-                        dolfin_mesh, kink_wall, need_gmsh, on_cylinders, on_sphere, periodic_mesh,
-                        periodic_sphere_mesh)
 
 
 pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")

@@ -154,7 +154,7 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
   hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     handle_outside(run, mesh, ps, outside, nodes, xn, verbose);
   };
-  // Done or at rest: declined, not left
+  // Only steps that left the fluid: done or at rest are not counted
   OutsideTotals totals{outside, *run.intp, [&]{ return integrator.get_left(); }};
   totals.attach(hooks, verbose);
   // Stop when no particle is left

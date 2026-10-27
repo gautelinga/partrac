@@ -4,14 +4,13 @@ probe them. The cases are described in test_wall_edge_rule's docstring."""
 
 import os
 import shutil
-import subprocess
 
 import numpy as np
 import pytest
 
 from dumps import dump_at
 from paths import app
-from runs import checkpoint_folder, put_points, read_checkpoint
+from runs import checkpoint_folder, put_points, read_checkpoint, run_app
 
 
 def need_gmsh():
@@ -442,10 +441,7 @@ def sphere(tmp_path_factory, sphere_mesh):
 
 def run(case, args):
     """Run tracers on the case's parameter file with args; assert it succeeded; its stdout."""
-    r = subprocess.run([TRACERS, str(case / "dolfin_params.dat")] + args,
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout + r.stderr
-    return r.stdout
+    return run_app(TRACERS, case / "dolfin_params.dat", args, timeout=600).stdout
 
 
 def restart_from(case, mode, points, args, scheme="RK4", out=None, dt=DT):

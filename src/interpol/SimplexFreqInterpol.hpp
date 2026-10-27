@@ -5,7 +5,9 @@
 // component, each a dolfin HDF5 checkpoint on the same triangle or tet mesh,
 // summed with a cosine of the base frequency. The components are read the way
 // SimplexInterpol reads a stamp and held by node, so an evaluation gathers the
-// cell's nodes out of each component in turn.
+// cell's nodes out of each component in turn. With wall_upgrade, a wall cell's
+// components are summed and the sum raised by the near-wall rule, at the wall
+// vertices where every component is at rest.
 
 #include <array>
 #include <cstdint>
@@ -14,6 +16,7 @@
 
 #include "MeshCore.hpp"
 #include "FreqStamps.hpp"
+#include "near_wall.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
 #include <omp.h>
@@ -43,6 +46,7 @@ public:
   // A cell's velocity nodes in every component, gathered once for the evaluations in it
   struct Held {
     std::vector<double> blocks;   // a component's block every n_dofs_max*3
+    bool wall = false;
   };
   void hold(const Region& R, Held& h) const;
   // evaluate_motion at the barycentrics of cell id from its held nodes
@@ -63,6 +67,7 @@ protected:
   using Base::x_min; using Base::x_max; using Base::is_initialized; using Base::t_update;
   using Base::get_folder; using Base::set_folder; using Base::wants_gradient;
   using Base::read_mesh_params; using Base::set_period; using Base::tree_;
+  using Base::verbose;
 
   // They depend on the time alone; kept per thread for the times last asked
   const FreqWeights& weights(const double t);
@@ -82,6 +87,34 @@ protected:
   std::vector<std::uint32_t> topo_;
   std::vector<double> coords_;
   std::size_t ncells_ = 0, nverts_ = 0;
+
+  // Near walls: P1 to P2 by the edge rule, or P2 plus the quartic terms
+  bool wall_upgrade_ = false;
+  bool upgrade_p2_ = false;
+  std::vector<std::uint32_t> vclass_;
+  std::vector<std::int32_t> wall_index_;   // -1: no wall vertex at rest
+  std::vector<near_wall::WallEdges<Cell>> wall_cells_;
+  near_wall::UpgradeTable<Cell> upgrade_;
+  std::vector<std::uint8_t> rest_;   // by wall cell: the vertices at rest in every component
+  // The wall vertices at rest, from every component's values
+  void rest_masks();
+  // A wall cell at bary, out of line: the components summed with their weights,
+  // then raised; component k's block at blocks + k*stride, gathered here if
+  // blocks is null
+  __attribute__((noinline))
+  void wall_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf, const double* blocks,
+               const std::size_t stride, PointValues& fields) const;
+  // A P2 wall cell, out of line: P2 plus the terms of the summed blocks B (the
+  // velocity's) and Bt (its rate's)
+  __attribute__((noinline))
+  void upgrade_at(const int id, const std::array<double, 4>& bary, const double* B, const double* Bt,
+                  PointValues& fields) const;
+  // Without gradients: the velocity and its rate at bary in cell id, out of line
+  __attribute__((noinline))
+  void velocity_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,
+                   PointValues& fields) const;
+  // The pressure at bary in cell id
+  double pressure_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf) const;
 };
 
 #endif

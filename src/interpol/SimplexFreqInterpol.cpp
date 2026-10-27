@@ -5,7 +5,6 @@
 #include "phase_timing.hpp"
 #include "simplex_load.hpp"
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <iostream>
 
@@ -19,33 +18,6 @@ void same_element(const simplex_load::Element& a, const simplex_load::Element& b
     partrac::fail(path, ": '", field, "' is of degree ", b.degree, " with ", b.ncomp,
                   " components, the first component's degree ", a.degree, " with ", a.ncomp);
 }
-
-// Times a thread keeps the weights of: an RK4 step asks three distinct ones
-constexpr int weight_slots = 4;
-
-// One component's share of the velocity, its rate and their gradients at a point
-template<int D>
-__attribute__((always_inline))
-inline void add_component(const double* N, const double* Nx, const double* Ny, const double* Nz,
-                          const double* block, const Uint ncoeffs, const double w, const double wt,
-                          Vector3d& U, Vector3d& A, Matrix3d& gradU, Matrix3d& gradA, const bool gradient){
-  const Vector3d U_f = block_value<D>(N, block, ncoeffs);
-  U += w*U_f;
-  A += wt*U_f;
-  if (gradient){
-    const Matrix3d G_f = block_gradient<D>(Nx, Ny, Nz, block, ncoeffs);
-    gradU += w*G_f;
-    gradA += wt*G_f;
-  }
-}
-
-// Serial of each loader built, so kept weights are never read as a later
-// loader's at the same address
-std::atomic<std::uint64_t> next_id{1};
-
-// The weights last asked, per thread; plain data, read without a guard
-thread_local FreqWeights kept[weight_slots];
-thread_local int next_kept = 0;
 
 }  // namespace
 
@@ -128,6 +100,18 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
 
   topo_ = std::move(t.mesh.topo);
   coords_ = std::move(t.mesh.coords);
+
+  // Near walls: the velocity's order raised or not
+  wall_upgrade_ = dolfin_params.template get<bool>("wall_upgrade");
+  if (wall_upgrade_){
+    upgrade_p2_ = near_wall::velocity_p2<Cell>(ncoeffs_u);
+    near_wall::build_tables<Cell>(topo_, coords_, ncells_, nverts_, dim, periodic, x_min, x_max,
+                                  periodic_tol, facet_neigh_, upgrade_p2_, vclass_, wall_index_,
+                                  wall_cells_, upgrade_, verbose);
+    rest_masks();
+    partrac::phase("wall edges");
+  }
+
   mesh_tables::build_cells_and_tree<Cell>(topo_, coords_, ncells_, nverts_, dim, cells_, tree_);
   partrac::phase_total();
 
@@ -142,156 +126,28 @@ void SimplexFreqInterpol<Cell>::update(const double t)
 }
 
 template<typename Cell>
-void SimplexFreqInterpol<Cell>::new_id()
+void SimplexFreqInterpol<Cell>::rest_masks()
 {
-  id_ = next_id++;
-}
-
-template<typename Cell>
-inline const FreqWeights& SimplexFreqInterpol<Cell>::weights(const double t)
-{
-  for (const FreqWeights& e : kept)
-    if (e.owner == id_ && e.t == t)
-      return e;
-  return fill_weights(t);
-}
-
-template<typename Cell>
-const FreqWeights& SimplexFreqInterpol<Cell>::fill_weights(const double t)
-{
-  // The values behind each slot: the cosines, then the rates
-  static thread_local std::array<std::vector<double>, weight_slots> store;
-  const int i = next_kept;
-  next_kept = (next_kept + 1) % weight_slots;
-  const std::size_t n = std::size_t(fs.size());
-  std::vector<double>& v = store[std::size_t(i)];
-  v.resize(2*n);
-  double* w = v.data();
-  double* wt = v.data() + n;
-  for (std::size_t iFreq = 0; iFreq < n; ++iFreq){
-    FreqStamp& f = fs.get(int(iFreq));
-    double a = f.a;
-    double t_shift = f.t;
-    if (fs.omega_given()){
-      w[iFreq] = a * cos(f.omega * t + t_shift);
-      wt[iFreq] = - a * f.omega * sin(f.omega * t + t_shift);
+  // One tolerance for the sum: round-off of the largest value it can reach
+  double tol = 0.;
+  for (std::size_t k = 0; k < u_nodes_.size(); ++k)
+    tol += std::abs(fs.get(int(k)).a)*near_wall::rest_tolerance(u_nodes_[k]);
+  rest_.assign(upgrade_p2_ ? upgrade_.cells.size() : wall_cells_.size(), 0);
+#pragma omp parallel for schedule(static)
+  for (std::size_t i = 0; i < ncells_; ++i){
+    const std::int32_t w = wall_index_[i];
+    if (w < 0) continue;
+    unsigned rest = upgrade_p2_ ? upgrade_.cells[std::size_t(w)].wall : wall_cells_[std::size_t(w)].wall;
+    for (std::size_t k = 0; k < u_nodes_.size() && rest; ++k){
+      std::array<double, Cell::n_dofs_max*3> u;
+      gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[i], u_dofs_.stride(), u_nodes_[k].data(),
+                                                            u.data());
+      rest = near_wall::rest_vertices<Cell>(u.data(), ncoeffs_u, std::uint8_t(rest), tol);
     }
-    else {
-      w[iFreq] = a * cos(omega0 * (iFreq * t + t_shift));
-      wt[iFreq] = - a * omega0 * iFreq * sin(omega0 * (iFreq * t + t_shift));
-    }
+    rest_[std::size_t(w)] = std::uint8_t(rest);
+    // None at rest: read as without the rule
+    if (!rest) wall_index_[i] = -1;
   }
-  kept[i] = {id_, t, w, wt};
-  return kept[i];
-}
-
-template<typename Cell>
-void SimplexFreqInterpol<Cell>::evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  evaluate_impl<true>(x, t, pos, fields);
-}
-
-template<typename Cell>
-void SimplexFreqInterpol<Cell>::evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  evaluate_impl<false>(x, t, pos, fields);
-}
-
-template<typename Cell>
-template<bool Scalars>
-void SimplexFreqInterpol<Cell>::evaluate_impl(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields)
-{
-  // Assume found in fluid domain
-  const int id = pos.id;
-  const FreqWeights& wf = weights(t);
-  const std::size_t nfreq = u_nodes_.size();
-
-  // Compute Pk-Pl basis at x
-  std::array<double, Cell::n_dofs_max> Nu_, Np_, Nux_, Nuy_, Nuz_;   // Nuz_ unused in 2D
-
-  cell_basis(cells_[id], pos.bary, ncoeffs_u, Nu_.data(), "u");
-  if constexpr (Scalars)
-    if (include_pressure)
-      cell_basis(cells_[id], pos.bary, ncoeffs_p, Np_.data(), "p");
-
-  // Gathered by node: the D components of a node are consecutive
-  const std::uint32_t* u_row = u_dofs_[id];
-  std::array<double, Cell::n_dofs_max*3> u_block;
-
-  const bool gradient = wants_gradient();
-  if (gradient)
-    cell_deriv(cells_[id], pos.bary, ncoeffs_u, Nux_.data(), Nuy_.data(), Nuz_.data(), "u");
-
-  Vector3d U = Vector3d::Zero();
-  Vector3d A = Vector3d::Zero();
-  Matrix3d gradU = Matrix3d::Zero();
-  Matrix3d gradA = Matrix3d::Zero();
-  double P = 0.;
-  for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq){
-    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_row, u_dofs_.stride(),
-                      u_nodes_[iFreq].data(), u_block.data());
-    add_component<D>(Nu_.data(), Nux_.data(), Nuy_.data(), Nuz_.data(), u_block.data(), ncoeffs_u,
-                     wf.w[iFreq], wf.wt[iFreq], U, A, gradU, gradA, gradient);
-    if constexpr (Scalars){
-      if (include_pressure){
-        std::array<double, Cell::n_dofs_max> p_block;
-        gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, 1>(p_dofs_[id], p_dofs_.stride(),
-                          p_nodes_[iFreq].data(), p_block.data());
-        P += wf.w[iFreq]*block_scalar(Np_.data(), p_block.data(), ncoeffs_p);
-      }
-    }
-  }
-
-  // Update
-  fields.U = U;
-  fields.A = A;
-  if constexpr (Scalars){
-    if (include_pressure)
-      fields.P = P;
-  }
-  if (gradient){
-    fields.gradU = gradU;
-    fields.gradA = gradA;
-  }
-}
-
-template<typename Cell>
-void SimplexFreqInterpol<Cell>::hold(const Region& R, Held& h) const
-{
-  const int id = R.id;
-  constexpr std::size_t bs = Cell::n_dofs_max*3;
-  const std::size_t nfreq = u_nodes_.size();
-  h.blocks.resize(nfreq*bs);
-  for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq)
-    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
-                      u_nodes_[iFreq].data(), h.blocks.data() + iFreq*bs);
-}
-
-template<typename Cell>
-void SimplexFreqInterpol<Cell>::held_motion(const int id, const std::array<double, 4>& lev,
-                                            const double t, const Held& h, PointValues& fields)
-{
-  constexpr std::size_t bs = Cell::n_dofs_max*3;
-  const FreqWeights& wf = weights(t);
-  const std::size_t nfreq = u_nodes_.size();
-  std::array<double, Cell::n_dofs_max> Nu_, Nux_, Nuy_, Nuz_;   // Nuz_ unused in 2D
-  cell_basis(cells_[id], lev, ncoeffs_u, Nu_.data(), "u");
-  const bool gradient = wants_gradient();
-  if (gradient)
-    cell_deriv(cells_[id], lev, ncoeffs_u, Nux_.data(), Nuy_.data(), Nuz_.data(), "u");
-
-  // The gradients summed in place
-  Vector3d U = Vector3d::Zero();
-  Vector3d A = Vector3d::Zero();
-  if (gradient){
-    fields.gradU.setZero();
-    fields.gradA.setZero();
-  }
-  for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq)
-    add_component<D>(Nu_.data(), Nux_.data(), Nuy_.data(), Nuz_.data(), h.blocks.data() + iFreq*bs,
-                     ncoeffs_u, wf.w[iFreq], wf.wt[iFreq], U, A, fields.gradU, fields.gradA, gradient);
-  fields.U = U;
-  fields.A = A;
 }
 
 template class SimplexFreqInterpol<Triangle>;

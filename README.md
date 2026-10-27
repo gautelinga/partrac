@@ -93,7 +93,7 @@ Each app declares the parameters it accepts, so the set differs between them and
 ```
 Parameters are given as `key=value` after the input file. A parameter is either required, optional with a default, or computed by the program (`folder`, `t`, `Lx`, `Ly`, `Lz`) and then only read back when restarting. Some are required only in certain configurations, for instance `La` when `init_mode` is a strip, sheet or ellipsoid.
 
-`wall_upgrade=true` raises the order of the velocity next to walls at rest: P1 to quadratic, P2 by quartic terms. It is accepted by modes `tet` and `triangle` (default `false`) and by `xdmftet`, `xdmftriangle` and `openfoam` (default `true`), and not together with `divfree=true`.
+`wall_upgrade=true` raises the order of the velocity next to walls at rest: P1 to quadratic, P2 by quartic terms. It is accepted by modes `tet`, `triangle`, `tetfreq` and `trianglefreq` (default `false`) and by `xdmftet`, `xdmftriangle` and `openfoam` (default `true`), and not together with `divfree=true`.
 
 ### Initialization modes
 Set with `init_mode`. The trailing axes select the direction(s) involved.

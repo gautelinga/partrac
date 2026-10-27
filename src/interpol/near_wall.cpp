@@ -8,6 +8,8 @@
 
 #include "Error.hpp"
 #include "cell_walk.hpp"
+#include "mesh_tables.hpp"
+#include "p12_eval.hpp"
 
 namespace near_wall {
 
@@ -412,22 +414,14 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
 }
 
 template<typename Cell>
-bool upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, const std::uint32_t terms,
-                          const typename UpgradeTable<Cell>::Normal* n, const double tol)
+void upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, const std::uint32_t terms,
+                          const typename UpgradeTable<Cell>::Normal* n, const unsigned rest)
 {
   constexpr int nv = Cell::n_verts, D = nv - 1;
   constexpr int n2 = int(Cell::n_dofs_max);
   using R = UpgradeRule<Cell>;
   constexpr auto edge_ends = WallRule<Cell>::edge_ends;
   constexpr int f0 = 2*R::n_edges, b0 = f0 + R::n_faces;
-  // Walls: listed vertices at rest
-  unsigned rest = 0;
-  for (int k = 0; k < nv; ++k){
-    bool r = w.wall >> k & 1;
-    for (int d = 0; d < D; ++d) r = r && std::abs(u[d*n2 + k]) <= tol;
-    if (r) rest |= 1u << k;
-  }
-  if (rest == 0) return false;
 
   // The P2 slope along each edge end from a wall vertex at rest, as 4 u_m - u_v
   std::array<std::array<double, D>, 2*R::n_edges> s;
@@ -487,7 +481,31 @@ bool upgrade_coefficients(const double* u, double* c, const UpgradeCell& w, cons
       for (int d = 0; d < D; ++d) cb[d] += -2.*t*bp[std::size_t(d)];
     }
   }
-  return true;
+}
+
+template<typename Cell>
+void field_terms(const UpgradeTable<Cell>& upgrade, const CellDofs& u_dofs, const double* u,
+                 const double tol, std::vector<double>& coef)
+{
+  constexpr int D = Cell::n_verts - 1;
+  constexpr int nt = n_terms<Cell>;
+  const std::size_t ncw = upgrade.cells.size();
+  coef.resize(upgrade.n_coef);
+#pragma omp parallel for schedule(dynamic, 1024)
+  for (std::size_t w = 0; w < ncw; ++w){
+    const UpgradeCell& wc = upgrade.cells[w];
+    const TermSpan sp = upgrade.spans[w];
+    std::array<double, Cell::n_dofs_max*3> uc;
+    gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs[wc.cell], u_dofs.stride(), u, uc.data());
+    std::array<double, D*nt> c;
+    const unsigned rest = rest_vertices<Cell>(uc.data(), Cell::n_dofs_max, wc.wall, tol);
+    if (rest)
+      upgrade_coefficients<Cell>(uc.data(), c.data(), wc, sp.mask, upgrade.normals.data() + wc.normals, rest);
+    // The cell's terms only, in their order; none at rest: zero
+    double* out = coef.data() + sp.offset;
+    for (std::uint32_t m = sp.mask; m; m &= m - 1, out += D)
+      for (int d = 0; d < D; ++d) out[d] = rest ? c[std::size_t(D*__builtin_ctz(m) + d)] : 0.;
+  }
 }
 
 template<typename Cell>
@@ -557,6 +575,44 @@ void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<
   });
 }
 
+template<typename Cell>
+void build_tables(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
+                  const std::size_t ncells, const std::size_t nverts, const Uint gdim,
+                  const std::vector<bool>& periodic, const Vector3d& x_min, const Vector3d& x_max,
+                  const double periodic_tol, const std::vector<std::int32_t>& facet_neigh,
+                  const bool p2, std::vector<std::uint32_t>& vclass,
+                  std::vector<std::int32_t>& wall_index, std::vector<WallEdges<Cell>>& wall_cells,
+                  UpgradeTable<Cell>& upgrade, const bool verbose)
+{
+  if (vclass.empty())
+    vclass = mesh_tables::match_periodic_vertices(coords, nverts, gdim, periodic, x_min, x_max,
+                                                  periodic_tol);
+  if (p2)
+    build_wall_terms<Cell>(topo, coords, ncells, nverts, gdim, facet_neigh, vclass, wall_index,
+                           upgrade, verbose);
+  else
+    build_wall_edges<Cell>(topo, coords, ncells, nverts, gdim, facet_neigh, vclass, wall_index,
+                           wall_cells, verbose);
+}
+
+double rest_tolerance(const std::vector<double>& u)
+{
+  double u_max = 0.;
+  for (const double x : u) u_max = std::max(u_max, std::abs(x));
+  return 1e-12*u_max;
+}
+
+double rest_tolerance_by_vertex(const std::vector<double>& u, const std::vector<std::uint32_t>& vclass,
+                                const std::size_t nverts, const Uint dim)
+{
+  double u_max = 0.;
+  for (std::size_t v = 0; v < nverts; ++v){
+    if (vclass[v] != v) continue;
+    for (Uint c = 0; c < dim; ++c) u_max = std::max(u_max, std::abs(u[v*dim + c]));
+  }
+  return 1e-12*u_max;
+}
+
 void label_cell_type(std::vector<int>& cell_type, const std::vector<std::int32_t>& across,
                      const Uint nv){
   const std::size_t ncells = across.size() / nv;
@@ -588,10 +644,14 @@ template void build_wall_edges<Tet>(const std::vector<std::uint32_t>&, const std
                                     std::vector<std::int32_t>&, std::vector<WallEdges<Tet>>&,
                                     const bool);
 
-template bool upgrade_coefficients<Triangle>(const double*, double*, const UpgradeCell&, const std::uint32_t,
-                                             const UpgradeTable<Triangle>::Normal*, const double);
-template bool upgrade_coefficients<Tet>(const double*, double*, const UpgradeCell&, const std::uint32_t,
-                                        const UpgradeTable<Tet>::Normal*, const double);
+template void upgrade_coefficients<Triangle>(const double*, double*, const UpgradeCell&, const std::uint32_t,
+                                             const UpgradeTable<Triangle>::Normal*, const unsigned);
+template void upgrade_coefficients<Tet>(const double*, double*, const UpgradeCell&, const std::uint32_t,
+                                        const UpgradeTable<Tet>::Normal*, const unsigned);
+template void field_terms<Triangle>(const UpgradeTable<Triangle>&, const CellDofs&, const double*, const double,
+                                    std::vector<double>&);
+template void field_terms<Tet>(const UpgradeTable<Tet>&, const CellDofs&, const double*, const double,
+                               std::vector<double>&);
 template void build_wall_terms<Triangle>(const std::vector<std::uint32_t>&, const std::vector<double>&,
                                          const std::size_t, const std::size_t, const Uint,
                                          const std::vector<std::int32_t>&,
@@ -602,5 +662,18 @@ template void build_wall_terms<Tet>(const std::vector<std::uint32_t>&, const std
                                     const std::vector<std::int32_t>&,
                                     const std::vector<std::uint32_t>&,
                                     std::vector<std::int32_t>&, UpgradeTable<Tet>&, const bool);
+
+template void build_tables<Triangle>(const std::vector<std::uint32_t>&, const std::vector<double>&,
+                                     const std::size_t, const std::size_t, const Uint, const std::vector<bool>&,
+                                     const Vector3d&, const Vector3d&, const double,
+                                     const std::vector<std::int32_t>&, const bool, std::vector<std::uint32_t>&,
+                                     std::vector<std::int32_t>&, std::vector<WallEdges<Triangle>>&,
+                                     UpgradeTable<Triangle>&, const bool);
+template void build_tables<Tet>(const std::vector<std::uint32_t>&, const std::vector<double>&,
+                                const std::size_t, const std::size_t, const Uint, const std::vector<bool>&,
+                                const Vector3d&, const Vector3d&, const double,
+                                const std::vector<std::int32_t>&, const bool, std::vector<std::uint32_t>&,
+                                std::vector<std::int32_t>&, std::vector<WallEdges<Tet>>&,
+                                UpgradeTable<Tet>&, const bool);
 
 }  // namespace near_wall

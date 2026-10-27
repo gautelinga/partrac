@@ -703,13 +703,16 @@ bool cache_read(const std::string& path, const std::string& key, CacheTables& c)
   for (int d = 0; d < 3; ++d){ c.x_min[d] = sc[S_XMIN + d]; c.x_max[d] = sc[S_XMAX + d]; }
 
   const std::size_t nv = c.gdim + 1;
+  const std::size_t nu = std::size_t(c.ncoeffs_u);
+  if (nu != nodes_per_cell(int(nv), 1) && nu != nodes_per_cell(int(nv), 2))
+    return cache_bad(path, "the velocity's dofs a cell, neither P1's nor P2's");
   if (!cache_get(file, "topology", c.topo, c.ncells*nv))
     return cache_bad(path, "the topology");
   if (!cache_get(file, "coordinates", c.coords, c.nverts*c.gdim))
     return cache_bad(path, "the coordinates");
   if (!cache_get(file, "facets", c.facets, c.ncells*nv))
     return cache_bad(path, "the facet table");
-  if (!cache_get(file, "u_nodes", c.u_nodes, c.ncells*std::size_t(c.ncoeffs_u)))
+  if (!cache_get(file, "u_nodes", c.u_nodes, c.ncells*nu))
     return cache_bad(path, "the velocity node table");
   partrac::h5_read(file, "u_values", c.u_values);
   if (!cache_get_map(file, "u", c.u_map) || !values_fit(c.u_values, c.u_nodes, c.u_map, c.ncomp_u))

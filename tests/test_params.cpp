@@ -504,6 +504,30 @@ TEST_CASE("a predicate reading a conditional key is caught by validate_self",
   REQUIRE_THROWS_AS(s.validate_self(), ParamError);
 }
 
+TEST_CASE("a key declared and also retired or replaced is caught by validate_self",
+          "[params]") {
+  // a retired or replaced key is refused by name when given, so declaring it
+  // too would leave the schema both reading it and refusing it
+  const auto problems = [](const Schema& s) {
+    try { s.validate_self(); }
+    catch (const ParamError& e) { return all_problems(e); }
+    return std::string();
+  };
+  Schema retired = basic();
+  retired.opt<double>("La", 1.0, "extent");
+  retired.retired({"La"});
+  REQUIRE(problems(retired).find("'La' is declared and retired") != std::string::npos);
+  Schema replaced = basic();
+  replaced.opt<double>("La", 1.0, "extent");
+  replaced.replaced("La", "Lx");
+  REQUIRE(problems(replaced).find("'La' is declared and replaced") != std::string::npos);
+  // either alone is well formed
+  Schema alone = basic();
+  alone.retired({"Lb"});
+  alone.replaced("La", "Lx");
+  REQUIRE(problems(alone).empty());
+}
+
 // Parameter files, as the interpolators read them
 
 namespace {
