@@ -192,22 +192,26 @@ def test_points_along_a_direction_the_domain_is_flat_in_are_reported(tmp_path):
 
 
 @needs(app("interpol"))
-def test_interpol_writing_into_a_folder_it_cannot_write_is_reported(tmp_path):
-    """interpol's probe table into a run folder made read-only: the file
-    cannot be created, and the run stops with exit code 2 instead of
-    reporting it written."""
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        pytest.skip("root writes into a read-only folder")
+def test_interpol_writing_where_it_cannot_is_reported(tmp_path):
+    """interpol's probe table where a folder of that name stands: the file
+    cannot be created, even as root, and the run stops with exit code 2
+    instead of reporting it written."""
     params = copy_example(POISEUILLE, tmp_path)
     args = ["mode=analytic", "Nrw=100", "int_order=1", "random=false", "seed=1"]
     run_app(app("interpol"), params, args)
     out, = tmp_path.rglob("interpolation.h5part")
     out.unlink()
-    os.chmod(out.parent, 0o555)
-    try:
-        r = run_app(app("interpol"), params, args, check=False)
-    finally:
-        os.chmod(out.parent, 0o755)
+    out.mkdir()
+    r = run_app(app("interpol"), params, args, check=False)
     reported(r, "interpolation.h5part")
     assert "Done writing" not in r.stdout
     assert "HDF5-DIAG" not in r.stderr, r.stderr
+
+
+@needs_partrac
+def test_a_run_folder_a_file_stands_in_is_reported(tmp_path):
+    """A plain file where the run's folder must go: the run stops with exit
+    code 2 naming the folder, before anything is written."""
+    params = copy_example(POISEUILLE, tmp_path)
+    (tmp_path / "RandomWalkers").write_text("not a folder\n")
+    reported(run(tmp_path, SEED, params=params), "cannot make the folder")
