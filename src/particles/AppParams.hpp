@@ -9,21 +9,30 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 
-// Every app: field scale, seed, threads, folder naming and restart
+// Every app: field scale, seed, threads and folder naming
 inline void add_app_params(partrac::Schema& s){
   s.opt<double>("U", 1.0, "velocity scale");
   s.opt<int>("seed", 0, "random seed");
   s.opt<bool>("random", true, "draw the seed randomly");
   s.opt<int>("num_threads", 0, "OpenMP threads, 0 = leave alone");
   s.opt<std::string>("tag", "", "appended to the folder name");
-  s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.runtime<std::string>("folder", "", "output folder");
 }
 
-// Every particle run: the app's keys, output, and the state a checkpoint keeps;
-// t is what the run counts, a time or a path length
+// int_order, 1 or 2; required unless def is
+inline void add_int_order(partrac::Schema& s, const std::string& doc, const int def = 0){
+  if (def > 0)
+    s.opt<int>("int_order", def, doc);
+  else
+    s.require<int>("int_order", doc);
+  s.check([](const partrac::Params& p){ const int k = p.get<int>("int_order"); return k == 1 || k == 2; },
+          "int_order must be 1 or 2");
+}
+
+// Every particle run: app keys, restart, output, checkpoint state
 inline void add_run_params(partrac::Schema& s, const std::string& t_doc){
   add_app_params(s);
+  s.opt<std::string>("restart_folder", "", "folder to restart from");
   s.opt<int>("dump_chunk_size", 0, "dumps per dump file, 0 = one file");
   s.opt<bool>("minimal_output", false, "dump less");
   s.opt<bool>("verbose", false, "print the parameters");

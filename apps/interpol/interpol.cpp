@@ -11,6 +11,7 @@
 #include <ctime>
 
 #include "Error.hpp"
+#include "wait_policy.hpp"
 #include "io.hpp"
 #include "rng.hpp"
 #include "PointValues.hpp"
@@ -154,11 +155,6 @@ static int run(int argc, char* argv[])
 
     std::cout << "Initialized Interpolator." << std::endl;
 
-  // Input parameters
-  if (argc < 2) {
-    std::cout << "Specify an input file." << std::endl;
-    return 1;
-  }
   partrac::Params prm = partrac::parse_or_exit(interpol_schema(), argc, argv);
   if (prm.check_only())
     partrac::fail("interpol has no --check: it only probes the field");
@@ -191,5 +187,6 @@ static int run(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+  partrac::wait_passively(argv);
   return partrac::report_errors([&]{ return run(argc, argv); });
 }

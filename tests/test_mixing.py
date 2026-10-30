@@ -26,7 +26,7 @@ import numpy as np
 import pytest
 
 from dumps import read_stats
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import run_app
 
 PARTRAC = app("partrac")
@@ -37,8 +37,7 @@ BATCHELOR = os.path.join(REPO, "data_example", "batchelor_vortex",
 TAYLOR_COUETTE = os.path.join(REPO, "data_example", "taylor_couette",
                               "expr_params.dat")
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 SINE_BASE = ("mode=analytic x0=0.5 y0=0.5 z0=0.5 Nrw=200 Nrw_max=1000000 "
              "ds_min=1e-9 coarsen=false Dm=0 int_order=1 dt=0.0625 "   # dt must divide tau in binary
@@ -184,8 +183,7 @@ def test_a_strip_follows_the_exact_sine_flow_map(tmp_path):
 @pytest.fixture(scope="module")
 def refined_strip(tmp_path_factory):
     """Statistics every 0.5 of a refined strip in the sine flow, to T = 6."""
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     return run(tmp_path_factory.mktemp("refined_strip"), SINE, SINE_BASE,
                ["init_mode=strip_x", "La=0.2", "T=6.0", "stat_intv=0.5",
                 "ds_max=0.002", "refine=true", "refine_intv=0.0625"])
@@ -361,8 +359,7 @@ def test_only_the_radial_direction_stretches_in_the_cell(tmp_path):
 @pytest.fixture(scope="module")
 def radial_sheet(tmp_path_factory):
     """Statistics of an x-y sheet, which carries the radial direction, in the cell."""
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     return run(tmp_path_factory.mktemp("radial_sheet"), TAYLOR_COUETTE, TC_BASE,
                ["init_mode=sheet_xy", "ds_init=0.002"])
 

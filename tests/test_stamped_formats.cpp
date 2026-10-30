@@ -23,6 +23,7 @@
 #include "SimplexInterpol.hpp"
 #include "XDMFInterpol.hpp"
 #include "case_dir.hpp"
+#include "dolfin_cases.hpp"
 #include "dolfin_ref.hpp"
 #include "held_eval.hpp"
 #include "taylor_hood.hpp"
@@ -59,25 +60,6 @@ private:
   int k_;
 };
 
-// A quadratic, so a P2 space holds it exactly
-double phi_exact(const Vector3d& x, const int k, const Uint gdim){
-  return x[0]*x[0] - x[0]*x[1] + 0.5*x[1]*x[1] + (gdim == 3 ? x[2]*x[2] - 0.3*x[2] : 0.)
-       + 0.5*double(k);
-}
-
-class PhiExpr : public dolfin::Expression {
-public:
-  PhiExpr(const Uint gdim, const int k) : gdim_(gdim), k_(k) {}
-  void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
-    Vector3d xx = Vector3d::Zero();
-    for (Uint d = 0; d < gdim_; ++d) xx[d] = x[d];
-    v[0] = phi_exact(xx, k_, gdim_);
-  }
-private:
-  Uint gdim_;
-  int k_;
-};
-
 // Stamps at t = 0, 1, ..., two by default, as a checkpoint (mesh.h5, up_k.h5)
 // and, where every field is P1, as XDMF (u, p, phi .xdmf); the parameter files
 // name neither wall_upgrade nor include_phi, which the tests append. Stamp k
@@ -88,19 +70,14 @@ void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
                 const std::vector<double>& drift = {0., 0.}){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
-  std::shared_ptr<dolfin::Mesh> mesh;
-  if constexpr (nv == 3) mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitSquareMesh(n, n));
-  else                   mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitCubeMesh(n, n, n));
+  const auto mesh = unit_box<Cell>(n);
   std::shared_ptr<dolfin::FunctionSpace> V, P;
   Uint ncoeffs_u = 0, ncoeffs_p = 0;
   taylor_hood_spaces<Cell>(u_el, "P1", true, mesh, nullptr, V, P, ncoeffs_u, ncoeffs_p);
   const auto F = lagrange_space<gdim, false>(phi_el, mesh, nullptr, "phase field");
   const bool xdmf = u_el == "P1" && phi_el == "P1";
 
-  {
-    dolfin::HDF5File f(MPI_COMM_WORLD, (c.path / "mesh.h5").string(), "w");
-    f.write(*mesh, "mesh");
-  }
+  write_mesh(c, *mesh);
   std::unique_ptr<dolfin::XDMFFile> xf[3];
   if (xdmf){
     for (int i = 0; i < 3; ++i){
@@ -136,25 +113,6 @@ void write_case(const CaseDir& c, const std::size_t n, const std::string& u_el,
     << "velocity_space=" << u_el << "\npressure_space=P1\ntimestamps=timestamps.dat\nmesh=mesh.h5\n";
   if (xdmf)
     std::ofstream(c.file("xdmf_params.dat")) << "u=u.xdmf\np=p.xdmf\nphi=phi.xdmf\n";
-}
-
-void append(const std::string& params, const std::string& lines){
-  std::ofstream(params, std::ios::app) << lines;
-}
-
-// Points spread over the box, a quarter of them in the first layer of cells
-// above the walls, where the near-wall rule acts
-std::vector<Vector3d> points(const Uint gdim, const std::size_t n, const double layer){
-  std::mt19937 rng(7);
-  std::uniform_real_distribution<double> any(0.01, 0.99), low(0.001, layer);
-  std::vector<Vector3d> pts;
-  for (std::size_t i = 0; i < n; ++i){
-    Vector3d x = Vector3d::Zero();
-    for (Uint d = 0; d < gdim; ++d) x[d] = any(rng);
-    if (i % 4 == 0) x[i/4 % gdim] = low(rng);
-    pts.push_back(x);
-  }
-  return pts;
 }
 
 // Everything an evaluation gives, at these points and times
@@ -411,7 +369,7 @@ TEST_CASE("A checkpoint's phase field is read in its own element", "[stamped]") 
         REQUIRE(intp.locate(x, t, pos));
         PointValues got(1.);
         intp.evaluate(x, t, pos, got);
-        const double want = (1. - t)*phi_exact(x, 0, 3) + t*phi_exact(x, 1, 3);
+        const double want = (1. - t)*phi_exact(x, 3, 0) + t*phi_exact(x, 3, 1);
         REQUIRE(std::abs(got.get_phi() - want) < 1e-12);
       }
     }

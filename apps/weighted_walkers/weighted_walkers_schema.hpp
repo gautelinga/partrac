@@ -20,7 +20,7 @@ inline partrac::Schema weighted_walkers_schema(){
   s.require<double>("Dm", "molecular diffusivity");
   s.require<double>("dt", "timestep");
   s.require<double>("T", "final time");
-  s.require<int>("int_order", "integration order");
+  add_int_order(s, "integration order");
   s.require<double>("La", "principal extent");
   s.require<double>("Lb", "gaussian width");
   s.require<double>("ds_max", "distance from the exit plane's axis within which walkers are written as separation data");
@@ -61,8 +61,6 @@ inline partrac::Schema weighted_walkers_schema(){
             return true;
           },
           "init_mode must be a strip or a circle with two direction tokens, as strip_y_x or circle_x_yz");
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
   s.check([](const partrac::Params& p){ return !p.get<bool>("inject"); },
           "weighted_walkers does not inject");
   return s;

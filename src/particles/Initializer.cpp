@@ -100,9 +100,9 @@ Uint refine_surface(Surface& s, const double ds_max, const bool check_if_inside)
   return sheet_refinement(s, s.ps, ds_max, 0.0, StuckEdge::Keep, check_if_inside);
 }
 
-// Collapse edges shorter than ds_min
-Uint coarsen_surface(Surface& s, const double ds_min){
-  return sheet_coarsening(s, s.ps, ds_min, 0.0);
+// Collapse edges shorter than ds_min, none lengthened past ds_max
+Uint coarsen_surface(Surface& s, const double ds_min, const double ds_max){
+  return sheet_coarsening(s, s.ps, ds_min, ds_max, 0.0);
 }
 
 // Edge lengths and face areas from the positions
@@ -111,6 +111,19 @@ void settle_lengths(Surface& s){
     edge.second = s.ps.dist(edge.first[0], edge.first[1]);
   for (auto & face : s.faces)
     face.second = s.ps.triangle_area(face.first[0], face.first[1], s.edges);
+}
+
+// Refuse what Nrw_max left under-refined
+void refuse_under_refined(const Surface& s, const double ds, const std::string& what, const partrac::Params& prm){
+  if (s.ps.has_space())
+    return;
+  Uint n = 0;
+  for (const auto & edge : s.edges)
+    if (s.ps.dist(edge.first[0], edge.first[1])/ds >= 1.0)
+      ++n;
+  if (n > 0)
+    partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": Nrw_max = ", s.ps.capacity(),
+                  " particles leave ", n, " edges longer than ", what, " = ", ds);
 }
 
 InitialState surface_state(const Surface& s){
@@ -257,6 +270,7 @@ InitialState init_sheet(const std::vector<std::string>& key, std::shared_ptr<Int
 
   // Refine to ds_init
   while (refine_surface(s, prm.get<double>("ds_init"), false) > 0);
+  refuse_under_refined(s, prm.get<double>("ds_init"), "ds_init", prm);
   settle_lengths(s);
   compute_maps(s);
 
@@ -265,8 +279,7 @@ InitialState init_sheet(const std::vector<std::string>& key, std::shared_ptr<Int
   std::vector<bool> face_isactive(s.faces.size(), true);
   std::vector<bool> node_isactive(s.ps.N(), true);
   for (Uint irw=0; irw < s.ps.N(); ++irw){
-    int cell_id = s.ps.get_cell_id(irw);
-    if (intp->locate(s.ps.x(irw), 0., cell_id))
+    if (intp->locate(s.ps.x(irw)))
       continue;
     for (const auto & iedge : s.node2edges[irw]){
       edge_isactive[iedge] = false;
@@ -277,13 +290,14 @@ InitialState init_sheet(const std::vector<std::string>& key, std::shared_ptr<Int
   remove_inactive(s, face_isactive, edge_isactive, node_isactive, s.ps);
 
   // Coarsen to ds_min, refine to ds_max
-  Uint n_rem, n_add;
-  int attempt = 0;
-  do {
-    n_rem = coarsen_surface(s, prm.get<double>("ds_min"));
-    n_add = refine_surface(s, prm.get<double>("ds_max"), true);
-    ++attempt;
-  } while ((n_add > 0 || n_rem > 0) && attempt < 100);
+  settle([&]{
+    const Uint n_rem = coarsen_surface(s, prm.get<double>("ds_min"), prm.get<double>("ds_max"));
+    const Uint n_add = refine_surface(s, prm.get<double>("ds_max"), true);
+    return n_add > 0 || n_rem > 0;
+  }, 100, "sheet");
+  refuse_under_refined(s, prm.get<double>("ds_max"), "ds_max", prm);
+  // Reset reference lengths and areas
+  settle_lengths(s);
   return surface_state(s);
 }
 
@@ -306,9 +320,8 @@ InitialState init_ellipsoid(const std::vector<std::string>& key, std::shared_ptr
     {x_c[0] + R/sqrt(2.), x_c[1] - R/sqrt(6.0),   x_c[2] - R/sqrt(3.0)/2},
     {x_c[0],              x_c[1] + R*sqrt(2./3.), x_c[2] - R/sqrt(3.0)/2},
     {x_c[0],              x_c[1],                 x_c[2] + R*sqrt(3.0)/2}};
-  int cell_id = -1;
   for (const auto & x : corners)
-    if (!intp->locate(x, 0., cell_id))
+    if (!intp->locate(x))
       partrac::fail("init_mode ", prm.get<std::string>("init_mode"), ": the ellipsoid is not inside the domain");
   Surface s(intp, corners, prm.get<Uint>("Nrw_max"));
   for (const auto & e : std::vector<std::array<Uint, 2>>{{0, 1}, {1, 2}, {2, 0}, {1, 3}, {2, 3}, {0, 3}})
@@ -319,22 +332,24 @@ InitialState init_ellipsoid(const std::vector<std::string>& key, std::shared_ptr
   s.faces.push_back({{2, 5, 4}, 1.});
   compute_maps(s);
 
-  // Refine to ds_max, project onto the ellipsoid, coarsen to ds_min
-  Uint n_add, n_rem;
-  int attempt = 0;
-  do {
-    n_add = refine_surface(s, prm.get<double>("ds_max"), true);
+  // Refine to ds_max and coarsen to ds_min, each projected onto the ellipsoid
+  const auto project = [&](){
     for (Uint irw=0; irw < s.ps.N(); ++irw){
       const Vector3d x = s.ps.x(irw);
       const Vector3d nn = (x - x_c)/ (x - x_c).norm();
       const double rad = 1./sqrt(nn[0]*nn[0]/lx2 + nn[1]*nn[1]/ly2 + nn[2]*nn[2]/lz2);
       s.ps.move(irw, x_c + rad * nn);
     }
-    n_rem = coarsen_surface(s, prm.get<double>("ds_min"));
-    ++attempt;
-  } while ((n_add > 0 || n_rem > 0) && attempt < 100);
-  if (n_add > 0 || n_rem > 0)
-    std::cout << "Note: the ellipsoid's remeshing stopped after " << attempt << " passes without settling" << std::endl;
+  };
+  settle([&]{
+    const Uint n_add = refine_surface(s, prm.get<double>("ds_max"), true);
+    project();
+    const Uint n_rem = coarsen_surface(s, prm.get<double>("ds_min"), prm.get<double>("ds_max"));
+    if (n_rem > 0)
+      project();
+    return n_add > 0 || n_rem > 0;
+  }, 100, "ellipsoid");
+  refuse_under_refined(s, prm.get<double>("ds_max"), "ds_max", prm);
   // Every node inside
   for (Uint irw=0; irw < s.ps.N(); ++irw)
     if (!intp->locate(s.ps.x(irw)))

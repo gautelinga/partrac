@@ -32,7 +32,7 @@ import pytest
 
 from cases import KINDS
 from dumps import dump_at
-from paths import REPO, app, built_with_dolfin
+from paths import REPO, app, built_with_dolfin, needs
 from runs import run_app
 
 TRACERS = app("tracers")
@@ -62,7 +62,7 @@ def run(case, tmp_path, renumber):
 
 @pytest.mark.fenics
 @needs_dolfin
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_renumbered_cells_give_identical_dumps(mesh_dir, tmp_path):
     """Renumbered and unrenumbered runs agree dataset by dataset, in particle-id
     order, at every step."""
@@ -87,7 +87,7 @@ REQUIRED = {
 }
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 @pytest.mark.parametrize("mode", sorted(REQUIRED))
 def test_a_loader_that_does_not_renumber_refuses_the_key(tmp_path, mode):
     """A mode whose schema has no renumber_cells says so instead of ignoring it.
@@ -115,7 +115,7 @@ def test_a_loader_that_does_not_renumber_refuses_the_key(tmp_path, mode):
 P1_TET = os.path.join(REPO, "data_example", "test_tet_p1")
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_a_mesh_numbered_without_locality_gives_identical_dumps(tmp_path):
     """P1 only: a P2 file's edge dofs follow the vertex ids within each cell, so
     relabelling its vertices would make the checkpoint inconsistent."""

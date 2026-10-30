@@ -51,7 +51,8 @@ void DolfInterpol<Cell>::init_mesh_geometry(){
     x_min[i_loc] = std::min(x_min[i_loc], xx[i]);
     x_max[i_loc] = std::max(x_max[i_loc], xx[i]);
   }
-  hmin_ = mesh->hmin();
+  hmin_ = simplex_load::shortest_edge(mesh->coordinates().data(), mesh->cells().data(),
+                                      mesh->num_cells(), Cell::n_verts, dim);
   partrac::phase("bounds");
 }
 
@@ -80,7 +81,7 @@ void DolfInterpol<Cell>::build_facet_table()
 {
   build_facet_neighbours(facet_neigh_, mesh, dolfin_cells_,
                          dolfin2local_.empty() ? nullptr : &dolfin2local_,
-                         periodic, x_min, x_max, dim, periodic_tol);
+                         periodic, x_min, x_max, dim, periodic_tol());
   set_period();
 }
 
@@ -105,7 +106,7 @@ std::vector<std::array<std::uint32_t, 2>> DolfInterpol<Cell>::seam_pairs(const d
   const dolfin::GenericDofMap& dofmap = *space.dofmap();
   const std::size_t ndofs = element.space_dimension();
   const std::size_t per_component = ndofs / components(element);
-  const double tol = 1e-6 * hmin_;
+  const double tol = periodic_tol();
   std::map<std::array<long long, 4>, std::uint32_t> first;
   std::vector<std::array<std::uint32_t, 2>> pairs;
   boost::multi_array<double, 2> X;

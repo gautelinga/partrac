@@ -11,7 +11,7 @@ import re
 
 import pytest
 
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import copy_case, copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -20,7 +20,7 @@ ARGS = ("mode=analytic dt=0.01 T=0.02 Nrw=10 Nrw_max=100 ds_max=0.1 ds_min=1e-9 
         "ds_init=0.01 Dm=0 int_order=1 refine=false coarsen=false dump_intv=1e9 "
         "stat_intv=1e9 checkpoint_intv=1e9").split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 SEED = ["init_mode=strip_x", "La=0.1", "x0=0", "y0=0", "z0=0"]
@@ -187,5 +187,31 @@ def test_points_along_a_direction_the_domain_is_flat_in_are_reported(tmp_path):
     text = re.sub(r"^z_min=.*$", "z_min=0.0", params.read_text(), flags=re.M)
     text = re.sub(r"^z_max=.*$", "z_max=0.0", text, flags=re.M)
     params.write_text(re.sub(r"^Lz=.*$", "Lz=0.0", text, flags=re.M))
-    reported(run(tmp_path, ["init_mode=points_z", "ds_init=0.1", "init_weight=none"], params=params),
+    reported(run(tmp_path, ["init_mode=points_z", "ds_init=0.1", "init_weight=uniform"], params=params),
              "the domain has no extent along its directions")
+
+
+@needs(app("interpol"))
+def test_interpol_writing_where_it_cannot_is_reported(tmp_path):
+    """interpol's probe table where a folder of that name stands: the file
+    cannot be created, even as root, and the run stops with exit code 2
+    instead of reporting it written."""
+    params = copy_example(POISEUILLE, tmp_path)
+    args = ["mode=analytic", "Nrw=100", "int_order=1", "random=false", "seed=1"]
+    run_app(app("interpol"), params, args)
+    out, = tmp_path.rglob("interpolation.h5part")
+    out.unlink()
+    out.mkdir()
+    r = run_app(app("interpol"), params, args, check=False)
+    reported(r, "interpolation.h5part")
+    assert "Done writing" not in r.stdout
+    assert "HDF5-DIAG" not in r.stderr, r.stderr
+
+
+@needs_partrac
+def test_a_run_folder_a_file_stands_in_is_reported(tmp_path):
+    """A plain file where the run's folder must go: the run stops with exit
+    code 2 naming the folder, before anything is written."""
+    params = copy_example(POISEUILLE, tmp_path)
+    (tmp_path / "RandomWalkers").write_text("not a folder\n")
+    reported(run(tmp_path, SEED, params=params), "cannot make the folder")

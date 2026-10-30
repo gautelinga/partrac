@@ -10,23 +10,25 @@ several ranks for mpi4py, and fail there with PARTRAC_REQUIRE_MPI set.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 
 import numpy as np
 import pytest
 
-from cases import shared_dir
-from divfree_cases import (CASES, CLEANER, D, IDS, INTERPOL, channel2d, channel3d,
-                           interpol_probe, mpi_clean, mpi_run, pocket_case, same_log,
-                           same_output, smooth_noslip, write_case)
+from divfree_cases import (CLEANER, D, INTERPOL, channel2d, channel3d, cleaner_main,
+                           each_case, interpol_probe, launcher_or_skip, mpi_batch, mpi_clean,
+                           one_rank_main, pocket_case, same_log, same_output, smooth_noslip,
+                           two_stamp_channel, write_case)
+from paths import needs
 
 
 # ------------------------------------------------------- read back by the apps
 
 
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+@needs(INTERPOL)
 def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
     """The whole path: a case written and cleaned by the tool, read by the app as
     a plain P2 field with --no-key, gives at its own probe points the velocity
@@ -68,6 +70,7 @@ def test_a_failed_write_of_the_first_rank_takes_the_job_down(tmp_path):
     like one that is still running. It stops instead, naming what could not be
     written."""
     pytest.importorskip("h5py")
+    launcher_or_skip()
     X, cells = channel2d(6)
     t = D.Topo(X, cells, [True, False])
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
@@ -86,9 +89,9 @@ def test_a_failed_write_of_the_first_rank_takes_the_job_down(tmp_path):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("dim,mesh", CASES, ids=IDS)
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
-def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
+@pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
+@needs(INTERPOL)
+def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, channel_runs, dim):
     """Every rank holds, solves and writes its share. A case cleaned on three
     ranks balances to what a loader accepts, leaves every held node at the data's value, and
     reports each stamp once -- every printed line is the first rank's -- and the
@@ -98,19 +101,20 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
     Bit-for-bit agreement is not asked for and is not there: the ranks add their
     cell blocks in another order, so GAMG aggregates differently and the
     iteration counts differ. What is compared is the criterion the loader
-    applies, and the fields to well inside it."""
+    applies, and the fields to well inside it. The runs are channel_runs'."""
     pytest.importorskip("h5py")
-    X, cells = mesh
-    per = [True] * (dim - 1) + [False]
-    t = D.Topo(X, cells, per)
-    fields = [smooth_noslip(t.node_x), 0.5 * smooth_noslip(t.node_x)]
-    cfg = write_case(tmp_path / "in", X, cells, fields, per, stamps=["0", "1"])
-    runs = {n: mpi_clean(cfg, tmp_path / ("out%d" % n), n) for n in (1, 3)}
+    X, cells, per, fields, _ = two_stamp_channel(dim)
+    d = channel_runs(dim)
+    runs = {}
+    for n, name in ((1, "one"), (3, "three")):
+        # the probe below writes beside the case
+        shutil.copytree(d / name, tmp_path / ("out%d" % n))
+        runs[n] = (d / (name + ".log")).read_text()
 
-    same_log(runs[1].stdout, runs[3].stdout)
+    same_log(runs[1], runs[3])
     got = {}
-    for n, r in runs.items():
-        lines = [l for l in r.stdout.split("\n") if l.strip()]
+    for n, log in runs.items():
+        lines = [l for l in log.split("\n") if l.strip()]
         assert sum(l.startswith("  up_") for l in lines) == 2, "one line a stamp"
         assert sum("wrote 2 stamps" in l for l in lines) == 1
         out = tmp_path / ("out%d" % n)
@@ -139,54 +143,59 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, dim, mesh):
         assert np.abs(a["u" + c] - b["u" + c]).max() < 1e-8 * scale, c
 
 
-@pytest.fixture(scope="session")
-def one_rank_pocket(tmp_path_factory):
-    """one_rank_pocket(dim, kind) -> (parameter file, the folder one rank cleaned
-    it into, what that run printed, what --check printed): one rank shares
-    nothing out, so every partition's test compares with the same run, made
-    once a session."""
-
-    def get(dim, kind):
-        def build(d):
-            cfg = pocket_case(d / "in", dim, kind)
-            (d / "clean.log").write_text(mpi_clean(cfg, d / "out1", 1, timeout=120).stdout)
-            r = mpi_run(1, [CLEANER, cfg, "--check"], timeout=120)
-            assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-            (d / "check.log").write_text(r.stdout)
-
-        d = shared_dir(tmp_path_factory, "pocket_%dd_%s" % (dim, kind.replace(" ", "_")), build)
-        return (d / "in" / "dolfin_params.dat", d / "out1", (d / "clean.log").read_text(),
-                (d / "check.log").read_text())
-
-    return get
+# (dim, kind) of every pocket case, each under both partitions
+POCKETS = [(d, k) for d in (2, 3) for k in ("closed", "moving wall")]
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("partition", ["blocks", "ptscotch"])
-@pytest.mark.parametrize("kind", ["closed", "moving wall"])
-@pytest.mark.parametrize("dim", [2, 3])
-def test_three_ranks_report_every_number_one_rank_reports(tmp_path, one_rank_pocket, dim, kind,
-                                                          partition):
+def test_three_ranks_report_every_number_one_rank_reports(tmp_path):
     """What the tool prints -- the counts of cells, edges, held nodes, free and
     boundary-free midpoints and changed edges, the fluxes, the volume means,
     the drift, the divergence left, and under --check the Taylor-Hood moments
     -- is the whole mesh's, each a reduction over the ranks, and a reduction
     over some of them moves a number by far more than round-off. So every line
     of the three-rank run is the one-rank run's, the numbers to round-off.
+    --check reduces too: it reports each stamp once, and the worst cell, which
+    is the whole mesh's, is the one-rank run's to the bit.
 
     The fixtures reach what the smooth channel does not: a pocket whose cells
     are measured against the floor of the stamp's largest facet flux, which on
     blocks one rank holds alone, so that rank's own largest is not the
     stamp's; a closed domain whose data leaves a net flux the step has to
-    share out over every cell; a moving wall with free midpoints on it."""
+    share out over every cell; a moving wall with free midpoints on it. Every
+    case under both partitions, one job; the one-rank runs in this process."""
     pytest.importorskip("h5py")
-    cfg, out1, run1, check1 = one_rank_pocket(dim, kind)
-    run3 = mpi_clean(cfg, tmp_path / "out3", 3, extra=["--partition", partition], timeout=120).stdout
-    r = mpi_run(3, [CLEANER, cfg, "--check", "--partition", partition], timeout=120)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    free_on_wall = int(re.search(r"(\d+) of them on the boundary", run1).group(1))
-    assert (free_on_wall > 0) == (kind == "moving wall")
-    assert ("singular" in run1) == (kind == "closed")
-    same_log(run1, run3)
-    same_log(check1, r.stdout)
-    same_output(out1, tmp_path / "out3", 1.25)
+    launcher_or_skip()
+    one, jobs = {}, {}
+    for dim, kind in POCKETS:
+        name = "%dd-%s" % (dim, kind.replace(" ", "_"))
+        cfg = pocket_case(tmp_path / name / "in", dim, kind)
+        one[dim, kind] = (one_rank_main([cfg, "--out", tmp_path / name / "out1"]),
+                          one_rank_main([cfg, "--check"]))
+        for partition in ("blocks", "ptscotch"):
+            out = tmp_path / name / partition
+            jobs["clean", dim, kind, partition] = [cfg, "--out", out, "--partition", partition]
+            jobs["check", dim, kind, partition] = [cfg, "--check", "--partition", partition]
+    said = mpi_batch(3, cleaner_main, {"%s %dd %s %s" % k: v for k, v in jobs.items()},
+                     tmp_path / "jobs")
+
+    def check(case):
+        dim, kind, partition = case
+        run1, check1 = one[dim, kind]
+        # every line the job printed, whichever rank printed it
+        run3, check3 = ("".join(said["%s %dd %s %s" % ((what,) + case)])
+                        for what in ("clean", "check"))
+        free_on_wall = int(re.search(r"(\d+) of them on the boundary", run1).group(1))
+        assert (free_on_wall > 0) == (kind == "moving wall")
+        assert ("singular" in run1) == (kind == "closed")
+        same_log(run1, run3)
+        for log in (check1, check3):
+            lines = log.rstrip().split("\n")
+            assert sum(l.startswith("  0 up_0.h5:") for l in lines) == 1, log
+            assert sum(l.startswith("  1 up_1.h5:") for l in lines) == 1, log
+        assert check1.rstrip().split("\n")[-1].startswith("worst cell balance")
+        assert check3.rstrip().split("\n")[-1] == check1.rstrip().split("\n")[-1]
+        same_log(check1, check3)
+        name = "%dd-%s" % (dim, kind.replace(" ", "_"))
+        same_output(tmp_path / name / "out1", tmp_path / name / partition, 1.25)
+    each_case([(d, k, p) for d, k in POCKETS for p in ("blocks", "ptscotch")], check)

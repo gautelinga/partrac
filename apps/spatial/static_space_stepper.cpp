@@ -3,6 +3,7 @@
 #include <string>
 
 #include "Error.hpp"
+#include "wait_policy.hpp"
 #include "RunLoop.hpp"
 #include "SpatialIntegrator.hpp"
 
@@ -13,11 +14,6 @@ static int run(int argc, char* argv[])
 
     std::cout << "Initialized spatial stepper." << std::endl;
 
-  // Input parameters
-  if (argc < 2) {
-    std::cout << "Specify an input file." << std::endl;
-    return 1;
-  }
   partrac::Params prm = partrac::parse_or_exit(spatial_schema(), argc, argv);
 
   // March from xn0 to Ln, fields frozen at t0
@@ -34,63 +30,24 @@ static int run(int argc, char* argv[])
   if (check_only(run, ps, mesh))
     return 0;
 
-  const bool refine = prm.get<bool>("refine");
-  const bool coarsen = prm.get<bool>("coarsen");
   const bool verbose = prm.get<bool>("verbose");
-
-  // Initial refinement and coarsening, not on a restart
-  if (refine && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
-    std::cout << "Initial refinement" << std::endl;
-    Uint n_add = mesh.refine();
-    if (verbose)
-      std::cout << "Added " << n_add << " edges." << std::endl;
-  }
-  if (coarsen && !restarting && !prm.get<bool>("inject") && mesh.dim() > 0){
-    std::cout << "Initial coarsening" << std::endl;
-    Uint n_rem = mesh.coarsen(true);
-    if (verbose)
-      std::cout << "Removed " << n_rem << " edges." << std::endl;
-  }
-
-  mesh.compute_interior();
+  const double dxn = prm.get<double>("dxn");
+  Remesher remesher(mesh, prm, dxn);
+  remesher.initial(restarting, prm.get<bool>("inject"));
 
   OutputFields output_fields = mesh_output_fields(prm, mesh);
   output_fields.c = true;
   output_fields.t_loc = true;
   output_fields.tau = true;
 
-  // Coarsen at refine_intv when coarsening is off
-  const double coarsen_intv = coarsen ? prm.get<double>("coarsen_intv")
-                                      : prm.get<double>("refine_intv");
-
   // Hook constants
-  const double refine_intv = prm.get<double>("refine_intv");
-  const double dump_intv = prm.get<double>("dump_intv");
-  const double dxn = prm.get<double>("dxn");
   const double T_final = prm.get<double>("T");
   const std::string outside = prm.get<std::string>("outside");
 
   RunHooks hooks;
 
   // Reshaping
-  hooks.reshape = [&](const int it, const double){
-    // Curvature computation
-    if ((refine && at_interval(it, refine_intv, dxn)) || at_interval(it, coarsen_intv, dxn) || at_interval(it, dump_intv, dxn)){
-      mesh.compute_interior();
-    }
-    // Refinement
-    if (refine && at_interval(it, refine_intv, dxn) && it > 0){
-      Uint n_add = mesh.refine();
-      if (verbose)
-        std::cout << "Added " << n_add << " edges." << std::endl;
-    }
-    // Coarsening
-    if (at_interval(it, coarsen_intv, dxn)){
-      Uint n_rem = mesh.coarsen(coarsen);
-      if (verbose)
-        std::cout << "Removed " << n_rem << " edges." << std::endl;
-    }
-  };
+  hooks.reshape = [&](const int it, const double){ remesher.reshape(it); };
 
   hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     // Finished and trapped nodes
@@ -132,12 +89,17 @@ static int run(int argc, char* argv[])
     }
   } stepper{integrator, run.t_fields};
 
+  OutsideTotals totals{outside, *run.intp, [&]{ return integrator.get_left(); }};
+  totals.attach(hooks, verbose);
+
   run_loop(run, ps, mesh, stepper, output_fields, dxn, hooks);
+  totals.finish(std::cout);
 
   return 0;
 }
 
 int main(int argc, char* argv[])
 {
+  partrac::wait_passively(argv);
   return partrac::report_errors([&]{ return run(argc, argv); });
 }

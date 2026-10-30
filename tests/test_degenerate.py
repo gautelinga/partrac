@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -28,8 +28,7 @@ BASE = ("mode=analytic ds_max=1e9 ds_min=1e-9 refine=false coarsen=false Dm=0 "
         "int_order=1 dt=0.01 stat_intv=0.01 dump_intv=1e9 checkpoint_intv=1e9 "
         "random=false seed=1").split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def run(tmp_path, example, extra):
@@ -208,6 +207,9 @@ def test_an_exit_plane_on_a_strip_removes_exactly_the_nodes_beyond(tmp_path):
     assert np.array_equal(kept, whole[whole[:, 0] <= 0.105])
     assert len(edges) == len(kept) - 1                # still one open strip
     assert edges.max() == len(kept) - 1               # and no dangling index
+    # a plane at a negative coordinate cuts as well
+    kept, _ = points("negative", -0.105)
+    assert 0 < len(kept) and np.array_equal(kept, whole[whole[:, 0] <= -0.105])
 
 
 @needs_partrac
@@ -260,3 +262,21 @@ def test_a_single_particle_reports_zero_spread_not_nan(tmp_path):
     for key, value in st.items():
         assert np.isfinite(float(value)), key
     assert float(st["dx2_mean"]) == 0.0
+
+
+@needs_partrac
+def test_filtering_a_strip_keeps_exactly_filter_target_edges_and_a_consistent_strip(tmp_path):
+    """filter=true drops edges at random down to filter_target: 199 edges to
+    80 here. What is left is 80 edges, every one naming a node that exists,
+    and no node that no edge reaches; each node keeps at most two edges."""
+    r = run(tmp_path, POISEUILLE,
+            ["init_mode=strip_x", "La=0.5", "x0=0", "y0=0", "z0=0", "Nrw=200",
+             "Nrw_max=2000", "T=0.02", "filter=true", "filter_intv=0.01",
+             "filter_target=80", "dump_intv=0.01"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    g = dump(tmp_path, first=False)
+    p, e = g["points"], g["edges"].astype(np.int64)
+    assert len(e) == 80
+    assert e.max() < len(p)
+    assert np.array_equal(np.unique(e), np.arange(len(p)))
+    assert np.bincount(e.ravel()).max() <= 2

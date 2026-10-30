@@ -478,3 +478,39 @@ def test_a_malformed_checkpoint_is_refused_by_name(tmp_path, kind):
         poke_checkpoint(tmp_path / "in", kind, t.ncells)
     with pytest.raises(ValueError, match=MALFORMED[kind]):
         D.clean_case(cfg, tmp_path / "out", verbose=False)
+
+
+@pytest.mark.parametrize("option,value", [("--penalty", "-1"), ("--rest-tol", "nan"),
+                                          ("--periodic-tol", "0")])
+def test_a_tolerance_or_weight_out_of_range_is_refused(tmp_path, capsys, option, value):
+    """A negative penalty makes the solve indefinite, a NaN rest tolerance holds
+    nothing and a zero periodic tolerance pairs nothing, each silently."""
+    with pytest.raises(SystemExit) as e:
+        D.main([str(tmp_path / "dolfin_params.dat"), "--out", str(tmp_path / "out"), option, value])
+    assert e.value.code == 2
+    assert option + " must be" in capsys.readouterr().err
+
+
+def test_periodic_images_pair_on_a_mesh_far_from_the_origin():
+    """Paired within a hundredth of the shortest edge, as partrac's loaders pair
+    them: a channel moved and scaled to coordinates near 1e4, its images a
+    little off, pairs as the unit one does."""
+    X, cells = channel2d(6)
+    unit = D.Topo(X, cells, [True, False])
+    far = 1e3 * X + 1e4
+    far[np.isclose(X[:, 0], X[:, 0].max()), 1] += 1e-7
+    moved = D.Topo(far, cells, [True, False])
+    assert unit.facet_periodic.sum() > 0
+    assert np.array_equal(moved.facet_periodic, unit.facet_periodic)
+    assert np.array_equal(moved.master, unit.master)
+
+
+def test_a_mesh_not_periodic_along_a_periodic_axis_is_refused():
+    """An image off its place on an axis the case calls periodic is an error
+    naming the axis, as in partrac's loaders, not a face left a wall."""
+    X, cells = channel2d(6)
+    moved = X.copy()
+    moved[np.argmax(np.isclose(X[:, 0], X[:, 0].max()) & (X[:, 1] > X[:, 1].min())
+                    & (X[:, 1] < X[:, 1].max())), 1] += 0.02
+    with pytest.raises(ValueError, match="periodic_x: .* have no image .* not periodic along x"):
+        D.Topo(moved, cells, [True, False])

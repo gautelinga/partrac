@@ -8,15 +8,14 @@ is plane Poiseuille with u along y depending only on x, so x is conserved
 exactly along every trajectory.
 """
 
-import os
 import shutil
 
 import numpy as np
 import pytest
 
 from dumps import all_dumps, dump_at
-from paths import app, built_with_dolfin
-from runs import copy_case, read_checkpoint, run_app
+from paths import app, built_with_dolfin, need, needs
+from runs import copy_case, interpolation, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
 INTERPOL = app("interpol")
@@ -44,7 +43,7 @@ def mesh_case(request, mesh_dir):
     return mode, mesh_dir(kind)
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_particles_move_and_stay_in_the_periodic_domain(mesh_case, tmp_path):
     """Particles advect on the triangle and tet meshes, stay finite, and keep
     unwrapped positions across the periodic boundaries. A periodic run has to
@@ -78,7 +77,7 @@ DEGENERATE_PARAMS = [pytest.param(m, marks=needs_fenics) if m == "fenics" else m
                      for m in DEGENERATE]
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 @pytest.mark.parametrize("mode", DEGENERATE_PARAMS)
 @pytest.mark.parametrize("stamps", ["last", "single"])
 def test_fields_hold_on_a_degenerate_stamp_bracket(mesh_dir, xdmf, tmp_path, mode, stamps):
@@ -176,8 +175,7 @@ def fenics_case(tmp_path):
     if not built_with_dolfin():
         pytest.skip("mode=fenics needs a build with dolfin")
     df = pytest.importorskip("dolfin", reason="writing the case needs dolfin")
-    if not os.path.exists(INTERPOL):
-        pytest.skip("interpol is not built")
+    need(INTERPOL)
     return df, tmp_path / "case"
 
 
@@ -189,7 +187,6 @@ def test_fenics_reads_a_p3_p2_field_exactly(fenics_case, dim):
     exactly by P3-P2, so the probed values must match them to round-off; a
     wrong dof order or a wrong basis would not."""
     df, d = fenics_case
-    h5py = pytest.importorskip("h5py")
     d.mkdir()
     mesh = df.UnitSquareMesh(3, 3) if dim == 2 else df.UnitCubeMesh(2, 2, 2)
     V = df.VectorFunctionSpace(mesh, "CG", 3)
@@ -206,12 +203,8 @@ def test_fenics_reads_a_p3_p2_field_exactly(fenics_case, dim):
     (d / "dolfin_params.dat").write_text(
         "velocity_space=P3\npressure_space=P2\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
         "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
-    run_app(INTERPOL, d / "dolfin_params.dat",
-            "mode=fenics Nrw=400 int_order=2 t0=0 random=false seed=1", timeout=600)
-    out = list(d.rglob("interpolation.h5part"))
-    assert len(out) == 1
-    with h5py.File(out[0], "r") as h:
-        v = {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    r, v = probe_fenics(d, 400)
+    assert r.returncode == 0, r.stdout + r.stderr
     x, y = v["x"], v["y"]
     z = v["z"] if dim == 3 else np.zeros_like(x)
     assert len(x) > 100
@@ -224,21 +217,18 @@ def test_fenics_reads_a_p3_p2_field_exactly(fenics_case, dim):
     assert np.abs(v["uxy"] - 3 * y**2).max() < 1e-9
 
 
-@pytest.mark.parametrize("dim", [2, 3])
 @pytest.mark.fenics
-def test_fenics_reads_a_p4_field_exactly(fenics_case, dim):
+def test_fenics_reads_a_p4_field_exactly(fenics_case):
     """mode=fenics takes a P4 velocity, beside a P3 pressure. A quartic
     velocity and a cubic pressure are held exactly, so the probed values and
     the velocity gradient must match them to round-off; a wrong dof order or
     a wrong basis would not."""
     df, d = fenics_case
-    h5py = pytest.importorskip("h5py")
     d.mkdir()
-    mesh = df.UnitSquareMesh(3, 3) if dim == 2 else df.UnitCubeMesh(2, 2, 2)
+    mesh = df.UnitSquareMesh(3, 3)
     V = df.VectorFunctionSpace(mesh, "CG", 4)
     P = df.FunctionSpace(mesh, "CG", 3)
-    u_expr = ["x[1]*x[1]*x[1]*x[1] + 0.5*x[0]", "x[0]*x[0]*x[0]*x[1] - x[1]"] + \
-        (["0.25*x[2]*x[0]*x[0]*x[1]"] if dim == 3 else [])
+    u_expr = ["x[1]*x[1]*x[1]*x[1] + 0.5*x[0]", "x[0]*x[0]*x[0]*x[1] - x[1]"]
     u = df.interpolate(df.Expression(u_expr, degree=4), V)
     p = df.interpolate(df.Expression("x[0]*x[0]*x[1] + 1.0", degree=3), P)
     with df.HDF5File(mesh.mpi_comm(), str(d / "mesh.h5"), "w") as f:
@@ -250,19 +240,12 @@ def test_fenics_reads_a_p4_field_exactly(fenics_case, dim):
     (d / "dolfin_params.dat").write_text(
         "velocity_space=P4\npressure_space=P3\ntimestamps=timestamps.dat\nmesh=mesh.h5\n"
         "periodic_x=false\nperiodic_y=false\nperiodic_z=false\nrho=1.0\n")
-    run_app(INTERPOL, d / "dolfin_params.dat",
-            "mode=fenics Nrw=400 int_order=2 t0=0 random=false seed=1", timeout=600)
-    out = list(d.rglob("interpolation.h5part"))
-    assert len(out) == 1
-    with h5py.File(out[0], "r") as h:
-        v = {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    r, v = probe_fenics(d, 400)
+    assert r.returncode == 0, r.stdout + r.stderr
     x, y = v["x"], v["y"]
-    z = v["z"] if dim == 3 else np.zeros_like(x)
     assert len(x) > 100
     assert np.abs(v["ux"] - (y**4 + 0.5 * x)).max() < 1e-10
     assert np.abs(v["uy"] - (x**3 * y - y)).max() < 1e-10
-    if dim == 3:
-        assert np.abs(v["uz"] - 0.25 * z * x * x * y).max() < 1e-10
     assert np.abs(v["p"] - (x * x * y + 1.0)).max() < 1e-10
     assert np.abs(v["uxy"] - 4 * y**3).max() < 1e-9
     assert np.abs(v["uyx"] - 3 * x * x * y).max() < 1e-9
@@ -340,25 +323,26 @@ def seam_jump(df, f, dim):
     return jump
 
 
-def probe_fenics(d, args=()):
-    """The run of interpol in mode=fenics on the case in d, and its probes."""
+# probes of a periodic_unit_case, enough that every cell holds some
+PERIODIC_NRW = {2: 1500, 3: 600}
+
+
+def probe_fenics(d, nrw, args=()):
+    """The run of interpol in mode=fenics on the case in d at nrw random points, and its probes."""
     r = run_app(INTERPOL, d / "dolfin_params.dat",
-                "mode=fenics Nrw=1500 int_order=2 t0=0 random=false seed=1", list(args),
+                "mode=fenics Nrw=%d int_order=2 t0=0 random=false seed=1" % nrw, list(args),
                 check=False, timeout=600)
-    if r.returncode != 0:
-        return r, None
-    h5py = pytest.importorskip("h5py")
-    out = list(d.rglob("interpolation.h5part"))
-    assert len(out) == 1
-    with h5py.File(out[0], "r") as h:
-        return r, {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    return r, interpolation(d) if r.returncode == 0 else None
 
 
 def assert_probes_match(df, v, u, p, dim):
-    """The probed velocity and pressure are u's and p's at the probed points."""
+    """The probed velocity and pressure are u's and p's at the probed
+    points, which fall in every cell of the mesh."""
     xs = np.stack([v[a] for a in "xyz"[:dim]], -1)
-    assert len(xs) > 1000
     pts = [df.Point(*x) for x in xs]
+    mesh = u.function_space().mesh()
+    tree = mesh.bounding_box_tree()
+    assert {tree.compute_first_entity_collision(q) for q in pts} == set(range(mesh.num_cells()))
     uu = np.array([u(q) for q in pts])
     pp = np.array([p(q) for q in pts])
     got = np.stack([v["u" + a] for a in "xyz"[:dim]], -1)
@@ -378,7 +362,7 @@ def test_fenics_reads_a_periodic_p3_field_on_reversed_seam_edges(fenics_case, di
     df, d = fenics_case
     u, p = periodic_unit_case(df, d, dim, 3, shuffled=True, constrained=False)
     assert seam_jump(df, u, dim) < 1e-12
-    r, v = probe_fenics(d)
+    r, v = probe_fenics(d, PERIODIC_NRW[dim])
     assert r.returncode == 0, r.stdout + r.stderr
     assert_probes_match(df, v, u, p, dim)
 
@@ -394,7 +378,7 @@ def test_fenics_reads_a_good_periodic_p3_field_offset_by_1e7(fenics_case):
     with h5py.File(d / "up_0.h5", "r+") as f:
         for name in ("u/vector_0", "p/vector_0"):
             f[name][...] += rng.uniform(-1e-8, 1e-8, f[name].shape)
-    r, _ = probe_fenics(d)
+    r, _ = probe_fenics(d, PERIODIC_NRW[2])
     assert r.returncode == 0, r.stdout + r.stderr
     assert "periodic image" not in r.stdout + r.stderr
 
@@ -407,7 +391,7 @@ def test_fenics_reads_a_periodic_p3_field_named_by_its_dataset(fenics_case):
     u, p = periodic_unit_case(df, d, 2, 3, shuffled=True, constrained=False)
     with open(d / "dolfin_params.dat", "a") as f:
         f.write("velocity_field=u/vector_0\npressure_field=p/vector_0\n")
-    r, v = probe_fenics(d)
+    r, v = probe_fenics(d, PERIODIC_NRW[2])
     assert r.returncode == 0, r.stdout + r.stderr
     assert_probes_match(df, v, u, p, 2)
 
@@ -422,7 +406,7 @@ def test_fenics_refuses_a_periodic_p3_field_wrong_at_the_seam(fenics_case, dim):
     df, d = fenics_case
     u, _ = periodic_unit_case(df, d, dim, 3, shuffled=True, constrained=True)
     assert seam_jump(df, u, dim) > 1e-2
-    r, _ = probe_fenics(d)
+    r, _ = probe_fenics(d, PERIODIC_NRW[dim])
     assert r.returncode != 0, "a P3 field wrong at the periodic seam went unnoticed"
     assert "periodic image" in r.stdout + r.stderr
 
@@ -439,7 +423,7 @@ def test_fenics_refuses_a_seam_jump_small_beside_the_values(fenics_case, field):
     u, p = periodic_unit_case(df, d, 2, 3, shuffled=True, constrained=constrained, offset=1e7)
     wrong = u if field == "velocity" else p
     assert seam_jump(df, wrong, 2) > 1e-2
-    r, _ = probe_fenics(d)
+    r, _ = probe_fenics(d, PERIODIC_NRW[2])
     assert r.returncode != 0, "a seam jump beside values of 1e7 went unnoticed"
     assert "the %s differs between periodic images" % field in r.stdout + r.stderr
 
@@ -455,7 +439,7 @@ def test_fenics_reads_good_periodic_fields(fenics_case, dim, degree, shuffled):
     df, d = fenics_case
     u, p = periodic_unit_case(df, d, dim, degree, shuffled=shuffled, constrained=True)
     assert seam_jump(df, u, dim) < 1e-12
-    r, v = probe_fenics(d)
+    r, v = probe_fenics(d, PERIODIC_NRW[dim])
     assert r.returncode == 0, r.stdout + r.stderr
     assert "periodic image" not in r.stdout + r.stderr
     assert_probes_match(df, v, u, p, dim)

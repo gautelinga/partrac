@@ -5,8 +5,10 @@
 #include "files.hpp"
 
 std::string create_folder(const std::string& folder){
-  if (!std::filesystem::is_directory(folder)){
-    std::filesystem::create_directory(folder);
+  std::error_code ec;
+  std::filesystem::create_directory(folder, ec);   // no error when it exists
+  if (ec || !std::filesystem::is_directory(folder)){
+    partrac::fail("cannot make the folder ", folder, ec ? ": " + ec.message() : ": a file is in the way");
   }
   return folder;
 }

@@ -25,6 +25,7 @@
 #include "h5direct.hpp"
 #include "interpolators.hpp"
 #include "case_dir.hpp"
+#include "dolfin_cases.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
@@ -99,17 +100,12 @@ private:
 template<typename Cell>
 void write_case(const CaseDir& c, const std::size_t n, const std::vector<std::string>& u_spaces){
   constexpr int D = Cell::n_verts - 1;
-  std::shared_ptr<dolfin::Mesh> mesh;
-  if constexpr (D == 2) mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitSquareMesh(n, n));
-  else                  mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitCubeMesh(n, n, n));
+  const auto mesh = unit_box<Cell>(n);
   const std::vector<bool> per = {true, true, D == 3};
   const Vector3d x_max(1., 1., D == 3 ? 1. : 0.);
   const std::shared_ptr<const dolfin::SubDomain> pbc =
     std::make_shared<PeriodicBC>(per, Vector3d::Zero(), x_max, D);
-  {
-    dolfin::HDF5File f(MPI_COMM_WORLD, (c.path / "mesh.h5").string(), "w");
-    f.write(*mesh, "mesh");
-  }
+  write_mesh(c, *mesh);
   std::ofstream stamps(c.path / "freqstamps.dat");
   for (int k = 0; k < int(u_spaces.size()); ++k){
     std::shared_ptr<dolfin::FunctionSpace> V, P;
@@ -135,34 +131,6 @@ void write_case(const CaseDir& c, const std::size_t n, const std::vector<std::st
     << "tau=" << tau << "\nt_min=0\nt_max=1e8\n";
 }
 
-// The cell centroids of the case's mesh, and how many sit in a cell with a
-// vertex on a max face: those cells read image nodes
-template<typename Cell>
-std::vector<Vector3d> centroids(const CaseDir& c, std::size_t& touching){
-  constexpr int nv = Cell::n_verts;
-  constexpr Uint gdim = Uint(nv - 1);
-  const partrac::H5Id file = partrac::h5_open_read((c.path / "mesh.h5").string());
-  std::vector<std::uint32_t> topo;
-  std::vector<double> coords;
-  partrac::h5_read(file, "mesh/topology", topo);
-  partrac::h5_read(file, "mesh/coordinates", coords, gdim);
-  const std::size_t ncells = topo.size()/nv;
-  std::vector<Vector3d> out(ncells, Vector3d::Zero());
-  touching = 0;
-  for (std::size_t i = 0; i < ncells; ++i){
-    bool on_face = false;
-    for (int k = 0; k < nv; ++k){
-      const double* v = coords.data() + std::size_t(topo[i*nv + k])*gdim;
-      for (Uint d = 0; d < gdim; ++d){
-        out[i][d] += v[d]/double(nv);
-        if (v[d] > 1. - 1e-12) on_face = true;
-      }
-    }
-    if (on_face) ++touching;
-  }
-  return out;
-}
-
 // Every component reaches every cell, at times where the two carry different
 // weights, one of them (t = 0.25) where the second component alone moves the field
 template<typename Interpol, typename Cell>
@@ -170,7 +138,7 @@ void check_components_reach_every_cell(const std::string& tag, const std::size_t
   CaseDir c(tag);
   write_case<Cell>(c, n, {"P2", "P2"});
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Cell>(c, touching);
+  const std::vector<Vector3d> pts = centroids<Cell::n_verts>(c, touching);
   REQUIRE(touching > 0);
   constexpr int D = Cell::n_verts - 1;
   Interpol intp(c.params());
@@ -256,7 +224,7 @@ TEST_CASE("evaluate_motion gives evaluate's velocity, acceleration and gradient"
   CaseDir c("motion_tet_p2");
   write_case<Tet>(c, 4, {"P2", "P2"});
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Tet>(c, touching);
+  const std::vector<Vector3d> pts = centroids<4>(c, touching);
   TetFreqInterpol intp(c.params());
   intp.set_int_order(2);   // the gradient is read too
   // the times of one RK4 step, asked in the order a step asks them
@@ -286,7 +254,7 @@ TEST_CASE("A freqstamps line may give its angular frequency and phase", "[freq_l
   CaseDir c("omega");
   write_case<Triangle>(c, 6, {"P2", "P2"});
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Triangle>(c, touching);
+  const std::vector<Vector3d> pts = centroids<3>(c, touching);
   std::vector<double> harmonic;
   { TriangleFreqInterpol intp(c.params()); harmonic = sample_u(intp, pts, 2); }
   drop_tau(c);
@@ -310,7 +278,7 @@ TEST_CASE("One frequency on two lines is a Fourier mode's cosine and sine parts"
   const double w = 2.5;
   write_stamps(c, "2.5 0 1 up_0.h5\n2.5 -1.5707963267948966 1 up_1.h5\n");
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Triangle>(c, touching);
+  const std::vector<Vector3d> pts = centroids<3>(c, touching);
   TriangleFreqInterpol intp(c.params());
   for (const double t : {0., 0.1, 0.25, 0.7}){
     intp.update(t);
@@ -336,7 +304,7 @@ TEST_CASE("Components all of frequency 0 are a steady field", "[freq_load]") {
   drop_tau(c);
   write_stamps(c, "0 0 0.707 up_0.h5\n 0 0 0.103 up_1.h5\n 0 0 0.405 up_0.h5\n");
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Triangle>(c, touching);
+  const std::vector<Vector3d> pts = centroids<3>(c, touching);
   TriangleFreqInterpol intp(c.params());
   intp.set_int_order(2);
   std::vector<Vector3d> first;
@@ -368,7 +336,7 @@ TEST_CASE("A freqstamps file may have comments and Windows line ends", "[freq_lo
   CaseDir c("stamps_text");
   write_case<Triangle>(c, 6, {"P2", "P2"});
   std::size_t touching = 0;
-  const std::vector<Vector3d> pts = centroids<Triangle>(c, touching);
+  const std::vector<Vector3d> pts = centroids<3>(c, touching);
   std::vector<double> plain, annotated;
   { TriangleFreqInterpol intp(c.params()); plain = sample_u(intp, pts, 2); }
   write_stamps(c, "# t_k a_k file\r\n0 1 up_0.h5\r\n  #the first harmonic\r\n0.125 0.5 up_1.h5\r\n");

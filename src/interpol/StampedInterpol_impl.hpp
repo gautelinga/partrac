@@ -42,7 +42,7 @@ StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
 
   if (wall_upgrade_){
     near_wall::build_tables<Cell>(topo_, coords_, ncells_, nverts_, dim, periodic, x_min, x_max,
-                                  periodic_tol, facet_neigh_, upgrade_p2_, vclass_, wall_index_,
+                                  periodic_tol(), facet_neigh_, upgrade_p2_, vclass_, wall_index_,
                                   wall_cells_, upgrade_, verbose);
     if (!stamps_.a().u.empty()) prepare(stamps_.a());
     partrac::phase("wall edges");
@@ -59,28 +59,14 @@ template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::update(const double t)
 {
   const auto sp = fmt_.ts.get(t);
-
-  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
-    partrac::phase_begin("update");
-    const auto fill = stamps_.load(fmt_.key(*this, sp.prev), fmt_.key(*this, sp.next),
-                                   [&](const typename Format::Key& key, Stamp& s){
-      fmt_.read(*this, key, s);
-      prepare(s);
-    });
-    std::cout << "Prev: Timestep = " << sp.prev.t << ", "
-              << partrac::stamp_note(fill.first, fmt_.name(sp.prev)) << std::endl;
-    std::cout << "Next: Timestep = " << sp.next.t << ", "
-              << partrac::stamp_note(fill.second, fmt_.name(sp.next)) << std::endl;
-
-    point(stamps_.prev(), stamps_.next());
-
-    partrac::phase("vector read");
-    partrac::phase_total();
-
-    is_initialized = true;
-    t_prev = sp.prev.t;
-    t_next = sp.next.t;
-  }
+  partrac::update_bracket(stamps_, is_initialized, t_prev, t_next, sp.prev, sp.next,
+                          [&](const auto& end){ return fmt_.key(*this, end); },
+                          [&](const auto& end){ return fmt_.name(end); },
+                          [&](const typename Format::Key& key, Stamp& s){
+                            fmt_.read(*this, key, s);
+                            prepare(s);
+                          },
+                          [&](const Stamp& prev, const Stamp& next){ point(prev, next); });
   t_update = t;
 }
 

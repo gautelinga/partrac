@@ -12,14 +12,13 @@ only int_order=2 reaches. With interpolation=constant each point takes the
 nearest node's values, so u_y is k times the nearest node's x.
 """
 
-import os
 
 import numpy as np
 import pytest
 
 from cases import write_felbm
-from dumps import all_dumps
-from paths import app
+from dumps import all_dumps, deformation_gradient
+from paths import app, needs
 from runs import run_app
 
 FILAMENTS = app("filaments")
@@ -44,7 +43,7 @@ def three_stamp_felbm(d, shear=False, extra=""):
     write_felbm(d, fields, solid, times=(0, 1, 2), extra=extra)
 
 
-@pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
+@needs(FILAMENTS)
 def test_uz_advances_with_the_timestamp(tmp_path):
     """Past stamp 1 the field is blended between stamps 1 and 2, so particles
     move at u_z > 0.9 over [1, 1.5] and z(T) follows t^2/2. If a component
@@ -69,7 +68,7 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     assert abs((z[t] - 8.0) - t * t / 2) < 0.05, (t, z[t] - 8.0, t * t / 2)
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_frozen_fields_hold_the_blend_at_t_frozen(tmp_path):
     """Frozen at t = 0.5, the field is u_z = 0.5 at every time, also past
     the last stamp, and the tracers move at that speed."""
@@ -103,7 +102,7 @@ def probe(d, t0, int_order=2):
         return {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
 
 
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+@needs(INTERPOL)
 def test_gradient_blends_between_stamps(tmp_path):
     """Stamp 0 is at rest, so halfway to stamp 1 every component of the
     velocity gradient is exactly half its value at stamp 1, in every cell
@@ -122,7 +121,7 @@ def test_gradient_blends_between_stamps(tmp_path):
     assert np.abs(whole["uyx"]).max() > 0.5   # the shear is there, so the check above is not 0 == 0
 
 
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+@needs(INTERPOL)
 def test_constant_takes_the_nearest_node(tmp_path):
     """interpolation=constant: halfway between stamps 0 and 1 every point has
     u_y = x_n/2 and u_z = 1/2, x_n the x of its nearest node (unit spacing,
@@ -144,7 +143,7 @@ def test_constant_takes_the_nearest_node(tmp_path):
     assert np.abs(v["uy"] - 0.5 * v["x"]).max() > 0.2   # not the trilinear field
 
 
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+@needs(INTERPOL)
 def test_constant_refuses_a_gradient(tmp_path):
     """A piecewise-constant field has no gradient, so a run that needs one
     (int_order=2 here; vectors and tensors too) stops at setup with the
@@ -157,7 +156,7 @@ def test_constant_refuses_a_gradient(tmp_path):
     assert "interpolation=constant" in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+@needs(INTERPOL)
 def test_linear_is_the_default(tmp_path):
     """interpolation=linear, written out, gives the same probe as a file
     without the key, which is how every existing felbm file runs."""
@@ -200,7 +199,7 @@ NEAR = [(2.3, 3.7, 0.7), (5.3, 7.3, 5.6), (9.7, 8.2, 12.3), (7.6, 5.2, 9.3), (5.
 BULK = [(2.3, 12.6, 7.4), (12.2, 3.7, 10.6)]
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_lattice_gradient_is_the_velocity_gradient(tmp_path):
     """At points in cells next to solids, and in bulk cells, the dumped J is
     the derivative of the dumped u: differences of u over 1e-5 cells match
@@ -246,7 +245,7 @@ def test_lattice_gradient_is_the_velocity_gradient(tmp_path):
 TENSORS = app("tracertensors")
 
 
-@pytest.mark.skipif(not os.path.exists(TENSORS), reason="tracertensors is not built")
+@needs(TENSORS)
 def test_steady_identity_next_to_solids(tmp_path):
     """In a steady field F carries the velocity along: F(T) u(x0) = u(x(T)).
     With tracers all over the lattice of wall_felbm, many next to its walls,
@@ -267,3 +266,127 @@ def test_steady_identity_next_to_solids(tmp_path):
     e = np.linalg.norm(np.einsum("nij,nj->ni", F, u0) - u, axis=1)[moving] / np.linalg.norm(u, axis=1)[moving]
     assert moving.sum() > 900
     assert np.percentile(e, 90) < 0.02, np.percentile(e, [50, 90, 100])
+
+
+# --- the lattice's layout, sizes and second-order time rate ----------------------
+
+# u = B + G x on a lattice of nx x ny x nz unit cells, every coefficient
+# different, dyadic so that float32 holds the node values exactly
+SHAPE = (8, 12, 16)
+G = np.array([[0.5, 0.25, -0.125], [-0.25, 0.75, 0.0625], [0.125, -0.5, 1.0]])
+B = np.array([1.0, -2.0, 0.5])
+
+
+def linear_lattice(d, shape=SHAPE):
+    """A felbm case of shape (nx, ny, nz) holding u = B + G x, x the node's (ix, iy, iz),
+    steady, with the node layer iz = nz - 1 solid."""
+    pytest.importorskip("h5py")
+    X = np.meshgrid(*(np.arange(m, dtype=float) for m in shape), indexing="ij")
+    u = [B[i] + sum(G[i, j] * X[j] for j in range(3)) for i in range(3)]
+    stamp = {"u_x": u[0], "u_y": u[1], "u_z": u[2],
+             "density": np.ones(shape), "pressure": np.zeros(shape)}
+    solid = np.zeros(shape[::-1], dtype=np.int32)   # [z, y, x]
+    solid[-1, :, :] = 1
+    write_felbm(d, [stamp, stamp], solid, times=(0, 100))
+
+
+@needs(INTERPOL)
+def test_noncubic_lattice_layout(tmp_path):
+    """On an 8 x 12 x 16 lattice written as FELBM writes it (dims (nx, ny, nz),
+    x fastest), the probe spans [0, 8) x [0, 12) x [0, 16), the solid layer is
+    at z = 15, and in the cells that neither touch it nor wrap the velocity is
+    B + G x and its gradient G, so each axis's extent, order and field are
+    the ones written."""
+    d = tmp_path / "felbm"
+    d.mkdir()
+    linear_lattice(d)
+    v = probe(d, 0.0)
+    x = np.stack([v["x"], v["y"], v["z"]], axis=1)
+    assert len(x) > 4000
+    n = np.array(SHAPE)
+    assert (x >= 0).all() and (x < n).all()
+    assert (x.max(axis=0) > n - 0.5).all()
+    # nearest node solid at z = 15 only
+    assert not ((x[:, 2] >= 14.5) & (x[:, 2] < 15.5)).any()
+    bulk = (x < n - np.array([1, 1, 2])).all(axis=1)
+    assert bulk.sum() > 3000
+    u = np.stack([v["ux"], v["uy"], v["uz"]], axis=1)[bulk]
+    assert np.allclose(u, B + x[bulk] @ G.T, rtol=0, atol=1e-12)
+    for i, a in enumerate("xyz"):
+        for j, b in enumerate("xyz"):
+            assert np.allclose(v["u" + a + b][bulk], G[i, j], rtol=0, atol=1e-12), a + b
+
+
+@needs(INTERPOL)
+@pytest.mark.parametrize("dims", [(8, 12, 15), (16, 12, 8)])
+def test_a_stamp_of_another_size_is_refused(tmp_path, dims):
+    """A stamp whose dataset has other dims than is_solid, in count (8 x 12 x 15)
+    or in order alone (16 x 12 x 8), stops the run with the parameter-error
+    code, naming the file, the dataset and both shapes, instead of reading past
+    the data or into the wrong nodes."""
+    h5py = pytest.importorskip("h5py")
+    d = tmp_path / "felbm"
+    d.mkdir()
+    linear_lattice(d)
+    with h5py.File(d / "output_1.h5", "r+") as f:
+        del f["u_y"]
+        f.create_dataset("u_y", data=np.zeros(dims, dtype=np.float32))
+    r = run_probe(d, 0.0, 1, check=False)
+    assert r.returncode == 2, r.stdout + r.stderr
+    for s in ("output_1.h5", "u_y", "%dx%dx%d" % dims, "8x12x16"):
+        assert s in r.stderr, (s, r.stderr)
+
+
+@needs(INTERPOL)
+def test_a_lattice_past_int_max_nodes_is_refused(tmp_path):
+    """Region ids are ints, so a mask of 2^31 nodes stops the run at load with
+    the parameter-error code (the mask is never allocated: h5py stores no chunk)."""
+    h5py = pytest.importorskip("h5py")
+    d = tmp_path / "felbm"
+    d.mkdir()
+    linear_lattice(d)
+    with h5py.File(d / "output_is_solid.h5", "w") as f:
+        f.create_dataset("is_solid", shape=(2048, 1024, 1024), dtype=np.uint8, chunks=(64, 64, 64))
+    r = run_probe(d, 0.0, 1, check=False)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "is_solid" in r.stderr and "2147483648" in r.stderr, r.stderr
+
+
+def shear_stamps(d, n=16):
+    """A 16^3 felbm case, no solid, u = G_k (x - c) at stamp k (t = 0, 1), c the
+    centre: linear in space, so every cell is exact, and G changes in time."""
+    G0 = np.array([[0.0, 0.8, 0.0], [-0.4, 0.0, 0.3], [0.0, -0.2, 0.0]])
+    G1 = np.array([[0.2, -0.6, 0.5], [0.7, -0.4, 0.0], [-0.3, 0.4, 0.2]])
+    X = np.meshgrid(*(np.arange(n, dtype=float) - n / 2 for _ in range(3)), indexing="ij")
+    stamps = []
+    for Gk in (G0, G1):
+        u = [sum(Gk[i, j] * X[j] for j in range(3)) for i in range(3)]
+        stamps.append({"u_x": u[0], "u_y": u[1], "u_z": u[2],
+                       "density": np.ones((n, n, n)), "pressure": np.zeros((n, n, n))})
+    write_felbm(d, stamps, np.zeros((n, n, n), dtype=np.int32), times=(0, 1))
+
+
+@needs(TENSORS)
+def test_explicit_second_order_carries_the_time_rate(tmp_path):
+    """dF/dt = G(t) F with G linear in time between two stamps: explicit
+    int_order=2 steps F by F + J F dt + (J J F + dJ/dt F) dt^2/2, so its error
+    in F(1) quarters when dt halves. Without the stamps' rate of the gradient
+    (gradA) it halves only."""
+    def F_at(dt):
+        d = tmp_path / ("dt%g" % dt)
+        d.mkdir()
+        shear_stamps(d)
+        run_app(TENSORS, d / "felbm_params.dat",
+                "mode=felbm init_mode=points_x x0=8 y0=8.5 z0=7.5 Nrw=20 Nrw_max=20 scheme=explicit "
+                "int_order=2 Dm=0 dt=%r T=1 dump_intv=1 stat_intv=1e9 checkpoint_intv=1e9 "
+                "random=false seed=1" % dt)
+        D = all_dumps(d)
+        # near the centre, so far from the periodic wrap at every time
+        near = np.abs(D[0.0]["points"][:, 0] - 8) < 2
+        assert near.any()
+        return deformation_gradient(D[1.0])[near]
+
+    ref = F_at(0.1 / 64)
+    e = [np.abs(F_at(dt) - ref).max() for dt in (0.1, 0.05)]
+    assert e[1] > 1e-8, e
+    assert 3.3 < e[0] / e[1] < 4.7, e

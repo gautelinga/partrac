@@ -8,7 +8,7 @@ FetchContent_MakeAvailable(catch)
 
 # Catch's main, without partrac's usage requirements
 add_library(unittest_main OBJECT test_main.cpp)
-target_link_libraries(unittest_main PRIVATE Catch2::Catch2)
+target_link_libraries(unittest_main PRIVATE Catch2::Catch2 ${PROJECT_NAME}_base)
 target_compile_features(unittest_main PRIVATE cxx_std_17)
 
 # Listed, not globbed: a glob is only re-evaluated when cmake runs again.
@@ -69,8 +69,15 @@ if (Python3_Interpreter_FOUND)
     RESULT_VARIABLE PARTRAC_NO_PYTEST OUTPUT_QUIET ERROR_QUIET)
 endif()
 if (Python3_Interpreter_FOUND AND NOT PARTRAC_NO_PYTEST)
+  # on every core where pytest-xdist is installed
+  execute_process(COMMAND ${Python3_EXECUTABLE} -c "import xdist"
+    RESULT_VARIABLE PARTRAC_NO_XDIST OUTPUT_QUIET ERROR_QUIET)
+  set(PARTRAC_PYTEST_WORKERS "")
+  if (NOT PARTRAC_NO_XDIST)
+    set(PARTRAC_PYTEST_WORKERS -n auto)
+  endif()
   add_test(NAME pytest
-    COMMAND ${Python3_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR} -q)
+    COMMAND ${Python3_EXECUTABLE} -m pytest ${CMAKE_CURRENT_SOURCE_DIR} -q ${PARTRAC_PYTEST_WORKERS})
   # the apps live in the build tree, which the tests cannot guess
   set_tests_properties(pytest PROPERTIES
     ENVIRONMENT "PARTRAC_BIN=${PROJECT_BINARY_DIR}/bin")

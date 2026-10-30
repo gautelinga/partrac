@@ -12,26 +12,6 @@
 #include <vector>
 #include "typedefs.hpp"
 
-template<std::size_t N>
-inline void gather_n(const std::uint32_t* dofs, const std::vector<double>& prev,
-                     const std::vector<double>& next, double* block_prev, double* block_next){
-  for (std::size_t i = 0; i < N; ++i){
-    block_prev[i] = prev[dofs[i]];
-    block_next[i] = next[dofs[i]];
-  }
-}
-
-// A field's dofs in this cell, at both stamps; P1 and P2 gather a fixed count
-template<std::size_t N1, std::size_t N2>
-inline void gather_stamps(const std::uint32_t* dofs, const std::size_t stride,
-                          const std::vector<double>& prev, const std::vector<double>& next,
-                          double* block_prev, double* block_next){
-  if (stride == N1)
-    gather_n<N1>(dofs, prev, next, block_prev, block_next);
-  else
-    gather_n<N2>(dofs, prev, next, block_prev, block_next);
-}
-
 // A node-numbered field: the Dim components of a node are consecutive, and the
 // gathered block keeps a component per contiguous run of N, as block_value reads it
 template<std::size_t N, int Dim>

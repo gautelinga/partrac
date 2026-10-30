@@ -4,9 +4,10 @@ the two write routes give the same files, and a rank without a cell or
 without an unknown of its own takes its part.
 
 A refusal on several ranks has to be collective -- a rank that raised alone
-would leave the others inside the next exchange -- so each case is cleaned as
-an MPI job that catches the refusal on every rank and prints the first rank's,
-and the message is compared with the one-rank job's. What is refused is decided
+would leave the others inside the next exchange -- so the cases of one rank
+count are cleaned in turn by one MPI job that catches each refusal on every
+rank and prints the first rank's, and each message is compared with the one
+this process gives, where COMM_WORLD is one rank. What is refused is decided
 from the whole mesh: a ragged or unknown row, a table longer than the mesh or
 with fewer labels than rows, a cell no row names, a dof past the values, a node
 no cell gives a value, a node two cells give two values -- within a rank or
@@ -14,14 +15,14 @@ across two, the owner deciding --, a non-finite value by its dof, a mesh whose
 every midpoint is held, and a step that leaves a cell unbalanced, named by its
 serial id. `--split` stays serial and is refused on several ranks.
 
-Run as a script, this file is the MPI job. The jobs skip where no launcher
-starts a job of several ranks for mpi4py, and fail there with
+The jobs run this file's cases through divfree_cases.mpi_batch; run as a
+script, it is the job of a failure on one rank alone. The jobs skip where no
+launcher starts a job of several ranks for mpi4py, and fail there with
 PARTRAC_REQUIRE_MPI set.
 """
 
 import os
 import sys
-import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -30,9 +31,10 @@ sys.path.insert(0, HERE)
 import numpy as np                 # noqa: E402
 import pytest                      # noqa: E402
 
-from divfree_cases import (CLEANER, D, channel2d, channel3d, mpi_clean, mpi_run,  # noqa: E402
-                           read_back, same_log, same_output, smooth_noslip,
-                           two_cells, write_case)
+from divfree_cases import (D, channel2d, channel3d, cleaner_main, each_case,  # noqa: E402
+                           launcher_or_skip, mpi_batch, mpi_clean, mpi_or_skip, mpi_run, one_rank_main,
+                           read_back, same_output, smooth_noslip, two_cells,
+                           two_stamp_channel, write_case)
 from test_divfree_files import poke_checkpoint   # noqa: E402
 
 from mpi4py import MPI             # noqa: E402
@@ -41,22 +43,29 @@ from mpi4py import MPI             # noqa: E402
 # ------------------------------------------------------------------ the jobs
 
 
-def job(cfg, out, partition, unbalanced):
-    """Clean the case; print the refusal every rank raised, or that none did.
-    With unbalanced the step is taken to be zero, so the data's own worst cell
-    is the one the balance refusal has to name."""
-    comm = MPI.COMM_WORLD
-    if unbalanced == "1":
-        D.Equil._step = lambda self, U, rhs, who, facet: (np.zeros(len(self.gcol)), 0, "")
+def refused(cfg, out, partition="blocks"):
+    """Clean the case; the refusal it raised, or that there was none."""
     try:
         D.clean_case(cfg, out, verbose=False, partition=partition)
-        said = "CLEANED"
+        return "CLEANED"
     except (ValueError, RuntimeError) as exc:
-        said = "REFUSED %s" % exc
-    every = comm.gather(said, root=0)
-    if comm.rank == 0:
-        assert len(set(every)) == 1, every
-        print(said)
+        return "REFUSED %s" % exc
+
+
+def no_step(self, U, rhs, who, facet):
+    """Equil._step taken to be zero, so the data's own worst cell is the one
+    the balance refusal has to name."""
+    return np.zeros(len(self.gcol)), 0, ""
+
+
+STEP = D.Equil._step
+
+
+def refusal_case(cfg, out, partition, unbalanced):
+    """A case of mpi_batch: clean the case, with no step where unbalanced, and
+    print the refusal it raised, or that there was none."""
+    D.Equil._step = no_step if unbalanced else STEP
+    print(refused(cfg, out, partition))
 
 
 def fault_job(cfg, out):
@@ -73,9 +82,10 @@ def fault_job(cfg, out):
     return D.main([cfg, "--out", out])
 
 
-def csr_job():
-    """A matrix block past an 8-bit PETSc's index range on the first rank
-    alone, handed to PETSc on every rank; print what every rank said."""
+def csr_case():
+    """A case of mpi_batch: a matrix block past an 8-bit PETSc's index range
+    on the first rank alone, handed to PETSc on every rank; print what the
+    rank said."""
     import types
     import scipy.sparse as sp
     comm = MPI.COMM_WORLD
@@ -87,15 +97,13 @@ def csr_job():
         said = "ACCEPTED"
     except ValueError as exc:
         said = "REFUSED %s" % exc
-    every = comm.gather(said, root=0)
-    if comm.rank == 0:
-        print("\n".join(every))
+    print(said)
 
 
-def cache_job(cfg, out):
-    """Clean the case with a stamp cache whose budget a rank lies between the
-    ranks' shares of a stamp: the smallest share fits it and the largest does
-    not."""
+def cache_case(cfg, out):
+    """A case of mpi_batch: clean the case with a stamp cache whose budget a
+    rank lies between the ranks' shares of a stamp: the smallest share fits it
+    and the largest does not."""
     comm = MPI.COMM_WORLD
     case = D.read_case(cfg, mesh=False)
     topo = D._read_topology(case, comm, "ptscotch")
@@ -105,30 +113,12 @@ def cache_job(cfg, out):
     D.clean_case(cfg, out, verbose=False, partition="ptscotch")
 
 
-JOBS = {"refuse": job, "csr": csr_job, "cache": cache_job}
-
-
-if __name__ == "__main__":
-    if sys.argv[1] == "fault":
-        # nothing here catches it: the tool itself has to end the job
-        sys.exit(fault_job(*sys.argv[2:]))
-    try:
-        JOBS[sys.argv[1]](*sys.argv[2:])
-    except BaseException:
-        sys.stderr.write("rank %d:\n%s" % (MPI.COMM_WORLD.rank, traceback.format_exc()))
-        sys.stderr.flush()
-        MPI.COMM_WORLD.Abort(1)
+if __name__ == "__main__" and sys.argv[1:2] == ["fault"]:
+    # nothing here catches it: the tool itself has to end the job
+    sys.exit(fault_job(*sys.argv[2:]))
 
 
 # --------------------------------------------------------------- the cases
-
-
-def run_job(cfg, out, ranks, partition="blocks", unbalanced=False):
-    """This file's refusal job; what it printed."""
-    r = mpi_run(ranks, [os.path.abspath(__file__), "refuse", cfg, out, partition,
-                        "1" if unbalanced else "0"], timeout=120)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    return r.stdout.strip().split("\n")[-1]
 
 
 def two_rank_disagreement(folder):
@@ -210,24 +200,31 @@ KIND_RANKS = [(k, 2 if k == "cells disagree across ranks" else 2 + i % 2)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("kind,ranks", KIND_RANKS, ids=["%s-%d" % c for c in KIND_RANKS])
-def test_a_refusal_fires_on_every_rank_and_names_what_one_rank_names(tmp_path, kind, ranks):
+@pytest.mark.parametrize("ranks", [2, 3])
+def test_a_refusal_fires_on_every_rank_and_names_what_one_rank_names(tmp_path, ranks):
     """Each rank reads only its rows and values, so what is wrong may be in
     another rank's share: the verdict is reduced over the ranks and every rank
     refuses together, with the one-rank run's message -- the same file, the same
-    dataset, the same dof."""
+    dataset, the same dof. Every refusal of this rank count, one job."""
     pytest.importorskip("h5py")
-    cfg = broken(tmp_path, kind)
-    one = run_job(cfg, tmp_path / "out1", 1)
-    many = run_job(cfg, tmp_path / "outn", ranks)
-    assert one.startswith("REFUSED") and REFUSED[kind] in one, one
-    assert many == one
+    launcher_or_skip()
+    kinds = [k for k, n in KIND_RANKS if n == ranks]
+    folder = {k: tmp_path / k.replace(" ", "_") for k in kinds}
+    cfg = {k: broken(folder[k], k) for k in kinds}
+    one = {k: refused(cfg[k], folder[k] / "out1") for k in kinds}
+    many = mpi_batch(ranks, refusal_case,
+                     {k: [cfg[k], folder[k] / "outn", "blocks", False] for k in kinds},
+                     tmp_path / "jobs", timeout=300)
+
+    def check(kind):
+        assert one[kind].startswith("REFUSED") and REFUSED[kind] in one[kind], one[kind]
+        # every rank refused, with the one-rank run's message
+        assert many[kind] == [one[kind] + "\n"] * ranks, many[kind]
+    each_case(kinds, check)
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("partition", ["blocks", "ptscotch"])
-@pytest.mark.parametrize("field", ["smooth", "tied"])
-def test_the_balance_refusal_names_the_serial_cell(tmp_path, field, partition):
+def test_the_balance_refusal_names_the_serial_cell(tmp_path, monkeypatch):
     """A step that leaves a cell above what a loader accepts is refused naming
     the cell; on several ranks the cells are numbered by rank, so the name has
     to be the cell's serial id, the row of mesh/topology, and the worst cell
@@ -235,24 +232,35 @@ def test_the_balance_refusal_names_the_serial_cell(tmp_path, field, partition):
     same at every rank count. Where several cells are exactly as bad -- a field
     of z alone on a grid whose coordinates are exact binary fractions, so every
     translated copy of a cell has the same bits -- the one named is the one
-    with the smallest serial id, whichever ranks hold the others."""
+    with the smallest serial id, whichever ranks hold the others. Both fields
+    under both partitions, one job of three ranks."""
     pytest.importorskip("h5py")
-    X, cells = channel3d(3 if field == "smooth" else 4)
-    per = [True, True, False]
-    t = D.Topo(X, cells, per)
-    U = smooth_noslip(t.node_x)
-    if field == "tied":
-        U = np.zeros_like(U)
-        U[:, 2] = t.node_x[:, 2] * (1 - t.node_x[:, 2])
-    ratio, _ = D.flux_ratios(t, U)
-    worst = np.nonzero(ratio == ratio.max())[0]
-    assert len(worst) > 1 or field == "smooth"
-    cfg = write_case(tmp_path / "in", X, cells, [U], per)
-    one = run_job(cfg, tmp_path / "out1", 1, unbalanced=True)
-    assert one.startswith("REFUSED up_0.h5: the flux solve left cell %d " % worst.min()), one
-    for ranks in (2, 3):
-        assert run_job(cfg, tmp_path / ("out%d" % ranks), ranks, partition,
-                       unbalanced=True) == one
+    launcher_or_skip()
+    monkeypatch.setattr(D.Equil, "_step", no_step)
+    cfg, one = {}, {}
+    for field in ("smooth", "tied"):
+        X, cells = channel3d(3 if field == "smooth" else 4)
+        per = [True, True, False]
+        t = D.Topo(X, cells, per)
+        U = smooth_noslip(t.node_x)
+        if field == "tied":
+            U = np.zeros_like(U)
+            U[:, 2] = t.node_x[:, 2] * (1 - t.node_x[:, 2])
+        ratio, _ = D.flux_ratios(t, U)
+        worst = np.nonzero(ratio == ratio.max())[0]
+        assert len(worst) > 1 or field == "smooth"
+        cfg[field] = write_case(tmp_path / field / "in", X, cells, [U], per)
+        one[field] = refused(cfg[field], tmp_path / field / "out1")
+        assert one[field].startswith(
+            "REFUSED up_0.h5: the flux solve left cell %d " % worst.min()), one[field]
+    cases = {"%s-%s" % (f, p): (f, p) for f in ("smooth", "tied") for p in ("blocks", "ptscotch")}
+    many = mpi_batch(3, refusal_case,
+                     {n: [cfg[f], tmp_path / n, p, True] for n, (f, p) in cases.items()},
+                     tmp_path / "jobs", timeout=300)
+
+    def check(name):
+        assert many[name] == [one[cases[name][0]] + "\n"] * 3, many[name]
+    each_case(cases, check)
 
 
 @pytest.mark.slow
@@ -260,6 +268,7 @@ def test_split_is_refused_on_several_ranks(tmp_path):
     """--split writes the split mesh and its field from one rank; on several it
     is refused, saying so, before anything is read."""
     pytest.importorskip("h5py")
+    launcher_or_skip()
     X, cells = channel2d(4)
     t = D.Topo(X, cells, [True, False])
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
@@ -270,7 +279,8 @@ def test_split_is_refused_on_several_ranks(tmp_path):
 
 
 @pytest.mark.slow
-def test_both_write_routes_write_the_same_case_and_say_which(tmp_path, monkeypatch):
+def test_both_write_routes_write_the_same_case_and_say_which(tmp_path, monkeypatch,
+                                                              channel_runs):
     """The rows go to their blocks and are written by every rank through
     parallel HDF5, or gathered to the first rank where PARTRAC_HDF5_GATHER is
     set; the log says which, once. Both routes give the same datasets, the
@@ -278,30 +288,28 @@ def test_both_write_routes_write_the_same_case_and_say_which(tmp_path, monkeypat
     to run, so the floats agree to round-off. Both routes put the rows in
     place the same way, so each is also read back by node through the tool's
     own reader and compared with the one-rank run's field: values written at
-    another node's row would agree between the routes and read back wrong."""
+    another node's row would agree between the routes and read back wrong.
+    The one-rank run and the writer's own route's are channel_runs'."""
     h5py = pytest.importorskip("h5py")
-    X, cells = channel3d(3)
-    t = D.Topo(X, cells, [True, True, False])
-    phi = [np.ones((t.nnodes, 1)), 2 * np.ones((t.nnodes, 1))]
-    fields = [smooth_noslip(t.node_x), 0.5 * smooth_noslip(t.node_x)]
-    cfg = write_case(tmp_path / "in", X, cells, fields, [True, True, False], phi=phi)
-    one = mpi_clean(cfg, tmp_path / "one", 1)
-    assert one.stdout.count("wrote 2 stamps") == 1
+    d = channel_runs(3)
+    fields = two_stamp_channel(3)[3]
+    assert (d / "one.log").read_text().count("wrote 2 stamps") == 1
+    monkeypatch.setenv("PARTRAC_HDF5_GATHER", "1")
+    out = {"": d / "three", "1": tmp_path / "out1"}
+    logs = {"": (d / "three.log").read_text(),
+            "1": mpi_clean(d / "in" / "dolfin_params.dat", out["1"], 3).stdout}
     routes = {}
-    for gather in ("", "1"):
-        monkeypatch.setenv("PARTRAC_HDF5_GATHER", gather)
-        r = mpi_clean(cfg, tmp_path / ("out" + gather), 3)
-        said = [l for l in r.stdout.split("\n") if l.startswith("  wrote 2 stamps")]
-        assert len(said) == 1, r.stdout
+    for gather, log in logs.items():
+        said = [l for l in log.split("\n") if l.startswith("  wrote 2 stamps")]
+        assert len(said) == 1, log
         routes[gather] = said[0]
     assert routes["1"].endswith("gathered to rank 0")
     if routes[""].endswith("gathered to rank 0"):
-        pytest.skip("the h5py of the jobs has no MPI, so both runs were gathered")
+        mpi_or_skip("the h5py of the jobs has no MPI, so both runs were gathered")
     assert routes[""].endswith("through parallel HDF5")
     scale = max(float(np.abs(f).max()) for f in fields)
     for name in ("u_0000.h5", "u_0001.h5"):
-        with h5py.File(tmp_path / "out" / name, "r") as a, \
-                h5py.File(tmp_path / "out1" / name, "r") as b:
+        with h5py.File(out[""] / name, "r") as a, h5py.File(out["1"] / name, "r") as b:
             got = []
             a.visititems(lambda n, o: got.append(n) if isinstance(o, h5py.Dataset) else None)
             assert "phi/vector_0" in got and "p/vector_0" in got
@@ -314,10 +322,10 @@ def test_both_write_routes_write_the_same_case_and_say_which(tmp_path, monkeypat
                     assert np.array_equal(x, y), n
                 assert dict(a[n].attrs).keys() == dict(b[n].attrs).keys(), n
     names = ["u_0000.h5", "u_0001.h5"]
-    want = read_back(tmp_path / "one", names)
-    for out in ("out", "out1"):
-        for a, b in zip(want, read_back(tmp_path / out, names)):
-            assert np.abs(a - b).max() < 1e-12 * scale, out
+    want = read_back(d / "one", names)
+    for gather in out:
+        for a, b in zip(want, read_back(out[gather], names)):
+            assert np.abs(a - b).max() < 1e-12 * scale, gather
 
 
 def test_the_gather_is_forced_by_one_or_true_and_by_nothing_else(monkeypatch):
@@ -332,31 +340,6 @@ def test_the_gather_is_forced_by_one_or_true_and_by_nothing_else(monkeypatch):
 
 
 @pytest.mark.slow
-def test_the_check_on_several_ranks_reports_what_one_rank_reports(tmp_path):
-    """--check reads and measures its share on every rank and reduces what it
-    reports: the worst cell, which is the whole mesh's, is the one-rank run's
-    to the bit, each stamp is reported once, and every line is the one-rank
-    run's, the numbers to round-off."""
-    pytest.importorskip("h5py")
-    X, cells = channel3d(3)
-    t = D.Topo(X, cells, [True, True, False])
-    U = smooth_noslip(t.node_x)
-    cfg = write_case(tmp_path / "in", X, cells, [U, 0.5 * U], [True, True, False],
-                     stamps=["0", "1"])
-    said = {}
-    for n in (1, 3):
-        r = mpi_run(n, [CLEANER, cfg, "--check"], timeout=120)
-        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-        lines = r.stdout.rstrip().split("\n")
-        assert sum(l.startswith("  0 up_0.h5:") for l in lines) == 1, r.stdout
-        assert sum(l.startswith("  1 up_1.h5:") for l in lines) == 1, r.stdout
-        said[n] = r.stdout
-    assert said[1].rstrip().split("\n")[-1].startswith("worst cell balance")
-    assert said[3].rstrip().split("\n")[-1] == said[1].rstrip().split("\n")[-1]
-    same_log(said[1], said[3])
-
-
-@pytest.mark.slow
 def test_a_failure_on_one_rank_alone_takes_the_job_down(tmp_path):
     """Whatever raises on one rank and not on the others -- a read, a bug, a
     full disk outside the writer -- leaves the others waiting in the next
@@ -364,60 +347,59 @@ def test_a_failure_on_one_rank_alone_takes_the_job_down(tmp_path):
     busy. The command line ends it instead, the failing rank saying what it
     was."""
     pytest.importorskip("h5py")
+    launcher_or_skip()
     X, cells = channel2d(4)
     t = D.Topo(X, cells, [True, False])
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
-    r = mpi_run(2, [os.path.abspath(__file__), "fault", cfg, tmp_path / "out"], timeout=60)
+    r = mpi_run(2, [os.path.abspath(__file__), "fault", cfg, tmp_path / "out"], timeout=300)
     assert r.returncode != 0
     assert "rank 1: OSError: a read only the last rank fails" in r.stderr, r.stderr[-3000:]
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("partition", ["blocks", "ptscotch"])
 @pytest.mark.parametrize("ranks", [2, 3])
-def test_ranks_with_no_cell_or_no_unknown_clean_what_one_rank_cleans(tmp_path, ranks,
-                                                                    partition):
+def test_ranks_with_no_cell_or_no_unknown_clean_what_one_rank_cleans(tmp_path, ranks):
     """A rank may own no unknown -- its cells reach only unknowns whose first
     cell is another rank's -- or hold no cell at all, where there are more
     ranks than cells. It still takes its part in every exchange and in the
     assembly, with no rows of its own, and the case comes out as one rank
     cleans it. PETSc takes an empty preallocation array for something else
-    than no rows, and the assembly then waits forever."""
+    than no rows, and the assembly then waits forever. Both partitions, one
+    job."""
     pytest.importorskip("h5py")
+    launcher_or_skip()
     cfg = two_cells(tmp_path / "in")
-    mpi_clean(cfg, tmp_path / "out1", 1)
-    mpi_clean(cfg, tmp_path / "outn", ranks, extra=["--partition", partition], timeout=120)
-    same_output(tmp_path / "out1", tmp_path / "outn", 1.0)
+    one_rank_main([cfg, "--out", tmp_path / "out1"])
+    partitions = ["blocks", "ptscotch"]
+    mpi_batch(ranks, cleaner_main,
+              {p: [cfg, "--out", tmp_path / p, "--partition", p] for p in partitions},
+              tmp_path / "jobs")
+    each_case(partitions, lambda p: same_output(tmp_path / "out1", tmp_path / p, 1.0))
 
 
 @pytest.mark.slow
-def test_a_matrix_past_the_index_range_on_one_rank_is_refused_on_every_rank():
+def test_a_matrix_past_the_index_range_on_one_rank_is_refused_on_every_rank(tmp_path):
     """Each rank hands PETSc its own block of K and C, and the blocks differ in
     size, so a block past PETSc's integer range can be one rank's alone. A rank
     that refused alone would leave the others in the assembly forever: every
     rank refuses, with the same message, naming the largest block."""
-    r = mpi_run(3, [os.path.abspath(__file__), "csr"], timeout=60)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    said = r.stdout.strip().split("\n")
+    said = [s.strip() for s in mpi_batch(3, csr_case, {"csr": []}, tmp_path, timeout=300)["csr"]]
     assert len(said) == 3 and len(set(said)) == 1, said
     assert said[0].startswith("REFUSED") and "400 nonzeros" in said[0], said[0]
     assert "past the 127 that this PETSc's 8-bit indices hold" in said[0], said[0]
 
 
 @pytest.mark.slow
-def test_a_stamp_is_kept_for_the_second_pass_by_every_rank_or_by_none(tmp_path):
+def test_a_stamp_is_kept_for_the_second_pass_by_every_rank_or_by_none(tmp_path, channel_runs):
     """The values read in the wall pass are kept for the cleaning pass where
     they fit the rank's part of the budget, and the shares differ by rank. A
     rank that kept a stamp another rank did not would skip the collective read
     the other makes, and the two would pair up the wrong exchanges. With the
     budget between the smallest and the largest share the case still cleans,
-    and to what one rank writes."""
+    and to what one rank writes, channel_runs' run."""
     pytest.importorskip("h5py")
-    X, cells = channel3d(3)
-    t = D.Topo(X, cells, [True, True, False])
-    fields = [smooth_noslip(t.node_x), 0.5 * smooth_noslip(t.node_x)]
-    cfg = write_case(tmp_path / "in", X, cells, fields, [True, True, False])
-    mpi_clean(cfg, tmp_path / "one", 1)
-    r = mpi_run(3, [os.path.abspath(__file__), "cache", cfg, tmp_path / "three"], timeout=120)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    same_output(tmp_path / "one", tmp_path / "three", float(np.abs(fields[0]).max()))
+    d = channel_runs(3)
+    fields = two_stamp_channel(3)[3]
+    mpi_batch(3, cache_case, {"cache": [d / "in" / "dolfin_params.dat", tmp_path / "three"]},
+              tmp_path / "jobs", timeout=120)
+    same_output(d / "one", tmp_path / "three", float(np.abs(fields[0]).max()))

@@ -34,8 +34,8 @@ public:
     return walk_to_cell(cells_, facet_neigh_, xx, pos) || locate_tree(xx, pos);
   }
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals);
-  double get_t_min() { return ts.get_t_min(); };
-  double get_t_max() { return ts.get_t_max(); };
+  double get_t_min() const override { return ts.get_t_min(); };
+  double get_t_max() const override { return ts.get_t_max(); };
   double next_stamp_after(const double t) const override { return ts.next_after(t); }
   using MeshCore<Cell>::locate;
 protected:

@@ -114,7 +114,6 @@ struct Request {
   bool include_phi = false;     // a phase field, in the element its file gives
   std::size_t n_dofs_max = 0;   // what an evaluation's buffers hold
   std::vector<bool> periodic = {false, false, false};
-  double periodic_tol = 1e-12;
 };
 
 // Everything a dolfin HDF5 loader builds before its own field values: the mesh
@@ -188,6 +187,7 @@ void renumber_vertices(MeshData& m, int nv, const std::vector<std::uint32_t>& no
 
 // The shortest edge of the mesh, a parallel reduction over the cells
 double shortest_edge(const MeshData& m, int nv);
+double shortest_edge(const double* coords, const std::uint32_t* topo, std::size_t ncells, int nv, Uint gdim);
 
 // Everything a load produces that is deterministic from the input files, so a
 // later run reads it back instead of rebuilding it. The cell tree and the

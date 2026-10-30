@@ -22,15 +22,14 @@ import pytest
 
 from cases import args_for
 from dumps import dump_at, read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import checkpoint_folder, copy_case, copy_example, read_checkpoint, run_app
 
 TRACERS = app("tracers")
 TENSORS = app("tracertensors")
 LINEAR = os.path.join(REPO, "data_example", "linear_flow", "expr_params.dat")
 
-needs = pytest.mark.skipif(not (os.path.exists(TRACERS) and os.path.exists(TENSORS)),
-                           reason="tracers or tracertensors is not built")
+needs_apps = needs(TRACERS, TENSORS)
 
 BASE = ("mode=analytic x0=0 y0=0 z0=0 Nrw=50 Nrw_max=50 Dm=0 int_order=1 "
         "checkpoint_intv=1e9 random=false seed=1").split()
@@ -44,7 +43,7 @@ def linear_flow(d, entries):
     return params
 
 
-@needs
+@needs_apps
 def test_every_tracer_on_a_stagnation_line_is_at_rest(tmp_path):
     """u = (x, 0, 0) vanishes on the y axis: 50 tracers placed there are all at rest."""
     params = linear_flow(tmp_path / "c", {"Axx": 1.0})
@@ -54,7 +53,7 @@ def test_every_tracer_on_a_stagnation_line_is_at_rest(tmp_path):
     assert (st["n_at_rest"] == 50).all(), st["n_at_rest"]
 
 
-@needs
+@needs_apps
 def test_the_count_is_the_tracers_slower_than_a_thousandth_of_the_mean_speed(tmp_path):
     """At a stagnation point the count at each statistics time is the dumped
     velocities' own: |u| <= 1e-3 of their mean |u|, and not every tracer."""
@@ -67,7 +66,7 @@ def test_the_count_is_the_tracers_slower_than_a_thousandth_of_the_mean_speed(tmp
         assert n < 50
 
 
-@needs
+@needs_apps
 @pytest.mark.parametrize("axx,ayy", [(1.0, -1.0), (1.0, 0.5)])
 def test_log_det_F_is_the_integral_of_the_divergence(tmp_path, axx, ayy):
     """In u = A x, F = exp(A t) and log det F = tr(A) t for every particle:
@@ -82,7 +81,7 @@ def test_log_det_F_is_the_integral_of_the_divergence(tmp_path, axx, ayy):
     assert list(st)[-7] == "n_at_rest"   # the frame's six rate columns follow
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_a_step_over_several_cells_is_noted(tmp_path, felbm_dir):
     """The felbm shear, |u| <= 0.05 on a unit grid: dt = 100 crosses up to 5
     cells a step and is noted; dt = 1 crosses a twentieth and is not."""
@@ -97,7 +96,7 @@ def test_a_step_over_several_cells_is_noted(tmp_path, felbm_dir):
             assert 4.0 < float(m.group(1)) <= 5.0 + 1e-9, m.group(0)
 
 
-@needs
+@needs_apps
 def test_a_random_run_prints_its_seed_and_the_seed_repeats_it(tmp_path):
     """Diffusing tracers with random = true: the printed seed names the run
     folder, and random = false with that seed ends every tracer where the

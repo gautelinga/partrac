@@ -1,9 +1,5 @@
-// The OpenFOAM reader: the only translation unit that includes an OpenFOAM
-// header, built as the plugin libpartrac_openfoam.so, whose C entry points
-// fill the plain arrays of openfoam_load.hpp. The polyMesh is read, copied out
-// and freed before the case is returned; a field is read from its file alone,
-// each patch's condition asked whether it fixes the value on a one-cell probe
-// mesh. OpenFOAM's errors are thrown, caught and returned as text.
+// The OpenFOAM reader plugin (libpartrac_openfoam.so): the only unit with
+// OpenFOAM headers; mesh and fields into openfoam_load.hpp's arrays
 
 #include "openfoam_load.hpp"
 
@@ -34,6 +30,8 @@
 namespace fs = std::filesystem;
 using namespace openfoam_load;
 
+static_assert(sizeof(Foam::label) == sizeof(std::int32_t), "the reader's arrays hold 32-bit labels");
+
 namespace {
 
 // A refusal of this reader, as a message
@@ -47,9 +45,6 @@ template<typename... Args>
   (s << ... << args);
   throw Refused{s.str()};
 }
-
-const char* const convert_cmd =
-  "foamDictionary -entry writeFormat -set ascii system/controlDict && foamFormatConvert -case .";
 
 // Patch types taken
 const std::vector<std::string> accepted = {"patch", "wall", "mappedWall", "symmetry",
@@ -84,25 +79,6 @@ void quiet(){
   Foam::FatalIOError.throwExceptions();
 }
 
-// The header of a file; binary with 64-bit labels is refused, since this
-// OpenFOAM reads it as 32-bit
-void check_header(const fs::path& p){
-  // IFstream reads name.gz for name
-  std::string name = p.string();
-  if (name.size() > 3 && name.compare(name.size() - 3, 3, ".gz") == 0) name.resize(name.size() - 3);
-  Foam::IFstream is(name);
-  if (!is.good()) refuse(p.string(), ": cannot open");
-  Foam::token t(is);
-  while (t.good() && !(t.isWord() && t.wordToken() == "FoamFile")) t = Foam::token(is);
-  if (!t.good()) return;
-  const Foam::dictionary head(is);
-  const Foam::word format = head.lookupOrDefault<Foam::word>("format", "ascii");
-  const Foam::string arch = head.lookupOrDefault<Foam::string>("arch", "");
-  if (format == "binary" && arch.find("label=64") != std::string::npos)
-    refuse(p.string(), " is binary with 64-bit labels, which this OpenFOAM reads as 32-bit; "
-           "convert the case to ascii first: ", convert_cmd);
-}
-
 // The case's root and name, as Time takes them
 std::unique_ptr<Foam::Time> open_time(const std::string& dir){
   const Foam::fileName c = Foam::fileName(fs::absolute(dir).lexically_normal().string());
@@ -126,10 +102,6 @@ void check_case(const std::string& dir){
     const std::string n = e.path().filename().string();
     if (e.is_directory() && is_number(n) && exists_either(e.path()/"polyMesh"/"points"))
       refuse(dir, ": ", n, "/polyMesh/points: a moving or changed mesh is not handled");
-  }
-  for (const char* f : {"points", "faces", "owner", "neighbour"}){
-    const fs::path p = poly/f;
-    check_header(fs::exists(p) ? p : fs::path(p.string() + ".gz"));
   }
 }
 
@@ -269,7 +241,7 @@ int empty_axis(const CaseData& c){
   return axis;
 }
 
-// The time directories that hold the field, by value; 0 only when alone
+// Times holding the field; 0 only when alone
 void read_times(const Foam::Time& runTime, const std::string& dir, const std::string& field,
                 CaseData& c){
   const Foam::instantList all = runTime.times();
@@ -293,6 +265,24 @@ void read_times(const Foam::Time& runTime, const std::string& dir, const std::st
   for (const auto& t : ts){
     c.time_values.push_back(t.first);
     c.times.push_back(t.second);
+  }
+  // Times only processor directories hold
+  for (const auto& e : fs::directory_iterator(dir)){
+    const std::string pd = e.path().filename().string();
+    if (!e.is_directory() || (pd != "processor0" && pd.rfind("processors", 0) != 0)) continue;
+    std::vector<std::pair<double, std::string>> missing;
+    for (const auto& t : fs::directory_iterator(e.path())){
+      const std::string n = t.path().filename().string();
+      if (t.is_directory() && is_number(n) && std::strtod(n.c_str(), nullptr) != 0.
+          && exists_either(t.path()/field) && !exists_either(fs::path(dir)/n/field))
+        missing.push_back({std::strtod(n.c_str(), nullptr), n});
+    }
+    std::sort(missing.begin(), missing.end());
+    std::vector<std::string> names;
+    for (const auto& m : missing) names.push_back(m.second);
+    if (!names.empty())
+      refuse(dir, ": ", pd, " holds ", field, " at times the case's root lacks (", joined(names), "); "
+             "reconstruct them (reconstructPar -case . -newTimes) or remove the processor directories");
   }
 }
 
@@ -377,34 +367,35 @@ void do_read_case(const std::string& dir, const std::string& velocity, CaseData&
   read_times(*runTime, dir, velocity, c);
 }
 
-// A one-cell mesh whose patches each condition is built on to ask it
-// whether it fixes the value: one of each patch type the conditions differ by
+// One-cell probe mesh: two patches per type, of different normal and area
 class Probe {
 public:
   explicit Probe(const Foam::Time& runTime){
     Foam::pointField X(8);
-    for (int i = 0; i < 8; ++i) X[i] = Foam::vector(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+    for (int i = 0; i < 8; ++i) X[i] = Foam::vector(i & 1, 2*((i >> 1) & 1), 3*((i >> 2) & 1));
     Foam::faceList F(6);
     F[0] = Foam::face(Foam::labelList({0, 2, 3, 1}));
-    F[1] = Foam::face(Foam::labelList({4, 5, 7, 6}));
-    F[2] = Foam::face(Foam::labelList({0, 1, 5, 4}));
-    F[3] = Foam::face(Foam::labelList({2, 6, 7, 3}));
-    F[4] = Foam::face(Foam::labelList({0, 4, 6, 2}));
-    F[5] = Foam::face(Foam::labelList({1, 3, 7, 5}));
+    F[1] = Foam::face(Foam::labelList({0, 4, 6, 2}));
+    F[2] = Foam::face(Foam::labelList({4, 5, 7, 6}));
+    F[3] = Foam::face(Foam::labelList({1, 3, 7, 5}));
+    F[4] = Foam::face(Foam::labelList({0, 1, 5, 4}));
+    F[5] = Foam::face(Foam::labelList({2, 6, 7, 3}));
     mesh_ = std::make_unique<Foam::fvMesh>(
       Foam::IOobject("partracProbe", runTime.name(), runTime, Foam::IOobject::NO_READ,
                      Foam::IOobject::NO_WRITE, false),
       std::move(X), std::move(F), Foam::labelList(6, 0), Foam::labelList(), false);
     const Foam::polyBoundaryMesh& bm = static_cast<const Foam::polyMesh&>(*mesh_).boundary();
-    Foam::List<Foam::polyPatch*> pp(3);
+    Foam::List<Foam::polyPatch*> pp(5);
     pp[0] = new Foam::polyPatch("patch", 1, 0, 0, bm);
-    pp[1] = new Foam::wallPolyPatch("wall", 1, 1, 1, bm);
-    pp[2] = new Foam::polyPatch("rest", 4, 2, 2, bm);
+    pp[1] = new Foam::polyPatch("patch2", 1, 1, 1, bm);
+    pp[2] = new Foam::wallPolyPatch("wall", 1, 2, 2, bm);
+    pp[3] = new Foam::wallPolyPatch("wall2", 1, 3, 3, bm);
+    pp[4] = new Foam::polyPatch("rest", 2, 4, 4, bm);
     mesh_->addFvPatches(pp, false);
   }
-  // The probe patch standing for a case patch type
-  const Foam::fvPatch& patch(const std::string& type) const {
-    return mesh_->boundary()[type == "wall" || type == "mappedWall" ? 1 : 0];
+  // Probe patch for a case patch type
+  const Foam::fvPatch& patch(const std::string& type, const int which = 0) const {
+    return mesh_->boundary()[(type == "wall" || type == "mappedWall" ? 2 : 0) + which];
   }
   const Foam::fvMesh& mesh() const { return *mesh_; }
 private:
@@ -579,9 +570,14 @@ void read_typed(const CaseData& c, Session& s, const Foam::dictionary& dict, con
               Foam::component(v[i], Foam::direction(d));
       }
       else if (fp.fixes_value){
-        // A condition that sets its value without writing it, as noSlip
+        // Value set but not written (noSlip): the same on both probes
         const Foam::tmp<Foam::fvPatchField<Type>> probe =
           Foam::fvPatchField<Type>::New(s.probe->patch(p.type), pf.iF, pd);
+        const Foam::tmp<Foam::fvPatchField<Type>> other =
+          Foam::fvPatchField<Type>::New(s.probe->patch(p.type, 1), pf.iF, pd);
+        if (probe()[0] != other()[0])
+          refuse(file.string(), ": patch ", p.name, " is ", fp.condition, ", whose value is not written and "
+                 "depends on the patch's faces; write its value in the time directory, as the solver does");
         fp.has_value = true;
         fp.values.resize(std::size_t(ncomp)*std::size_t(p.size));
         for (std::int64_t i = 0; i < p.size; ++i)
@@ -602,8 +598,9 @@ void do_read_field(const CaseData& c, const std::string& time, const std::string
     if (!fs::exists(file.string() + ".gz")) refuse(file.string(), ": no such file");
     file = fs::path(file.string() + ".gz");
   }
-  check_header(file);
   Session& s = session(c.dir);
+  // Conditions at the stamp's time
+  s.runTime->setTime(Foam::instant(Foam::word(time)), 0);
   Foam::IFstream is((fs::path(c.dir)/time/name).string());
   Foam::IOobject io(name, time, *s.runTime, Foam::IOobject::NO_READ, Foam::IOobject::NO_WRITE, false);
   if (!io.readHeader(is)) refuse(file.string(), ": no FoamFile header");

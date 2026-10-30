@@ -47,7 +47,7 @@ void MeshCore<Cell>::enable_reflection()
 }
 
 template<typename Cell>
-Vector3d MeshCore<Cell>::get_boundary_normal(const Vector3d &x, int& cell_id)
+Vector3d MeshCore<Cell>::get_boundary_normal(const Vector3d &x, const int cell_id) const
 {
   if (cell_id < 0 || std::size_t(cell_id) >= cells_.size())
     return Vector3d::Zero();

@@ -18,15 +18,23 @@ from paths import REPO
 
 DATA = os.path.join(REPO, "data_example")
 
+# The apps' own default, set here so that they do not start twice
+os.environ.setdefault("OMP_WAIT_POLICY", "passive")
 # Under pytest-xdist the workers share the cores: an app's OpenMP threads,
-# unless a test sets them, get the machine divided by the workers. Spinning
-# OpenMP threads on an oversubscribed machine make the suite slower than serial.
+# unless a test sets them, get the machine divided by the workers.
 if "PYTEST_XDIST_WORKER_COUNT" in os.environ:
     os.environ.setdefault("OMP_NUM_THREADS", str(max(1, (os.cpu_count() or 1)
                                                      // int(os.environ["PYTEST_XDIST_WORKER_COUNT"]))))
 
 
+def pytest_addoption(parser):
+    parser.addoption("--mpi", action="store_true",
+                     help="also run the jobs of several MPI ranks (as PARTRAC_MPI=1 does)")
+
+
 def pytest_configure(config):
+    if config.getoption("--mpi"):
+        os.environ["PARTRAC_MPI"] = "1"
     config.addinivalue_line("markers", "slow: left out of the quick run, pytest -m 'not slow'")
     # mode=fenics is the only mode a build without dolfin does not have; a run
     # against such a build names what it leaves out, pytest -m 'not fenics'
@@ -74,8 +82,7 @@ def felbm_dir(tmp_path_factory):
     The FELBM solver is a separate project and its output is not shipped, but
     the format is small. felbm_params.dat names a timestamps file and an
     is_solid file; is_solid fixes the grid size, and each timestep holds u_x,
-    u_y, u_z, density and pressure as doubles indexed nx*ny*iz + nx*iy + ix.
-    The grid is cubic so that the index order is unambiguous.
+    u_y, u_z, density and pressure in the same layout (write_felbm's).
     """
     np = pytest.importorskip("numpy")
     pytest.importorskip("h5py")

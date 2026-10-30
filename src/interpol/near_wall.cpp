@@ -74,16 +74,14 @@ Vector3d wall_normal(const std::uint32_t* row, const int k, const std::array<std
   return Vector3d(n[0], n[1], n[2]);
 }
 
-// The wall geometry both rules read: the normals at the wall vertices, the
-// corners, and the side normals per fluid end and wall end; with facet_sums
+// Wall normals at the vertices and per (fluid end, wall end); facet sums if asked
 // also every facet's classes, apex class and normal
 template<int nv>
 struct Geometry {
   struct Side { std::uint32_t wall; Vector3d n; };
   struct FacetSum { std::array<std::uint32_t, nv> key; Vector3d n; };   // classes, apex class last
   std::vector<Vector3d> n_sum;
-  std::vector<std::uint32_t> n_count;
-  std::vector<bool> corner;
+  std::vector<std::uint8_t> on_wall;
   std::vector<std::size_t> first;
   std::vector<Side> side;
   std::vector<FacetSum> facet;   // in the facet order
@@ -131,13 +129,10 @@ Geometry<nv> wall_geometry(const std::vector<std::uint32_t>& topo, const std::ve
   // Wall normals at the vertices, summed over the facets that meet there in that
   // one order; the side entries (wall end, facet) bucketed by the fluid end
   std::vector<Vector3d>& n_sum = g.n_sum;
-  std::vector<std::uint32_t>& n_count = g.n_count;
-  std::vector<bool>& corner = g.corner;
+  std::vector<std::uint8_t>& on_wall = g.on_wall;
   std::vector<std::size_t>& first = g.first;
   n_sum.assign(nverts, Vector3d::Zero());
-  std::vector<Vector3d> n_first(nverts, Vector3d::Zero());
-  n_count.assign(nverts, 0);
-  corner.assign(nverts, false);
+  on_wall.assign(nverts, 0);
   first.assign(nverts + 1, 0);
   for (std::size_t f = 0; f < nw; ++f){
     const std::uint32_t* row = topo.data() + (facets[f].slot/nv)*nv;
@@ -146,10 +141,8 @@ Geometry<nv> wall_geometry(const std::vector<std::uint32_t>& topo, const std::ve
     for (int j = 0; j < nv; ++j){
       if (j == k) continue;
       const std::size_t iv = class_of(vclass, row[j]);
-      if (n_count[iv] == 0) n_first[iv] = n;
-      else if ((nv == 3 && n_count[iv] > 1) || n_first[iv].dot(n) < 0.5) corner[iv] = true;   // over 60 degrees
       n_sum[iv] += n;
-      ++n_count[iv];
+      on_wall[iv] = 1;
     }
     first[class_of(vclass, row[k]) + 1] += nv - 1;
   }
@@ -205,14 +198,14 @@ EndNormal edge_end_normal(const Geometry<nv>& g, const std::uint32_t cw, const s
 // The cells with a wall vertex, numbered in cell order; verbose prints their count
 template<int nv>
 std::size_t number_wall_cells(const std::vector<std::uint32_t>& topo, const std::size_t ncells,
-                              const std::vector<std::uint32_t>& n_count, const std::vector<std::uint32_t>& vclass,
+                              const std::vector<std::uint8_t>& on_wall, const std::vector<std::uint32_t>& vclass,
                               std::vector<std::int32_t>& wall_index, const bool verbose){
   wall_index.assign(ncells, -1);
   std::size_t ncw = 0;
   for (std::size_t i = 0; i < ncells; ++i){
     const std::uint32_t* row = topo.data() + i*std::size_t(nv);
     for (int k = 0; k < nv; ++k)
-      if (n_count[class_of(vclass, row[k])] > 0){ wall_index[i] = std::int32_t(ncw++); break; }
+      if (on_wall[class_of(vclass, row[k])]){ wall_index[i] = std::int32_t(ncw++); break; }
   }
   if (verbose)
     std::cout << "Wall cells: " << ncw << std::endl;
@@ -221,7 +214,7 @@ std::size_t number_wall_cells(const std::vector<std::uint32_t>& topo, const std:
 
 // fill(i, w, row, wall) for wall cell w, cell i, in parallel; wall: its wall vertices by bit
 template<int nv, typename Fill>
-void each_wall_cell(const std::vector<std::uint32_t>& topo, const std::vector<std::uint32_t>& n_count,
+void each_wall_cell(const std::vector<std::uint32_t>& topo, const std::vector<std::uint8_t>& on_wall,
                     const std::vector<std::uint32_t>& vclass, const std::vector<std::int32_t>& wall_index,
                     Fill&& fill){
 #pragma omp parallel for schedule(dynamic, 4096)
@@ -230,7 +223,7 @@ void each_wall_cell(const std::vector<std::uint32_t>& topo, const std::vector<st
     const std::uint32_t* row = topo.data() + i*nv;
     std::uint8_t wall = 0;
     for (int k = 0; k < nv; ++k)
-      if (n_count[class_of(vclass, row[k])] > 0) wall |= std::uint8_t(1 << k);
+      if (on_wall[class_of(vclass, row[k])]) wall |= std::uint8_t(1 << k);
     fill(i, std::size_t(wall_index[i]), row, wall);
   }
 }
@@ -307,11 +300,11 @@ void cell_terms(const TermSources<Cell::n_verts>& s, const std::size_t i, const 
   constexpr int f0 = 2*R::n_edges, b0 = f0 + R::n_faces;
   const Geometry<nv>& g = s.g;
   const auto cls = [&](const int k){ return class_of(s.vclass, row[k]); };
-  // Edge ends: the side normal, else the mean at the wall vertex; none at a corner
+  // Edge ends: the side normal, else the mean at the wall vertex
   for (int e = 0; e < R::n_edges; ++e)
     for (int o = 0; o < 2; ++o){
       const std::uint32_t cw = cls(at(at(edge_ends, e), o)), cv = cls(at(at(edge_ends, e), 1 - o));
-      if (g.n_count[cw] == 0 || g.corner[cw]) continue;
+      if (!g.on_wall[cw]) continue;
       if (unit_normal(edge_end_normal(g, cw, cv).n, at(w.end, 2*e + o)))
         w.terms |= 1u << (2*e + o);
     }
@@ -323,7 +316,7 @@ void cell_terms(const TermSources<Cell::n_verts>& s, const std::size_t i, const 
       const std::uint32_t ca = cls(a), cb = cls(b);
       const SumKey k{std::min(ca, cb), std::max(ca, cb), any_apex};
       const NormalSum* es = find_sum(s.edge_sum, k);
-      if (!es || g.corner[ca] || g.corner[cb]) continue;
+      if (!es) continue;
       const NormalSum* fs = find_sum(s.face_sum, {k[0], k[1], cls(v)});
       if (unit_normal(fs ? fs->n : es->n, at(w.face, e*R::n_apex + j))){
         const int off = off_vertex<Cell>(a, b, v);
@@ -332,16 +325,11 @@ void cell_terms(const TermSources<Cell::n_verts>& s, const std::size_t i, const 
         w.terms |= 1u << (f0 + R::face_slot(off, b));
       }
     }
-  // 3D: the bubble's rows, the cell's wall facets without a corner vertex
+  // 3D: bubble rows from the cell's wall facets
   if constexpr (R::n_bubble > 0){
     int ks[nv], m = 0;
-    for (int k = 0; k < nv; ++k){
-      if (s.facet_neigh[i*nv + std::size_t(k)] != facet_wall) continue;
-      bool at_corner = false;
-      for (int j = 0; j < nv; ++j)
-        if (j != k && g.corner[cls(j)]) at_corner = true;
-      if (!at_corner) ks[m++] = k;
-    }
+    for (int k = 0; k < nv; ++k)
+      if (s.facet_neigh[i*nv + std::size_t(k)] == facet_wall) ks[m++] = k;
     if (m > 0){
       // At most nv rows: no allocation
       Eigen::Matrix<double, Eigen::Dynamic, D, Eigen::RowMajor, nv, D> N(m, D);
@@ -376,8 +364,8 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
   const Geometry<nv> g = wall_geometry<nv>(topo, coords, ncells, nverts, gdim, facet_neigh, vclass, false);
 
   wall_cells.clear();
-  wall_cells.resize(number_wall_cells<nv>(topo, ncells, g.n_count, vclass, wall_index, verbose));
-  each_wall_cell<nv>(topo, g.n_count, vclass, wall_index,
+  wall_cells.resize(number_wall_cells<nv>(topo, ncells, g.on_wall, vclass, wall_index, verbose));
+  each_wall_cell<nv>(topo, g.on_wall, vclass, wall_index,
                      [&](std::size_t, const std::size_t wc, const std::uint32_t* row, const std::uint8_t wall){
     WallEdges<Cell>& w = wall_cells[wc];
     w.wall = wall;
@@ -389,7 +377,7 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
         const std::uint32_t cw = class_of(vclass, iw);
         if constexpr (nv == 3) we = {0.5, 0., 0., 0.5};   // linear
         else                   we = {0., 0., 0., 0., 0., 0.};
-        if (g.n_count[cw] == 0 || g.corner[cw]) continue;
+        if (!g.on_wall[cw]) continue;
         const Vector3d edge = point_of(coords, iv, gdim) - point_of(coords, iw, gdim);
         // over several wall facets: their mean normal
         const EndNormal en = edge_end_normal(g, cw, class_of(vclass, iv));
@@ -536,11 +524,11 @@ void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<
   merge_sums(src.face_sum);
 
   // The masks, then the places in the pool and in a stamp's table, then the normals
-  const std::size_t ncw = number_wall_cells<nv>(topo, ncells, g.n_count, vclass, wall_index, verbose);
+  const std::size_t ncw = number_wall_cells<nv>(topo, ncells, g.on_wall, vclass, wall_index, verbose);
   table.cells.assign(ncw, UpgradeCell{});
   table.spans.assign(ncw, TermSpan{});
   std::vector<std::uint32_t> n_normals(ncw);
-  each_wall_cell<nv>(topo, g.n_count, vclass, wall_index,
+  each_wall_cell<nv>(topo, g.on_wall, vclass, wall_index,
                      [&](const std::size_t i, const std::size_t wc, const std::uint32_t* row, const std::uint8_t wall){
     CellTerms<Cell> w;
     cell_terms<Cell>(src, i, row, w);
@@ -560,7 +548,7 @@ void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<
   table.n_coef = std::uint32_t(nc);
   std::vector<std::uint32_t>().swap(n_normals);
   table.normals.resize(nn);
-  each_wall_cell<nv>(topo, g.n_count, vclass, wall_index,
+  each_wall_cell<nv>(topo, g.on_wall, vclass, wall_index,
                      [&](const std::size_t i, const std::size_t wc, const std::uint32_t* row, std::uint8_t){
     CellTerms<Cell> w;
     cell_terms<Cell>(src, i, row, w);

@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import run_app
 
 PARTRAC = app("partrac")
@@ -43,8 +43,7 @@ BASE = ("mode=analytic ds_min=1e-12 refine=false coarsen=false Dm=0 "
         "int_order=1 checkpoint_intv=1e9 random=false seed=1 "
         "integrate_tau=true tau_max=0").split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def run(tmp_path, example, extra, expr=None):

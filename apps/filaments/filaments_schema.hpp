@@ -20,7 +20,7 @@ inline partrac::Schema filaments_schema(){
   s.runtime<Uint>("Nrw_init", 0, "particles the initializer placed");
   s.runtime<Uint>("Nrw_current", 0, "particles in the set when this was written");
   s.require<Uint>("Nrw_max", "max number of particles");
-  s.require<int>("int_order", "integration order");
+  add_int_order(s, "integration order");
   // Required unless resize_target is ds_init
   s.require_if<double>("ds_max", 0.0,
                        [](const partrac::Params& p){ return p.get<std::string>("resize_target") == "ds_max"; },
@@ -40,7 +40,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("filter_target", 0, "filter target");
+  s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("filter", false, "filter the filament");
   s.opt<bool>("inject", false, "inject new particles");
   s.opt<bool>("inject_edges", true, "inject edges too");
@@ -54,8 +54,6 @@ inline partrac::Schema filaments_schema(){
   s.choices("resize", {"rescale", "doublings"});
   s.choices("resize_target", {"ds_max", "ds_init"});
   s.choices("outside", {"ignore", "reinject"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
   // Pairs only
   s.check([](const partrac::Params& p){
             const auto key = split_string(p.get<std::string>("init_mode"), "_");

@@ -19,6 +19,9 @@
 
 namespace mesh_tables {
 
+// Periodic match tolerance: a hundredth of the shortest edge
+inline double periodic_match_tol(const double hmin){ return 1e-2*hmin; }
+
 // The per-cell geometry and the tree over it, from the topology and the
 // coordinates; both keep pointing into the caller's arrays
 template<typename Cell>

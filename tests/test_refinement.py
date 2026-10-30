@@ -30,7 +30,7 @@ import pytest
 
 from cases import ABC
 from dumps import all_dumps
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import checkpoint_folder, copy_example, read_checkpoint, run_app, write_checkpoint
 
 PARTRAC = app("partrac")
@@ -47,10 +47,8 @@ BASE = ("mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw_max=%d "
         "int_order=1 dt=%g random=false seed=1 stat_intv=0.05 dump_intv=0.1 "
         "checkpoint_intv=1e9 T=0.3" % (NRW_MAX, DT)).split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
-needs_sss = pytest.mark.skipif(not os.path.exists(SSS),
-                               reason="static_space_stepper is not built")
+needs_partrac = needs(PARTRAC)
+needs_sss = needs(SSS)
 
 
 def spacing(n):

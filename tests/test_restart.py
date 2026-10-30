@@ -13,14 +13,15 @@ run also dumps at, and the two runs share timestamps to compare.
 """
 
 import os
+import subprocess
 
 import numpy as np
 import pytest
 
 from cases import ABC
 from dumps import all_dumps, dump_at
-from paths import REPO, app
-from runs import checkpoint_folder, continuous_and_resumed, copy_example, run_app
+from paths import REPO, app, left_out, needs
+from runs import checkpoint_folder, continuous_and_resumed, copy_example, put_points, run_app
 
 PARTRAC = app("partrac")
 TRACERS = app("tracers")
@@ -34,8 +35,7 @@ BASE = ("mode=analytic x0=0.5 y0=0.5 z0=0.5 Nrw=200 Nrw_max=200000 Dm=0 "
         "int_order=1 dt=%g stat_intv=1e9 random=false seed=1 dump_intv=%g "
         "integrate_tau=true tau_intv=%g tau_max=0" % (DT, STOP, DT)).split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def continuous_and_resumed_at_end(tmp_path, extra, stop=STOP - DT, text=False):
@@ -121,7 +121,7 @@ def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
 FILAMENTS = app("filaments")
 
 
-@pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
+@needs(FILAMENTS)
 @pytest.mark.parametrize("resize,fmt", [("rescale", "hdf5"), ("doublings", "hdf5"), ("doublings", "text")])
 def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path, resize, fmt):
     """filaments resumes its step count from the checkpoint, so intervals keep
@@ -148,7 +148,7 @@ def test_a_resumed_filament_run_keeps_the_phase_of_its_intervals(tmp_path, resiz
         assert dump_at(cont, 0.2)["doublings"].max() >= 1, "nothing was halved before the stop"
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_a_run_resumed_at_another_dt_goes_on_from_the_checkpoints_time(tmp_path):
     """Time is counted in steps from the run's start, or from the restart if dt
     has changed there: steps of 0.1 checkpointed at t = 0.6 and resumed at
@@ -166,12 +166,53 @@ def test_a_run_resumed_at_another_dt_goes_on_from_the_checkpoints_time(tmp_path)
     assert len(resumed) == 5 and np.allclose(resumed, [0.6, 0.7, 0.8, 0.9, 1.0], rtol=0, atol=1e-9), resumed
 
 
+@needs(TRACERS)
+def test_a_run_resumed_from_another_directory_writes_into_the_run_it_resumes(tmp_path):
+    """A run started on a relative parameter path records a relative folder;
+    resumed from elsewhere it still writes beside the checkpoint it read."""
+    work, elsewhere = tmp_path / "work", tmp_path / "elsewhere"
+    params = copy_example(ABC, work)
+    elsewhere.mkdir()
+    base = ("mode=analytic init_mode=points_xyz x0=3 y0=3 z0=3 Nrw=20 Nrw_max=20 Dm=0 int_order=1 "
+            "scheme=RK4 dt=0.1 stat_intv=1e9 dump_intv=0.1 random=false seed=1").split()
+    r = subprocess.run([TRACERS, params.name] + base + ["T=0.5", "checkpoint_intv=0.5"],
+                       cwd=work, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    run = checkpoint_folder(work)
+    r = subprocess.run([TRACERS, str(params)] + base + ["T=1.0", "checkpoint_intv=1e9",
+                                                       "restart_folder=%s" % run],
+                       cwd=elsewhere, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert len(all_dumps(run, "data_from_t0.6*.h5")) == 5
+    assert not any(elsewhere.iterdir())
+
+
+@needs(TRACERS)
+def test_a_resumed_diffusive_run_draws_new_noise(tmp_path):
+    """With random=false a resumed run's first diffusive step is not the run's
+    first step again: replayed noise would correlate the two near 1 and
+    double the variance of the displacement over both legs."""
+    params = copy_example(ABC, tmp_path)
+    base = ("mode=analytic init_mode=points_xyz x0=5 y0=5 z0=5 Nrw=4000 Nrw_max=4000 Dm=0.1 "
+            "int_order=1 scheme=explicit dt=0.01 stat_intv=1e9 dump_intv=0.01 random=false seed=1 "
+            "num_threads=4")
+    # the final checkpoint is written one step past T: t = 0.1
+    run_app(TRACERS, params, base, "T=0.09 checkpoint_intv=0.09")
+    run_app(TRACERS, params, base, "T=0.115 checkpoint_intv=1e9",
+            "restart_folder=%s" % checkpoint_folder(tmp_path))
+    first = dump_at(tmp_path, 0.01)["points"] - dump_at(tmp_path, 0.)["points"]
+    resumed = dump_at(tmp_path, 0.11)["points"] - dump_at(tmp_path, 0.1)["points"]
+    keep = (abs(first) < 1).all(axis=1) & (abs(resumed) < 1).all(axis=1)   # no periodic jumps
+    r = np.corrcoef(first[keep].ravel(), resumed[keep].ravel())[0, 1]
+    assert abs(r) < 0.2, r
+
+
 # --- dump files ------------------------------------------------------------------
 
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 POINTS = ("mode=analytic init_mode=points_xyz x0=0 y0=0 z0=0 Nrw=20 Nrw_max=20 Dm=0 int_order=1 "
           "scheme=RK4 dt=0.1 stat_intv=1e9 random=false seed=1")
-needs_tracers = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+needs_tracers = needs(TRACERS)
 
 
 @needs_tracers
@@ -204,3 +245,34 @@ def test_chunked_dumps_survive_a_resume(tmp_path):
     assert files == ["data_from_t%f.h5" % t for t in (0., 0.2, 0.4, 0.5, 0.6)], files
     assert sorted(all_dumps(tmp_path)) == pytest.approx([0.1 * k for k in range(8)])
 
+
+
+@needs_tracers
+def test_dumps_a_step_apart_are_named_apart(tmp_path):
+    """Steps of 1e-7 dump at times six decimals cannot tell apart; the names
+    take as many more decimals as the step needs."""
+    params = copy_example(POISEUILLE, tmp_path)
+    run_app(TRACERS, params, POINTS.replace("dt=0.1", "dt=1e-7"), "T=3e-7 dump_intv=1e-7")
+    times = sorted(all_dumps(tmp_path))
+    assert np.allclose(times, [0., 1e-7, 2e-7, 3e-7], rtol=0, atol=1e-12), times
+
+
+@needs_tracers
+def test_a_run_that_ended_with_no_particles_resumes_and_stops(tmp_path):
+    """A checkpoint with no particle left, as outside=remove or a finished
+    march leaves one, resumes: the run has nothing to step and ends."""
+    params = copy_example(POISEUILLE, tmp_path)
+    run_app(TRACERS, params, POINTS, "T=0.5 checkpoint_intv=0.5")
+    put_points(tmp_path, np.zeros((0, 3)))
+    r = run_app(TRACERS, params, POINTS, "T=1.0 checkpoint_intv=1e9",
+                "restart_folder=%s" % checkpoint_folder(tmp_path), check=False)
+    assert r.returncode == 0, r.stdout[-1000:] + r.stderr
+
+
+@pytest.mark.skipif(left_out(app("interpol")), reason="interpol not built")
+def test_interpol_has_no_run_to_resume(tmp_path):
+    """restart_folder is a key of the apps that checkpoint; interpol refuses it by name."""
+    params = copy_example(POISEUILLE, tmp_path)
+    r = run_app(app("interpol"), params, "mode=analytic Nrw=10 int_order=1",
+                "restart_folder=%s" % tmp_path, check=False)
+    assert r.returncode == 2 and "unknown parameter 'restart_folder'" in r.stderr, r.stderr

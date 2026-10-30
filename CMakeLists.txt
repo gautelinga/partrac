@@ -19,22 +19,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-include(CTest)
-include(GNUInstallDirs)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(PartracApp)
-find_package(Doxygen)
-if (Doxygen_FOUND)
-  add_subdirectory(docs)
-else()
-  message(STATUS "Doxygen not found, not building docs.")
-endif()
-
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: Release Debug." FORCE)
 endif()
 if (NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
   message(FATAL_ERROR "partrac: CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} is not supported; use Release or Debug")
+endif()
+
+include(CTest)
+include(GNUInstallDirs)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(PartracApp)
+option(PARTRAC_BUILD_DOCS "Build the Doxygen documentation." OFF)
+if (PARTRAC_BUILD_DOCS)
+  find_package(Doxygen REQUIRED)
+  add_subdirectory(docs)
 endif()
 
 option(PARTRAC_ENABLE_DOLFIN "Compile with support for Dolfin." ON)
@@ -75,6 +74,10 @@ if(PARTRAC_ENABLE_OPENFOAM)
     message(FATAL_ERROR "PARTRAC_ENABLE_OPENFOAM: no OpenFOAM found; source its etc/bashrc or set "
       "OPENFOAM_DIR (found FOAM_SRC='${FOAM_SRC}', FOAM_LIBBIN='${FOAM_LIBBIN}')")
   endif()
+  if (NOT FOAM_LABEL_SIZE STREQUAL "32")
+    message(FATAL_ERROR "PARTRAC_ENABLE_OPENFOAM: OpenFOAM ${FOAM_PROJECT_DIR} has ${FOAM_LABEL_SIZE}-bit labels; "
+      "the reader's mesh arrays are 32-bit, so build against an OpenFOAM with WM_LABEL_SIZE=32")
+  endif()
   message(STATUS "*** with OpenFOAM: ${FOAM_PROJECT_DIR}, labels ${FOAM_LABEL_SIZE}, ${FOAM_PRECISION} ***")
 endif()
 
@@ -109,6 +112,14 @@ endif()
 option(PARTRAC_COVERAGE "Instrument for test coverage (gcov)." OFF)
 if (PARTRAC_COVERAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -fprofile-update=atomic -fprofile-abs-path -fno-inline-functions -fno-inline-small-functions")
+endif()
+
+# Run-time checks: addresses, undefined behaviour, libstdc++'s bounds
+option(PARTRAC_SANITIZE "Check memory and undefined behaviour at run time (ASan, UBSan)." OFF)
+if (PARTRAC_SANITIZE)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address,undefined")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address,undefined")
 endif()
 
 message(STATUS "cxx flags: ${CMAKE_CXX_FLAGS}")
@@ -154,6 +165,10 @@ if(PARTRAC_ENABLE_OPENFOAM)
 else()
   file(APPEND "${PROJECT_BINARY_DIR}/bin/build_features.txt" "openfoam=off\n")
 endif()
+# The apps configured, for the tests
+get_property(PARTRAC_APPS GLOBAL PROPERTY PARTRAC_APPS)
+list(JOIN PARTRAC_APPS "," PARTRAC_APPS)
+file(APPEND "${PROJECT_BINARY_DIR}/bin/build_features.txt" "apps=${PARTRAC_APPS}\n")
 
 # FetchContent added in CMake 3.11, downloads during the configure step
 

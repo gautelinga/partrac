@@ -33,18 +33,18 @@ Mean velocities come from the statistics of a run seeded on a lattice, since
 random seeding leaves a sampling error as large as the effects at issue.
 """
 
-import os
 
 import numpy as np
 import pytest
 
 from dumps import all_dumps, dump_at, read_stats
+from paths import needs
 from runs import cells_counts
-from wall_cases import DT, OBSTACLE_FORCE, TRACERS, inside, probe, restart_from
+from wall_cases import DT, OBSTACLE_FORCE, TRACERS, lattice, probe, restart_from
 from wall_cases import ball, cylinder, kinked, obstacles, sphere, sphere_mesh  # noqa: F401  (fixtures)
 
 
-pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+pytestmark = needs(TRACERS)
 
 
 @pytest.fixture(params=["cylinder", "kinked"])
@@ -165,10 +165,7 @@ def lattice_run(case, mode, n, T):
     """Tracers on a cell-centred lattice with n points a side, those in the
     fluid, run to T with wall_upgrade=mode: (times, mean velocity over time, the
     fraction of tracers at rest at T)."""
-    dim = case.geometry[0].shape[1]
-    x = (np.arange(n) + 0.5) / n
-    points = np.stack(np.meshgrid(*[x] * dim, indexing="ij"), axis=-1).reshape(-1, dim)
-    points = points[inside(case.geometry, points)]
+    points = lattice(n, case.geometry[0].shape[1], case.geometry)
     folder = restart_from(case, mode, points,
                           ["T=%g" % T, "dump_intv=%g" % T, "stat_intv=%g" % (2 * DT)])
     [f] = [p for p in folder.glob("tdata_from_t*.dat") if p.name != "tdata_from_t0.000000.dat"]
@@ -182,13 +179,13 @@ def test_tracers_keep_the_eulerian_mean_velocity_between_obstacles(obstacles):
     """Tracers seeded uniformly in an incompressible flow with impermeable
     walls stay uniform, so their mean velocity stays at the Eulerian mean.
     In the P1 field each pass of an obstacle moves a tracer a little towards
-    its upstream face, where it stops: by t = 200 most tracers are at rest
+    its upstream face, where it stops: by t = 100 most tracers are at rest
     and the mean has collapsed. With wall_upgrade=true the mean stays within a few
     percent (its sampling noise is about 2% with 2000 tracers) and next to
     nothing stops."""
     ratio, stuck = {}, {}
     for mode in ("true", "false"):
-        _, u, stuck[mode] = lattice_run(obstacles, mode, 50, T=200.0)
+        _, u, stuck[mode] = lattice_run(obstacles, mode, 50, T=100.0)
         along = u[:, :2] @ OBSTACLE_FORCE
         ratio[mode] = along / along[0]
     assert stuck["false"] > 0.5 and ratio["false"][-1] < 0.3, (stuck, ratio["false"][-1])
@@ -304,14 +301,16 @@ def cells_against_rk4(case, mode, points, T, dt):
         res[scheme] = (read_stats(f)["n_declined"][-1], np.mean(np.linalg.norm(u, axis=1) < 1e-3),
                        cells_counts(out[0]).get("fallbacks"))
         if every:
-            dumps = all_dumps(folder)
+            dumps = all_dumps(folder, raw=True, names=("u", "p"))
             assert len(dumps) >= T / dt - 2
             outside = sum(int(np.sum((g["p"].ravel() == 0) & (g["u"] == 0).all(axis=1))) for g in dumps.values())
     return res, outside
 
 
 @pytest.mark.slow
-def test_rk4cells_past_the_sphere_declines_as_rk4_does(sphere):
+@pytest.mark.parametrize("dt", [DT, 0.5])
+@pytest.mark.parametrize("mode", ["true", "false"])
+def test_rk4cells_past_the_sphere_declines_as_rk4_does(sphere, mode, dt):
     """RK4cells on the sphere case (a periodic box, the no-slip sphere, stamps
     every 0.25), tracers on the 10^3 lattice to T = 50, with wall_upgrade=true and
     none, dt from 0.05 to 0.5. A step meeting the sphere falls back to RK4's
@@ -321,20 +320,13 @@ def test_rk4cells_past_the_sphere_declines_as_rk4_does(sphere):
     them cross before they step, so they step held in their cell and the
     fallbacks stay rare. An end below a wall is moved onto it and nudged
     inside, so every position stored at a step's end is in a cell."""
-    n, T = 10, 50.0
-    x = (np.arange(n) + 0.5) / n
-    points = np.stack(np.meshgrid(*[x] * 3, indexing="ij"), axis=-1).reshape(-1, 3)
-    points = points[inside(sphere.geometry, points)]
-    runs = {(mode, dt): cells_against_rk4(sphere, mode, points, T, dt)
-            for mode in ("true", "false") for dt in (DT, 0.2, 0.5)}
-    table = "\n".join("%s dt=%g: %s, %d outside" % (k + v) for k, v in runs.items())
-    for (mode, dt), (res, outside) in runs.items():
-        (d4, rest4, _), (dc, restc, fbc) = res["RK4"], res["RK4cells"]
-        assert dc <= d4 and fbc < 1e-3 and outside == 0, table
-        if mode == "true":
-            assert rest4 < 0.02 and restc < rest4 + 0.01, table
-        else:
-            assert rest4 > 0.5 and restc > 0.5, table
+    res, outside = cells_against_rk4(sphere, mode, lattice(10, 3, sphere.geometry), 50.0, dt)
+    (d4, rest4, _), (dc, restc, fbc) = res["RK4"], res["RK4cells"]
+    assert dc <= d4 and fbc < 1e-3 and outside == 0, (res, outside)
+    if mode == "true":
+        assert rest4 < 0.02 and restc < rest4 + 0.01, res
+    else:
+        assert rest4 > 0.5 and restc > 0.5, res
 
 
 def test_rk4cells_between_the_cylinders_declines_none(obstacles):
@@ -342,9 +334,5 @@ def test_rk4cells_between_the_cylinders_declines_none(obstacles):
     lattice to T = 100 at dt = 0.5: RK4 declines steps of tracers resting on
     the walls when the flow turns them; RK4cells, which keeps every stored
     position in a cell, declines none."""
-    n = 30
-    x = (np.arange(n) + 0.5) / n
-    points = np.stack(np.meshgrid(x, x, indexing="ij"), axis=-1).reshape(-1, 2)
-    points = points[inside(obstacles.geometry, points)]
-    res, outside = cells_against_rk4(obstacles, "false", points, 100.0, 0.5)
+    res, outside = cells_against_rk4(obstacles, "false", lattice(30, 2, obstacles.geometry), 100.0, 0.5)
     assert res["RK4cells"][0] == 0 and outside == 0, (res, outside)

@@ -2,6 +2,8 @@
 #define __INITIALIZER_HPP
 
 #include <algorithm>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <random>
 #include <string>
@@ -40,6 +42,15 @@ InitialState init_gaussian_strip(const std::vector<std::string>& key, std::share
 InitialState init_gaussian_circle(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, const partrac::Params& prm, std::mt19937& gen);
 // The rows of an HDF5 file's nodes, joined
 InitialState init_file(const std::string& path, std::shared_ptr<Interpol> intp, const partrac::Params& prm);
+
+// Remesh until a pass changes nothing, at most max_passes
+inline bool settle(const std::function<bool()>& pass, const int max_passes, const std::string& what){
+  for (int k = 0; k < max_passes; ++k)
+    if (!pass()) return true;
+  std::cout << "Note: the " << what << "'s remeshing stopped after " << max_passes
+            << " passes without settling" << std::endl;
+  return false;
+}
 
 // An init_mode
 struct InitMode {
@@ -200,6 +211,7 @@ inline void add_initializer_params(partrac::Schema& s){
                             [](const partrac::Params& p){ return init_mode_needs(p, "init_weight"); },
                             "init_mode is " + init_modes_needing("init_weight"),
                             "sampling weight");
+  s.choices("init_weight", {"uniform", "u", "ux", "uy", "uz"});
   // uniform and strip step from end to end
   for (const std::string name : {"uniform", "strip"})
     s.check([name](const partrac::Params& p){

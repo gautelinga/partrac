@@ -11,7 +11,6 @@ The kernel's own properties on the split (a step in one sub-cell is RK4's bit
 for bit; planes crossed; stale cells relocated) are in test_cells.cpp.
 """
 
-import os
 import shutil
 
 import numpy as np
@@ -19,15 +18,14 @@ import pytest
 
 from divfree_cases import D, channel3d, smooth_noslip, write_case
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
-from paths import app
+from paths import app, needs
 from runs import (cells_counts, checkpoint_file, checkpoint_folder, halving_ratios, read_checkpoint, run_app,
                   same_checkpoint, same_dumps)
 
 TRACERS = app("tracers")
 TENSORS = app("tracertensors")
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (TRACERS, TENSORS)),
-                                reason="the tracer apps are not built")
+needs_apps = needs(TRACERS, TENSORS)
 
 # 200 particles over the channel
 ARGS = ("mode=tet init_mode=points_xyz x0=0.5 y0=0.5 z0=0.5 Nrw=200 Nrw_max=200 Dm=0 int_order=1 "

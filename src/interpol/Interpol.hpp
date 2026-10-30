@@ -39,7 +39,7 @@ public:
   void set_folder(const std::string& folder){ this->folder=folder; };
   std::string get_folder() const { return folder; };
   void set_U0(const double U0) { this->U0 = U0; };
-  double get_U0() { return this->U0; };
+  double get_U0() const { return this->U0; };
   void set_int_order(const int int_order) { this->int_order = int_order; check_gradient(); };
   // Gradient needed for int_order > 1 or carried elements
   void set_needs_gradient(const bool b) { needs_gradient_ = b; check_gradient(); };
@@ -47,9 +47,9 @@ public:
   // A field without a gradient refuses a run that wants one
   virtual void check_gradient() const {};
   //
-  double get_Lx() { return x_max[0]-x_min[0]; };
-  double get_Ly() { return x_max[1]-x_min[1]; };
-  double get_Lz() { return x_max[2]-x_min[2]; };
+  double get_Lx() const { return x_max[0]-x_min[0]; };
+  double get_Ly() const { return x_max[1]-x_min[1]; };
+  double get_Lz() const { return x_max[2]-x_min[2]; };
   Vector3d get_x_min() const { return x_min; };
   Vector3d get_x_max() const { return x_max; };
   // Serial versions: no cell cache, time from update()
@@ -69,9 +69,10 @@ public:
     cell_id = pos.id;
     return inside;
   };
+  bool locate(const Vector3d &x, int& cell_id){ return locate(x, t_update, cell_id); };
   //
-  virtual double get_t_min() = 0;
-  virtual double get_t_max() = 0;
+  virtual double get_t_min() const = 0;
+  virtual double get_t_max() const = 0;
   //
   virtual void update(const double t) = 0;
   // The fields at t for every later time
@@ -85,7 +86,7 @@ public:
   // Only after a successful locate: outside the fluid the velocity is zero
   virtual void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& ptvals) = 0;
   //
-  virtual Vector3d get_boundary_normal(const Vector3d &x, int& cell_id) { return {0., 0., 0.}; }; // should be overloaded
+  virtual Vector3d get_boundary_normal(const Vector3d &x, const int cell_id) const { return {0., 0., 0.}; }; // should be overloaded
   // Walk dx from x, located in pos, off the walls; dx and pos give the end
   virtual bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos) { return false; };
   // Build what reflect needs

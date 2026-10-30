@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, dump_at
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
@@ -51,8 +51,7 @@ BASE = ("mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw=%d Nrw_max=200000 
 # which span the pipe in steps of 2R/(NRW-1) = 0.05
 REMESH = ["ds_max=0.1", "ds_min=0.02", "refine=true", "coarsen=true"]
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def steps_per(intv, dt=DT):

@@ -443,6 +443,7 @@ class DistTopo(D.Ranks):
         self.X = ex.back(Xb[ex.forward(self.vert_gid) - v0])
         self.loc = np.array(LOC_EDGES[self.nv])
         self._edges()
+        tol = D.match_tol(self.X, self.edges, tol, comm)
         # the serial formulas, on the rank's cells
         geo = types.SimpleNamespace(X=self.X, cells=self.cells, ncells=self.ncells,
                                     nv=self.nv, dim=self.dim)

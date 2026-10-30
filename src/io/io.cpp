@@ -10,10 +10,23 @@
 #include "h5direct.hpp"
 #include "io.hpp"
 
-// recently moved here
+// Text checkpoints: a missing file is an error
+static std::ifstream open_text(const std::string& input_file){
+  std::ifstream infile(input_file);
+  if (!infile)
+    partrac::fail("cannot read ", input_file);
+  return infile;
+}
+
+// One row per particle
+static void check_row(const std::istream& infile, const std::string& input_file, const Uint irw, const Uint Nrw){
+  if (!infile)
+    partrac::fail(input_file, ": the row of particle ", irw, " of ", Nrw, " is missing or not a number");
+}
+
 void load_vector_field(const std::string& input_file,
                        std::vector<Vector3d> &pos_init){
-  std::ifstream infile(input_file);
+  std::ifstream infile = open_text(input_file);
   double x, y, z;
   while (infile >> x >> y >> z){
     pos_init.push_back({x, y, z});
@@ -24,7 +37,7 @@ void load_vector_field(const std::string& input_file,
 // tau and rho_prev optional (older checkpoints)
 void load_faces(const std::string& input_file,
                 FacesType& faces){
-  std::ifstream infile(input_file);
+  std::ifstream infile = open_text(input_file);
   std::string line;
   while (std::getline(infile, line)){
     std::istringstream ss(line);
@@ -39,7 +52,7 @@ void load_faces(const std::string& input_file,
 
 void load_edges(const std::string& input_file,
                 EdgesType &edges){
-  std::ifstream infile(input_file);
+  std::ifstream infile = open_text(input_file);
   std::string line;
   while (std::getline(infile, line)){
     std::istringstream ss(line);
@@ -54,7 +67,7 @@ void load_edges(const std::string& input_file,
 
 void load_list(const std::string& input_file,
                std::vector<Uint> &li){
-  std::ifstream infile(input_file);
+  std::ifstream infile = open_text(input_file);
   Uint a;
   while (infile >> a){
     li.push_back(a);
@@ -64,58 +77,12 @@ void load_list(const std::string& input_file,
 
 void load_scalar_field(const std::string& input_file,
                        std::vector<double>& c_rw, const Uint Nrw){
-  // TODO: to hdf5
-  std::ifstream infile(input_file);
+  std::ifstream infile = open_text(input_file);
   for (Uint irw=0; irw < Nrw; ++irw){
     infile >> c_rw[irw];
+    check_row(infile, input_file, irw, Nrw);
   }
   infile.close();
-}
-
-void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname,
-                 const std::vector<double>& axx_rw, const std::vector<double>& axy_rw, const std::vector<double>& axz_rw,
-                 const std::vector<double>& ayx_rw, const std::vector<double>& ayy_rw, const std::vector<double>& ayz_rw,
-                 const std::vector<double>& azx_rw, const std::vector<double>& azy_rw, const std::vector<double>& azz_rw,
-                 const Uint Nrw){
-  hsize_t dims[2];
-  dims[0] = Nrw;
-  dims[1] = 3*3;
-  H5::DataSpace dspace(2, dims);
-  std::vector<double> data(Nrw*3*3);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    data[irw*3*3+0] = axx_rw[irw];
-    data[irw*3*3+1] = axy_rw[irw];
-    data[irw*3*3+2] = axz_rw[irw];
-    data[irw*3*3+3] = ayx_rw[irw];
-    data[irw*3*3+4] = ayy_rw[irw];
-    data[irw*3*3+5] = ayz_rw[irw];
-    data[irw*3*3+6] = azx_rw[irw];
-    data[irw*3*3+7] = azy_rw[irw];
-    data[irw*3*3+8] = azz_rw[irw];
-  }
-  H5::DataSet dset = h5f.createDataSet(dsetname,
-                                    H5::PredType::NATIVE_DOUBLE,
-                                    dspace);
-  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
-}
-
-void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
-                 const std::vector<double>& ax_rw, const std::vector<double>& ay_rw, const std::vector<double>& az_rw,
-                 const Uint Nrw){
-  hsize_t dims[2];
-  dims[0] = Nrw;
-  dims[1] = 3;
-  H5::DataSpace dspace(2, dims);
-  std::vector<double> data(Nrw*3);
-  for (Uint irw=0; irw < Nrw; ++irw){
-    data[irw*3+0] = ax_rw[irw];
-    data[irw*3+1] = ay_rw[irw];
-    data[irw*3+2] = az_rw[irw];
-  }
-  H5::DataSet dset = h5f.createDataSet(dsetname,
-                                    H5::PredType::NATIVE_DOUBLE,
-                                    dspace);
-  dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 }
 
 // Write storage directly
@@ -198,19 +165,23 @@ void int2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<in
 }
 
 void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_rw, const Uint Nrw){
-  std::ifstream infile(input_file);
-  for (Uint irw=0; irw < Nrw; ++irw)
+  std::ifstream infile = open_text(input_file);
+  for (Uint irw=0; irw < Nrw; ++irw){
     for (Uint i=0; i<3; ++i)
       for (Uint j=0; j<3; ++j)
         infile >> M_rw[irw](i, j);
+    check_row(infile, input_file, irw, Nrw);
+  }
   infile.close();
 }
 
 // Into a pre-sized array
 void load_vector_field(const std::string& input_file, std::vector<Vector3d>& a_rw, const Uint Nrw){
-  std::ifstream infile(input_file);
-  for (Uint irw=0; irw < Nrw; ++irw)
+  std::ifstream infile = open_text(input_file);
+  for (Uint irw=0; irw < Nrw; ++irw){
     infile >> a_rw[irw][0] >> a_rw[irw][1] >> a_rw[irw][2];
+    check_row(infile, input_file, irw, Nrw);
+  }
   infile.close();
 }
 

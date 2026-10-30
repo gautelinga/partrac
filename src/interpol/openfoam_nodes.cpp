@@ -391,6 +391,12 @@ struct Rows {
   std::vector<std::uint32_t> mirror;          // into table, 0 the identity
   std::vector<std::array<double, 9>> table{std::array<double, 9>{1., 0., 0., 0., 1., 0., 0., 0., 1.}};
   std::vector<std::int32_t> zero_wins;
+  // Shared fixed rows: entries and zero flags per patch
+  std::vector<std::int32_t> zpatch;
+  std::vector<char> zzero;
+  std::vector<std::size_t> zcount;
+  std::vector<std::uint32_t> zcol;
+  std::vector<double> zcoef;
   std::size_t fixed = 0, second_ring = 0, deficient = 0, mirrored = 0;
   bool gradient = false;                      // the fit's G too, into dcoef
   std::vector<double> dcoef;                  // d an entry
@@ -591,6 +597,18 @@ struct Builder {
     }
     const bool won = mdev > tol && nzero > 0;
     if (won) out.zero_wins.push_back(std::int32_t(m));
+    if (ng > 1)
+      for (std::size_t e = 0; e < w.gcol.size(); ++e){
+        const std::size_t a = w.gid[e];
+        if (e == 0 || w.gid[e - 1] != a){
+          out.zpatch.push_back(patch(w.gcol[e]));
+          out.zzero.push_back(zero[a]);
+          out.zcount.push_back(0);
+        }
+        out.zcol.push_back(std::uint32_t(std::size_t(c.ncells) + w.gcol[e] - ni()));
+        out.zcoef.push_back(w.gcoef[e]);
+        ++out.zcount.back();
+      }
     std::size_t n = 0;
     for (std::size_t e = 0; e < w.gcol.size(); ++e){
       const std::size_t a = w.gid[e];
@@ -979,7 +997,13 @@ LeastSquares::LeastSquares(const Geometry& g, const SplitData& s, const FieldDat
     mirror_table_.push_back({1., 0., 0., 0., 1., 0., 0., 0., 1.});
   }
   std::map<std::array<double, 9>, std::uint32_t> known;
+  zero_start_.assign(1, 0);
   for (const Rows& r : part){
+    zero_patch_.insert(zero_patch_.end(), r.zpatch.begin(), r.zpatch.end());
+    zero_at_load_.insert(zero_at_load_.end(), r.zzero.begin(), r.zzero.end());
+    for (const std::size_t n : r.zcount) zero_start_.push_back(zero_start_.back() + n);
+    zero_col_.insert(zero_col_.end(), r.zcol.begin(), r.zcol.end());
+    zero_coef_.insert(zero_coef_.end(), r.zcoef.begin(), r.zcoef.end());
     for (const std::size_t n : r.count) start_.push_back(start_.back() + n);
     col_.insert(col_.end(), r.col.begin(), r.col.end());
     coef_.insert(coef_.end(), r.coef.begin(), r.coef.end());
@@ -1039,6 +1063,23 @@ void LeastSquares::apply(const FieldData& f, const std::vector<int>& comps, std:
       partrac::fail(f.name, " at ", f.time, ": patch ", name_[i], " (", p.condition, ") holds ",
                     p.values.size()/k, " values for ", patch_size_[i], " faces");
     std::copy(p.values.begin(), p.values.end(), b.begin() + std::ptrdiff_t(k*(ncells_ + patch_start_[i] - n_internal_)));
+  }
+  // Zero sets as at the first stamp
+  double vmax = 0.;
+  for (std::size_t i = 0; i < data_.size(); ++i)
+    if (data_[i]) for (const double v : f.patches[i].values) vmax = std::max(vmax, std::abs(v));
+  for (std::size_t q = 0; q < zero_patch_.size(); ++q){
+    double g[3] = {0., 0., 0.};
+    for (std::size_t e = zero_start_[q]; e < zero_start_[q + 1]; ++e)
+      for (std::size_t d = 0; d < k; ++d) g[d] += zero_coef_[e]*b[k*zero_col_[e] + d];
+    double gmax = 0.;
+    for (std::size_t d = 0; d < k; ++d) gmax = std::max(gmax, std::abs(g[d]));
+    const bool z = gmax <= 1e-12*vmax;
+    if (z != bool(zero_at_load_[q]))
+      partrac::fail(f.name, " at ", f.time, ": patch ", name_[std::size_t(zero_patch_[q])], " is ",
+                    z ? "zero" : "not zero", " at a point it shares with another patch that fixes the value, and ",
+                    z ? "was not" : "was", " at the first stamp; the node values keep the first stamp's zero patches "
+                    "at such points");
   }
   const std::size_t nc = comps.size();
   const std::size_t nn = kind_.size();
@@ -1140,7 +1181,9 @@ std::size_t Gradient::bytes() const {
 std::size_t LeastSquares::bytes() const {
   return kind_.capacity() + 4*(ref_.capacity() + col_.capacity() + mirror_.capacity())
        + 8*(start_.capacity() + coef_.capacity() + patch_start_.capacity() + patch_size_.capacity())
-       + 72*mirror_table_.capacity() + data_.capacity();
+       + 72*mirror_table_.capacity() + data_.capacity()
+       + 4*(zero_patch_.capacity() + zero_col_.capacity()) + zero_at_load_.capacity()
+       + 8*(zero_start_.capacity() + zero_coef_.capacity());
 }
 
 std::size_t InverseDistance::bytes() const {

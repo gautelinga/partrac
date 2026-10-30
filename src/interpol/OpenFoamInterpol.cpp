@@ -20,7 +20,8 @@ void report_unknown(const openfoam_load::FieldData& f, const std::vector<openfoa
   for (std::size_t i = 0; i < f.patches.size(); ++i)
     if (f.patches[i].unknown)
       std::cout << f.name << ": patch " << patches[i].name << " is " << f.patches[i].condition
-                << ", which OpenFOAM cannot build here (its library is not loaded); its faces are not data"
+                << ", which OpenFOAM cannot build here (its library is not loaded); its faces are not data "
+                << "to the least-squares nodes (inverse distance reads their written values, as cellPoint does)"
                 << std::endl;
 }
 
@@ -93,12 +94,20 @@ void OpenFoamFormat::load(I& intp, const std::string& infilename)
     count(s.fan_cells, "cells fanned");
     count(s.five_tet_hexes, "hexes in 5");
     count(s.fallback, "split the other way");
-    std::ostringstream invalid;
-    invalid << "cells with " << s.invalid_simplices << " simplices under " << openfoam_split::valid_fraction
-            << " of their cell";
-    count(s.invalid_cells, invalid.str());
-    count(s.base_failures, "faces without a valid base");
     std::cout << std::endl;
+  }
+  // Refuse bad simplices
+  if (s.invalid_cells || s.base_failures){
+    std::ostringstream why;
+    if (s.invalid_cells)
+      why << s.invalid_simplices << " simplices of the split flat or inverted (under " << openfoam_split::valid_fraction
+          << " of their cell) in " << s.invalid_cells << " cells, the first in cell " << s.first_invalid_cell;
+    if (s.base_failures)
+      why << (s.invalid_cells ? "; " : "") << s.base_failures << " faces without a valid base (no fan of their "
+          << "triangles positive towards their cells' centres), the first face " << s.first_base_failure
+          << " of cell " << c.owner[std::size_t(s.first_base_failure)];
+    partrac::fail(folder, ": ", why.str(), "; the mesh has warped, flat or inverted cells, which checkMesh -case . "
+                  "reports");
   }
   partrac::phase("split");
 
@@ -107,9 +116,11 @@ void OpenFoamFormat::load(I& intp, const std::string& infilename)
   if (first_u.ncomp != 3)
     partrac::fail(folder, "/", c.times.front(), "/", u_field, " has ", first_u.ncomp, " components, not a vector");
   if (intp.include_pressure){
-    const std::string p0 = folder + "/" + c.times.front() + "/" + p_field;
-    if (!std::filesystem::exists(p0) && !std::filesystem::exists(p0 + ".gz"))
-      partrac::fail(p0, ": no such file; set pressure_field, or ignore_pressure=true");
+    for (const std::string& t : c.times){
+      const std::string f = folder + "/" + t + "/" + p_field;
+      if (!std::filesystem::exists(f) && !std::filesystem::exists(f + ".gz"))
+        partrac::fail(f, ": no such file; set pressure_field, or ignore_pressure=true");
+    }
     first_p = openfoam_load::read_field(c, c.times.front(), p_field);
     if (first_p.ncomp != 1)
       partrac::fail(folder, "/", c.times.front(), "/", p_field, " has ", first_p.ncomp, " components, not a scalar");
@@ -179,7 +190,7 @@ void OpenFoamFormat::load(I& intp, const std::string& infilename)
   std::vector<bool> periodic = {false, false, false};
   std::vector<double> period = {0., 0., 0.};
   for (const auto& p : layout.patches){
-    if (p.type != "cyclic" || !p.owner) continue;
+    if (p.type != "cyclic" || !p.owner || p.size == 0) continue;
     int axis = -1;
     const double len = std::sqrt(p.separation[0]*p.separation[0] + p.separation[1]*p.separation[1]
                                  + p.separation[2]*p.separation[2]);
@@ -224,7 +235,7 @@ void OpenFoamFormat::load(I& intp, const std::string& infilename)
       partrac::fail(folder, ": the cyclic pair along ", "xyz"[a], " is ", period[std::size_t(a)],
                     " apart, but the mesh spans ", m.x_max[a] - m.x_min[a], "; the periodic box is the mesh's");
 
-  // A vertex and its cyclic images read one value, the lowest image's
+  // Cyclic images read the master's value
   t.np.master.resize(m.nverts);
   for (std::size_t n = 0; n < m.nverts; ++n) t.np.master[slot[n]] = slot[s.node_master[n]];
   t.nv = nv;
@@ -239,7 +250,7 @@ void OpenFoamFormat::load(I& intp, const std::string& infilename)
   r.nv = nv;
   r.include_pressure = false;   // p reads the velocity's table
   r.n_dofs_max = Cell::n_dofs_max;
-  check_dofs_fit(t.ncoeffs_u, t.ncoeffs_p, Cell::n_dofs_max, r.what);
+  check_dofs_fit({t.ncoeffs_u, t.ncoeffs_p}, Cell::n_verts, Cell::n_dofs_max, r.what);
   simplex_load::tables_from_mesh(r, t);
 
   // The cyclic facets paired by the case's addressing

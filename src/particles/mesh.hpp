@@ -50,14 +50,17 @@ void remove_inactive(Connectivity& m,
                      std::vector<bool> &node_isactive,
                      ParticleSet& ps);
 
+// ds_max > 0: no collapse lengthens an edge past it
 Uint sheet_coarsening(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_min,
+                      const double ds_max,
                       const double curv_refine_factor);
 
 Uint coarsening(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_min,
+                const double ds_max,
                 const double curv_refine_factor);
 
 bool filtering(Connectivity& m,

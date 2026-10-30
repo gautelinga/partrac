@@ -122,67 +122,71 @@ def sub(a, b):
     return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 
 
-def geometry(m):
-    """Face centres and areas, cell centres and volumes, cyclic separations, OpenFOAM's way."""
-    X = [list(x) for x in m["X"]]
-    fc, fa = [], []
-    for F in m["faces"]:
-        k = len(F)
+def centres(X, faces, owner, neighbour, ncells):
+    """Face centres and area vectors, cell centres and volumes, OpenFOAM's
+    way: face::areaAndCentre (a triangle directly, any other face the
+    triangles from its points' average, at that average when their normal
+    areas add to nothing) and primitiveMesh::makeCellCentresAndVols (the
+    pyramids from the average of the faces' centres). Each sum in OpenFOAM's
+    order, faces of one size at a time."""
+    X = np.asarray(X, dtype=float)
+    nf = len(faces)
+    fc, fa = np.zeros((nf, 3)), np.zeros((nf, 3))
+    sizes = np.array([len(f) for f in faces])
+    for k in np.unique(sizes):
+        at = np.flatnonzero(sizes == k)
+        Q = X[np.array([faces[i] for i in at])]
         if k == 3:
-            a, b, d = X[F[0]], X[F[1]], X[F[2]]
-            n = cross(sub(b, a), sub(d, a))
-            fa.append([0.5 * n[i] for i in range(3)])
-            fc.append([(a[i] + b[i] + d[i]) / 3. for i in range(3)])
+            fa[at] = 0.5 * np.cross(Q[:, 1] - Q[:, 0], Q[:, 2] - Q[:, 0])
+            fc[at] = (Q[:, 0] + Q[:, 1] + Q[:, 2]) / 3.
             continue
-        pav = [0., 0., 0.]
+        pav = np.zeros((len(at), 3))
         for j in range(k):
-            for i in range(3):
-                pav[i] += X[F[j]][i]
-        pav = [v / float(k) for v in pav]
-        A, sa = [], [0., 0., 0.]
+            pav += Q[:, j]
+        pav /= float(k)
+        A, sa = [], np.zeros((len(at), 3))
         for j in range(k):
-            x, y = X[F[j]], X[F[(j + 1) % k]]
-            A.append(cross(sub(y, x), sub(pav, x)))
-            for i in range(3):
-                sa[i] += A[j][i]
-        mag = dot(sa, sa) ** 0.5
-        hat = [v / mag for v in sa] if mag > 0 else [0., 0., 0.]
-        num, san = [0., 0., 0.], 0.
+            x, y = Q[:, j], Q[:, (j + 1) % k]
+            A.append(np.cross(y - x, pav - x))
+            sa += A[j]
+        mag = np.sqrt(dot(sa.T, sa.T))
+        hat = np.divide(sa, mag[:, None], out=np.zeros_like(sa), where=mag[:, None] > 0)
+        num, san = np.zeros((len(at), 3)), np.zeros(len(at))
         for j in range(k):
-            x, y = X[F[j]], X[F[(j + 1) % k]]
-            an = dot(A[j], hat)
+            x, y = Q[:, j], Q[:, (j + 1) % k]
+            an = dot(A[j].T, hat.T)
             san += an
-            for i in range(3):
-                num[i] += an * (x[i] + y[i] + pav[i])
-        fc.append([num[i] / (3 * san) if san > 1e-300 else pav[i] for i in range(3)])
-        fa.append([0.5 * sa[i] for i in range(3)])
-    nc, ni = m["ncells"], m["ni"]
-    sides = [(f, int(m["owner"][f]), 1.) for f in range(len(m["faces"]))] + \
-            [(f, int(m["nbr"][f]), -1.) for f in range(ni)]
-    est, cnt = [[0., 0., 0.] for _ in range(nc)], [0] * nc
-    for f, c, _ in sides:
-        for i in range(3):
-            est[c][i] += fc[f][i]
-        cnt[c] += 1
-    est = [[v / float(cnt[c]) for v in est[c]] for c in range(nc)]
-    ctr, vol = [[0., 0., 0.] for _ in range(nc)], [0.] * nc
-    for f, c, sign in sides:
-        pyr3 = sign * dot(fa[f], sub(fc[f], est[c]))
-        for i in range(3):
-            ctr[c][i] += pyr3 * (0.75 * fc[f][i] + 0.25 * est[c][i])
-        vol[c] += pyr3
-    m["C"] = [[ctr[c][i] / vol[c] for i in range(3)] if abs(vol[c]) > 1e-300 else est[c] for c in range(nc)]
-    m["V"] = [v / 3. for v in vol]
-    m["fc"], m["fa"] = fc, fa
+            num += an[:, None] * (x + y + pav)
+        fc[at] = np.divide(num, 3 * san[:, None], out=pav, where=san[:, None] > 1e-300)
+        fa[at] = 0.5 * sa
+    owner, neighbour = np.asarray(owner, dtype=np.int64), np.asarray(neighbour, dtype=np.int64)
+    nn = len(neighbour)
+    est, cnt = np.zeros((ncells, 3)), np.zeros(ncells)
+    for f, c in ((slice(None), owner), (slice(0, nn), neighbour)):
+        np.add.at(est, c, fc[f])
+        np.add.at(cnt, c, 1)
+    est /= cnt[:, None]
+    ctr, vol = np.zeros((ncells, 3)), np.zeros(ncells)
+    for f, c, sign in ((slice(None), owner, 1.), (slice(0, nn), neighbour, -1.)):
+        pyr3 = sign * dot(fa[f].T, (fc[f] - est[c]).T)
+        np.add.at(ctr, c, pyr3[:, None] * (0.75 * fc[f] + 0.25 * est[c]))
+        np.add.at(vol, c, pyr3)
+    C = np.divide(ctr, vol[:, None], out=est, where=np.abs(vol[:, None]) > 1e-300)
+    return fc, fa, C, vol / 3.
+
+
+def geometry(m):
+    """centres() on the mesh, and the cyclic patches' separations."""
+    m["fc"], m["fa"], m["C"], m["V"] = centres(m["X"], m["faces"], m["owner"], m["nbr"], m["ncells"])
+    fc = m["fc"]
     for p in m["patches"]:
         if p["type"] != "cyclic":
             continue
         q = m["patches"][p["nbr"]]
-        sep = [0., 0., 0.]
+        sep = np.zeros(3)
         for i in range(p["size"]):
-            for d in range(3):
-                sep[d] += fc[q["start"] + i][d] - fc[p["start"] + i][d]
-        p["sep"] = [s / float(p["size"]) if p["size"] else 0. for s in sep]
+            sep += fc[q["start"] + i] - fc[p["start"] + i]
+        p["sep"] = list(sep / float(p["size"])) if p["size"] else [0., 0., 0.]
 
 
 # --- the rules -----------------------------------------------------------------

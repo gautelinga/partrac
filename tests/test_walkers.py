@@ -20,14 +20,13 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import continuous_and_resumed, copy_example, run_app
 
 WALKERS = app("weighted_walkers")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 
-needs_walkers = pytest.mark.skipif(not os.path.exists(WALKERS),
-                                   reason="weighted_walkers is not built")
+needs_walkers = needs(WALKERS)
 
 # a strip along x from wall to wall (x in [-1, 1], no width), in the plane
 # Poiseuille flow u = (0, 0, 1.5 (1 - x^2)); nothing leaves unless an exit
@@ -108,8 +107,7 @@ def test_resampling_does_not_depend_on_the_thread_count(tmp_path):
 @pytest.fixture(scope="module")
 def resampled(tmp_path_factory):
     """The dumps of a run with an exit plane at z = 0.3, resampled and dumped every step."""
-    if not os.path.exists(WALKERS):
-        pytest.skip("weighted_walkers is not built")
+    need(WALKERS)
     d = run(tmp_path_factory.mktemp("resampled"),
             "exit_plane=z Ln=0.3 refine_intv=0.01 dump_intv=0.01",
             env={"OMP_NUM_THREADS": "4"})

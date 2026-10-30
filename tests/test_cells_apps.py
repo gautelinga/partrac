@@ -14,7 +14,6 @@ field is RK4 bit for bit; restarts and the thread count change no bit; Dm > 0
 and a field without cells are refused.
 """
 
-import os
 import re
 
 import numpy as np
@@ -22,15 +21,14 @@ import pytest
 
 from cases import ABC, args_for
 from dumps import all_dumps
-from paths import app
+from paths import app, needs
 from runs import (cells_counts, checkpoint_file, checkpoint_folder, copy_case, copy_example, read_checkpoint,
                   run_app, same_checkpoint, same_dumps, same_stats)
 
 PARTRAC = app("partrac")
 FILAMENTS = app("filaments")
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (PARTRAC, FILAMENTS)),
-                                reason="partrac or filaments is not built")
+needs_apps = needs(PARTRAC, FILAMENTS)
 
 # dt and the intervals exact in binary; T and an interval for each case
 COMMON = "Dm=0 int_order=1 dt=0.00390625 stat_intv=0.125 checkpoint_intv=1e9 random=false seed=1 verbose=true"
@@ -139,7 +137,7 @@ def test_reinjection_under_rk4cells_as_under_rk4(stamp_mesh, tmp_path, app_name)
         binary = FILAMENTS
         args = ("mode=triangle init_mode=pairs_xy_xy x0=0 y0=0 z0=0 Nrw=200 Nrw_max=200 ds_init=0.02 "
                 "resize=doublings resize_target=ds_init resize_intv=0.05")
-        stuck = "Some nodes are outside"
+        stuck = "nodes could not move"
     out = {}
     for s in ("RK4cells", "RK4"):
         d = copy_case(stamp_mesh, tmp_path / s)

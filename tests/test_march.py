@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, by_id
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import checkpoint_folder, continuous_and_resumed, copy_example, read_checkpoint, run_app
 
 SPATIAL = app("tracervectors_spatial")
@@ -41,7 +41,7 @@ def groups(d):
             for xn, g in all_dumps(d, raw=True).items()}
 
 
-@pytest.mark.skipif(not os.path.exists(SPATIAL), reason="tracervectors_spatial is not built")
+@needs(SPATIAL)
 @pytest.mark.parametrize("outside", ["remove", "mark", "ignore"])
 def test_a_particle_slower_than_u_eps_follows_outside(tmp_path, outside):
     """A particle with |u| <= u_eps cannot cover a path-length step in any
@@ -78,8 +78,7 @@ def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary, fmt
     integration time and the step count resumes; otherwise a long march split
     over several jobs would restart its integration times from zero or dump at
     the wrong path lengths. An old text checkpoint carries them too."""
-    if not os.path.exists(binary):
-        pytest.skip(os.path.basename(binary) + " is not built")
+    need(binary)
     # the final checkpoint is written one step past Ln: xn = 0.2, step 20
     cont, split = continuous_and_resumed(binary, POISEUILLE, tmp_path,
                                          [BASE[binary], "dxn=0.01 dump_intv=0.1"],
@@ -94,7 +93,7 @@ def test_a_resumed_march_is_identical_to_one_never_stopped(tmp_path, binary, fmt
             assert np.array_equal(a[xn][k], b[xn][k]), "%s differs at xn = %g after a restart" % (k, xn)
 
 
-@pytest.mark.skipif(not os.path.exists(STEPPER), reason="static_space_stepper is not built")
+@needs(STEPPER)
 def test_a_resumed_march_skips_the_initial_passes(tmp_path):
     """static_space_stepper refines and coarsens a new line before its first
     step, but not a line restored from a checkpoint: the checkpoint holds the

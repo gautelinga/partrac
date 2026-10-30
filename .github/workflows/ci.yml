@@ -21,9 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
-    # Open MPI refuses more ranks than it counts cores, and the MPI tests take 3
+    # MPI jobs of 3 ranks, several at once: oversubscribed, unbound, yielding
     env:
       OMPI_MCA_rmaps_base_oversubscribe: 1
+      OMPI_MCA_hwloc_base_binding_policy: none
+      OMPI_MCA_mpi_yield_when_idle: 1
 
     steps:
       - uses: actions/checkout@v7
@@ -33,8 +35,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
-            python3-pytest python3-numpy python3-h5py python3-h5py-mpi python3-scipy \
-            python3-mpi4py python3-petsc4py-real
+            python3-pytest python3-pytest-xdist python3-numpy python3-h5py python3-h5py-mpi \
+            python3-scipy python3-mpi4py python3-petsc4py-real
           # Debian keeps petsc4py beside its PETSc build, off the default path
           echo "PYTHONPATH=$(ls -d /usr/lib/petscdir/petsc*/x86_64-linux-gnu-real/lib/python3/dist-packages)" >> "$GITHUB_ENV"
 
@@ -45,6 +47,8 @@ jobs:
         run: |
           python3 -c "import petsc4py; petsc4py.init([]); from petsc4py import PETSc"
           test "$(mpiexec -n 2 python3 -c 'from mpi4py import MPI; print(MPI.COMM_WORLD.size)' | tr -d '\n')" = 22
+          # h5py with parallel HDF5
+          mpiexec -n 2 python3 -c 'import h5py; assert h5py.get_config().mpi, "h5py has no MPI driver"'
 
       - name: Configure
         run: |
@@ -53,7 +57,16 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
 
       - name: Build
-        run: make -C build -j$(nproc)
+        run: |
+          set -o pipefail
+          make -C build -j$(nproc) 2>&1 | tee build.log
+
+      - name: No warnings
+        # the tree builds clean
+        run: |
+          n=$(grep -c "warning:" build.log || true)
+          grep "warning:" build.log | sort -u || true
+          test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
 
       - name: Check every app was built
         # Every app builds without dolfin since the restructuring: the retired
@@ -82,32 +95,33 @@ jobs:
           PARTRAC_REQUIRE_MPI: 1
         run: ctest --test-dir build --output-on-failure
 
-  # Both build types carry the same warning flags, and the tree builds clean, so
-  # a new warning is a regression rather than something to be counted.
-  warnings:
-    name: no warnings (dolfin OFF)
+  # AddressSanitizer, UBSan and libstdc++'s checks on the quick suite
+  sanitize:
+    name: sanitizers (dolfin OFF)
     runs-on: ubuntu-24.04
-    strategy:
-      matrix:
-        build_type: [Release, Debug]
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ libhdf5-dev libeigen3-dev libboost-dev
+            cmake g++ libhdf5-dev libeigen3-dev libboost-dev \
+            python3-pytest python3-pytest-xdist python3-numpy python3-h5py python3-scipy
+      - name: Address space ASan can shadow
+        # ASan's shadow clashes with 32-bit mmap randomness
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Configure
         run: |
           cmake -S . -B build \
             -DPARTRAC_ENABLE_DOLFIN=OFF \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-      - name: Build, and fail on any warning
-        run: |
-          make -C build -j$(nproc) 2>&1 | tee build.log
-          n=$(grep -c "warning:" build.log || true)
-          grep "warning:" build.log | sort -u || true
-          test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
+            -DPARTRAC_SANITIZE=ON \
+            -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: make -C build -j$(nproc)
+      - name: Unit tests
+        run: build/tests/unittest
+      - name: Python tests, the quick ones
+        run: PARTRAC_BIN=$PWD/build/bin python3 -m pytest -q -n $(nproc) tests/ -m "not slow" -rs
 
   # Unoptimised: a call the optimiser drops as dead still needs its definition
   # at -O0, so a template referenced where it is never instantiated links in
@@ -142,10 +156,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests need
-        # the image has pytest, numpy and dolfin; h5py is what reads the dumps,
-        # scipy the cleaner; numpy held at the image's, which dolfin and
-        # petsc4py are built against
-        run: python3 -m pip install --no-cache-dir h5py scipy "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+        # gmsh and the X libraries its wheel loads, for the near-wall cases; numpy held at the image's
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa libx11-6 libxext6 libxfixes3 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+          python3 -m pip install --no-cache-dir h5py scipy pytest-xdist==3.8.0 gmsh==4.15.2 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
@@ -177,6 +191,8 @@ jobs:
         # (test_interpol_core, test_simplex_load, test_xdmf_load,
         # test_freq_load), and tests/test_mesh.py generates a mesh rather
         # than skipping
+        env:
+          PARTRAC_REQUIRE_GMSH: 1
         run: ctest --test-dir build --output-on-failure
 
   # The build the mesh loaders are for since the direct loader: no dolfin in the
@@ -194,7 +210,7 @@ jobs:
         # the image has pytest, numpy and dolfin; h5py reads the dumps, scipy
         # the cleaner, and xdist runs the suite on every core; numpy held at
         # the image's, which dolfin and petsc4py are built against
-        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+        run: python3 -m pip install --no-cache-dir h5py scipy pytest-xdist==3.8.0 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # as the dolfin job, but with the option off: Ninja, and HDF5_ROOT for
         # the image's mpich build
@@ -226,15 +242,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests and the report need
-        # xdist because instrumented apps are slower and ctest runs pytest
-        # serially; curl because codecov-action downloads its uploader with it;
-        # gmsh (and libGL/libGLU, which its wheel loads) because test_wall_edge_rule.py
-        # builds its meshes with it and would otherwise skip, leaving the
-        # near-wall code unmeasured; numpy held at the image's, which dolfin
-        # and petsc4py are built against
+        # curl for codecov-action; gmsh and its X libraries for the near-wall cases; numpy held at the image's
         run: |
-          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py scipy gcovr pytest-xdist gmsh "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa libx11-6 libxext6 libxfixes3 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+          python3 -m pip install --no-cache-dir h5py scipy gcovr==8.6 pytest-xdist==3.8.0 gmsh==4.15.2 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         run: |
           cmake -S . -B build-cov -G Ninja \
@@ -246,6 +257,8 @@ jobs:
       - name: Unit tests
         run: build-cov/tests/unittest
       - name: Python tests
+        env:
+          PARTRAC_REQUIRE_GMSH: 1
         run: PARTRAC_BIN=$PWD/build-cov/bin python3 -m pytest -q -n $(nproc) tests/
       - name: Report
         # gcovr.cfg holds the filters; the summary goes to the run's page.
@@ -270,12 +283,7 @@ jobs:
           disable_search: true
           fail_ci_if_error: false
 
-  # mode=openfoam reads cases through OpenFOAM's own libraries, a plugin built
-  # against OpenFOAM.org 14 from its apt repository, a large install; the split
-  # and the node values are OpenFOAM-free and tested in every job, the reader
-  # here. The tests on solved cases too large to check in skip. The coverage
-  # job has no OpenFOAM, so the reader's coverage is measured here, in a
-  # build of its own, and reported to Codecov with the coverage job's.
+  # The OpenFOAM reader against OpenFOAM.org 14, with its own coverage report
   openfoam:
     name: OpenFOAM reader (dolfin OFF)
     runs-on: ubuntu-24.04
@@ -302,9 +310,14 @@ jobs:
             -DOPENFOAM_DIR=/opt/openfoam14 \
             -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: make -C build -j$(nproc)
-      - name: Unit tests of the split and the node values
-        run: build/tests/unittest "[openfoam]"
+        run: |
+          set -o pipefail
+          make -C build -j$(nproc) 2>&1 | tee build.log
+      - name: No warnings
+        run: |
+          n=$(grep -c "warning:" build.log || true)
+          grep "warning:" build.log | sort -u || true
+          test "$n" -eq 0 || { echo "$n warnings"; exit 1; }
       - name: The reader through the apps
         # fails rather than skips if the build has no reader
         env:
@@ -329,7 +342,8 @@ jobs:
       - name: Coverage report
         if: always()
         run: |
-          pipx install gcovr
+          # as the coverage job's
+          pipx install gcovr==8.6
           mkdir -p build-cov/report
           gcovr --cobertura build-cov/report/coverage.xml
       - uses: codecov/codecov-action@v5

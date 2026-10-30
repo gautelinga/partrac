@@ -21,7 +21,7 @@ import shutil
 import numpy as np
 import pytest
 
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import (checkpoint_file, checkpoint_folder, copy_example, read_checkpoint, run_app,
                   write_checkpoint, write_text_checkpoint)
 
@@ -43,8 +43,8 @@ DATASETS = {"points": 3, "id": 1, "c": 1, "cell_id": 1,
             "positions_inj": 3, "edges_inj": 2, "dl0_inj": 1, "edge_tau_inj": 1,
             "edge_rho_prev_inj": 1, "edges_inlet": 1, "nodes_inlet": 1}
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
-needs_tracers = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+needs_partrac = needs(PARTRAC)
+needs_tracers = needs(TRACERS)
 
 
 def params_t(folder, name="params.dat"):
@@ -273,8 +273,7 @@ def test_a_cloud_checkpoint_from_an_older_run_still_resumes(tmp_path, name, args
     """Older tracer and walker runs wrote four placeholder keys of a mesh's
     remeshing into their params.dat, which their schemas no longer declare. A
     restart reads past them; any other key it does not know is still refused."""
-    if not os.path.exists(app(name)):
-        pytest.skip(name + " is not built")
+    need(app(name))
     params = copy_example(POISEUILLE, tmp_path)
     run_app(app(name), params, args)
     folder = checkpoint_folder(tmp_path)
@@ -285,3 +284,53 @@ def test_a_cloud_checkpoint_from_an_older_run_still_resumes(tmp_path, name, args
         f.write("no_such_key=1\n")
     r = run_app(app(name), params, args, "T=0.06", ["restart_folder=%s" % folder], check=False)
     assert r.returncode == 2 and "unknown parameter 'no_such_key'" in r.stderr, r.stderr
+
+
+def first_value(path, column, value):
+    """Rewrite the text file path with its first row's column set to value."""
+    rows = path.read_text().splitlines()
+    first = rows[0].split()
+    first[column] = repr(int(value))
+    path.write_text("\n".join([" ".join(first)] + rows[1:]) + "\n")
+
+
+@needs_partrac
+@pytest.mark.parametrize("damage,message", [
+    ("faces.face", "cannot read"),
+    ("positions_inj.pos", "cannot read"),
+    ("nodes_inlet.list", "cannot read"),
+    ("short", "colors.col: the row of particle"),
+    ("edge", "of 'edges' joins nodes"),
+    ("edge_inj", "of 'edges_inj' joins nodes"),
+    ("face", "names edge"),
+    ("nodes_inlet", "of 'nodes_inlet' names node"),
+    ("edges_inlet", "of 'edges_inlet' names edge"),
+])
+def test_a_text_checkpoint_that_does_not_fit_is_refused(case, damage, message):
+    """The text files of an older run are held to what checkpoint.h5 is: a
+    file the resume needs and cannot read, a per-particle file a row short,
+    an edge naming a node past the end, a face an edge past the end, or an
+    inlet entry a node or edge past the end stops the resume with exit code
+    2 and the message the HDF5 reader gives. Read as they are, a missing file
+    would resume with no faces or no inlet, and an index past the end would
+    read and write outside the arrays."""
+    ck = read_checkpoint(case)
+    restart = checkpoint_folder(case)
+    folder = restart / "Checkpoints"
+    write_text_checkpoint(folder)
+    if damage.endswith((".face", ".pos", ".list")):
+        (folder / damage).unlink()
+    elif damage == "short":
+        rows = (folder / "colors.col").read_text().splitlines()
+        (folder / "colors.col").write_text("\n".join(rows[:-1]) + "\n")
+    elif damage == "edge":
+        first_value(folder / "edges.edge", 1, len(ck["points"]))
+    elif damage == "edge_inj":
+        first_value(folder / "edges_inj.edge", 1, len(ck["positions_inj"]))
+    elif damage == "face":
+        first_value(folder / "faces.face", 2, len(ck["edges"]))
+    elif damage == "nodes_inlet":
+        first_value(folder / "nodes_inlet.list", 0, len(ck["points"]))
+    else:
+        first_value(folder / "edges_inlet.list", 0, len(ck["edges"]))
+    refused(resume(case, check=False, restart=restart), message)

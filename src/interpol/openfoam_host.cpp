@@ -1,9 +1,5 @@
-// The host side of the OpenFOAM reader: the plugin is opened on the first
-// case read, with WM_PROJECT_DIR set to the OpenFOAM the build found, so no
-// app carries OpenFOAM or its MPI until a case is read. It is found at
-// PARTRAC_OPENFOAM_PLUGIN if set, else beside the app (installed, or the
-// build tree's lib), else in the build tree, and refused unless its layout
-// stamp is this build's. A build without the reader refuses every call.
+// Host side of the OpenFOAM reader: the plugin opened on the first case read,
+// from PARTRAC_OPENFOAM_PLUGIN, beside the app or the build tree
 
 #include "openfoam_load.hpp"
 
@@ -45,6 +41,19 @@ F symbol(void* h, const char* name, const std::string& path){
   return reinterpret_cast<F>(s);
 }
 
+// The build's OpenFOAM environment; refuse another
+void set_project(const char* name, const std::string& build, const bool is_dir){
+  const char* env = std::getenv(name);
+  if (env && *env){
+    std::error_code ec;
+    const bool same = env == build || (is_dir && fs::equivalent(env, build, ec));
+    if (!same)
+      partrac::fail("the environment's OpenFOAM is not the one this build reads cases with: ", name, " is ", env,
+                    ", the build's ", build, "; unset it, or source the build's OpenFOAM");
+  }
+  setenv(name, build.c_str(), 1);
+}
+
 // The plugin: the variable's, else the first that exists of those beside the
 // app and the build's
 std::string plugin_path(){
@@ -72,7 +81,8 @@ const Entries& entries(){
   static Entries e;
   if (e.read_case) return e;
   // OpenFOAM's static initialisation reads its etc/controlDict
-  setenv("WM_PROJECT_DIR", PARTRAC_WM_PROJECT_DIR, 0);
+  set_project("WM_PROJECT_DIR", PARTRAC_WM_PROJECT_DIR, true);
+  set_project("WM_PROJECT_VERSION", PARTRAC_WM_PROJECT_VERSION, false);
   const std::string path = plugin_path();
   void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!h) partrac::fail("cannot load the OpenFOAM reader: ", dlerror(), " (PARTRAC_OPENFOAM_PLUGIN "

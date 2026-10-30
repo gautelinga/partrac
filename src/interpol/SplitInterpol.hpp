@@ -38,8 +38,8 @@ public:
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
-  double get_t_min() { return ts_.get_t_min(); };
-  double get_t_max() { return ts_.get_t_max(); };
+  double get_t_min() const override { return ts_.get_t_min(); };
+  double get_t_max() const override { return ts_.get_t_max(); };
   double next_stamp_after(const double t) const override { return ts_.next_after(t); }
   // The two stamps are the same values, not a copy of them
   bool stamps_aliased() const { return stamps_.aliased(); }
@@ -147,6 +147,8 @@ protected:
 
   // One stamp's vectors, then its interior values; the reference the failures name
   void read_stamp(const std::string& file, Stamp& s);
+  // Point the evaluation at two stamps
+  void point(const Stamp& prev, const Stamp& next);
   // Every vertex of every exterior facet at rest in the stamp
   bool walls_at_rest(const Stamp& s) const;
   // Every cell's net flux against its scale, floored at the stamp's, and the

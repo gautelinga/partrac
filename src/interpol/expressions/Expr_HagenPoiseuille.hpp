@@ -11,15 +11,14 @@ public:
           expr_params.get<double>("z0")};
     u_inf = expr_params.get<double>("u_inf");
     R = expr_params.get<double>("R");
-    mu = expr_params.get<double>("mu");
     p_inf = expr_params.get<double>("p_inf");
     Rho = expr_params.get<double>("rho");
   };
   // Keys this expression reads
   static void add_params(partrac::Schema& s) {
     s.require<double>("R", "pipe radius");
-    s.require<double>("u_inf", "centreline velocity");
-    s.require<double>("mu", "viscosity");
+    s.require<double>("u_inf", "mean velocity over the pipe's cross-section (the centreline's is twice it)");
+    s.optional<double>("mu", "viscosity; not read, the profile is set by u_inf");
     s.require<double>("p_inf", "pressure");
     s.require<double>("rho", "density");
     s.require<double>("x0", "centre x");
@@ -56,9 +55,8 @@ public:
                     0.;
   };
 private:
-  double mu;  // Viscosity
   Vector3d x0;  // origin
-  double u_inf;  // Far-field velocity
+  double u_inf;  // Mean velocity
   double R;
   double p_inf;  // Far-field pressure
   double Rho;

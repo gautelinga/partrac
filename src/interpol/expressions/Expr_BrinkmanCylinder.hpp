@@ -1,53 +1,48 @@
 #include "Expr.hpp"
 #include <cmath>
-#include <functional>
+#include <vector>
 
 #ifndef __EXPR_BRINKMANCYLINDER_HPP
 #define __EXPR_BRINKMANCYLINDER_HPP
 
-inline double beta(double zeta, double r){
-  return 2*std::cyl_bessel_k(1.0, zeta * r)/(zeta * std::cyl_bessel_k(0.0, zeta));
-}
-
-inline double betar(double zeta, double r){
-  return - 2 * std::cyl_bessel_k(0.0, zeta * r)/std::cyl_bessel_k(0.0, zeta) - beta(zeta, r)/r;
-}
-
-inline double betarr(double zeta, double r){
-  return (pow(zeta, 2) + pow(r, -2))*beta(zeta, r) - betar(zeta, r)/r;
-}
-
-inline double f(double zeta, double r){
-  return r - (1+beta(zeta, 1.0))/r + beta(zeta, r);
-}
-
-inline double fr(double zeta, double r){
-  return 1 + (1+beta(zeta, 1.0))/pow(r, 2) + betar(zeta, r);
-}
-
-inline double frr(double zeta, double r){
-  return -2.*(1 + beta(zeta, 1.0))/pow(r, 3) + betarr(zeta, r);
-}
-
-inline double prf(double zeta, double r){
-  return pow(zeta, 2)*(r + (1+beta(zeta, 1.0))/r);
-}
+// Radial profile from K0, K1 at zeta r
+struct BrinkmanProfile {
+  double zeta, k0z, b1;
+  double beta(double k1) const {
+    return 2*k1/(zeta * k0z);
+  }
+  double betar(double r, double k0, double k1) const {
+    return - 2 * k0/k0z - beta(k1)/r;
+  }
+  double betarr(double r, double k0, double k1) const {
+    return (pow(zeta, 2) + pow(r, -2))*beta(k1) - betar(r, k0, k1)/r;
+  }
+  double f(double r, double k1) const {
+    return r - (1+b1)/r + beta(k1);
+  }
+  double fr(double r, double k0, double k1) const {
+    return 1 + (1+b1)/pow(r, 2) + betar(r, k0, k1);
+  }
+  double frr(double r, double k0, double k1) const {
+    return -2.*(1 + b1)/pow(r, 3) + betarr(r, k0, k1);
+  }
+  double prf(double r) const {
+    return pow(zeta, 2)*(r + (1+b1)/r);
+  }
+};
 
 
 class LinIntp {
 public:
   LinIntp() {};
   ~LinIntp() {};
-  void load(std::function<double(double, double)> func, const double x0, const double x1, const Uint N, const double arg0) {
-    y.clear();
-    this->N = N;
+  // N + 1 equispaced values on [x0, x1]
+  void load(std::vector<double> values, const double x0, const double x1) {
+    y = std::move(values);
+    N = Uint(y.size() - 1);
     this->x0 = x0;
     this->x1 = x1;
     dx = (x1-x0)/N;
-    for (Uint i=0; i <= N; ++i){
-      double x = x0 + i * dx;
-      y.push_back(func(arg0, x));
-    }
   };
   double eval(double x){
     if (x <= x0){
@@ -85,10 +80,24 @@ public:
     double rmax = expr_params.get<double>("rmax_intp");
     int N = expr_params.get<int>("Nintp");
 
-    f_intp.load(&f, 1., rmax, N, zeta);
-    fr_intp.load(&fr, 1., rmax, N, zeta);
-    frr_intp.load(&frr, 1., rmax, N, zeta);
-    prf_intp.load(&prf, 1., rmax, N, zeta);
+    // Tables from K0 and K1, once a point
+    const double k0z = std::cyl_bessel_k(0.0, zeta);
+    const BrinkmanProfile pr{zeta, k0z, 2*std::cyl_bessel_k(1.0, zeta)/(zeta * k0z)};
+    const double dr = (rmax - 1.)/Uint(N);
+    std::vector<double> f(N + 1), fr(N + 1), frr(N + 1), prf(N + 1);
+#pragma omp parallel for schedule(static)
+    for (int i = 0; i <= N; ++i){
+      const double r = 1. + Uint(i) * dr;
+      const double k0 = std::cyl_bessel_k(0.0, zeta * r), k1 = std::cyl_bessel_k(1.0, zeta * r);
+      f[i] = pr.f(r, k1);
+      fr[i] = pr.fr(r, k0, k1);
+      frr[i] = pr.frr(r, k0, k1);
+      prf[i] = pr.prf(r);
+    }
+    f_intp.load(std::move(f), 1., rmax);
+    fr_intp.load(std::move(fr), 1., rmax);
+    frr_intp.load(std::move(frr), 1., rmax);
+    prf_intp.load(std::move(prf), 1., rmax);
   };
   // Keys this expression reads
   static void add_params(partrac::Schema& s) {
@@ -134,10 +143,10 @@ public:
     double c2t = ct*ct;
 
     // These are costly!
-    double f_r = f_intp.eval(rabs); // f(zeta, rabs);
-    double fr_r = fr_intp.eval(rabs); // fr(zeta, rabs);
-    double frr_r = frr_intp.eval(rabs); // frr(zeta, rabs);
-    double prf_r = prf_intp.eval(rabs); // prf(zeta, rabs);
+    double f_r = f_intp.eval(rabs);
+    double fr_r = fr_intp.eval(rabs);
+    double frr_r = frr_intp.eval(rabs);
+    double prf_r = prf_intp.eval(rabs);
 
     ptvals.U = {u_inf * (s2t*fr_r + f_r*c2t/rabs),
                 u_inf * st*ct*(-fr_r + f_r/rabs),

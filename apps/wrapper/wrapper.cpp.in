@@ -10,17 +10,16 @@
 int main(int argc, char* argv[]){
   std::cerr << "@WRAPPER_NAME@ is retired: this is @WRAPPER_TARGET@ with "
             << "@WRAPPER_ARGS_TEXT@" << std::endl;
-  if (argc < 2){
-    std::cerr << "Please specify an input file." << std::endl;
-    return 1;
-  }
   // Target beside this binary, symlinks resolved; argv[0]'s directory without /proc
   std::vector<char> self(4096, '\0');
   const ssize_t n = readlink("/proc/self/exe", self.data(), self.size() - 1);
   if (n <= 0 || n >= ssize_t(self.size()) - 1)
     self.assign(argv[0], argv[0] + std::strlen(argv[0]) + 1);
   std::string target = std::string(dirname(self.data())) + "/@WRAPPER_TARGET@";
-  std::vector<std::string> args = {target, argv[1], @WRAPPER_ARGS_CODE@};
+  // No arguments: the target bare
+  std::vector<std::string> args = {target};
+  if (argc > 1)
+    args.insert(args.end(), {argv[1], @WRAPPER_ARGS_CODE@});
   // Renamed arguments
   const std::vector<std::pair<std::string, std::string>> rename = {@WRAPPER_RENAME_CODE@};
   const std::vector<std::pair<std::string, std::string>> copy = {@WRAPPER_COPY_CODE@};

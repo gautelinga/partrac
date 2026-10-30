@@ -43,7 +43,6 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
   req.include_phi = include_phi;
   req.n_dofs_max = Cell::n_dofs_max;
   req.periodic = intp.periodic;
-  req.periodic_tol = intp.periodic_tol;
   // The declared elements are checked whether the tables are rebuilt or read
   // from the cache
   simplex_load::request_from_params(req, prm, folder);
@@ -62,13 +61,10 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
     key = simplex_load::cache_key({mesh_file, first});
     if (!key.empty()){
       // The facet table and the node tables are built from the periodicity too
-      char tol[32];
-      std::snprintf(tol, sizeof tol, "%.17g", intp.periodic_tol);
       key += "|u=" + u_field + "|p=" + (include_pressure ? p_field : std::string())
            + "|phi=" + (include_phi ? phi_field : std::string())
            + "|periodic=" + (intp.periodic[0] ? "1" : "0") + (intp.periodic[1] ? "1" : "0")
-                          + (intp.periodic[2] ? "1" : "0")
-           + "|periodic_tol=" + tol;
+                          + (intp.periodic[2] ? "1" : "0");
     }
   }
   auto& a = intp.stamps_.a();
@@ -85,7 +81,7 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
     intp.ncoeffs_u = cache.ncoeffs_u;
     intp.ncoeffs_p = include_pressure ? cache.ncoeffs_p : 0;
     intp.ncoeffs_phi = include_phi ? cache.ncoeffs_phi : 0;
-    check_dofs_fit(intp.ncoeffs_u, std::max(intp.ncoeffs_p, intp.ncoeffs_phi), Cell::n_dofs_max, "SimplexInterpol");
+    check_dofs_fit({intp.ncoeffs_u, intp.ncoeffs_p, intp.ncoeffs_phi}, Cell::n_verts, Cell::n_dofs_max, "SimplexInterpol");
     intp.topo_ = std::move(cache.topo);
     intp.coords_ = std::move(cache.coords);
     intp.facet_neigh_ = std::move(cache.facets);

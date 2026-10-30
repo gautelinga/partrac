@@ -18,7 +18,7 @@ inline partrac::Schema partrac_schema(){
   s.require<double>("Dm", "molecular diffusivity");
   s.require<double>("dt", "timestep");
   s.require<double>("T", "final time");
-  s.require<int>("int_order", "integration order");
+  add_int_order(s, "integration order");
   // exit_plane cuts at Ln
   s.require_if<double>("Ln", 0.0,
                        [](const partrac::Params& p){
@@ -45,7 +45,7 @@ inline partrac::Schema partrac_schema(){
   s.opt<double>("refine_intv", 100.0, "refinement interval");
   s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("filter_target", 0, "filter target");
+  s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("refine", false, "refine the mesh");
   s.opt<bool>("coarsen", false, "coarsen the mesh");
   s.opt<bool>("filter", false, "filter the mesh");
@@ -59,8 +59,6 @@ inline partrac::Schema partrac_schema(){
   s.choices("mode", interpol_modes());
   s.choices("outside", {"ignore", "reinject", "mark"});
   s.choices("exit_plane", {"none", "x", "y", "z"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
   s.check([](const partrac::Params& p){
             return !(p.get<bool>("inject") && p.get<bool>("filter"));
           },

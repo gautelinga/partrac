@@ -37,32 +37,48 @@ public:
     return true;
   };
   void eval(const Vector3d &x, const double t, PointValues& ptvals) {
-    compute(x, t, ptvals.U, ptvals.gradU, ptvals.P);
+    compute(x, t, ptvals);
     ptvals.Rho = rho_inf;
   };
 private:
   // No member writes: called inside omp for
-  void compute(const Vector3d &x, const double t, Vector3d& U_, Matrix3d& gradU_, double& P_) const {
+  void compute(const Vector3d &x, const double t, PointValues& ptvals) const {
     Vector3d r = x-x0;
     double k = 2*M_PI/L;
-    double At = A + A_amp*sin(A_omega*t);
+    // A forced: At and its rate
+    double At = A;
+    double Ad = 0.;
+    if (A_amp != 0.){
+      At += A_amp*sin(A_omega*t);
+      Ad = A_amp*A_omega*cos(A_omega*t);
+    }
 
+    double s = sin(k*r[2]);
+    double c = cos(k*r[2]);
     double sx = B*sin(k*r[0]);
     double sy = C*sin(k*r[1]);
-    double sz = At*sin(k*r[2]);
+    double sz = At*s;
     double cx = B*cos(k*r[0]);
     double cy = C*cos(k*r[1]);
-    double cz = At*cos(k*r[2]);
+    double cz = At*c;
 
-    U_ = {sz + cy, sx + cz, sy + cx};
+    ptvals.U = {sz + cy, sx + cz, sy + cx};
     // Pressure, valid for A_amp = 0
-    P_ = p_inf - rho_inf*(sz*cy + sx*cz + sy*cx);
+    ptvals.P = p_inf - rho_inf*(sz*cy + sx*cz + sy*cx);
 
-    // gradU_(i, j) is dU_i/dx_j
-    gradU_ <<
+    // gradU(i, j) is dU_i/dx_j
+    ptvals.gradU <<
        0.,     -k*sy,   k*cz,
        k*cx,    0.,    -k*sz,
       -k*sx,    k*cy,   0.;
+
+    // Time derivatives, when forced
+    if (A_amp != 0.){
+      ptvals.A[0] = Ad*s;
+      ptvals.A[1] = Ad*c;
+      ptvals.gradA(0, 2) = Ad*k*c;
+      ptvals.gradA(1, 2) = -Ad*k*s;
+    }
   };
   Vector3d x0;  // Center of vortex
   double p_inf;  // Far-field pressure

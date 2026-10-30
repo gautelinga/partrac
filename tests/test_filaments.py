@@ -18,13 +18,14 @@ refuses to reinject it.
 """
 
 import os
+import re
 
 import numpy as np
 import pytest
 
 from cases import write_felbm
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 FILAMENTS = app("filaments")
@@ -36,7 +37,7 @@ BASE = ("mode=analytic init_mode=pairs_xz_x x0=0 y0=0 z0=0 Nrw=200 Nrw_max=400 i
         "ds_init=%g Dm=0 scheme=RK4 dt=0.01 dump_intv=0.1 stat_intv=0.1 checkpoint_intv=1e9 "
         "resize=doublings resize_target=ds_init resize_intv=0.01 random=false seed=1" % TARGET)
 
-needs_filaments = pytest.mark.skipif(not os.path.exists(FILAMENTS), reason="filaments is not built")
+needs_filaments = needs(FILAMENTS)
 
 
 def run(d, extra):
@@ -138,12 +139,12 @@ def test_an_edge_stuck_in_an_underresolved_channel_is_reinjected(tmp_path):
     _, out, g = run_channel(tmp_path / "ignore", "outside=ignore")
     t = sorted(g)
     stuck = np.all(g[t[-2]] == g[t[-1]], axis=1)
-    assert "Some nodes are outside." in out
+    assert int(re.search(r"Steps declined: (\d+)", out).group(1)) > 0
     assert stuck.sum() > 0, "no node stuck: the case no longer tests reinjection"
 
     fluid, out, g = run_channel(tmp_path / "reinject", "outside=reinject")
     t = sorted(g)
-    assert "Some nodes are outside." in out
+    assert re.search(r"Steps declined: [1-9]\d* \(outside=reinject: reinjected\)", out), out[-2000:]
     z0 = g[t[0]][:, 2]
     for s in t:
         p = g[s]

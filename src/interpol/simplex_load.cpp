@@ -418,21 +418,26 @@ void renumber_vertices(MeshData& m, const int nv, const std::vector<std::uint32_
 }
 
 double shortest_edge(const MeshData& m, const int nv){
+  return shortest_edge(m.coords.data(), m.topo.data(), m.ncells, nv, m.gdim);
+}
+
+double shortest_edge(const double* coords, const std::uint32_t* topo, const std::size_t ncells,
+                     const int nv, const Uint gdim){
   double h = std::numeric_limits<double>::max();
 #pragma omp parallel for schedule(static) reduction(min: h)
-  for (std::size_t i = 0; i < m.ncells; ++i){
-    const std::uint32_t* row = m.topo.data() + i*std::size_t(nv);
+  for (std::size_t i = 0; i < ncells; ++i){
+    const std::uint32_t* row = topo + i*std::size_t(nv);
     for (int a = 0; a < nv; ++a)
       for (int b = a + 1; b < nv; ++b){
         double d2 = 0.;
-        for (Uint k = 0; k < m.gdim; ++k){
-          const double dd = m.coords[std::size_t(row[a])*m.gdim + k] - m.coords[std::size_t(row[b])*m.gdim + k];
+        for (Uint k = 0; k < gdim; ++k){
+          const double dd = coords[std::size_t(row[a])*gdim + k] - coords[std::size_t(row[b])*gdim + k];
           d2 += dd*dd;
         }
         h = std::min(h, d2);
       }
   }
-  return m.ncells ? std::sqrt(h) : 0.;
+  return ncells ? std::sqrt(h) : 0.;
 }
 
 int declared_degree(const std::string& space, const char* what){
@@ -485,7 +490,7 @@ void build_tables(const Request& r, Tables& t){
   t.ncoeffs_u = Uint(nodes_per_cell(nv, t.el_u.degree));
   t.ncoeffs_p = r.include_pressure ? Uint(nodes_per_cell(nv, t.el_p.degree)) : 0;
   t.ncoeffs_phi = r.include_phi ? Uint(nodes_per_cell(nv, t.el_phi.degree)) : 0;
-  check_dofs_fit(t.ncoeffs_u, std::max(t.ncoeffs_p, t.ncoeffs_phi), r.n_dofs_max, r.what);
+  check_dofs_fit({t.ncoeffs_u, t.ncoeffs_p, t.ncoeffs_phi}, std::size_t(nv), r.n_dofs_max, r.what);
 
   tables_from_mesh(r, t);
 }
@@ -517,7 +522,9 @@ void tables_from_mesh(const Request& r, Tables& t){
   }
 
   // A node and its periodic images are one node, the master's dof serving all
-  t.np.build(m, t.edges, t.nedges, nv, r.periodic, m.x_min, m.x_max, r.periodic_tol);
+  t.hmin = shortest_edge(m, nv);
+  const double tol = mesh_tables::periodic_match_tol(t.hmin);
+  t.np.build(m, t.edges, t.nedges, nv, r.periodic, m.x_min, m.x_max, tol);
 
   const std::size_t n_u = m.nverts + (t.el_u.degree == 2 ? t.nedges : 0);
   const std::vector<std::uint32_t> nodes_u = t.np.masters(t.node_order(t.el_u), n_u);
@@ -542,13 +549,11 @@ void tables_from_mesh(const Request& r, Tables& t){
 
   if (nv == 4)
     mesh_tables::build_facet_neighbours<4>(m.topo, m.ncells, m.coords, m.gdim, r.periodic,
-                                           m.x_min, m.x_max, r.periodic_tol, t.facets);
+                                           m.x_min, m.x_max, tol, t.facets);
   else
     mesh_tables::build_facet_neighbours<3>(m.topo, m.ncells, m.coords, m.gdim, r.periodic,
-                                           m.x_min, m.x_max, r.periodic_tol, t.facets);
+                                           m.x_min, m.x_max, tol, t.facets);
   partrac::phase("facet table");
-
-  t.hmin = shortest_edge(m, nv);
 }
 
 void read_field_by_node(const std::string& path, const std::string& field, const Tables& t,

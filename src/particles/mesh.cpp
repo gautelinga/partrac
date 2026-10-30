@@ -3,6 +3,7 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <numeric>
 #include <set>
 #include "Error.hpp"
 #include "io.hpp"
@@ -37,7 +38,6 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
     hsize_t faces_dims[2];
     faces_dims[0] = faces.size();
     faces_dims[1] = 3;
-    H5::DataSpace faces_dspace(2, faces_dims);
     std::vector<Uint> faces_arr(faces_dims[0]*faces_dims[1]);
 
     std::vector<double> dA(faces_dims[0]);
@@ -67,10 +67,7 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
         tau_[iface] = faces[iface].tau;
       }
     }
-    H5::DataSet faces_dset = h5f.createDataSet(groupname + "/faces",
-                                    H5::PredType::NATIVE_ULONG,
-                                    faces_dspace);
-    faces_dset.write(faces_arr.data(), H5::PredType::NATIVE_ULONG);
+    ulong2hdf5(h5f, groupname + "/faces", faces_arr, faces_dims[0], faces_dims[1]);
 
     scalar2hdf5(h5f, groupname + "/dA", dA, faces_dims[0]);
     scalar2hdf5(h5f, groupname + "/dA0", dA0, faces_dims[0]);
@@ -83,7 +80,6 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
     hsize_t edges_dims[2];
     edges_dims[0] = edges.size();
     edges_dims[1] = 2;
-    H5::DataSpace edges_dspace(2, edges_dims);
     std::vector<Uint> edges_arr(edges_dims[0]*edges_dims[1]);
 
     std::vector<double> dl(edges_dims[0]);
@@ -104,10 +100,7 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
       }
     }
 
-    H5::DataSet edges_dset = h5f.createDataSet(groupname + "/edges",
-                                      H5::PredType::NATIVE_ULONG,
-                                      edges_dspace);
-    edges_dset.write(edges_arr.data(), H5::PredType::NATIVE_ULONG);
+    ulong2hdf5(h5f, groupname + "/edges", edges_arr, edges_dims[0], edges_dims[1]);
 
     scalar2hdf5(h5f, groupname + "/dl", dl, edges_dims[0]);
     scalar2hdf5(h5f, groupname + "/dl0", dl0, edges_dims[0]);
@@ -247,6 +240,7 @@ Uint sheet_refinement(Connectivity& m,
         ++n_add;
         //
         edges[iedge].first[1] = new_inode;
+        edges[iedge].second = ds0/2;
         ds_ratio_[iedge] = ds_ratio_of(inode, new_inode);
         Uint new_iedge = edges.size();
         edges.push_back({{new_inode, jnode}, ds0/2});
@@ -255,8 +249,12 @@ Uint sheet_refinement(Connectivity& m,
         if (has_inlet) inlet_of.push_back(-1);
         // Append new node to node2edges list
         node2edges.push_back({iedge, new_iedge});
-        // Modify existing entry
-        std::replace(node2edges[jnode].begin(), node2edges[jnode].end(), iedge, new_iedge);
+        // Keep jnode's row sorted
+        {
+          auto & row = node2edges[jnode];
+          row.erase(std::find(row.begin(), row.end(), iedge));
+          row.push_back(new_iedge);
+        }
 
         for (auto itface = edge2faces[iedge].begin();
              itface != edge2faces[iedge].end(); ++itface){
@@ -659,7 +657,8 @@ inline bool collapse_edge(const Uint iedge,
                           std::vector<bool> &edge_isactive,
                           std::vector<bool> &node_isactive,
                           ParticleSet& ps,
-                          CollapseBuffers &buf){
+                          CollapseBuffers &buf,
+                          const double ds_max){
 
   // This function will collapse the edge 'iedge' and thus remove it.
   // The 1-2 facets next to it will be removed.
@@ -700,6 +699,14 @@ inline bool collapse_edge(const Uint iedge,
   if (!new_node_is_good){
     // Corner edge
     return false;
+  }
+  // Lengthen no edge past ds_max
+  if (ds_max > 0.){
+    for (const auto& [owner, conodes] : {std::pair{inode, &inodes}, std::pair{jnode, &jnodes}})
+      for (const Uint knode : *conodes)
+        if (knode != inode && knode != jnode
+            && (x - ps.x(knode)).norm() > std::max(ds_max, ps.dist(owner, knode)))
+          return false;
   }
 
   double dA_res = 0.;
@@ -1060,6 +1067,7 @@ void remove_inactive(Connectivity& m,
 Uint sheet_coarsening(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_min,
+                      const double ds_max,
                       const double curv_refine_factor){
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
@@ -1102,7 +1110,7 @@ Uint sheet_coarsening(Connectivity& m,
                            face_isactive,
                            edge_isactive,
                            node_isactive,
-                           ps, buf);
+                           ps, buf, ds_max);
 
         if (coll){
           changed = true;
@@ -1127,6 +1135,7 @@ inline bool tau_compatible(const double a, const double b){
 inline Uint strip_coarsening(Connectivity& m,
                              ParticleSet& ps,
                              const double ds_min,
+                             const double ds_max,
                              const double curv_refine_factor){
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
@@ -1180,6 +1189,17 @@ inline Uint strip_coarsening(Connectivity& m,
             ++iedge;
             continue;
           }
+          // Merge at the midpoint; lengthen no neighbour past ds_max
+          if (ds_max > 0.){
+            const Vector3d mid = 0.5*(ps.x(inode) + ps.x(jnode));
+            const Uint jfar = get_other(edges[jedge].first[0], edges[jedge].first[1], old_inode);
+            const Uint kfar = get_other(edges[kedge].first[0], edges[kedge].first[1], new_inode);
+            if ((mid - ps.x(jfar)).norm() > std::max(ds_max, ps.dist(old_inode, jfar))
+                || (mid - ps.x(kfar)).norm() > std::max(ds_max, ps.dist(new_inode, kfar))){
+              ++iedge;
+              continue;
+            }
+          }
 
           edge_isactive[iedge] = false;
           node_isactive[old_inode] = false;
@@ -1227,12 +1247,13 @@ inline Uint strip_coarsening(Connectivity& m,
 Uint coarsening(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_min,
+                const double ds_max,
                 const double curv_refine_factor){
   if (m.faces.size() > 0){ // TODO: better requirement for injection?
-    return sheet_coarsening(m, ps, ds_min, curv_refine_factor);
+    return sheet_coarsening(m, ps, ds_min, ds_max, curv_refine_factor);
   }
   else if (m.edges_inlet.size() == 0){ // Omits first steps of injection which might have no faces
-    return strip_coarsening(m, ps, ds_min, curv_refine_factor);
+    return strip_coarsening(m, ps, ds_min, ds_max, curv_refine_factor);
   }
   return 0;
 }
@@ -1243,15 +1264,24 @@ inline bool strip_filtering(Connectivity& m,
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
 
-  if (edges.size() <= filter_target)
+  const Uint n_edges = edges.size();
+  if (n_edges <= filter_target)
     return false;
-  while (edges.size() > filter_target){
-    int index = rand() % edges.size();
-    edges.erase(edges.begin() + index);
-  }
-  // Remove nodes left behind (no injection with filter)
-  std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
+  // Target 0: a cloud
+  if (filter_target == 0)
+    edges.clear();
+  // Drop the excess at random (partial shuffle)
   std::vector<bool> edge_isactive(edges.size(), true);
+  if (!edges.empty()){
+    std::vector<Uint> ids(n_edges);
+    std::iota(ids.begin(), ids.end(), 0);
+    for (Uint k = 0; k < n_edges - filter_target; ++k){
+      std::swap(ids[k], ids[k + rand() % (n_edges - k)]);
+      edge_isactive[ids[k]] = false;
+    }
+  }
+  // Remove orphaned nodes
+  std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
   std::vector<bool> node_isactive(ps.N(), true);
   remove_inactive(m, face_isactive, edge_isactive, node_isactive, ps);
   return true;

@@ -17,7 +17,6 @@ being a step, so it tells how many pieces a run took.
 """
 
 import bisect
-import os
 import re
 
 import numpy as np
@@ -25,15 +24,14 @@ import pytest
 
 from cases import LINEAR, UNIFORM, stamp_case
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
-from paths import app, built_with_dolfin
+from paths import app, built_with_dolfin, needs
 from runs import checkpoint_file, checkpoint_folder, run_app
 
 PARTRAC = app("partrac")
 TRACERS = app("tracers")
 TENSORS = app("tracertensors")
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (PARTRAC, TRACERS, TENSORS)),
-                                reason="partrac, tracers or tracertensors is not built")
+needs_apps = needs(PARTRAC, TRACERS, TENSORS)
 needs_fenics = [pytest.mark.fenics,
                 pytest.mark.skipif(not built_with_dolfin(), reason="mode=fenics needs a build with dolfin")]
 

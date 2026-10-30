@@ -4,9 +4,11 @@
 // The two stamps a loader blends a field between: one buffer per stamp, keyed
 // by the stamp it holds, so a stamp a buffer already holds is never read again.
 
+#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
+#include "phase_timing.hpp"
 
 namespace partrac {
 
@@ -117,6 +119,27 @@ std::pair<StampFill, StampFill> StampBuffer<Stamp, Key>::load(const Key& prev_ke
   }
   next_ = &b_;
   return {prev_fill, next_fill};
+}
+
+// Load the bracket (prev, next) unless held, then point at it
+template<typename Stamp, typename Key, typename End, typename KeyOf, typename NameOf,
+         typename Read, typename Point>
+void update_bracket(StampBuffer<Stamp, Key>& stamps, bool& held, double& t_prev, double& t_next,
+                    const End& prev, const End& next, KeyOf&& key, NameOf&& name, Read&& read,
+                    Point&& point)
+{
+  if (!stamp_reload(held, {t_prev, t_next}, {prev.t, next.t}))
+    return;
+  phase_begin("update");
+  const auto fill = stamps.load(key(prev), key(next), read);
+  std::cout << "Prev: Timestep = " << prev.t << ", " << stamp_note(fill.first, name(prev)) << std::endl;
+  std::cout << "Next: Timestep = " << next.t << ", " << stamp_note(fill.second, name(next)) << std::endl;
+  point(stamps.prev(), stamps.next());
+  phase("vector read");
+  phase_total();
+  held = true;
+  t_prev = prev.t;
+  t_next = next.t;
 }
 
 }  // namespace partrac

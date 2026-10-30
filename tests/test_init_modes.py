@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dumps import dump_at
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -31,7 +31,7 @@ BASE = ("mode=analytic Nrw=10 Nrw_max=100 ds_max=1 ds_min=0.01 ds_init=0.1 Dm=0 
         "int_order=1 dump_intv=0.01 stat_intv=0 checkpoint_intv=1e9 random=false seed=1").split()
 CENTRE = np.array([0.2, -0.3, 0.4])
 
-needs = pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def refused(r, message):
@@ -40,7 +40,7 @@ def refused(r, message):
     assert message in r.stderr, r.stderr
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("dirs", ["x", "y", "z", "xy", "xyz"])
 def test_a_pair_is_one_edge_of_length_ds_init_about_the_centre(tmp_path, dirs):
     """Nrw=10, yet two points and one edge between them: ds_init apart, their
@@ -63,7 +63,7 @@ def test_a_pair_is_one_edge_of_length_ds_init_about_the_centre(tmp_path, dirs):
             assert np.array_equal(p[:, k], [CENTRE[k]] * 2)
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("args,message", [
     ("init_mode=pair_xy x0=5", "init_mode pair_xy: the pair centre is not inside the domain"),
     # the ends at x = 0.93 and 1.03, whichever way the pair points
@@ -78,7 +78,7 @@ def test_a_pair_outside_the_fluid_is_refused(tmp_path, args, message):
     refused(r, message)
 
 
-@needs
+@needs_partrac
 def test_a_point_outside_the_fluid_is_refused(tmp_path):
     """point puts all Nrw particles at (x0, y0, z0); outside the fluid there
     is nothing to place, and a run with no particles would report statistics
@@ -88,7 +88,7 @@ def test_a_point_outside_the_fluid_is_refused(tmp_path):
     refused(r, "init_mode point: (x0, y0, z0) is not inside the domain")
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("args", [
     # every grid cell at x = 5
     "init_mode=points_y init_weight=uniform x0=5",
@@ -109,7 +109,7 @@ def test_a_sampling_mode_that_cannot_place_nrw_points_is_refused(tmp_path, args)
     assert re.search(r"with \d+ of 100 placed", r.stderr), r.stderr
 
 
-@needs
+@needs_partrac
 def test_points_weighted_by_a_velocity_component_that_is_zero_everywhere_are_refused(tmp_path):
     """The flow is along z, so init_weight=ux weighs every cell 0: there is
     nothing to sample by, and the weighted draw would put every point in the
@@ -119,7 +119,7 @@ def test_points_weighted_by_a_velocity_component_that_is_zero_everywhere_are_ref
     refused(r, "init_mode points_xy: init_weight ux has no finite positive total")
 
 
-@needs
+@needs_partrac
 def test_an_ellipsoid_whose_surface_leaves_the_fluid_is_refused(tmp_path):
     """A flat ellipsoid 1.8 across in x centred at x = 0.5: its starting
     tetrahedron is inside the fluid, its surface reaches x = 1.4. A surface
@@ -130,21 +130,24 @@ def test_an_ellipsoid_whose_surface_leaves_the_fluid_is_refused(tmp_path):
     refused(r, "init_mode ellipsoid_xy: the ellipsoid is not inside the domain")
 
 
-@needs
-def test_an_ellipsoid_whose_remeshing_cannot_settle_still_starts(tmp_path):
-    """ds_min=0.09 and ds_max=0.1: each refinement makes edges that coarsening
-    collapses again. The remeshing stops after a bounded number of passes, so
-    the run starts rather than hanging."""
+@needs_partrac
+def test_an_ellipsoid_close_to_both_lengths_settles_within_ds_max(tmp_path):
+    """ds_min=0.09 and ds_max=0.1: refinement makes edges coarsening would
+    collapse, but no collapse lengthens an edge past ds_max, so coarsening
+    does not undo the refinement: the remeshing settles and no edge of the
+    initial sheet is longer than ds_max."""
     params = copy_example(EXAMPLE, tmp_path / "c")
     r = run_app(PARTRAC, params, BASE, "Nrw_max=100000 ds_max=0.1 ds_min=0.09",
                 "init_mode=ellipsoid_xy La=0.5 Lb=0.3", timeout=120)
-    assert "Note: the ellipsoid's remeshing stopped after 100 passes" in r.stdout
+    assert "remeshing stopped after" not in r.stdout
     g = dump_at(tmp_path / "c", 0.0)
-    assert len(g["points"]) >= 4
-    assert np.all(np.abs(g["points"][:, 0]) <= 1)
+    x, f = g["points"], g["faces"][:, :3].astype(np.int64)
+    assert len(x) >= 4 and np.all(np.abs(x[:, 0]) <= 1)
+    e = np.vstack([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    assert np.linalg.norm(x[e[:, 0]] - x[e[:, 1]], axis=1).max() <= 0.1 * (1 + 1e-9)
 
 
-@needs
+@needs_partrac
 def test_uniform_along_an_axis_the_domain_is_flat_in_is_refused(tmp_path):
     """A box of zero height in z: uniform_z would put Nrw points on one spot,
     joined by edges of length zero."""
@@ -156,7 +159,7 @@ def test_uniform_along_an_axis_the_domain_is_flat_in_is_refused(tmp_path):
     refused(r, "init_mode uniform_z: the domain has no extent along z")
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("args,message", [
     ("init_mode=uniform_x", "init_mode uniform needs Nrw of 2 or more"),
     ("init_mode=strip_x La=1", "init_mode strip needs Nrw of 2 or more"),
@@ -169,7 +172,7 @@ def test_a_line_of_one_point_is_refused(tmp_path, args, message):
     refused(r, message)
 
 
-@needs
+@needs_partrac
 def test_points_along_one_axis_are_joined_in_order(tmp_path):
     """points_x samples a line: its points sorted along x, each edge joining
     two that follow each other. That order is the line's, so the edges are a
@@ -184,7 +187,7 @@ def test_points_along_one_axis_are_joined_in_order(tmp_path):
     assert np.all(edges[:, 1] - edges[:, 0] == 1)
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("dirs", ["xy", "xyz"])
 def test_points_over_a_plane_or_a_volume_are_a_cloud(tmp_path, dirs):
     """Points sampled over more than one axis have no order a line could
@@ -196,7 +199,7 @@ def test_points_over_a_plane_or_a_volume_are_a_cloud(tmp_path, dirs):
     assert "edges" not in g
 
 
-@needs
+@needs_partrac
 @pytest.mark.parametrize("init_mode,missing", [
     ("points_x", ["ds_init", "ds_max", "ds_min"]),
     ("points_xy", []),
@@ -215,3 +218,55 @@ def test_only_points_along_one_axis_need_edge_lengths(tmp_path, init_mode, missi
             refused(r, "missing required parameter '%s'" % key)
     else:
         assert r.returncode == 0, r.stdout[-1000:] + r.stderr[-1000:]
+
+
+@needs_partrac
+@pytest.mark.parametrize("args,message", [
+    ("init_mode=sheet_xy La=1 Lb=1 ds_init=0.02 ds_max=0.05 ds_min=0.01",
+     "edges longer than ds_init = 0.02"),
+    ("init_mode=ellipsoid_xy La=0.5 Lb=0.3 ds_max=0.02 ds_min=0.005",
+     "edges longer than ds_max = 0.02"),
+])
+def test_a_surface_nrw_max_cannot_refine_is_refused(tmp_path, args, message):
+    """Nrw_max=50 particles cannot cover the sheet or the ellipsoid at its
+    edge length: the refinement stops when the set is full, and the run stops
+    naming Nrw_max and how many edges are still too long, rather than
+    starting from a surface coarser than asked for."""
+    params = copy_example(EXAMPLE, tmp_path / "c")
+    r = run_app(PARTRAC, params, BASE, "Nrw_max=50", args, check=False, timeout=120)
+    refused(r, "Nrw_max = 50 particles leave ")
+    refused(r, message)
+
+
+@needs_partrac
+def test_an_unknown_init_weight_is_refused(tmp_path):
+    """init_weight is one of uniform, u, ux, uy and uz; anything else would
+    sample uniformly without saying so."""
+    params = copy_example(EXAMPLE, tmp_path / "c")
+    r = run_app(PARTRAC, params, BASE, "init_mode=points_xy init_weight=uy2", check=False)
+    refused(r, "parameter 'init_weight' = 'uy2' is not one of: uniform u ux uy uz")
+
+
+def at_rest(tmp_path):
+    """A copy of the linear flow with every rate zero: nothing moves."""
+    params = copy_example(LINEAR, tmp_path / "c")
+    params.write_text(re.sub(r"^A(xx|yy)=.*$", r"A\1=0.0", params.read_text(), flags=re.M))
+    return params
+
+
+@needs_partrac
+def test_a_fresh_flat_sheet_starts_at_its_reference_areas_and_lengths(tmp_path):
+    """A flat sheet refined to ds_init, coarsened to ds_min and refined to
+    ds_max starts with every face at dA/dA0 = 1 and every edge at ds/ds0 = 1:
+    its state at rest is its reference."""
+    from runs import read_checkpoint, checkpoint_folder
+    params = at_rest(tmp_path)
+    run_app(PARTRAC, params, BASE, "Nrw_max=100000 init_mode=sheet_xy La=0.5 Lb=0.37",
+            "ds_init=0.02 ds_min=0.05 ds_max=0.06", timeout=120)
+    g = dump_at(tmp_path / "c", 0.0)
+    assert len(g["dA"]) > 100
+    assert np.allclose(g["dA"] / g["dA0"], 1, rtol=0, atol=1e-12)
+    ck = read_checkpoint(checkpoint_folder(tmp_path / "c"))
+    x, e = ck["points"], ck["edges"].astype(np.int64)
+    ds = np.linalg.norm(x[e[:, 0]] - x[e[:, 1]], axis=1)
+    assert np.allclose(ds / ck["dl0"][:, 0], 1, rtol=0, atol=1e-12)

@@ -25,50 +25,14 @@
 #include "Triangle.hpp"
 #include "interpolators.hpp"
 #include "case_dir.hpp"
+#include "dolfin_cases.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
 
 namespace {
 
-// Stamp k of the velocity, of period one in every direction, so a vertex on a
-// max face and its master carry one value in a constrained space
-Vector3d stamp_u(const Vector3d& x, const int k, const Uint gdim){
-  Vector3d u = Vector3d::Zero();
-  for (Uint d = 0; d < gdim; ++d)
-    u[d] = std::sin(2.*M_PI*x[(d + Uint(k)) % gdim] + 0.4*double(d)) + 0.5 + double(k);
-  return u;
-}
-
-double stamp_p(const Vector3d& x, const int k){
-  return std::cos(2.*M_PI*x[k == 0 ? 0 : 1] + 0.2) - 0.75*double(k);
-}
-
-class UExpr : public dolfin::Expression {
-public:
-  UExpr(const Uint gdim, const int k) : dolfin::Expression(gdim), gdim_(gdim), k_(k) {}
-  void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
-    Vector3d xx = Vector3d::Zero();
-    for (Uint d = 0; d < gdim_; ++d) xx[d] = x[d];
-    const Vector3d u = stamp_u(xx, k_, gdim_);
-    for (Uint d = 0; d < gdim_; ++d) v[d] = u[d];
-  }
-private:
-  Uint gdim_;
-  int k_;
-};
-
-class PExpr : public dolfin::Expression {
-public:
-  PExpr(const Uint gdim, const int k) : gdim_(gdim), k_(k) {}
-  void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
-    Vector3d xx = Vector3d::Zero();
-    for (Uint d = 0; d < gdim_; ++d) xx[d] = x[d];
-    v[0] = stamp_p(xx, k_);
-  }
-private:
-  Uint gdim_;
-  int k_;
-};
+// Stamp k lifted by 1/2 + k
+const Stamps stamps{0.5, 1.};
 
 // A velocity that vanishes on the boundary of the unit box, so every wall
 // vertex is at rest and the near-wall rule applies
@@ -92,9 +56,7 @@ void write_xdmf_case(const CaseDir& c, const std::size_t n, const bool periodic,
                      const bool at_rest_on_walls = false){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
-  std::shared_ptr<dolfin::Mesh> mesh;
-  if constexpr (nv == 3) mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitSquareMesh(n, n));
-  else                   mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitCubeMesh(n, n, n));
+  const auto mesh = unit_box<Cell>(n);
   const std::vector<bool> per(3, periodic);
   std::shared_ptr<const dolfin::SubDomain> pbc;
   if (periodic)
@@ -117,10 +79,10 @@ void write_xdmf_case(const CaseDir& c, const std::size_t n, const bool periodic,
       u.interpolate(ue);
     }
     else {
-      const UExpr ue(gdim, k);
+      const StampU ue(stamps, gdim, k);
       u.interpolate(ue);
     }
-    const PExpr pe(gdim, k);
+    const StampP pe(stamps, gdim, k);
     p.interpolate(pe);
     xf_u.write(u, double(k));
     xf_p.write(p, double(k));
@@ -134,33 +96,6 @@ void write_xdmf_case(const CaseDir& c, const std::size_t n, const bool periodic,
     << "\nperiodic_y=" << (periodic ? "true" : "false")
     << "\nperiodic_z=" << (periodic && gdim == 3 ? "true" : "false")
     << "\nwall_upgrade=" << (wall_upgrade ? "true" : "false") << "\n";
-}
-
-// The cell centroids of the case's mesh, and how many sit in a cell with a
-// vertex on a max face: those cells read an image vertex
-template<int NV>
-std::vector<Vector3d> centroids(const CaseDir& c, std::size_t& touching){
-  constexpr Uint gdim = NV - 1;
-  const partrac::H5Id file = partrac::h5_open_read((c.path / "u.h5").string());
-  std::vector<std::uint32_t> topo;
-  std::vector<double> coords;
-  partrac::h5_read(file, "Mesh/0/mesh/topology", topo);
-  partrac::h5_read(file, "Mesh/0/mesh/geometry", coords, gdim);
-  const std::size_t ncells = topo.size()/NV;
-  std::vector<Vector3d> out(ncells, Vector3d::Zero());
-  touching = 0;
-  for (std::size_t i = 0; i < ncells; ++i){
-    bool on_face = false;
-    for (int k = 0; k < NV; ++k){
-      const double* v = coords.data() + std::size_t(topo[i*NV + k])*gdim;
-      for (Uint d = 0; d < gdim; ++d){
-        out[i][d] += v[d]/double(NV);
-        if (v[d] > 1. - 1e-12) on_face = true;
-      }
-    }
-    if (on_face) ++touching;
-  }
-  return out;
 }
 
 // The loader's velocity at every cell centroid, against the P1 value built
@@ -177,59 +112,14 @@ void check_against_stored(XDMFInterpol<Cell>& intp, const CaseDir& c, const int 
   partrac::h5_read(file, "Mesh/0/mesh/geometry", coords, gdim);
   // dolfin names a stamp's values by the order it wrote them
   partrac::h5_read(file, "VisualisationVector/" + std::to_string(stamp), vals, gdim);
-  const std::size_t ncells = topo.size()/nv;
-
-  intp.update(double(stamp));
-  for (std::size_t i = 0; i < ncells; ++i){
+  check_centroids<false>(intp, topo, coords, double(stamp), [&](const std::size_t i, const auto& N){
     const std::uint32_t* row = topo.data() + i*nv;
-    const double* v[4] = {nullptr, nullptr, nullptr, nullptr};
-    for (int k = 0; k < nv; ++k) v[k] = coords.data() + std::size_t(row[k])*gdim;
-    Cell cell;
-    if constexpr (nv == 4) cell = Cell(v[0], v[1], v[2], v[3]);
-    else                   cell = Cell(v[0], v[1], v[2]);
-    Vector3d x = Vector3d::Zero();
-    for (int k = 0; k < nv; ++k)
-      for (Uint d = 0; d < gdim; ++d) x[d] += v[k][d]/double(nv);
-    std::array<double, 4> bary;
-    cell.contains(x, bary);
-    std::array<double, Cell::n_dofs_max> N;
-    if constexpr (nv == 3) cell.linearbasis(bary[0], bary[1], bary[2], N.data());
-    else                   cell.linearbasis(bary[0], bary[1], bary[2], bary[3], N.data());
     Vector3d want = Vector3d::Zero();
     for (Uint d = 0; d < gdim; ++d)
       for (int k = 0; k < nv; ++k)
         want[d] += N[k]*vals[std::size_t(row[k])*gdim + d];
-
-    CellPos pos;
-    REQUIRE(intp.locate(x, double(stamp), pos));
-    PointValues got(1.);
-    intp.evaluate(x, double(stamp), pos, got);
-    for (Uint d = 0; d < gdim; ++d) REQUIRE(got.get_u()[d] == want[d]);
-  }
-}
-
-// The loader's velocity and pressure at the points, against the expressions
-// the stamps were written from; the field is linear in time between them
-template<typename Cell>
-void check_two_stamps(XDMFInterpol<Cell>& intp, const std::vector<Vector3d>& pts,
-                      const double tol_u, const double tol_p){
-  constexpr Uint gdim = Cell::n_verts - 1;
-  for (const double t : {0., 0.4, 1.}){
-    intp.update(t);
-    std::size_t inside = 0;
-    for (const Vector3d& x : pts){
-      CellPos pos;
-      if (!intp.locate(x, t, pos)) continue;
-      PointValues got(1.);
-      intp.evaluate(x, t, pos, got);
-      const Vector3d want = (1. - t)*stamp_u(x, 0, gdim) + t*stamp_u(x, 1, gdim);
-      for (Uint d = 0; d < gdim; ++d)
-        REQUIRE(std::abs(got.get_u()[d] - want[d]) < tol_u);
-      REQUIRE(std::abs(got.get_p() - ((1. - t)*stamp_p(x, 0) + t*stamp_p(x, 1))) < tol_p);
-      ++inside;
-    }
-    REQUIRE(inside == pts.size());
-  }
+    return want;
+  });
 }
 
 }  // namespace
@@ -261,7 +151,7 @@ TEST_CASE("Both near-wall settings load, and differ only at a wall at rest", "[x
     CaseDir n("tri_nowall_none");
     write_xdmf_case<Triangle>(n, 8, false, false, 1);
     std::size_t touching = 0;
-    const std::vector<Vector3d> pts = centroids<3>(c, touching);
+    const std::vector<Vector3d> pts = centroids<3>(c, touching, true);
     XDMFTriangleInterpol edge(c.params());
     XDMFTriangleInterpol none(n.params());
     edge.update(0.);
@@ -311,19 +201,19 @@ TEST_CASE("A later XDMF stamp reaches the cells on a periodic face", "[xdmf_load
     CaseDir c("per_tri");
     write_xdmf_case<Triangle>(c, 16, true, true, 2);
     std::size_t touching = 0;
-    const std::vector<Vector3d> pts = centroids<3>(c, touching);
+    const std::vector<Vector3d> pts = centroids<3>(c, touching, true);
     REQUIRE(touching > 0);
     XDMFTriangleInterpol intp(c.params());
-    check_two_stamps(intp, pts, 5e-2, 5e-2);
+    check_two_stamps(intp, stamps, pts, 5e-2, 5e-2);
   }
   SECTION("tets"){
     CaseDir c("per_tet");
     write_xdmf_case<Tet>(c, 8, true, true, 2);
     std::size_t touching = 0;
-    const std::vector<Vector3d> pts = centroids<4>(c, touching);
+    const std::vector<Vector3d> pts = centroids<4>(c, touching, true);
     REQUIRE(touching > 0);
     XDMFTetInterpol intp(c.params());
-    check_two_stamps(intp, pts, 1.5e-1, 1.5e-1);
+    check_two_stamps(intp, stamps, pts, 1.5e-1, 1.5e-1);
   }
 }
 
