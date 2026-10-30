@@ -156,10 +156,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests need
-        # gmsh for the near-wall cases; numpy held at the image's
+        # gmsh and the X libraries its wheel loads, for the near-wall cases; numpy held at the image's
         run: |
-          apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py scipy pytest-xdist==3.8.0 gmsh "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+          apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa libx11-6 libxext6 libxfixes3 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+          python3 -m pip install --no-cache-dir h5py scipy pytest-xdist==3.8.0 gmsh==4.15.2 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
@@ -242,10 +242,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Tools the tests and the report need
-        # curl for codecov-action; gmsh for the near-wall cases; numpy held at the image's
+        # curl for codecov-action; gmsh and its X libraries for the near-wall cases; numpy held at the image's
         run: |
-          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa
-          python3 -m pip install --no-cache-dir h5py scipy gcovr==8.6 pytest-xdist==3.8.0 gmsh "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+          apt-get update && apt-get install -y --no-install-recommends curl libgl1 libglu1-mesa libx11-6 libxext6 libxfixes3 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+          python3 -m pip install --no-cache-dir h5py scipy gcovr==8.6 pytest-xdist==3.8.0 gmsh==4.15.2 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
       - name: Configure
         run: |
           cmake -S . -B build-cov -G Ninja \
