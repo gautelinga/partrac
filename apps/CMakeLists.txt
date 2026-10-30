@@ -1,20 +1,25 @@
-option(BUILD_APP_INTERPOL "Build interpol app" TRUE)
-option(BUILD_APP_FILAMENTS "Build filaments app" TRUE)
-option(BUILD_APP_WEIGHTED_WALKERS "Build weighted_walkers app" TRUE)
-option(BUILD_APP_SPATIAL "Build spatial app" TRUE)
+# PARTRAC_BUILD_<app>; an old BUILD_APP_<app> sets the default
+foreach(app INTERPOL FILAMENTS WEIGHTED_WALKERS SPATIAL)
+  set(default ON)
+  if (DEFINED BUILD_APP_${app})
+    set(default ${BUILD_APP_${app}})
+  endif()
+  string(TOLOWER ${app} lower)
+  option(PARTRAC_BUILD_${app} "Build the ${lower} app(s)." ${default})
+endforeach()
 
 partrac_add_app(partrac SOURCE partrac/partrac.cpp)
-if (BUILD_APP_INTERPOL)
+if (PARTRAC_BUILD_INTERPOL)
     partrac_add_app(interpol SOURCE interpol/interpol.cpp)
 endif()
-if (BUILD_APP_FILAMENTS)
+if (PARTRAC_BUILD_FILAMENTS)
     partrac_add_app(filaments SOURCE filaments/filaments.cpp)
+    # Retired filaments names
+    partrac_add_wrapper(filaments_triangleRK4 TARGET filaments
+      ARGS mode=triangle scheme=RK4 resize=doublings resize_target=ds_init outside=reinject)
+    partrac_add_wrapper(filaments_felbmRK4 TARGET filaments
+      ARGS mode=felbm scheme=RK4 resize=doublings resize_target=ds_init outside=reinject)
 endif()
-# Retired filaments names
-partrac_add_wrapper(filaments_triangleRK4 TARGET filaments
-  ARGS mode=triangle scheme=RK4 resize=doublings resize_target=ds_init outside=reinject)
-partrac_add_wrapper(filaments_felbmRK4 TARGET filaments
-  ARGS mode=felbm scheme=RK4 resize=doublings resize_target=ds_init outside=reinject)
 # Tracer apps and retired names
 partrac_add_app(tracers SOURCE tracers/tracers.cpp)
 partrac_add_wrapper(tracers_triangleRK4 TARGET tracers
@@ -32,7 +37,7 @@ partrac_add_wrapper(tracervectors_triangleRK4 TARGET tracervectors
 partrac_add_app(tracertensors SOURCE tracertensors/tracertensors.cpp)
 partrac_add_wrapper(tracertensors_triangleRK4 TARGET tracertensors
   ARGS mode=tet scheme=RK4 outside=reinject)
-if (BUILD_APP_SPATIAL)
+if (PARTRAC_BUILD_SPATIAL)
     # Marching apps and retired name
     partrac_add_app(static_space_stepper
       SOURCE spatial/static_space_stepper.cpp)
@@ -42,7 +47,7 @@ if (BUILD_APP_SPATIAL)
       ARGS mode=triangle
       RENAME Lt=Ln COPY dt=dxn DROP T ds_max)
 endif()
-if (BUILD_APP_WEIGHTED_WALKERS)
+if (PARTRAC_BUILD_WEIGHTED_WALKERS)
     partrac_add_app(weighted_walkers
       SOURCE weighted_walkers/weighted_walkers.cpp)
 endif()

@@ -78,9 +78,7 @@ public:
   // values to tell uniform from varying and whether zero wins at a node
   LeastSquares(const Geometry& g, const openfoam_split::SplitData& s, const openfoam_load::FieldData& f,
                LeastSquaresReport* report = nullptr, double rank_tol = default_rank_tol);
-  // The split's node values, the components comps of each, node after node;
-  // a field whose patches are data where the first stamp's were not, or the
-  // other way, is refused
+  // The split's node values, comps per node; a stamp unlike the first refused
   void apply(const openfoam_load::FieldData& f, const std::vector<int>& comps,
              std::vector<double>& out) const;
   std::size_t nnodes() const { return kind_.size(); }
@@ -107,6 +105,12 @@ private:
   // A mirrored entry's reflection of a vector, into mirror_table_; empty without any
   std::vector<std::uint32_t> mirror_;
   std::vector<std::array<double, 9>> mirror_table_;
+  // Shared fixed rows: entries and zero flags at load
+  std::vector<std::int32_t> zero_patch_;
+  std::vector<char> zero_at_load_;
+  std::vector<std::size_t> zero_start_;
+  std::vector<std::uint32_t> zero_col_;
+  std::vector<double> zero_coef_;
 };
 
 class InverseDistance {

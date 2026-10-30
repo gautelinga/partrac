@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 #include "Error.hpp"
@@ -371,7 +372,7 @@ void boundary_facets(const CellPieces<NV-1>& pieces, const CaseData& c,
 void split_3d(const CaseData& c, const int tets_per_hex, SplitData& s){
   const std::size_t np = c.npoints(), nc = std::size_t(c.ncells);
   const CellFaces cf = cell_faces(c);
-  const std::vector<std::int32_t> base = face_bases(c, &s.base_failures);
+  const std::vector<std::int32_t> base = face_bases(c, &s.base_failures, nullptr, &s.first_base_failure);
   const FaceTris ft = face_triangles(c, base);
   const std::vector<std::int32_t> master = cyclic_masters(c);
   const Geometry g{c};
@@ -451,6 +452,7 @@ void split_3d(const CaseData& c, const int tets_per_hex, SplitData& s){
     }
   }
   s.invalid_cells = std::size_t(std::count(bad.begin(), bad.end(), 1));
+  if (s.invalid_cells) s.first_invalid_cell = std::find(bad.begin(), bad.end(), 1) - bad.begin();
 
   // The boundary faces' triangles, by their points
   const std::vector<std::int32_t> fp = face_patches(c);
@@ -498,7 +500,7 @@ void split_2d(const CaseData& c, const int tets_per_hex, SplitData& s){
 
   std::vector<char> is_front(c.nfaces(), 0);
   for (const std::int64_t f : front_of) if (f >= 0) is_front[std::size_t(f)] = 1;
-  const std::vector<std::int32_t> base = face_bases(c, &s.base_failures, &is_front);
+  const std::vector<std::int32_t> base = face_bases(c, &s.base_failures, &is_front, &s.first_base_failure);
 
   // Each cell's front polygon, counterclockwise, and its triangles
   using Tri = std::array<std::uint32_t, 3>;
@@ -604,6 +606,7 @@ void split_2d(const CaseData& c, const int tets_per_hex, SplitData& s){
     }
   }
   s.invalid_cells = std::size_t(std::count(bad.begin(), bad.end(), 1));
+  if (s.invalid_cells) s.first_invalid_cell = std::find(bad.begin(), bad.end(), 1) - bad.begin();
 
   // The side faces by their two front points
   const auto pieces = by_cell<2>(c, [&](auto&& emit){
@@ -627,10 +630,12 @@ void split_2d(const CaseData& c, const int tets_per_hex, SplitData& s){
 
 }  // namespace
 
-std::vector<std::int32_t> face_bases(const CaseData& c, std::size_t* failures, const std::vector<char>* only){
+std::vector<std::int32_t> face_bases(const CaseData& c, std::size_t* failures, const std::vector<char>* only,
+                                     std::int64_t* first_failure){
   const std::size_t nf = c.nfaces(), ni = std::size_t(c.n_internal);
   std::vector<std::int32_t> base(nf, -1);
   std::size_t failed = 0;
+  std::int64_t first = std::numeric_limits<std::int64_t>::max();
   const std::vector<std::int32_t> fp = face_patches(c);
   // The centre across a cyclic face, in this side's frame
   const auto across = [&](const std::size_t f){
@@ -640,7 +645,7 @@ std::vector<std::int32_t> face_bases(const CaseData& c, std::size_t* failures, c
     for (std::size_t d = 0; d < 3; ++d) x[d] -= p.separation[d];
     return x;
   };
-#pragma omp parallel for schedule(static) reduction(+:failed)
+#pragma omp parallel for schedule(static) reduction(+:failed) reduction(min:first)
   for (std::size_t f = 0; f < nf; ++f){
     if (only && !(*only)[f]) continue;
     const FaceRef F = face(c, f);
@@ -674,6 +679,7 @@ std::vector<std::int32_t> face_bases(const CaseData& c, std::size_t* failures, c
     if (base[f] < 0){
       base[f] = std::int32_t(best);
       ++failed;
+      first = std::min(first, std::int64_t(f));
     }
   }
   // A cyclic's other side takes the owner side's base, reindexed
@@ -688,6 +694,7 @@ std::vector<std::int32_t> face_bases(const CaseData& c, std::size_t* failures, c
     }
   }
   if (failures) *failures = failed;
+  if (first_failure) *first_failure = failed ? first : -1;
   return base;
 }
 

@@ -60,7 +60,6 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   req.include_pressure = include_pressure;
   req.n_dofs_max = Cell::n_dofs_max;
   req.periodic = periodic;
-  req.periodic_tol = periodic_tol;
   simplex_load::request_from_params(req, dolfin_params, get_folder());
   const std::string& u_field = req.u_field;
   const std::string& p_field = req.p_field;
@@ -106,7 +105,7 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   if (wall_upgrade_){
     upgrade_p2_ = near_wall::velocity_p2<Cell>(ncoeffs_u);
     near_wall::build_tables<Cell>(topo_, coords_, ncells_, nverts_, dim, periodic, x_min, x_max,
-                                  periodic_tol, facet_neigh_, upgrade_p2_, vclass_, wall_index_,
+                                  periodic_tol(), facet_neigh_, upgrade_p2_, vclass_, wall_index_,
                                   wall_cells_, upgrade_, verbose);
     rest_masks();
     partrac::phase("wall edges");

@@ -41,17 +41,23 @@ void block_scan(std::vector<std::uint32_t>& a){
   std::vector<std::uint32_t> base(std::size_t(nt) + 1, 0);
 #pragma omp parallel num_threads(nt)
   {
-    const int t = omp_get_thread_num();
-    const std::size_t lo = 1 + (n*std::size_t(t))/std::size_t(nt);
-    const std::size_t hi = 1 + (n*std::size_t(t+1))/std::size_t(nt);
-    std::uint32_t run = 0;
-    for (std::size_t i = lo; i < hi; ++i) run += a[i];
-    base[std::size_t(t) + 1] = run;
+    const int team = omp_get_num_threads();
+    for (int t = omp_get_thread_num(); t < nt; t += team){
+      const std::size_t lo = 1 + (n*std::size_t(t))/std::size_t(nt);
+      const std::size_t hi = 1 + (n*std::size_t(t+1))/std::size_t(nt);
+      std::uint32_t run = 0;
+      for (std::size_t i = lo; i < hi; ++i) run += a[i];
+      base[std::size_t(t) + 1] = run;
+    }
 #pragma omp barrier
 #pragma omp single
     for (int u = 0; u < nt; ++u) base[std::size_t(u) + 1] += base[std::size_t(u)];
-    std::uint32_t acc = base[std::size_t(t)];
-    for (std::size_t i = lo; i < hi; ++i){ acc += a[i]; a[i] = acc; }
+    for (int t = omp_get_thread_num(); t < nt; t += team){
+      const std::size_t lo = 1 + (n*std::size_t(t))/std::size_t(nt);
+      const std::size_t hi = 1 + (n*std::size_t(t+1))/std::size_t(nt);
+      std::uint32_t acc = base[std::size_t(t)];
+      for (std::size_t i = lo; i < hi; ++i){ acc += a[i]; a[i] = acc; }
+    }
   }
 }
 
@@ -65,6 +71,15 @@ void facet_key(const std::uint32_t* row, const int k, std::uint64_t& key, std::u
   std::sort(w.begin(), w.end());
   key = (std::uint64_t(w[0]) << 32) | w[1];
   tail = NV > 3 ? w[NV-2] : 0;
+}
+
+// Refuse a mesh not periodic along a
+[[noreturn]] void unpaired(const Uint a, const std::size_t n, const char* what,
+                           const Vector3d& example, const double tol){
+  const char axis = "xyz"[a];
+  partrac::fail("periodic_", axis, ": ", n, " ", what, " on the ", axis,
+                " faces have no image within ", tol, " on the other face, one at (", example[0],
+                ", ", example[1], ", ", example[2], "): the mesh is not periodic along ", axis);
 }
 
 }  // namespace
@@ -109,12 +124,14 @@ void sort_by_key(std::vector<std::uint64_t>& key, std::vector<std::uint32_t>& pa
     if (single) continue;
 #pragma omp parallel
     {
-      const int t = omp_get_thread_num();
-      const std::size_t lo = n*std::size_t(t)/std::size_t(nt);
-      const std::size_t hi = n*std::size_t(t+1)/std::size_t(nt);
-      std::size_t* c = off.data() + std::size_t(t)*n_bins;
-      for (int b = 0; b < n_bins; ++b) c[b] = 0;
-      for (std::size_t i = lo; i < hi; ++i) ++c[(src_k[i] >> (8*d)) & 0xff];
+      const int team = omp_get_num_threads();
+      for (int t = omp_get_thread_num(); t < nt; t += team){
+        const std::size_t lo = n*std::size_t(t)/std::size_t(nt);
+        const std::size_t hi = n*std::size_t(t+1)/std::size_t(nt);
+        std::size_t* c = off.data() + std::size_t(t)*n_bins;
+        for (int b = 0; b < n_bins; ++b) c[b] = 0;
+        for (std::size_t i = lo; i < hi; ++i) ++c[(src_k[i] >> (8*d)) & 0xff];
+      }
 #pragma omp barrier
 #pragma omp single
       {
@@ -127,10 +144,15 @@ void sort_by_key(std::vector<std::uint64_t>& key, std::vector<std::uint32_t>& pa
             run += cnt;
           }
       }
-      for (std::size_t i = lo; i < hi; ++i){
-        const std::size_t o = c[(src_k[i] >> (8*d)) & 0xff]++;
-        dst_k[o] = src_k[i];
-        dst_p[o] = src_p[i];
+      for (int t = omp_get_thread_num(); t < nt; t += team){
+        const std::size_t lo = n*std::size_t(t)/std::size_t(nt);
+        const std::size_t hi = n*std::size_t(t+1)/std::size_t(nt);
+        std::size_t* c = off.data() + std::size_t(t)*n_bins;
+        for (std::size_t i = lo; i < hi; ++i){
+          const std::size_t o = c[(src_k[i] >> (8*d)) & 0xff]++;
+          dst_k[o] = src_k[i];
+          dst_p[o] = src_p[i];
+        }
       }
     }
     std::swap(src_k, dst_k);
@@ -179,8 +201,7 @@ std::size_t build_edge_table(const std::vector<std::uint32_t>& topo, const std::
   const int nt = omp_get_max_threads();
   std::vector<std::size_t> counts(std::size_t(nt) + 1, 0);
 #pragma omp parallel
-  {
-    const int t = omp_get_thread_num();
+  for (int t = omp_get_thread_num(); t < nt; t += omp_get_num_threads()){
     std::size_t lo, hi;
     thread_range(key, t, nt, lo, hi);
     std::size_t c = 0;
@@ -191,8 +212,7 @@ std::size_t build_edge_table(const std::vector<std::uint32_t>& topo, const std::
   for (int t = 0; t < nt; ++t) counts[std::size_t(t) + 1] += counts[std::size_t(t)];
   check_entry_count(counts[std::size_t(nt)], "edge numbering");
 #pragma omp parallel
-  {
-    const int t = omp_get_thread_num();
+  for (int t = omp_get_thread_num(); t < nt; t += omp_get_num_threads()){
     std::size_t lo, hi;
     thread_range(key, t, nt, lo, hi);
     std::uint32_t id = std::uint32_t(counts[std::size_t(t)]);
@@ -385,8 +405,7 @@ void build_facet_table(const std::vector<std::uint32_t>& topo, const std::size_t
   std::vector<std::size_t> bad_slot(std::size_t(nt), 0);
   std::vector<char> bad(std::size_t(nt), 0);
 #pragma omp parallel
-  {
-    const int t = omp_get_thread_num();
+  for (int t = omp_get_thread_num(); t < nt; t += omp_get_num_threads()){
     std::size_t lo, hi;
     thread_range(key, t, nt, lo, hi);
     std::vector<std::pair<std::uint32_t, std::uint32_t>> grp;   // (third vertex, slot)
@@ -470,8 +489,9 @@ void match_periodic_facets(std::vector<std::int32_t>& across,
     }
   }
   // Match within a sorted window along the next axis
-  std::size_t unmatched = 0;
   for (Uint a = 0; a < dim; ++a){
+    std::size_t unmatched = 0;
+    Vector3d example = Vector3d::Zero();
     const Uint b = (a + 1) % dim;
     auto& h = hi[a];
     std::sort(h.begin(), h.end(), [b](const auto& p, const auto& q){ return p.first[b] < q.first[b]; });
@@ -490,12 +510,16 @@ void match_periodic_facets(std::vector<std::int32_t>& across,
           break;
         }
       }
-      if (!matched) ++unmatched;
+      if (!matched && unmatched++ == 0){
+        example = l.first;
+        example[a] = x_min[a];
+      }
     }
-    unmatched += std::count(h_matched.begin(), h_matched.end(), false);
+    for (std::size_t k = 0; k < h.size(); ++k)
+      if (!h_matched[k] && unmatched++ == 0) example = h[k].first;
+    if (unmatched)
+      unpaired(a, unmatched, "facets", example, tol);
   }
-  if (unmatched)
-    std::cout << unmatched << " periodic facets have no partner and reflect as walls" << std::endl;
 }
 
 std::vector<std::uint32_t> match_periodic_vertices(const std::vector<double>& coords,
@@ -517,9 +541,10 @@ std::vector<std::uint32_t> match_periodic_vertices(const std::vector<double>& co
   // on; a corner vertex reaches its master through the chain of links
   std::vector<std::uint32_t> link(nverts);
   for (std::size_t v = 0; v < nverts; ++v) link[v] = std::uint32_t(v);
-  std::size_t unmatched = 0;
   for (Uint a = 0; a < gdim; ++a){
     if (!periodic[a]) continue;
+    std::size_t unmatched = 0;
+    Vector3d example = Vector3d::Zero();
     const Uint b = (a + 1) % gdim;
     std::vector<std::pair<Vector3d, std::size_t>> lo, hi;
     for (std::size_t v = 0; v < nverts; ++v){
@@ -545,12 +570,14 @@ std::vector<std::uint32_t> match_periodic_vertices(const std::vector<double>& co
           break;
         }
       }
-      if (!matched) ++unmatched;
+      if (!matched && unmatched++ == 0){
+        example = h.first;
+        example[a] = x_max[a];
+      }
     }
+    if (unmatched)
+      unpaired(a, unmatched, "vertices", example, tol);
   }
-  if (unmatched)
-    std::cout << unmatched << " vertices on a periodic face have no image and keep their own value"
-              << std::endl;
   for (std::size_t v = 0; v < nverts; ++v){
     std::uint32_t m = std::uint32_t(v);
     for (std::size_t step = 0; step <= gdim && link[m] != m; ++step) m = link[m];

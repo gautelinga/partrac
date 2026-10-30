@@ -34,6 +34,7 @@ struct SplitData {
   // What the split did
   std::size_t fan_cells = 0, five_tet_hexes = 0, fallback = 0;
   std::size_t invalid_cells = 0, invalid_simplices = 0, base_failures = 0;
+  std::int64_t first_invalid_cell = -1, first_base_failure = -1;   // a cell, a face
   std::size_t nsimplices() const { return cell_of.size(); }
   std::size_t nnodes() const { return node_kind.size(); }
 };
@@ -41,11 +42,10 @@ struct SplitData {
 // The split of a case, W12 or W6; a case with an empty pair gives triangles
 SplitData split(const openfoam_load::CaseData& c, int tets_per_hex);
 
-// Each face's base point by findFaceBasePts' rule; where no base is good the
-// best, counted in failures; only the faces marked in only, if given, the
-// rest -1
+// Face base points by findFaceBasePts; failures counted, the first kept
 std::vector<std::int32_t> face_bases(const openfoam_load::CaseData& c, std::size_t* failures = nullptr,
-                                     const std::vector<char>* only = nullptr);
+                                     const std::vector<char>* only = nullptr,
+                                     std::int64_t* first_failure = nullptr);
 
 // The smallest cyclic image of every mesh point, the point itself without one
 std::vector<std::int32_t> cyclic_masters(const openfoam_load::CaseData& c);

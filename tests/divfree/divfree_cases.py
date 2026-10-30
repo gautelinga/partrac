@@ -4,14 +4,19 @@ Importing this module imports the cleaner, which needs petsc4py and mpi4py:
 without them it skips the importing test module, or fails it under
 PARTRAC_REQUIRE_MPI."""
 
+import contextlib
 import functools
 import glob
+import importlib
+import io
 import itertools
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import traceback
 
 import numpy as np
 import pytest
@@ -369,6 +374,29 @@ def pocket_case(folder, dim, kind):
     return write_case(folder, X, cells, [U, 0.5 * U], per, stamps=["0", "1"])
 
 
+def two_stamp_channel(dim):
+    """The 2D or 3D channel with the smooth field and half of it as two stamps
+    and a phase field of one and of two: (X, cells, periodic, fields, phi)."""
+    X, cells = channel2d(6) if dim == 2 else channel3d(3)
+    per = [True] * (dim - 1) + [False]
+    t = D.Topo(X, cells, per)
+    fields = [smooth_noslip(t.node_x), 0.5 * smooth_noslip(t.node_x)]
+    phi = [np.ones((t.nnodes, 1)), 2 * np.ones((t.nnodes, 1))]
+    return X, cells, per, fields, phi
+
+
+def each_case(names, check):
+    """check(name) for every case, every failure collected and named, so that
+    one case's failure hides no other's."""
+    bad = []
+    for name in names:
+        try:
+            check(name)
+        except AssertionError as exc:
+            bad.append("%s: %s" % (name, exc))
+    assert not bad, "\n".join(bad)
+
+
 NUMBER = re.compile(r"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 # what legitimately differs with the rank count: the rank count, times, the
 # iteration path of the solve, the route and the output folder
@@ -442,17 +470,26 @@ def same_output(a, b, scale, bound=1e-12):
 # ------------------------------------------------------------ the apps and MPI
 
 
-@functools.lru_cache(maxsize=None)
-def mpi_launcher():
-    """The first launcher on the path that starts one job of two ranks for
-    mpi4py, or None. A launcher from another MPI than mpi4py's starts
-    independent one-rank processes instead, which each clean the whole case."""
+def find_launcher():
+    """The first launcher that starts one job of two ranks for mpi4py, or None:
+    the one beside mpi4py's own compiler wrapper first, then those on the path.
+    A launcher from another MPI than mpi4py's starts independent one-rank
+    processes instead, which each clean the whole case."""
+    import mpi4py
+    names = ("mpiexec", "mpirun", "mpiexec.mpich", "mpirun.mpich",
+             "mpiexec.openmpi", "mpirun.openmpi")
+    tried, found = set(), []
+    for cc in mpi4py.get_config().values():
+        cc = shutil.which(cc)
+        if cc is not None:
+            found += [os.path.join(os.path.dirname(cc), n) for n in names[:2]]
+    found += [shutil.which(n) for n in names]
     probe = "from mpi4py import MPI; print(MPI.COMM_WORLD.size)"
-    for name in ("mpiexec", "mpirun", "mpiexec.mpich", "mpirun.mpich",
-                 "mpiexec.openmpi", "mpirun.openmpi"):
-        launcher = shutil.which(name)
-        if launcher is None:
+    for launcher in found:
+        if launcher is None or not os.access(launcher, os.X_OK) \
+                or os.path.realpath(launcher) in tried:
             continue
+        tried.add(os.path.realpath(launcher))
         try:
             r = subprocess.run([launcher, "-n", "2", sys.executable, "-c", probe],
                                capture_output=True, text=True, timeout=60,
@@ -464,14 +501,29 @@ def mpi_launcher():
     return None
 
 
+@functools.lru_cache(maxsize=None)
+def mpi_launcher():
+    """find_launcher()'s answer, probed once a process."""
+    return find_launcher()
+
+
+def mpi_or_skip(reason):
+    """A skip for want of MPI, a failure under PARTRAC_REQUIRE_MPI, where the
+    job is meant to have it."""
+    if os.environ.get("PARTRAC_REQUIRE_MPI"):
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
 def launcher_or_skip():
-    """mpi_launcher(), or the test skipped where there is none, and failed there
-    with PARTRAC_REQUIRE_MPI set."""
+    """mpi_launcher(), or the test skipped: jobs of several ranks run on
+    request (pytest --mpi, PARTRAC_MPI=1 or PARTRAC_REQUIRE_MPI=1) where a
+    launcher starts one, and fail with PARTRAC_REQUIRE_MPI set where none does."""
+    if not (os.environ.get("PARTRAC_MPI") or os.environ.get("PARTRAC_REQUIRE_MPI")):
+        pytest.skip("jobs of several ranks run with pytest --mpi")
     launcher = mpi_launcher()
     if launcher is None:
-        if os.environ.get("PARTRAC_REQUIRE_MPI"):
-            pytest.fail("no launcher here starts an MPI job for mpi4py")
-        pytest.skip("no launcher here starts an MPI job for mpi4py")
+        mpi_or_skip("no launcher here starts an MPI job for mpi4py")
     return launcher
 
 
@@ -506,6 +558,78 @@ def mpi_clean(cfg, out, ranks, extra=(), ok=True, timeout=900):
     if ok:
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     return r
+
+
+def one_rank_main(argv):
+    """The command line in this process, where COMM_WORLD is one rank as under
+    `mpirun -n 1`; what it printed."""
+    with contextlib.redirect_stdout(io.StringIO()) as f:
+        assert D.main([str(a) for a in argv]) == 0
+    return f.getvalue()
+
+
+def cleaner_main(*argv):
+    """A case of mpi_batch: the command line."""
+    return D.main(list(argv))
+
+
+def batch_job(module, function, path, results):
+    """In a job: function of module on the arguments of every case of the JSON
+    list [name, args] in path in turn, and {name: what each rank printed in
+    it} written to results. The first rank prints each case's name before it
+    starts, so a job that hangs names the case it was in, and what every rank
+    printed after it. A case whose function raised ends the job there, the
+    rank naming the case; one whose function returned something true on any
+    rank is named as failed and the others still run, and the job then ends
+    with 1."""
+    comm = D.MPI.COMM_WORLD
+    fn = getattr(importlib.import_module(module), function)
+    with open(path) as f:
+        cases = json.load(f)
+    said, failed = {}, []
+    for name, args in cases:
+        if comm.rank == 0:
+            print("case %s" % name, flush=True)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            try:
+                status = fn(*args)
+            except BaseException:
+                sys.stderr.write("rank %d, case %s:\n%s%s" % (comm.rank, name, out.getvalue(),
+                                                             traceback.format_exc()))
+                sys.stderr.flush()
+                comm.Abort(1)
+        said[name] = comm.gather(out.getvalue(), root=0)
+        if any(comm.allgather(bool(status))):
+            failed.append(name)
+        if comm.rank == 0:
+            sys.stdout.write("".join(said[name]))
+            if failed[-1:] == [name]:
+                print("case %s failed" % name)
+            sys.stdout.flush()
+    if comm.rank == 0:
+        with open(results, "w") as f:
+            json.dump(said, f)
+    return 1 if failed else 0
+
+
+def mpi_batch(ranks, fn, cases, folder, timeout=600, env=None):
+    """fn(*args) for every case {name: args} in turn as one job of that many
+    ranks, one start-up for them all, by batch_job's rules: {name: [what each
+    rank printed in it, by rank]}. fn is a top-level function of a module in
+    this folder, and the args are what JSON holds, paths as strings."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path, results = folder / "batch.json", folder / "said.json"
+    path.write_text(json.dumps([[name, list(args)] for name, args in cases.items()],
+                               default=str))
+    here = os.path.dirname(os.path.abspath(__file__))
+    env = dict(env or os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([os.path.dirname(here), here, env.get("PYTHONPATH", "")])
+    run = "import sys, divfree_cases as C; sys.exit(C.batch_job(*sys.argv[1:]))"
+    r = mpi_run(ranks, ["-c", run, fn.__module__, fn.__name__, path, results], timeout, env=env)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    said = json.loads(results.read_text())
+    assert sorted(said) == sorted(cases), r.stdout[-3000:]
+    return said
 
 
 def interpol_probe(params, mode, npts, int_order=1):

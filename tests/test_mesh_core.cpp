@@ -1,7 +1,10 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include "typedefs.hpp"
@@ -9,6 +12,7 @@
 #include "Interpol.hpp"
 #include "ParticleSet.hpp"
 #include "mesh.hpp"
+#include "Initializer.hpp"
 
 // This file exists partly for what it tests and partly for the fact that it
 // compiles at all: the core headers define functions in the header, and this
@@ -72,8 +76,8 @@ namespace {
 // Fluid everywhere, at rest: enough for the inside check of an insertion
 struct EverywhereInterpol final : public Interpol {
   EverywhereInterpol() : Interpol("") {}
-  double get_t_min() override { return 0.; }
-  double get_t_max() override { return 1.; }
+  double get_t_min() const override { return 0.; }
+  double get_t_max() const override { return 1.; }
   void update(const double) override {}
   void freeze(const double) override {}
   bool locate(const Vector3d&, const double, CellPos&) override { return true; }
@@ -86,8 +90,8 @@ struct EverywhereInterpol final : public Interpol {
 struct HumpInterpol final : public Interpol {
   HumpInterpol() : Interpol("") {}
   static double hump(const double x){ return 0.3*std::sin(M_PI*x); }
-  double get_t_min() override { return 0.; }
-  double get_t_max() override { return 1.; }
+  double get_t_min() const override { return 0.; }
+  double get_t_max() const override { return 1.; }
   void update(const double) override {}
   void freeze(const double) override {}
   bool locate(const Vector3d& x, const double, CellPos& pos) override {
@@ -99,7 +103,7 @@ struct HumpInterpol final : public Interpol {
   static Vector3d normal(const Vector3d& x){
     return Vector3d(0.3*M_PI*std::cos(M_PI*x[0]), -1., 0.).normalized();
   }
-  Vector3d get_boundary_normal(const Vector3d& x, int&) override { return normal(x); }
+  Vector3d get_boundary_normal(const Vector3d& x, const int) const override { return normal(x); }
   using Interpol::locate;
   using Interpol::evaluate;
 };
@@ -142,10 +146,62 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 0 );
 
   SECTION("and coarsening a straight strip keeps its length"){
-    const Uint n_rem = coarsening(m, ps, 0.75, 0.);
+    const Uint n_rem = coarsening(m, ps, 0.75, 0., 0.);
     REQUIRE( n_rem > 0 );
     REQUIRE( total_length(edges, ps) == Approx(2.0) );
   }
+}
+
+TEST_CASE("an initial remeshing stops after its passes whether or not it settles", "[mesh]") {
+  // Settles on the third pass, which changes nothing
+  int passes = 0;
+  REQUIRE( settle([&]{ return ++passes < 3; }, 100, "test") );
+  REQUIRE( passes == 3 );
+  // Never settles: stopped at the cap, saying so
+  passes = 0;
+  std::ostringstream said;
+  std::streambuf* out = std::cout.rdbuf(said.rdbuf());
+  const bool settled = settle([&]{ ++passes; return true; }, 100, "test");
+  std::cout.rdbuf(out);
+  REQUIRE( !settled );
+  REQUIRE( passes == 100 );
+  REQUIRE( said.str() == "Note: the test's remeshing stopped after 100 passes without settling\n" );
+}
+
+TEST_CASE("coarsening a strip collapses a short edge only if no neighbour grows past ds_max", "[mesh]") {
+  // 0.098, 0.01, 0.098: the middle edge collapses to its midpoint, leaving two of 0.103
+  const auto strip = [](ParticleSet& ps, Connectivity& m){
+    ps.add({{0., 0., 0.}, {0.098, 0., 0.}, {0.108, 0., 0.}, {0.206, 0., 0.}}, 0);
+    m.edges = {{{0, 1}, 0.098}, {{1, 2}, 0.01}, {{2, 3}, 0.098}};
+    compute_edge2faces(m.edge2faces, m.faces, m.edges);
+    compute_node2edges(m.node2edges, m.edges, ps.N());
+  };
+  ParticleSet guarded(std::make_shared<EverywhereInterpol>(), 8), free(std::make_shared<EverywhereInterpol>(), 8);
+  Connectivity a, b;
+  strip(guarded, a);
+  strip(free, b);
+  REQUIRE( coarsening(a, guarded, 0.05, 0.1, 0.) == 0 );
+  REQUIRE( a.edges.size() == 3 );
+  // Without a ds_max it collapses, and the edges left are longer than 0.1
+  REQUIRE( coarsening(b, free, 0.05, 0., 0.) == 1 );
+  REQUIRE( b.edges.size() == 2 );
+  for (const auto& e : b.edges)
+    REQUIRE( free.dist(e.first[0], e.first[1]) == Approx(0.103) );
+}
+
+TEST_CASE("coarsening collapses next to an edge already past ds_max if it does not lengthen it", "[mesh]") {
+  // The first edge, 0.15 > ds_max, shortens to 0.15 exactly when the short one collapses
+  ParticleSet ps(std::make_shared<EverywhereInterpol>(), 8);
+  ps.add({{0.155, 0.15, 0.}, {0.15, 0., 0.}, {0.16, 0., 0.}, {0.2, 0., 0.}}, 0);
+  Connectivity m;
+  m.edges = {{{0, 1}, 0.15}, {{1, 2}, 0.01}, {{2, 3}, 0.04}};
+  compute_edge2faces(m.edge2faces, m.faces, m.edges);
+  compute_node2edges(m.node2edges, m.edges, ps.N());
+  REQUIRE( ps.dist(0, 1) > 0.15 );
+  REQUIRE( coarsening(m, ps, 0.05, 0.1, 0.) == 1 );
+  REQUIRE( m.edges.size() == 2 );
+  for (const auto& e : m.edges)
+    REQUIRE( ps.dist(e.first[0], e.first[1]) <= 0.15 + 1e-12 );
 }
 
 TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edge, until inside", "[mesh]") {
@@ -214,6 +270,41 @@ TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {
   REQUIRE( int(ps.N()) - int(edges.size()) + int(faces.size()) == 1 );
   // The new node is the diagonal's midpoint
   REQUIRE( (ps.x(4) - Vector3d(0.5, 0.5, 0.)).norm() < 1e-14 );
+}
+
+TEST_CASE("remeshing a flat sheet keeps every face at its reference area", "[mesh]") {
+  // dA0 handed on by splits and collapses: a flat sheet at rest stays at dA/dA0 = 1
+  ParticleSet ps(std::make_shared<EverywhereInterpol>(), 100000);
+  const double La = 0.5, Lb = 0.37;
+  ps.add({{0., 0., 0.}, {La, 0., 0.}, {La, Lb, 0.}, {0., Lb, 0.}}, 0);
+  Connectivity m;
+  m.edges = {{{0, 1}, La}, {{0, 2}, std::hypot(La, Lb)}, {{1, 2}, Lb}, {{2, 3}, La}, {{3, 0}, Lb}};
+  m.faces = {{{0, 2, 1}, La*Lb/2}, {{1, 3, 4}, La*Lb/2}};
+  compute_edge2faces(m.edge2faces, m.faces, m.edges);
+  compute_node2edges(m.node2edges, m.edges, ps.N());
+  const auto at_reference = [&](const char* after){
+    INFO("after " << after);
+    double area = 0.;
+    for (Uint f = 0; f < m.faces.size(); ++f){
+      const double dA = ps.triangle_area(f, m.faces, m.edges);
+      area += dA;
+      REQUIRE( dA/m.faces[f].second == Approx(1.).epsilon(0).margin(1e-12) );
+    }
+    REQUIRE( area == Approx(La*Lb).epsilon(1e-12) );
+    // Rows sorted, as a collapse merges them
+    for (const auto& row : m.node2edges)
+      REQUIRE( std::is_sorted(row.begin(), row.end()) );
+  };
+  while (sheet_refinement(m, ps, 0.02, 0., StuckEdge::Keep, false) > 0);
+  at_reference("refining");
+  const Uint n_faces = m.faces.size();
+  REQUIRE( sheet_coarsening(m, ps, 0.05, 0.06, 0.) > 0 );
+  REQUIRE( m.faces.size() < n_faces/2 );
+  at_reference("coarsening");
+  REQUIRE( sheet_refinement(m, ps, 0.04, 0., StuckEdge::Keep, false) > 0 );
+  at_reference("refining the coarsened sheet");
+  REQUIRE( sheet_coarsening(m, ps, 0.03, 0.04, 0.) > 0 );
+  at_reference("coarsening it again");
 }
 
 TEST_CASE("a broken mesh invariant throws an internal error", "[mesh][errors]") {

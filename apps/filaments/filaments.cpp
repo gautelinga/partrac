@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Error.hpp"
+#include "wait_policy.hpp"
 #include "RunLoop.hpp"
 #include "TimeScheme.hpp"
 
@@ -51,11 +52,6 @@ static int run(int argc, char* argv[])
 
     std::cout << "Initialized FILAMENTS." << std::endl;
 
-  // Input parameters
-  if (argc < 2) {
-    std::cout << "Specify an input file." << std::endl;
-    return 1;
-  }
   partrac::Params prm = partrac::parse_or_exit(filaments_schema(), argc, argv);
 
   Run run = start_run(prm, "Filaments");
@@ -98,21 +94,26 @@ static int run(int argc, char* argv[])
       return pair_stats_columns(t, ps, mesh.edges, mesh.edge_doublings(), counters.get_declined());
     };
 
-  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double){
+  hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
     if (outside_nodes.size() == 0)
       return;
-    std::cout << "Some nodes are outside.\n";
+    if (verbose)
+      report_stuck(ps, outside_nodes, t);
     if (outside == "reinject")
       reinject_edges(run, mesh, ps, outside_nodes);
   };
+  OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};
+  totals.attach(hooks, verbose);
 
   run_loop(run, ps, mesh, scheme, output_fields, dt, hooks);
   scheme.report(std::cout);
+  totals.finish(std::cout);
 
   return 0;
 }
 
 int main(int argc, char* argv[])
 {
+  partrac::wait_passively(argv);
   return partrac::report_errors([&]{ return run(argc, argv); });
 }

@@ -10,24 +10,27 @@ the job down instead of leaving the others inside a collective; what the
 writer wrote reads back through the tool's reader and the loader.
 
 Files are compared by their datasets and attributes, never byte for byte: HDF5
-stores modification times in its object headers. The MPI tests run as jobs of
-this module (`python3 test_divfree_write.py job ...`), skip where no launcher
-starts a job of several ranks for mpi4py, and fail there with
-PARTRAC_REQUIRE_MPI set.
+stores modification times in its object headers. The MPI tests run as jobs,
+one a rank count writing every case in turn through divfree_cases.mpi_batch,
+or one a failure, this module run as a script (`python3 test_divfree_write.py
+job ...`); they skip where no launcher starts a job of several ranks for
+mpi4py, and fail there with PARTRAC_REQUIRE_MPI set.
 """
 
+import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from divfree_cases import (D, INTERPOL, channel2d, channel3d, interpol_probe,
-                           mpi_launcher, relabel_by_global_id, smooth_noslip,
-                           write_case)
+from cases import shared_dir
+from paths import need
+from divfree_cases import (D, INTERPOL, channel2d, channel3d, each_case, interpol_probe,
+                           launcher_or_skip, mpi_batch, mpi_or_skip, mpi_run, relabel_by_global_id,
+                           smooth_noslip, write_case)
 
 import divfree_write as W          # noqa: E402
 
@@ -183,32 +186,56 @@ def test_rows_of_the_wrong_width_are_refused_on_one_rank(tmp_path):
 # ------------------------------------------------------------ several ranks
 
 
-def run_job(args, ranks, timeout=300):
-    """This module as a job of that many ranks. One OpenMP thread a rank, set
-    in the job's environment alone."""
-    launcher = mpi_launcher()
-    if launcher is None:
-        if os.environ.get("PARTRAC_REQUIRE_MPI"):
-            pytest.fail("no launcher here starts an MPI job for mpi4py")
-        pytest.skip("no launcher here starts an MPI job for mpi4py")
-    env = dict(os.environ, OMP_NUM_THREADS="1",
-               PYTHONPATH=os.pathsep.join([os.path.dirname(HERE), HERE,
-                                           os.environ.get("PYTHONPATH", "")]))
-    env.pop("PARTRAC_HDF5_GATHER", None)
-    if args[0] == "gather":
-        env["PARTRAC_HDF5_GATHER"] = "1"
-    cmd = [launcher, "-n", str(ranks), sys.executable, os.path.abspath(__file__), "job"]
-    return subprocess.run(cmd + [str(a) for a in args[1:]], capture_output=True, text=True,
-                          timeout=timeout, env=env)
+def run_fail_job(route, args, ranks, timeout):
+    """This module's fail_job as a job of that many ranks on the route."""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([os.path.dirname(HERE), HERE,
+                                                      os.environ.get("PYTHONPATH", "")]))
+    env.pop(W.GATHER_ENV, None)
+    if route == "gather":
+        env[W.GATHER_ENV] = "1"
+    return mpi_run(ranks, [os.path.abspath(__file__), "job"] + list(args), timeout, env=env)
+
+
+ROUTES = ["parallel", "gather"]
+DIMS = {2: "2d", 3: "3d"}
+
+
+def write_every_case(folder, ranks):
+    """Both cases, each with its serial files, written by one job of that many
+    ranks on both routes in turn, the parallel one being the writer's own
+    choice: (the folder of the case of each dim, holding in/, ref/ and the
+    output of each route, {name: what each rank printed}); the job's own
+    files in jobs/."""
+    cases = {}
+    for dim, name in DIMS.items():
+        cfg = make_case(folder / name / "in", dim)
+        serial_output(cfg, folder / name / "ref")
+        cases[dim] = folder / name
+    jobs = {"%s-%s" % (DIMS[dim], route): [route, d / "in" / "dolfin_params.dat", d / route,
+                                          d / "ref"]
+            for route in ROUTES for dim, d in cases.items()}
+    return cases, mpi_batch(ranks, write_blocks_case, jobs, folder / "jobs")
+
+
+@pytest.fixture(scope="session")
+def three_rank_writes(tmp_path_factory):
+    """write_every_case at three ranks, made once a session for the tests that
+    read what three ranks wrote: (the case folders, {name: what each rank
+    printed})."""
+    launcher_or_skip()
+    d = shared_dir(tmp_path_factory, "write_three_ranks", lambda d: write_every_case(d, 3))
+    return ({dim: d / name for dim, name in DIMS.items()},
+            json.loads((d / "jobs" / "said.json").read_text()))
 
 
 def expect_route(r, route):
     """The route the job took is the one asked for; the parallel one is
-    skipped only where the job's h5py has no MPI driver, never assumed."""
-    text = r.stdout + r.stderr
+    skipped only where the job's h5py has no MPI driver, never assumed, and
+    not at all under PARTRAC_REQUIRE_MPI."""
+    text = r if isinstance(r, str) else r.stdout + r.stderr
     if route == "parallel":
         if "h5py mpi: False" in text:
-            pytest.skip("this h5py has no MPI driver, so there is no parallel route")
+            mpi_or_skip("this h5py has no MPI driver, so there is no parallel route")
         assert "h5py mpi: True" in text, text[-3000:]
         assert "route: parallel HDF5" in text, text[-3000:]
     else:
@@ -216,24 +243,35 @@ def expect_route(r, route):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("route", ["parallel", "gather"])
-@pytest.mark.parametrize("ranks", [2, 3])
-@pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
-def test_every_rank_writes_what_the_serial_writers_write(tmp_path, dim, ranks, route):
-    """Each rank writes its own uneven block of the cells and of the nodes --
-    the two split differently, rank 1 holding no cells and at three ranks one
-    rank no nodes -- in pieces far smaller than a block, so every
-    loop runs. The files must equal the serial writers' dataset by dataset and
-    attribute by attribute on either route, and a group the input does not
-    hold is reported missing by every rank."""
+def test_every_rank_writes_what_the_serial_writers_write(three_rank_writes):
+    """Each of three ranks writes its own uneven block of the cells and of the
+    nodes -- the two split differently, rank 1 holding no cells and one rank
+    no nodes -- in pieces far smaller than a block, so every loop runs. The
+    files must equal the serial writers' dataset by dataset and attribute by
+    attribute on either route, and a group the input does not hold is reported
+    missing by every rank. Both dims on both routes, three_rank_writes' job."""
     pytest.importorskip("h5py")
-    cfg = make_case(tmp_path / "in", dim)
-    serial_output(cfg, tmp_path / "ref")
-    r = run_job([route, cfg, tmp_path / "out", tmp_path / "ref"], ranks)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    expect_route(r, route)
-    assert "equal: up_0.h5 up_1.h5" in r.stdout, r.stdout[-3000:]
-    assert "missing on every rank" in r.stdout
+    cases, said = three_rank_writes
+    said = {name: "".join(s) for name, s in said.items()}
+    out = "".join(said.values())
+    if "h5py mpi: False" in out:
+        skipped = ROUTES[:1]
+    else:
+        assert "h5py mpi: True" in out, out[-3000:]
+        skipped = []
+    names = {"%s-%s" % (DIMS[dim], route): route for route in ROUTES for dim in cases}
+    assert sorted(said) == sorted(names), out[-3000:]
+
+    def check(name):
+        if names[name] in skipped:
+            return
+        text = said[name]
+        expect_route(text, names[name])
+        assert "equal: up_0.h5 up_1.h5" in text, text[-3000:]
+        assert "missing on every rank" in text
+    each_case(names, check)
+    if skipped:
+        mpi_or_skip("this h5py has no MPI driver, so there is no parallel route")
 
 
 @pytest.mark.slow
@@ -250,10 +288,10 @@ def test_a_write_that_fails_on_one_rank_takes_the_job_down(tmp_path, route, rank
     output directory should be (on the gathered route only the first rank
     opens a file), or rows that do not fit the element."""
     pytest.importorskip("h5py")
+    launcher_or_skip()
     cfg = make_case(tmp_path / "in", 2)
     (tmp_path / "blocker").write_text("a file where a directory is expected\n")
-    r = run_job([route, cfg, tmp_path / "out", "-", "fail", rank, kind, tmp_path / "blocker"],
-                2, timeout=120)
+    r = run_fail_job(route, [cfg, tmp_path / "out", rank, kind, tmp_path / "blocker"], 2, 120)
     text = r.stdout + r.stderr
     assert r.returncode != 0, text[-3000:]
     expect_route(r, route)
@@ -266,26 +304,25 @@ def test_a_write_that_fails_on_one_rank_takes_the_job_down(tmp_path, route, rank
 
 @pytest.mark.slow
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
-def test_three_ranks_write_a_case_that_reads_back(tmp_path, dim, mode):
+def test_three_ranks_write_a_case_that_reads_back(tmp_path, three_rank_writes, dim, mode):
     """A case written by three ranks on the route this machine takes reads
     back through the tool's reader as the fields that went in, and through
     the loader as the P2 field the Python evaluation of the same file gives:
     a dof table assembled from blocks is exactly where a silent permutation
-    would hide."""
+    would hide. The case is three_rank_writes' on the writer's own route."""
     pytest.importorskip("h5py")
-    cfg = make_case(tmp_path / "in", dim)
+    d = three_rank_writes[0][dim]
+    cfg = d / "in" / "dolfin_params.dat"
     out = tmp_path / "out"
-    r = run_job(["default", cfg, out, "-"], 3)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    shutil.copytree(d / "parallel", out)
     for name in ("mesh.h5", "dolfin_params.dat"):
-        shutil.copy(tmp_path / "in" / name, out / name)
+        shutil.copy(d / "in" / name, out / name)
     case, t, want = _read(cfg)
     got = _read(out / "dolfin_params.dat")[2]
     for name in want:
         for f in ("u", "phi"):
             assert np.array_equal(got[name][f], want[name][f]), (name, f)
-    if not os.path.exists(INTERPOL):
-        pytest.skip("interpol is not built")
+    need(INTERPOL)
     g = interpol_probe(out / "dolfin_params.dat", mode, 60)
     pts = np.stack([g[a] for a in "xyz"[:dim]], axis=1)
     val = np.stack([g["u" + a] for a in "xyz"[:dim]], axis=1)
@@ -309,15 +346,13 @@ def _uneven(n, weights, rank):
     return int(b[rank]), int(b[rank + 1])
 
 
-def _job(argv):
-    """route cfg out ref [fail rank kind blocker]: the case written from this
-    rank's blocks and, on the first rank, compared with the serial files in
-    ref; or, with fail, one rank's write made to fail."""
+def _blocks(comm):
+    """(the writer, this rank's cells and nodes): every block written and
+    gathered in many pieces, the blocks uneven, rank 1 holding no cells and,
+    on three ranks or more, the last no nodes. The first rank says which h5py
+    and which route."""
     import h5py
-    from mpi4py import MPI
-    comm = MPI.COMM_WORLD
-    cfg, out, ref = argv[0], Path(argv[1]), argv[2]
-    W.PIECE_BYTES = 40          # every block written and gathered in many pieces
+    W.PIECE_BYTES = 40
     writer = W.BlockWriter(comm)
     if comm.rank == 0:
         print("h5py mpi: %s" % h5py.get_config().mpi)
@@ -328,36 +363,30 @@ def _job(argv):
     wn = [(size - r) ** 2 for r in range(size)]
     if size >= 3:
         wn[-1] = 0
-    cells = lambda n: _uneven(n, wc, rank)
-    nodes = lambda n: _uneven(n, wn, rank)
-    if len(argv) > 3:
-        bad, kind, blocker = int(argv[4]), argv[5], Path(argv[6])
-        case, t, vals = _read(cfg)
-        (c0, c1), (n0, n1) = cells(t.ncells), nodes(t.nnodes)
-        U = vals["up_0.h5"]["u"][n0:n1]
-        if rank == bad and kind == "path":
-            out = blocker
-        else:
-            out.mkdir(parents=True, exist_ok=True)
-        if rank == bad and kind == "rows":
-            U = U[:, :1]
-        comm.Barrier()
-        writer.write_checkpoint(out / "up_0.h5", "u", D._cell_dofs(t, 2, t.dim)[c0:c1],
-                                case["cell_indices"].astype(np.uint64)[c0:c1], U, 2,
-                                t.dim, t.dim)
-        comm.Barrier()
-        print("rank %d wrote without failing" % rank)
-        return 0
+    return writer, lambda n: _uneven(n, wc, rank), lambda n: _uneven(n, wn, rank)
+
+
+def write_blocks_case(route, cfg, out, ref):
+    """A case of mpi_batch: the case written from this rank's blocks on the
+    route, gather as PARTRAC_HDF5_GATHER asks for it, parallel the writer's
+    own choice, and on the first rank compared with the serial files in ref.
+    Fails where they differ or where copy_group found the missing group."""
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    os.environ.pop(W.GATHER_ENV, None)
+    if route == "gather":
+        os.environ[W.GATHER_ENV] = "1"
+    out = Path(out)
+    writer, cells, nodes = _blocks(comm)
     names, missing = block_output(cfg, out, writer, cells, nodes)
     missing = comm.gather(missing)
-    if rank == 0 and ref != "-":
+    if comm.rank == 0:
         bad = {n: differences(out / n, Path(ref) / n) for n in names}
         bad = {n: d for n, d in bad.items() if d}
         if bad:
             print("different: %s" % bad)
             return 1
         print("equal: %s" % " ".join(names))
-    if rank == 0:
         if any(any(m) for m in missing):
             print("copy_group found a group that is not there: %s" % missing)
             return 1
@@ -365,5 +394,32 @@ def _job(argv):
     return 0
 
 
+def fail_job(cfg, out, bad, kind, blocker):
+    """The case's first stamp written from this rank's blocks, rank bad's
+    write made to fail: its output directory a file (path) or its rows one
+    component wide (rows)."""
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    out, bad, blocker = Path(out), int(bad), Path(blocker)
+    writer, cells, nodes = _blocks(comm)
+    rank = comm.rank
+    case, t, vals = _read(cfg)
+    (c0, c1), (n0, n1) = cells(t.ncells), nodes(t.nnodes)
+    U = vals["up_0.h5"]["u"][n0:n1]
+    if rank == bad and kind == "path":
+        out = blocker
+    else:
+        out.mkdir(parents=True, exist_ok=True)
+    if rank == bad and kind == "rows":
+        U = U[:, :1]
+    comm.Barrier()
+    writer.write_checkpoint(out / "up_0.h5", "u", D._cell_dofs(t, 2, t.dim)[c0:c1],
+                            case["cell_indices"].astype(np.uint64)[c0:c1], U, 2,
+                            t.dim, t.dim)
+    comm.Barrier()
+    print("rank %d wrote without failing" % rank)
+    return 0
+
+
 if __name__ == "__main__" and sys.argv[1:2] == ["job"]:
-    sys.exit(_job(sys.argv[2:]))
+    sys.exit(fail_job(*sys.argv[2:]))

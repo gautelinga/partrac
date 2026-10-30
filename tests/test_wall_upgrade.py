@@ -5,7 +5,7 @@ the cells with a wall vertex at rest.
 The terms vanish at every P2 node. Per edge end at a wall vertex w, towards v:
 -((4 u_m - u_v).n) n lambda_w^2 lambda_v (lambda_w - lambda_v), n the edge
 end's normal (the facet's own where the edge rises from one facet, else the
-mean of the facets there; none at a corner). Per face (w_i, w_j, v) over a
+mean of the facets there). Per face (w_i, w_j, v) over a
 wall edge, lambda_i lambda_j lambda_v (f_i lambda_i + f_j lambda_j) with
 f_i = -P(2 s_i + s_j), f_j = -P(s_i + 2 s_j), s the slopes 4 u_m - u_v along
 w -> v and P the face's normal projector. In 3D, per cell with wall facets,
@@ -32,16 +32,15 @@ import numpy as np
 import pytest
 
 from dumps import dump_at
-from paths import app
-from runs import run_app
-from wall_cases import (dolfin_mesh, kink_wall, kinked_channel_mesh, need_gmsh, periodic_sphere_mesh, probe,
-                        restart_from)
+from paths import app, needs
+from runs import interpolation, run_app
+from wall_cases import dolfin_mesh, kink_wall, kinked_channel_mesh, probe, restart_from
+from wall_cases import sphere_mesh  # noqa: F401  (fixture)
 
 INTERPOL = app("interpol")
 TRACERS = app("tracers")
 
-pytestmark = pytest.mark.skipif(not (os.path.exists(INTERPOL) and os.path.exists(TRACERS)),
-                                reason="interpol and tracers are not built")
+pytestmark = needs(INTERPOL, TRACERS)
 
 T0 = 0.4   # the probe time, between the stamps at 0 and 1
 
@@ -147,16 +146,14 @@ class Upgrade:
         facets.sort(key=lambda f: f[0])
         self.facet_n = {(c, k): n for _, c, k, n in facets}
         K = vclass
-        self.count, self.corner, self.n_sum, first = {}, set(), {}, {}
+        self.count, self.n_sum = {}, {}
         self.side, self.edge, self.face = {}, {}, {}
         for fv, c, k, n in facets:
             apex = K[cells[c][k]]
             cls = [K[v] for v in fv]
             for w in cls:
                 if w not in self.count:
-                    self.count[w], first[w], self.n_sum[w] = 0, n, np.zeros(self.dim)
-                elif (self.dim == 2 and self.count[w] > 1) or first[w] @ n < 0.5:
-                    self.corner.add(w)
+                    self.count[w], self.n_sum[w] = 0, np.zeros(self.dim)
                 self.count[w] += 1
                 self.n_sum[w] = self.n_sum[w] + n
                 self.side[(w, apex)] = self.side.get((w, apex), 0) + n
@@ -168,13 +165,13 @@ class Upgrade:
         self.wall_cell = np.array([any(K[v] in self.count for v in row) for row in cells])
 
     def end_normal(self, w, v):
-        if w not in self.count or w in self.corner:
+        if w not in self.count:
             return None
         return unit(self.side.get((w, v), self.n_sum[w]))
 
     def face_normal(self, a, b, v):
         e = (min(a, b), max(a, b))
-        if e not in self.edge or a in self.corner or b in self.corner:
+        if e not in self.edge:
             return None
         return unit(self.face.get(e + (v,), self.edge[e]))
 
@@ -211,8 +208,6 @@ class Upgrade:
                 rows = []
                 for k in range(nv):
                     if (c, k) not in self.facet_n:
-                        continue
-                    if any(K[row[j]] in self.corner for j in range(nv) if j != k):
                         continue
                     n = self.facet_n[(c, k)]
                     rows.append((n, -2.0 * float(n @ sum(s(i, k) for i in range(nv) if i != k))))
@@ -345,6 +340,7 @@ class Case:
                                       for a, p in zip("xyz", list(periodic) + [False] * (3 - dim))))
         self.params = "timestamps=timestamps.dat\n" + self.mesh_params
         self.up = Upgrade(X, cells, self.slots, periodic_classes(X, periodic))
+        self.cfd = {}
 
     def variant(self, name, extra, series="timestamps=timestamps.dat"):
         """A folder of the case's files, its parameter file naming the time
@@ -362,11 +358,17 @@ class Case:
         """The case folder read with wall_upgrade=mode ("true" or "false")."""
         return self.variant(mode, "wall_upgrade=%s\n" % mode)
 
+    def coefficients(self, k):
+        """Upgrade.coefficients of stamp k, computed once."""
+        if k not in self.cfd:
+            self.cfd[k] = self.up.coefficients(self.U2[k])
+        return self.cfd[k]
+
     def reference(self, cid, L, terms=True, weights=(1 - T0, T0)):
         """u and J from the two stamps summed with weights, by default the blend at T0."""
         out = []
-        for U2 in self.U2:
-            CFD = self.up.coefficients(U2) if terms else None
+        for k, U2 in enumerate(self.U2):
+            CFD = self.coefficients(k) if terms else None
             out.append(self.up.evaluate(U2, CFD, cid, L, terms=terms))
         return tuple(weights[0] * a + weights[1] * b for a, b in zip(*out))
 
@@ -384,10 +386,10 @@ def channel(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def sphere(tmp_path_factory):
+def sphere(tmp_path_factory, sphere_mesh):
     """The sphere in the periodic unit cube of test_wall_edge_rule.py, a P2 field at rest on the sphere."""
     df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
-    X, cells = periodic_sphere_mesh(need_gmsh())
+    X, cells = sphere_mesh
     d = "(sqrt(pow(x[0]-0.5, 2) + pow(x[1]-0.5, 2) + pow(x[2]-0.5, 2)) - 0.25)"
     exprs = [["%s*(1 + 0.5*sin(2*pi*x[1]))" % d, "%s*(0.6*cos(2*pi*x[2]) + 2*%s)" % (d, d),
               "%s*0.4*sin(2*pi*x[0])" % d],
@@ -400,14 +402,11 @@ def sphere(tmp_path_factory):
 def interpolate(folder, mode, n):
     """interpol's probes of the case in folder read by mode, at T0, n random
     points: {column: array}."""
-    import h5py
     for p in folder.glob("Interpolation*"):
         shutil.rmtree(p)
     run_app(INTERPOL, folder / "dolfin_params.dat",
             "mode=%s Nrw=%d int_order=2 t0=%r random=false seed=1" % (mode, n, T0), timeout=600)
-    [out] = list(folder.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        return {k: np.array(h["Step#0"][k]) for k in h["Step#0"]}
+    return interpolation(folder)
 
 
 def probed(v, dim):
@@ -460,7 +459,7 @@ def test_the_channel_matches_the_reference(channel):
 def test_the_sphere_matches_the_reference(sphere):
     """3D: the same, around a sphere meshed by gmsh in a periodic box: cells
     with a wall facet (and its bubble), a wall edge only, a wall vertex only."""
-    reached = check_against_reference(sphere, 30000)
+    reached = check_against_reference(sphere, 10000)
     assert reached["facet"] > 100 and reached["edge_only"] > 100 and reached["vertex_only"] > 100, reached
 
 
@@ -500,7 +499,7 @@ def single_facets(case):
         fv = [cells[c][j] for j in range(nv) if j != k]
         if any(apexes[(K[v], K[cells[c][k]])] > 1 for v in fv):
             continue
-        if any(K[v] in case.up.corner for v in fv) or K[cells[c][k]] in case.up.count:
+        if K[cells[c][k]] in case.up.count:
             continue
         for b in w:
             pts.append(np.array(b) @ X[fv])

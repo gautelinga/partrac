@@ -41,8 +41,8 @@ public:
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
-  double get_t_min() { return dolfin_params.template get<double>("t_min"); };
-  double get_t_max() { return dolfin_params.template get<double>("t_max"); };
+  double get_t_min() const override { return dolfin_params.template get<double>("t_min"); };
+  double get_t_max() const override { return dolfin_params.template get<double>("t_max"); };
   // A cell's velocity nodes in every component, gathered once for the evaluations in it
   struct Held {
     std::vector<double> blocks;   // a component's block every n_dofs_max*3

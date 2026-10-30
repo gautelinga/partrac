@@ -22,6 +22,7 @@
 #include "morton.hpp"
 #include "Tet.hpp"
 #include "Triangle.hpp"
+#include "box_meshes.hpp"
 
 using partrac::CellTree;
 using partrac::MortonBox;
@@ -67,32 +68,7 @@ BoxMesh tet_box(const std::size_t n){
   BoxMesh m;
   m.nv = 4;
   m.n = n;
-  const double h = 1.0/double(n);
-  const std::size_t s = n + 1;
-  const auto id = [&](const std::size_t i, const std::size_t j, const std::size_t k){
-    return std::uint32_t((i*s + j)*s + k);
-  };
-  m.coords.resize(3*s*s*s);
-  for (std::size_t i = 0; i < s; ++i)
-    for (std::size_t j = 0; j < s; ++j)
-      for (std::size_t k = 0; k < s; ++k){
-        const std::size_t v = id(i, j, k);
-        m.coords[3*v] = double(i)*h;
-        m.coords[3*v+1] = double(j)*h;
-        m.coords[3*v+2] = double(k)*h;
-      }
-  const int perm[6][3] = {{0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0}};
-  for (std::size_t i = 0; i < n; ++i)
-    for (std::size_t j = 0; j < n; ++j)
-      for (std::size_t k = 0; k < n; ++k)
-        for (int p = 0; p < 6; ++p){
-          std::size_t c[3] = {i, j, k};
-          m.topo.push_back(id(c[0], c[1], c[2]));
-          for (int step = 0; step < 3; ++step){
-            ++c[perm[p][step]];
-            m.topo.push_back(id(c[0], c[1], c[2]));
-          }
-        }
+  kuhn_tets(n, m.coords, m.topo);
   return m;
 }
 
@@ -101,22 +77,7 @@ BoxMesh triangle_box(const std::size_t n){
   BoxMesh m;
   m.nv = 3;
   m.n = n;
-  const double h = 1.0/double(n);
-  const std::size_t s = n + 1;
-  const auto id = [&](const std::size_t i, const std::size_t j){ return std::uint32_t(i*s + j); };
-  m.coords.assign(2*s*s, 0.);
-  for (std::size_t i = 0; i < s; ++i)
-    for (std::size_t j = 0; j < s; ++j){
-      const std::size_t v = id(i, j);
-      m.coords[2*v] = double(i)*h;
-      m.coords[2*v+1] = double(j)*h;
-    }
-  for (std::size_t i = 0; i < n; ++i)
-    for (std::size_t j = 0; j < n; ++j){
-      const std::uint32_t a = id(i, j), b = id(i+1, j), c = id(i+1, j+1), d = id(i, j+1);
-      m.topo.insert(m.topo.end(), {a, b, c});
-      m.topo.insert(m.topo.end(), {a, c, d});
-    }
+  diagonal_triangles(n, m.coords, m.topo);
   return m;
 }
 

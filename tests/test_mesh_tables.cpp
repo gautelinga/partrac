@@ -19,6 +19,7 @@
 
 #include "typedefs.hpp"
 #include "Error.hpp"
+#include "box_meshes.hpp"
 #include "mesh_tables.hpp"
 
 #ifdef USE_DOLFIN
@@ -44,66 +45,21 @@ struct Box {
   std::size_t nverts() const { return coords.size()/(NV-1); }
 };
 
-// n x n x n cubes on the unit cube, each cut into the six Kuhn tets (the
-// tetrahedra 0 -> e_a -> e_a+e_b -> 1 over the six axis orders), which agree on
-// every shared face, so the mesh is conforming and its outer faces pair up
-// across the box
+// The unit cube's Kuhn tets, n a side
 Box<4> tet_box(const std::size_t n){
   Box<4> b;
   b.n = n;
   b.hi = Vector3d(1., 1., 1.);
-  const std::size_t m = n + 1;
-  b.coords.resize(3*m*m*m);
-  auto vid = [m](const std::size_t i, const std::size_t j, const std::size_t k){
-    return (i*m + j)*m + k;
-  };
-  for (std::size_t i = 0; i < m; ++i)
-    for (std::size_t j = 0; j < m; ++j)
-      for (std::size_t k = 0; k < m; ++k){
-        double* c = b.coords.data() + 3*vid(i, j, k);
-        c[0] = double(i)/double(n);
-        c[1] = double(j)/double(n);
-        c[2] = double(k)/double(n);
-      }
-  std::array<int, 3> ax = {0, 1, 2};
-  for (std::size_t i = 0; i < n; ++i)
-    for (std::size_t j = 0; j < n; ++j)
-      for (std::size_t k = 0; k < n; ++k){
-        std::array<int, 3> p = ax;
-        std::sort(p.begin(), p.end());
-        do {
-          std::array<int, 3> o = {0, 0, 0};
-          for (int s = 0; s < 4; ++s){
-            b.topo.push_back(std::uint32_t(vid(i + std::size_t(o[0]), j + std::size_t(o[1]),
-                                               k + std::size_t(o[2]))));
-            if (s < 3) o[p[s]] = 1;
-          }
-        } while (std::next_permutation(p.begin(), p.end()));
-      }
+  kuhn_tets(n, b.coords, b.topo);
   return b;
 }
 
-// n x n squares on the unit square, each cut along its (0,0)-(1,1) diagonal
+// The unit square's triangles, n a side
 Box<3> triangle_box(const std::size_t n){
   Box<3> b;
   b.n = n;
   b.hi = Vector3d(1., 1., 0.);
-  const std::size_t m = n + 1;
-  b.coords.resize(2*m*m);
-  auto vid = [m](const std::size_t i, const std::size_t j){ return i*m + j; };
-  for (std::size_t i = 0; i < m; ++i)
-    for (std::size_t j = 0; j < m; ++j){
-      double* c = b.coords.data() + 2*vid(i, j);
-      c[0] = double(i)/double(n);
-      c[1] = double(j)/double(n);
-    }
-  for (std::size_t i = 0; i < n; ++i)
-    for (std::size_t j = 0; j < n; ++j){
-      const std::uint32_t v00 = std::uint32_t(vid(i, j)), v10 = std::uint32_t(vid(i+1, j));
-      const std::uint32_t v11 = std::uint32_t(vid(i+1, j+1)), v01 = std::uint32_t(vid(i, j+1));
-      b.topo.insert(b.topo.end(), {v00, v10, v11});
-      b.topo.insert(b.topo.end(), {v00, v11, v01});
-    }
+  diagonal_triangles(n, b.coords, b.topo);
   return b;
 }
 
@@ -479,6 +435,47 @@ TEST_CASE("The key sort is stable and gives the same order at 1 and 4 threads", 
   REQUIRE(out[0] == out[1]);
 }
 
+TEST_CASE("The tables do not depend on the team the runtime gives", "[mesh_tables]") {
+#ifndef _OPENMP
+  WARN("compiled without OpenMP (a coverage build): no team to vary");
+  return;
+#endif
+  // Called inside a parallel region with nesting off, every region gets a team
+  // of one while omp_get_max_threads() still says four
+  const Box<4> b = tet_box(4);
+  const std::vector<bool> periodic = {true, false, true};
+  std::vector<std::uint64_t> base(50000);
+  std::mt19937_64 rng(3);
+  for (auto& k : base) k = rng() % 1013;
+  const int saved = omp_get_max_threads(), levels = omp_get_max_active_levels();
+  omp_set_num_threads(4);
+  std::array<std::vector<std::uint32_t>, 2> edges, pay;
+  std::array<std::vector<std::int32_t>, 2> across;
+  std::array<int, 2> inner_team = {0, 0};
+  const auto build = [&](const int r){
+    std::vector<std::uint64_t> key = base;
+    mesh_tables::sort_by_key_indexed(key, pay[r]);
+    mesh_tables::build_edge_table<4>(b.topo, b.ncells(), edges[r]);
+    mesh_tables::build_facet_neighbours<4>(b.topo, b.ncells(), b.coords, 3, periodic,
+                                           b.lo, b.hi, 1e-12, across[r]);
+#pragma omp parallel
+#pragma omp single
+    inner_team[r] = omp_get_num_threads();
+  };
+  build(0);
+  omp_set_max_active_levels(1);
+#pragma omp parallel num_threads(2)
+#pragma omp single
+  build(1);
+  omp_set_max_active_levels(levels);
+  omp_set_num_threads(saved);
+  REQUIRE(inner_team[0] > 1);
+  REQUIRE(inner_team[1] == 1);
+  REQUIRE(pay[0] == pay[1]);
+  REQUIRE(edges[0] == edges[1]);
+  REQUIRE(across[0] == across[1]);
+}
+
 TEST_CASE("A vertex on a max face is matched to its image on the min face", "[mesh_tables]") {
   // A P1 field written from a constrained space gives a vertex and its images
   // one value, so the XDMF loader reads them through this matching; a corner
@@ -519,4 +516,30 @@ TEST_CASE("A vertex on a max face is matched to its image on the min face", "[me
       mesh_tables::match_periodic_vertices(coords, nverts, 2, per, x_min, x_max, 1e-12);
     for (std::size_t v = 0; v < nverts; ++v) REQUIRE(master[v] == v);
   }
+  SECTION("a vertex off its image's place is an error naming the axis"){
+    std::vector<double> moved = coords;
+    moved[2*at(2, n) + 1] += 1e-3;
+    REQUIRE_THROWS_WITH(
+      mesh_tables::match_periodic_vertices(moved, nverts, 2, {true, false, false}, x_min, x_max, 1e-12),
+      Catch::Contains("periodic_x: 1 vertices on the x faces have no image")
+      && Catch::Contains("the mesh is not periodic along x"));
+  }
+}
+
+TEST_CASE("A facet without its image is an error naming the axis", "[mesh_tables]") {
+  Box<4> b = tet_box(3);
+  // A vertex inside the x = 1 face, moved along y: the facets around it lose their images
+  std::size_t v = 0;
+  while (!(b.coords[3*v] == 1. && std::abs(b.coords[3*v + 1] - 1./3) < 1e-12
+           && std::abs(b.coords[3*v + 2] - 1./3) < 1e-12)) ++v;
+  b.coords[3*v + 1] += 1e-3;
+  std::vector<std::int32_t> across;
+  REQUIRE_THROWS_WITH(
+    mesh_tables::build_facet_neighbours<4>(b.topo, b.ncells(), b.coords, 3, {true, false, false},
+                                           b.lo, b.hi, 1e-12, across),
+    Catch::Contains("periodic_x:") && Catch::Contains("facets on the x faces have no image")
+    && Catch::Contains("the mesh is not periodic along x"));
+  // Not periodic along x, the same mesh is fine
+  REQUIRE_NOTHROW(mesh_tables::build_facet_neighbours<4>(b.topo, b.ncells(), b.coords, 3,
+                                                         {false, true, true}, b.lo, b.hi, 1e-12, across));
 }

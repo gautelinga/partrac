@@ -9,43 +9,46 @@ reader, the split, the node values, the tables, the periodic pairing, the
 evaluation -- is checked to round-off against OpenFOAM itself. The 2D cavity
 checks the triangle path and the lid corners (a moving and a fixed wall at
 one point), the jittered channel the tet path and the cyclic pairs (no facet
-left unpaired). With the default least-squares nodes the channel's field,
-linear in z, must come out exact in value and gradient, which cellPoint's
-does not; the cavity loads either way, zero winning at the lid's corners;
+left unpaired). The cavity loads with either node rule, zero winning at the
+lid's corners;
 a stamp whose conditions differ from the first's is refused. The load
 classes each boundary patch by its velocity condition (no-slip wall, moving
 wall, cyclic, other) and says so; a condition built only from its dictionary
 is read too. A 2D case may have its empty pair normal to any axis: the
 cavity turned onto x and onto y is the same field and traces the same. A
 steady case is traced frozen at one stamp: frozen_fields must give that
-stamp's field at every step, through tracers and partrac. The refusals are
+stamp's field at every step, through partrac. The refusals are
 checked by their messages. A phase_field is P1 on the split, its nodes
 cellPoint's, each mixed fanned cell's centre moved within [0, 1] so the
 volume above 1/2 is the cells' volume fractions', with a gradient of its
 own; a scalar condition OpenFOAM cannot build is not data, a velocity one is
-refused. A tracers run on the channel is a smoke test, a case with cells
-whose every point is on a no-slip wall is warned of, a build without the
-reader refuses the mode, and, marked slow, an installed tree reads the cavity
-with its own reader.
+refused. A case with cells whose every point is on a no-slip wall is warned
+of, mode=openfoam with no reader to load is refused, saying what is missing,
+and, marked slow, an installed tree reads the cavity with its own reader.
 
-The tests after those run on solved OpenFOAM cases too large to check in:
-the cyclic pairing complete on four of them; Poiseuille and Couette against
-their closed forms; the pressure, and a symmetry plane, against OpenFOAM's
-own cellPoint; and, marked slow, the tracers at rest near no-slip obstacles
-in 2D and 3D with and without the near-wall rule, and diffusing tracers kept
-out of the obstacles by the reflecting walk. PARTRAC_OPENFOAM_CASES lists
-the folders that hold them (os.pathsep between), each case a solved
-OpenFOAM case under its name: rsa2d, spheres3d, channel3d_jitter/n32,
-channel3d_graded/n32, couette, cavity_p and halfchannel, with the
-postProcessing probes the tests compare against. The make.sh scripts under
-harness/openfoam/ make them. Without the variable, or without its case, a
-test skips.
+The tests after those run on cases foam_write builds at test time, each
+field a closed form at OpenFOAM's cell centres and the reference: the
+cyclic pairing complete on a jittered channel and on a 2D box whose
+obstacles cut its sides; Poiseuille second order under refinement; Couette
+with a moving wall, a linear pressure and a symmetry plane exact; and the
+refusals that need a case of their own (an unwritten value that depends on
+the patch, an inverted cell, a zero patch that changes between stamps, a
+time without the pressure, times only a processor directory holds) and an
+empty cyclic pair, which loads. And on
+two small solved fixtures, a cylinder in 2D and a snapped sphere in 3D,
+cyclic all round under an oblique body force: |u.n|/|u.t| at the cylinder's
+wall the same a decade further out with a P1 field and ten times larger
+with the near-wall rule; tracers started at the walls stopping there
+without the rule and a tenth as many with it; diffusing tracers kept out of
+the cylinder by the reflecting walk.
 
 The reader is built with PARTRAC_ENABLE_OPENFOAM=ON; without it
 (build_features.txt says openfoam=off) these tests skip, and fail instead
 under PARTRAC_REQUIRE_OPENFOAM=1, as a job that has OpenFOAM runs them."""
 
+import ast
 import gzip
+import hashlib
 import os
 import re
 import shutil
@@ -54,9 +57,12 @@ import subprocess
 import numpy as np
 import pytest
 
+import foam_write
+import openfoam_expected
+from cases import once
 from dumps import all_dumps, deformation_gradient, dump_at
-from paths import BIN, REPO, app
-from runs import cells_counts, checkpoint_folder, put_points, read_checkpoint, run_app
+from paths import BIN, REPO, app, needs
+from runs import cells_counts, from_points, interpolation, read_checkpoint, run_app
 
 INTERPOL = app("interpol")
 TRACERS = app("tracers")
@@ -71,7 +77,7 @@ def built_with_openfoam():
 
 def _needs_openfoam():
     if built_with_openfoam():
-        return pytest.mark.skipif(not os.path.exists(INTERPOL), reason="interpol is not built")
+        return needs(INTERPOL)
     if os.environ.get("PARTRAC_REQUIRE_OPENFOAM"):
         return pytest.mark.skipif(False, reason="")
     return pytest.mark.skip(reason="built without PARTRAC_ENABLE_OPENFOAM")
@@ -81,28 +87,28 @@ needs_openfoam = _needs_openfoam()
 PROBE = ["mode=openfoam", "Nrw=200", "int_order=2", "random=false", "seed=1", "num_threads=1"]
 
 
+def params_in(d, lines):
+    (d / "partrac_params.dat").write_text("".join(l + "\n" for l in lines))
+    return d / "partrac_params.dat"
+
+
 def case_copy(src, d, params=None):
     """The case copied to d, its parameter file replaced by `params` lines if given."""
     shutil.copytree(src, d, ignore=shutil.ignore_patterns("generate_case.sh", "*.py", "split_expected.h5"))
-    if params is not None:
-        (d / "partrac_params.dat").write_text("".join(p + "\n" for p in params))
-    return d / "partrac_params.dat"
+    return d / "partrac_params.dat" if params is None else params_in(d, params)
 
 
 def probe(params, *args, gradient=False):
     """interpol's points (x, y, z) and velocities, and its output, stdout
     then stderr; with gradient, the velocity gradients J[:, i, j] = du_i/dx_j
     after them."""
-    import h5py
     r = run_app(INTERPOL, params, PROBE, list(args), env={"OMP_NUM_THREADS": "1"}, timeout=300)
-    [out] = list(params.parent.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        g = h[list(h.keys())[0]]
-        X, U = np.c_[g["x"], g["y"], g["z"]], np.c_[g["ux"], g["uy"], g["uz"]]
-        if gradient:
-            J = np.stack([np.c_[g["u%sx" % a], g["u%sy" % a], g["u%sz" % a]] for a in "xyz"], 1)
-            return X, U, J, r.stdout + r.stderr
-        return X, U, r.stdout + r.stderr
+    g = interpolation(params.parent)
+    X, U = np.c_[g["x"], g["y"], g["z"]], np.c_[g["ux"], g["uy"], g["uz"]]
+    if gradient:
+        J = np.stack([np.c_[g["u%sx" % a], g["u%sy" % a], g["u%sz" % a]] for a in "xyz"], 1)
+        return X, U, J, r.stdout + r.stderr
+    return X, U, r.stdout + r.stderr
 
 
 def against_cellpoint(src, d, dim, *args):
@@ -155,25 +161,6 @@ def test_w6_loads(tmp_path, src, dim, t0):
 
 
 @needs_openfoam
-def test_the_channel_is_exact_for_its_linear_field(tmp_path):
-    """The default least-squares nodes are exact for a linear field on any
-    mesh: the channel's u = z a + b (cyclic in x and y, fixed walls), jittered,
-    comes out exact at every probed point, value and gradient, where cellPoint
-    is off by the jitter."""
-    params = case_copy(CHANNEL, tmp_path / "c")
-    X, U, J, log = probe(params, "t0=0", gradient=True)
-    a, b = np.array([2.0, 0.7, -1.1]), np.array([1.0, -0.5, 0.3])
-    assert len(X) == 200
-    assert "Nodes by least squares, U" in log, log
-    assert np.abs(U - (X[:, 2:3] * a + b)).max() < 1e-13
-    grad = np.zeros((3, 3))
-    grad[:, 2] = a
-    assert np.abs(J - grad).max() < 1e-11
-    ref = np.loadtxt(os.path.join(CHANNEL, "cellpoint_U.txt"))
-    assert np.abs(ref[:, 3:6] - (ref[:, 2:3] * a + b)).max() > 1e-4
-
-
-@needs_openfoam
 @pytest.mark.parametrize("nodes", ["least_squares", "inverse_distance"])
 def test_the_cavity_loads_with_either_node_rule(tmp_path, nodes):
     """Least squares fixes the lid's two corners at rest (zero wins against
@@ -204,20 +191,6 @@ def test_a_condition_that_changes_between_stamps_is_refused(tmp_path):
     r = run_app(INTERPOL, params, PROBE, ["t0=20"], check=False, timeout=120)
     assert r.returncode == 2, r.stdout[-1000:] + r.stderr
     assert "U at 20: patch movingWall is zeroGradient" in r.stderr, r.stderr
-
-
-@needs_openfoam
-def test_tracers_run_on_the_channel(tmp_path):
-    """A smoke test: two identical stamps (times 1 and 2), 250 RK4 steps."""
-    params = case_copy(CHANNEL, tmp_path / "c")
-    for t in ("1", "2"):
-        shutil.copytree(tmp_path / "c" / "0", tmp_path / "c" / t)
-    r = run_app(TRACERS, params, ["mode=openfoam", "Nrw=500", "Nrw_max=500", "int_order=1", "Dm=0",
-                                  "dt=0.002", "t0=1", "T=1.5", "x0=0.5", "y0=0.5", "z0=0.5",
-                                  "init_mode=points_xyz", "random=true", "seed=1", "dump_intv=0.5",
-                                  "stat_intv=0.5", "checkpoint_intv=1e9"],
-                env={"OMP_NUM_THREADS": "2"}, timeout=300)
-    assert "Time = 1.5" in r.stdout, r.stdout[-2000:]
 
 
 @needs_openfoam
@@ -344,31 +317,26 @@ def two_stamp_cavity(d):
     return params
 
 
-FROZEN = {"tracers": ["mode=openfoam", "init_mode=points_xy", "Nrw=200", "Nrw_max=200", "int_order=1", "Dm=0",
-                      "dt=0.002", "x0=0.05", "y0=0.05", "random=false", "seed=1", "dump_intv=0.1",
-                      "stat_intv=0.1", "checkpoint_intv=1e9", "frozen_fields=true", "num_threads=2"],
-          "partrac": ["mode=openfoam", "init_mode=uniform_x", "Nrw=100", "Nrw_max=2000", "ds_max=0.01",
-                      "ds_min=0.001", "La=0.08", "int_order=1", "Dm=0", "dt=0.002", "x0=0.05", "y0=0.07",
-                      "random=false", "seed=1", "dump_intv=0.1", "stat_intv=0.1", "checkpoint_intv=1e9",
-                      "frozen_fields=true", "num_threads=2"]}
+PARTRAC = app("partrac")
+FROZEN = ["mode=openfoam", "init_mode=uniform_x", "Nrw=100", "Nrw_max=2000", "ds_max=0.01", "ds_min=0.001",
+          "La=0.08", "int_order=1", "Dm=0", "dt=0.002", "x0=0.05", "y0=0.07", "random=false", "seed=1",
+          "dump_intv=0.1", "stat_intv=0.1", "checkpoint_intv=1e9", "frozen_fields=true", "num_threads=2"]
 
 
 @needs_openfoam
-@pytest.mark.parametrize("name", ["tracers", "partrac"])
-def test_frozen_fields_hold_the_stamp_at_t_frozen_whatever_the_time(tmp_path, name):
+def test_frozen_fields_hold_the_stamp_at_t_frozen_whatever_the_time(tmp_path):
     """A steady case is traced as a series frozen at one stamp: run from t = 5
     on stamps at t = 5 and 10 with the fields frozen at either, the tracers
     see that stamp's field at every step, bit for bit what they see on a case
     holding that stamp alone, and not the time weight's blend of the two. A
     time past the stamps freezes the last one."""
-    app_ = app(name)
     ends = {}
     for tf in (5, 10):
         two = two_stamp_cavity(tmp_path / ("two%d" % tf))
-        run_app(app_, two, FROZEN[name], ["t0=5", "T=5.2", "t_frozen=%d" % tf], timeout=300)
+        run_app(PARTRAC, two, FROZEN, ["t0=5", "T=5.2", "t_frozen=%d" % tf], timeout=300)
         one = two_stamp_cavity(tmp_path / ("one%d" % tf))
         shutil.rmtree(tmp_path / ("one%d" % tf) / str(15 - tf))
-        run_app(app_, one, FROZEN[name], ["t0=%d" % tf, "T=%g" % (tf + 0.2), "t_frozen=%d" % tf], timeout=300)
+        run_app(PARTRAC, one, FROZEN, ["t0=%d" % tf, "T=%g" % (tf + 0.2), "t_frozen=%d" % tf], timeout=300)
         a, b = all_dumps(tmp_path / ("two%d" % tf))[5.2], all_dumps(tmp_path / ("one%d" % tf))[tf + 0.2]
         assert len(a["points"]) >= 100
         for key in ("points", "u"):
@@ -376,16 +344,16 @@ def test_frozen_fields_hold_the_stamp_at_t_frozen_whatever_the_time(tmp_path, na
         ends[tf] = a["points"]
     assert np.abs(ends[5] - ends[10]).max() > 1e-4
     # between the stamps: their blend, here three quarters of the t = 10 field
-    run_app(app_, two_stamp_cavity(tmp_path / "mid"), FROZEN[name], ["t0=5", "T=5.2", "t_frozen=7.5"], timeout=300)
+    run_app(PARTRAC, two_stamp_cavity(tmp_path / "mid"), FROZEN, ["t0=5", "T=5.2", "t_frozen=7.5"], timeout=300)
     one = two_stamp_cavity(tmp_path / "quarter")
     shutil.rmtree(tmp_path / "quarter" / "5")
     u = tmp_path / "quarter" / "10" / "U"
     u.write_text(VECTOR.sub(lambda m: "(%r %r %r)" % tuple(0.75 * float(m.group(i)) for i in (1, 2, 3)),
                             u.read_text()))
-    run_app(app_, one, FROZEN[name], ["t0=10", "T=10.2", "t_frozen=10"], timeout=300)
+    run_app(PARTRAC, one, FROZEN, ["t0=10", "T=10.2", "t_frozen=10"], timeout=300)
     a, b = all_dumps(tmp_path / "mid")[5.2], all_dumps(tmp_path / "quarter")[10.2]
     assert np.abs(a["points"] - b["points"]).max() < 1e-12
-    run_app(app_, two_stamp_cavity(tmp_path / "past"), FROZEN[name], ["t0=5", "T=5.2", "t_frozen=20"], timeout=300)
+    run_app(PARTRAC, two_stamp_cavity(tmp_path / "past"), FROZEN, ["t0=5", "T=5.2", "t_frozen=20"], timeout=300)
     assert np.array_equal(all_dumps(tmp_path / "past")[5.2]["points"], ends[10])
 
 
@@ -435,17 +403,6 @@ def test_a_patch_type_not_handled_is_refused(tmp_path, kind):
 
 
 @needs_openfoam
-def test_binary_with_64_bit_labels_is_refused(tmp_path):
-    """OpenFOAM.org reads such a file as 32-bit; the message names the conversion."""
-    params = case_copy(CHANNEL, tmp_path / "c")
-    owner = tmp_path / "c" / "constant" / "polyMesh" / "owner.gz"
-    data = gzip.decompress(owner.read_bytes()).replace(b"format      binary;",
-                                                        b"format      binary;\n    arch        \"LSB;label=64;scalar=64\";", 1)
-    owner.write_bytes(gzip.compress(data))
-    refused(params, "foamFormatConvert")
-
-
-@needs_openfoam
 def test_a_baffle_is_refused(tmp_path):
     """Two boundary faces on one set of points: the facet table would pair them."""
     params = case_copy(CAVITY, tmp_path / "c")
@@ -481,9 +438,8 @@ WALLS = ("    movingWall\n    {\n        type            zeroGradient;\n    }\n"
 def write_alpha(case, time, values=None, walls=WALLS):
     """alpha.water in the cell centres of time, the linear ALPHA or values(C)
     of the centres C, the walls' conditions as given; the mesh."""
-    import openfoam_expected as oe
-    m = oe.read_mesh(str(case))
-    oe.geometry(m)
+    m = openfoam_expected.read_mesh(str(case))
+    openfoam_expected.geometry(m)
     C = np.array(m["C"])
     a = values(C) if values else ALPHA[0] + ALPHA[1] * C[:, 0] + ALPHA[2] * C[:, 1]
     (case / time / "alpha.water").write_text(
@@ -499,13 +455,10 @@ def write_alpha(case, time, values=None, walls=WALLS):
 def probe_phi(params, *args, nrw=200):
     """interpol's points, its phase field and the phase field's gradient where
     written, and its stdout."""
-    import h5py
     r = run_app(INTERPOL, params, PROBE, ["Nrw=%d" % nrw] + list(args), env={"OMP_NUM_THREADS": "1"}, timeout=300)
-    [out] = list(params.parent.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        g = h[list(h.keys())[0]]
-        G = np.c_[g["dphi_dx"], g["dphi_dy"], g["dphi_dz"]] if "dphi_dx" in g else None
-        return np.c_[g["x"], g["y"], g["z"]], np.array(g["phi"]), G, r.stdout
+    g = interpolation(params.parent)
+    G = np.c_[g["dphi_dx"], g["dphi_dy"], g["dphi_dz"]] if "dphi_dx" in g else None
+    return np.c_[g["x"], g["y"], g["z"]], g["phi"], G, r.stdout
 
 
 def openfoam_bashrc():
@@ -518,6 +471,11 @@ def openfoam_bashrc():
             dirs.insert(0, m.group(1))
     return next((os.path.join(d, "etc", "bashrc") for d in dirs
                  if d and os.path.exists(os.path.join(d, "etc", "bashrc"))), None)
+
+
+def digest(a):
+    """A short name for the array's values."""
+    return hashlib.sha1(np.ascontiguousarray(a).tobytes()).hexdigest()[:16]
 
 
 def cellpoint(case, field, time, X):
@@ -538,7 +496,7 @@ def cellpoint(case, field, time, X):
 
 @needs_openfoam
 @pytest.mark.parametrize("nodes", ["least_squares", "inverse_distance"])
-def test_the_phase_fields_nodes_are_cellpoints_whatever_the_node_rule(tmp_path, nodes):
+def test_the_phase_fields_nodes_are_cellpoints_whatever_the_node_rule(tmp_path, tmp_path_factory, nodes):
     """nodes= is for U and p: the phase field's node values are inverse
     distance's, cellPoint's (OpenFOAM's probes, where OpenFOAM runs), and with
     water in every cell no centre needs moving."""
@@ -557,7 +515,10 @@ def test_the_phase_fields_nodes_are_cellpoints_whatever_the_node_rule(tmp_path, 
     z = [x[2] for x in m["X"]]
     P = X.copy()
     P[:, 2] = 0.5 * (min(z) + max(z))
-    assert np.abs(phi - cellpoint(tmp_path / "c", "alpha.water", "10", P)).max() < 1e-12
+    # the same field and points under either rule: probed once
+    ref = once(tmp_path_factory, "foam_cavity_alpha_" + digest(P),
+               lambda: cellpoint(tmp_path / "c", "alpha.water", "10", P))
+    assert np.abs(phi - ref).max() < 1e-12
 
 
 # A water layer below a tilted line, with a round bubble in it, as a tanh step
@@ -663,14 +624,11 @@ def test_a_velocity_condition_that_cannot_be_built_is_refused_naming_its_library
 @needs_openfoam
 def test_without_phase_field_no_phase_field_is_read(tmp_path):
     """No key: no phi written, alpha.water in the case or not."""
-    import h5py
     params = case_copy(CAVITY, tmp_path / "c")
     write_alpha(tmp_path / "c", "10")
     _, _, log = probe(params, "t0=10")
     assert "alpha.water" not in log
-    [out] = list(params.parent.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        assert "phi" not in h[list(h.keys())[0]]
+    assert "phi" not in interpolation(params.parent)
 
 
 @needs_openfoam
@@ -746,19 +704,24 @@ def test_an_installed_tree_reads_the_cavity_with_its_own_reader(tmp_path):
     [installed] = list(prefix.rglob("libpartrac_openfoam.so"))
     loaded = set(re.findall(r"file=(\S*libpartrac_openfoam\S*)", r.stderr))
     assert loaded == {str(installed)}, loaded
-    import h5py
-    [out] = list(params.parent.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        g = h[list(h.keys())[0]]
-        assert np.array_equal(np.c_[g["x"], g["y"], g["z"]], X0)
-        assert np.array_equal(np.c_[g["ux"], g["uy"], g["uz"]], U0)
+    g = interpolation(params.parent)
+    assert np.array_equal(np.c_[g["x"], g["y"], g["z"]], X0)
+    assert np.array_equal(np.c_[g["ux"], g["uy"], g["uz"]], U0)
 
 
-@pytest.mark.skipif(built_with_openfoam() or not os.path.exists(INTERPOL),
-                    reason="the reader is built" if built_with_openfoam() else "interpol is not built")
-def test_the_mode_needs_the_reader(tmp_path):
+@needs(INTERPOL)
+def test_the_mode_without_its_reader_is_refused(tmp_path):
+    """mode=openfoam with no reader to load is refused saying what is missing:
+    in a build without it, the build option; in one with it, the reader named
+    by PARTRAC_OPENFOAM_PLUGIN, here a file that is not there."""
     params = case_copy(CAVITY, tmp_path / "c")
-    refused(params, "mode openfoam needs a build with PARTRAC_ENABLE_OPENFOAM=ON.")
+    if not built_with_openfoam():
+        refused(params, "mode openfoam needs a build with PARTRAC_ENABLE_OPENFOAM=ON.")
+        return
+    r = run_app(INTERPOL, params, PROBE, ["t0=10"], env={"PARTRAC_OPENFOAM_PLUGIN": str(tmp_path / "none.so")},
+                check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr
+    assert "cannot load the OpenFOAM reader: " in r.stderr and "none.so" in r.stderr, r.stderr
 
 
 @needs_openfoam
@@ -790,9 +753,6 @@ def test_a_condition_without_a_null_constructor_is_read(tmp_path):
     assert np.array_equal(X, X0) and np.array_equal(U, U0)
 
 
-FOAM_HEADER = "FoamFile\n{\n    format      ascii;\n    class       %s;\n    object      %s;\n}\n\n"
-
-
 def strip_case(d, split, nx=5):
     """A 2D ascii case of nx x 1 unit cells, 0.1 thick with empty front and
     back: no-slip walls left, at the bottom and over the first cell's top
@@ -803,11 +763,9 @@ def strip_case(d, split, nx=5):
     params = case_copy(CAVITY, d, ["velocity_field=U", "ignore_pressure=true", "split=" + split])
     for t in ("0", "10"):
         shutil.rmtree(d / t)
-    poly = d / "constant" / "polyMesh"
-    shutil.rmtree(poly)
-    poly.mkdir()
+    shutil.rmtree(d / "constant" / "polyMesh")
     pid = lambda i, j, k: i + (nx + 1) * (j + 2 * k)
-    X = [(i, j, 0.1 * k) for k in range(2) for j in range(2) for i in range(nx + 1)]
+    X = np.array([(i, j, 0.1 * k) for k in range(2) for j in range(2) for i in range(nx + 1)], dtype=float)
     xface = lambda i: [pid(i, 0, 0), pid(i, 1, 0), pid(i, 1, 1), pid(i, 0, 1)]   # normal +x
     yface = lambda i, j: [pid(i, j, 0), pid(i, j, 1), pid(i + 1, j, 1), pid(i + 1, j, 0)]   # normal +y
     zface = lambda i, k: [pid(i, 0, k), pid(i + 1, 0, k), pid(i + 1, 1, k), pid(i, 1, k)]   # normal +z
@@ -815,31 +773,21 @@ def strip_case(d, split, nx=5):
     faces = [xface(i + 1) for i in range(nx - 1)]
     owner = list(range(nx - 1))
     neighbour = list(range(1, nx))
-    patches = [("left", "wall", [rev(xface(0))], [0]),
-               ("bottom", "wall", [rev(yface(i, 0)) for i in range(nx)], list(range(nx))),
-               ("lid", "wall", [yface(0, 1)], [0]),
-               ("top", "patch", [yface(i, 1) for i in range(1, nx)], list(range(1, nx))),
-               ("right", "patch", [xface(nx)], [nx - 1]),
-               ("frontAndBack", "empty", [rev(zface(i, 0)) for i in range(nx)] + [zface(i, 1) for i in range(nx)],
-                list(range(nx)) * 2)]
-    bounds = []
-    for name, kind, fs, cells in patches:
-        bounds.append("%s\n{\n    type %s;\n    nFaces %d;\n    startFace %d;\n}\n" % (name, kind, len(fs), len(faces)))
+    sides = [("left", "wall", [rev(xface(0))], [0]),
+             ("bottom", "wall", [rev(yface(i, 0)) for i in range(nx)], list(range(nx))),
+             ("lid", "wall", [yface(0, 1)], [0]),
+             ("top", "patch", [yface(i, 1) for i in range(1, nx)], list(range(1, nx))),
+             ("right", "patch", [xface(nx)], [nx - 1]),
+             ("frontAndBack", "empty", [rev(zface(i, 0)) for i in range(nx)] + [zface(i, 1) for i in range(nx)],
+              list(range(nx)) * 2)]
+    patches = []
+    for name, kind, fs, cells in sides:
+        patches.append({"name": name, "type": kind, "start": len(faces), "size": len(fs)})
         faces += fs
         owner += cells
-    lists = {"points": ("vectorField", ["(%r %r %r)" % x for x in X]),
-             "faces": ("faceList", ["4(%s)" % " ".join(map(str, f)) for f in faces]),
-             "owner": ("labelList", list(map(str, owner))),
-             "neighbour": ("labelList", list(map(str, neighbour))),
-             "boundary": ("polyBoundaryMesh", bounds)}
-    for name, (cls, rows) in lists.items():
-        (poly / name).write_text(FOAM_HEADER % (cls, name) + "%d\n(\n%s)\n" % (len(rows), "\n".join(rows)))
-    conds = {"left": "noSlip", "bottom": "noSlip", "lid": "noSlip", "top": "zeroGradient", "right": "zeroGradient",
-             "frontAndBack": "empty"}
-    (d / "0").mkdir()
-    (d / "0" / "U").write_text(FOAM_HEADER % ("volVectorField", "U") +
-                               "dimensions [0 1 -1 0 0 0 0];\ninternalField uniform (1 0 0);\nboundaryField\n{\n" +
-                               "".join("%s { type %s; }\n" % kv for kv in conds.items()) + "}\n")
+    foam_write.write_mesh(d, X, faces, owner, neighbour, patches)
+    # the walls noSlip, the patches zeroGradient
+    foam_write.write_field(d, "0", "U", {"patches": patches}, np.tile([1., 0., 0.], (nx, 1)))
     return params
 
 
@@ -855,33 +803,33 @@ def test_cells_with_every_point_on_a_wall_are_warned_of(tmp_path, split):
     assert ("their velocity is zero throughout" if split == "6" else "only their centre values are free") in log, log
 
 
-# --- solved cases -----------------------------------------------------------
+# --- generated cases --------------------------------------------------------
 #
-# The cases below are OpenFOAM solutions too large to check in: an obstacle
-# array in 2D (rsa2d, 61,801 cells, cyclic, the obstacles no-slip, a Stokes
-# flow under an oblique body force), four spheres in a channel (spheres3d,
-# snappyHexMesh), the jittered and graded channels (Poiseuille), a Couette
-# channel with a moving wall. PARTRAC_OPENFOAM_CASES lists the folders that
-# hold them (os.pathsep between); each test skips when its case is absent.
-
-CASE_DIRS = [d for d in os.environ.get("PARTRAC_OPENFOAM_CASES", "").split(os.pathsep) if d]
+# Cases foam_write builds at test time: lattices of hexes, graded toward the
+# walls, their interior points jittered, cells removed as obstacles; each
+# field a closed form at OpenFOAM's cell centres, which is the reference.
 
 
-def solved(name):
-    """The folder of the solved case `name`, or a skip."""
-    for d in CASE_DIRS:
-        if os.path.isdir(os.path.join(d, name, "constant")):
-            return os.path.join(d, name)
-    pytest.skip("the solved case %s is not in PARTRAC_OPENFOAM_CASES" % name)
+def graded(n, ratio=4.):
+    """n + 1 lines on [0, 1], the cells at both ends ratio times smaller than in the middle."""
+    assert n % 2 == 0 and n >= 4, "graded takes an even n of at least 4, not %d" % n
+    h = ratio ** (np.arange(n // 2) / (n // 2 - 1.))[::-1]
+    half = np.r_[0., np.cumsum(0.5 * h / h.sum())]
+    return np.r_[half, 1. - half[-2::-1]]
 
 
-def linked(src, time, d, lines, extra=()):
-    """d with the case's constant, system and time linked in and a parameter file of `lines`."""
-    d.mkdir(parents=True)
-    for sub in ("constant", "system", time) + tuple(extra):
-        os.symlink(os.path.realpath(os.path.join(src, sub)), d / sub)
-    (d / "partrac_params.dat").write_text("".join(l + "\n" for l in lines))
-    return d / "partrac_params.dat"
+def channel(d, n, x="cyclic", top="wall", height=1., jitter=0.):
+    """The channel [0,1]^2 x [0,height] in n^3 hexes, graded toward its bottom
+    and top, cyclic in y and, unless x names its two sides, in x."""
+    return foam_write.lattice_case(d, np.linspace(0, 1, n + 1), np.linspace(0, 1, n + 1),
+                                   height * graded(n), {"x": x, "y": "cyclic", "z": ("wall", top)},
+                                   jitter=jitter)
+
+
+def along_x(m, u):
+    """The flow u(z) along x at the cell centres."""
+    z = m["C"][:, 2]
+    return np.c_[u(z), np.zeros_like(z), np.zeros_like(z)]
 
 
 def probe_rows(params, time, nrw=2000):
@@ -889,17 +837,39 @@ def probe_rows(params, time, nrw=2000):
     return probe(params, "t0=" + time, "Nrw=%d" % nrw, gradient=True)
 
 
+def cyclic_facets(case, dim):
+    """The cyclic facets the log counts: a face of k points k - 2 triangles in
+    3D, a face an edge in 2D."""
+    m = openfoam_expected.read_mesh(case)
+    sizes = [len(m["faces"][f]) for p in m["patches"] if p["type"] == "cyclic"
+             for f in range(p["start"], p["start"] + p["size"])]
+    return sum(k - 2 for k in sizes) if dim == 3 else len(sizes)
+
+
 @needs_openfoam
-@pytest.mark.parametrize("name,time,split,cyclic", [("channel3d_jitter/n32", "1329", "12", 8192),
-                                                    ("channel3d_jitter/n32", "1329", "6", 8192),
-                                                    ("rsa2d", "189", "12", 844), ("spheres3d", "230", "12", 4608)])
-def test_every_cyclic_facet_is_paired_on_the_solved_cases(tmp_path, name, time, split, cyclic):
+@pytest.mark.parametrize("case,split", [("channel", "12"), ("channel", "6"), ("box", "12"), ("sphere", "12")])
+def test_every_cyclic_facet_is_paired(tmp_path, case, split):
     """A cyclic facet without its image is refused at load, so a load that
-    completes has them all paired; the log counts them, two triangles a
-    cyclic face in 3D (the channel's four 32 x 32 sides) and an edge in 2D."""
-    params = linked(solved(name), time, tmp_path / "c", ["velocity_field=U", "ignore_pressure=true", "split=" + split])
+    completes has them all paired; the log counts them, on a jittered channel,
+    a 2D box whose obstacles cut its cyclic sides, and the snapped sphere."""
+    d = tmp_path / "c"
+    lines = ["velocity_field=U", "ignore_pressure=true", "split=" + split]
+    if case == "sphere":
+        dim, time = 3, NEAR_WALL[SPHERE]["time"]
+        params = linked(SPHERE, time, d, lines)
+    else:
+        time = "0"
+        if case == "channel":
+            m, dim = channel(d, 8, jitter=0.2), 3
+        else:
+            solid = np.zeros((12, 12, 1), dtype=bool)
+            solid[3:6, 4:7] = solid[0:2, 8:11] = solid[10:12, 1:3] = solid[6:9, 0:2] = True
+            m, dim = foam_write.lattice_case(d, np.linspace(0, 1, 13), np.linspace(0, 1, 13), [0, 0.1],
+                                             {"x": "cyclic", "y": "cyclic", "z": "empty"}, solid=solid), 2
+        foam_write.write_field(d, "0", "U", m, np.tile([1., 0.3, 0.], (len(m["C"]), 1)))
+        params = params_in(d, lines)
     X, U, J, log = probe_rows(params, time, 200)
-    assert ", %d cyclic (" % cyclic in log, log
+    assert ", %d cyclic (" % cyclic_facets(d, dim) in log, log
 
 
 def closed_form_errors(X, U, J, u, du):
@@ -915,268 +885,350 @@ def closed_form_errors(X, U, J, u, du):
 
 
 @needs_openfoam
-def test_poiseuille_on_the_graded_channel(tmp_path):
-    """The graded channel (grading 4 toward both walls, n = 32) solved under a
-    body force, against u = 4 z (1 - z): the error is the solver's and the
-    split's, pinned at the values the construction gives, 10% either way;
-    cellPoint's own (the inverse-distance nodes) is larger in value and
-    smaller in gradient on this mesh."""
-    src = solved("channel3d_graded/n32")
-    errors = {}
-    for nodes in ("least_squares", "inverse_distance"):
-        params = linked(src, "3000", tmp_path / nodes, ["velocity_field=U", "ignore_pressure=true", "nodes=" + nodes])
-        X, U, J, log = probe_rows(params, "3000")
-        assert len(X) == 2000
-        errors[nodes] = closed_form_errors(X, U, J, lambda z: 4 * z * (1 - z), lambda z: 4 - 8 * z)
-    value, gradient = errors["least_squares"]
-    assert 0.9 * 7.2e-4 < value < 1.1 * 7.2e-4, value
-    assert 0.9 * 0.204 < gradient < 1.1 * 0.204, gradient
-    assert errors["inverse_distance"][0] > value and errors["inverse_distance"][1] < gradient
+@pytest.mark.parametrize("nodes", ["least_squares", "inverse_distance"])
+def test_poiseuille_on_the_graded_channel_is_second_order(tmp_path, nodes):
+    """u = 4 z (1 - z) on the graded channel: refined twice, the velocity's
+    error falls by about four and its gradient's by about two, the orders of
+    a piecewise linear field."""
+    errors = []
+    for n in (8, 16):
+        d = tmp_path / str(n)
+        m = channel(d, n)
+        foam_write.write_field(d, "0", "U", m, along_x(m, lambda z: 4 * z * (1 - z)))
+        X, U, J, log = probe_rows(params_in(d, ["velocity_field=U", "ignore_pressure=true", "nodes=" + nodes]), "0")
+        errors.append(closed_form_errors(X, U, J, lambda z: 4 * z * (1 - z), lambda z: 4 - 8 * z))
+    value, gradient = errors[0][0] / errors[1][0], errors[0][1] / errors[1][1]
+    assert 3.2 < value < 4.8 and 1.6 < gradient < 2.4, errors
 
 
 @needs_openfoam
 def test_couette_with_a_moving_wall_is_exact(tmp_path):
-    """The same graded channel with no force and its top moving
-    (movingWallVelocity): the solution u = z is linear, which the finite
-    volumes reproduce to the solver's tolerance and the least-squares nodes
+    """The jittered graded channel, its top moving (movingWallVelocity) and
+    u = z: the field is linear, which the least-squares nodes reproduce
     exactly; the top is classed a moving wall, the bottom a no-slip one."""
-    params = linked(solved("couette"), "3000", tmp_path / "c", ["velocity_field=U", "ignore_pressure=true"])
-    X, U, J, log = probe_rows(params, "3000")
-    assert "2048 no-slip wall (bottom), 2048 moving wall (top), 8192 cyclic" in log, log
+    d = tmp_path / "c"
+    m = channel(d, 8, jitter=0.2)
+    foam_write.write_field(d, "0", "U", m, along_x(m, lambda z: z), {"top": ("movingWallVelocity", [1., 0., 0.])})
+    X, U, J, log = probe_rows(params_in(d, ["velocity_field=U", "ignore_pressure=true"]), "0")
+    assert "128 no-slip wall (bottom), 128 moving wall (top), 512 cyclic" in log, log
     value, gradient = closed_form_errors(X, U, J, lambda z: z, np.ones_like)
     assert value < 1e-12 and gradient < 1e-11, (value, gradient)
 
 
-def probes_output(case, func, field):
-    """OpenFOAM's probes at the case's probe_points.txt: the last time's values
-    of `field` (a row a point), NaN where a point is outside the mesh."""
-    [f] = [os.path.join(dp, field) for dp, _, fs in os.walk(os.path.join(case, "postProcessing", func)) if field in fs]
-    row = [l for l in open(f).read().splitlines() if l.strip() and not l.startswith("#")][-1]
-    v = np.array(row.split(None, 1)[1].replace("(", " ").replace(")", " ").split(), dtype=float)
-    v = v.reshape(len(np.loadtxt(os.path.join(case, "probe_points.txt"))), -1)
-    v[np.abs(v) > 1e200] = np.nan
-    return v
-
-
-def at_probe_points(case, X, dim):
-    """The row of interpol's output at each of the case's probe points."""
-    from scipy.spatial import cKDTree
-    d, i = cKDTree(X[:, :dim]).query(np.loadtxt(os.path.join(case, "probe_points.txt"))[:, :dim])
-    assert d.max() < 1e-12
-    return i
+@needs_openfoam
+def test_a_linear_pressure_is_exact(tmp_path):
+    """p = x on the jittered channel, its walls zeroGradient and its x sides
+    fixedValue: the least-squares nodes of the pressure reproduce it exactly."""
+    d = tmp_path / "c"
+    m = channel(d, 8, x=("patch", "patch"), jitter=0.2)
+    foam_write.write_field(d, "0", "U", m, along_x(m, lambda z: 4 * z * (1 - z)))
+    foam_write.write_field(d, "0", "p", m, m["C"][:, 0], {"left": ("fixedValue", 0.), "right": ("fixedValue", 1.)})
+    params = params_in(d, ["velocity_field=U", "pressure_field=p", "nodes=least_squares"])
+    X, U, log = probe(params, "t0=0", "Nrw=2000")
+    p = interpolation(params.parent)["p"]
+    assert np.abs(p - X[:, 0]).max() < 1e-13, np.abs(p - X[:, 0]).max()
 
 
 @needs_openfoam
-def test_the_pressure_is_cellpoints(tmp_path):
-    """The pressure through the inverse-distance nodes is OpenFOAM's cellPoint
-    p at every probed point of the cavity, its zeroGradient walls included."""
-    import h5py
-    src = solved("cavity_p")
-    params = linked(src, "10", tmp_path / "c", ["velocity_field=U", "pressure_field=p", "wall_upgrade=false",
-                                                 "nodes=inverse_distance"])
-    X, U, log = probe(params, "t0=10", "Nrw=2000")
-    [out] = list(params.parent.rglob("interpolation.h5part"))
-    with h5py.File(out, "r") as h:
-        p = np.array(h[list(h.keys())[0]]["p"])
-    ref = probes_output(src, "probesCPp", "p")[:, 0]
-    i = at_probe_points(src, X, 2)
-    assert np.isfinite(ref).all() and np.abs(ref).max() > 1e-2
-    assert np.abs(p[i] - ref).max() < 1e-13, np.abs(p[i] - ref).max()
-
-
-@needs_openfoam
-def test_a_symmetry_plane_is_cellpoints_and_mirrors_exactly(tmp_path):
-    """The lower half of the graded channel under the same force, its top a
-    symmetryPlane: the inverse-distance nodes, whose points on the plane lose
-    their normal component, are OpenFOAM's cellPoint; the least-squares nodes,
-    which fit over the cells and their mirror images, are exact for a linear
-    field with the plane's symmetry, u = (1, -0.5, 2 (z - 0.5))."""
-    src = solved("halfchannel")
-    params = linked(src, "3000", tmp_path / "a", ["velocity_field=U", "ignore_pressure=true", "wall_upgrade=false",
-                                                   "nodes=inverse_distance"])
-    X, U, log = probe(params, "t0=3000", "Nrw=2000")
-    assert "2048 other (top)" in log, log
-    ref = probes_output(src, "probesCP", "U")
-    i = at_probe_points(src, X, 3)
-    assert np.isfinite(ref).all()
-    assert np.abs(U[i] - ref).max() < 1e-13, np.abs(U[i] - ref).max()
-    params = linked(os.path.join(src, "mf_symlinear"), "0", tmp_path / "b",
-                    ["velocity_field=U", "ignore_pressure=true", "wall_upgrade=false"])
-    X, U, J, log = probe(params, "t0=0", "Nrw=2000", gradient=True)
-    assert "1024 mirrored" in log, log
-    ue = np.c_[np.ones(len(X)), -0.5 * np.ones(len(X)), 2 * (X[:, 2] - 0.5)]
+def test_a_symmetry_plane_mirrors_exactly(tmp_path):
+    """The lower half of the jittered channel, its top a symmetryPlane and
+    u = (1, -0.5, 2 (z - 0.5)), which has the plane's symmetry: the
+    least-squares nodes, which fit over the cells and their mirror images,
+    reproduce it exactly; the plane and the bottom's fixed values are
+    classed other, the plane's nodes mirrored."""
+    d = tmp_path / "c"
+    m = channel(d, 8, top="symmetryPlane", height=0.5, jitter=0.2)
+    u = lambda X: np.c_[np.ones(len(X)), -0.5 * np.ones(len(X)), 2 * (X[:, 2] - 0.5)]
+    [bottom] = [p for p in m["patches"] if p["name"] == "bottom"]
+    foam_write.write_field(d, "0", "U", m, u(m["C"]),
+                           {"bottom": ("fixedValue", u(m["fc"][bottom["start"]:bottom["start"] + bottom["size"]]))})
+    X, U, J, log = probe_rows(params_in(d, ["velocity_field=U", "ignore_pressure=true", "wall_upgrade=false"]), "0")
+    assert "256 other (bottom top)" in log, log
+    assert int(re.search(r"(\d+) mirrored", log).group(1)) > 0, log
     Je = np.zeros((3, 3))
     Je[2, 2] = 2.0
-    assert np.abs(U - ue).max() < 1e-13 and np.abs(J - Je).max() < 1e-11
+    assert np.abs(U - u(X)).max() < 1e-13 and np.abs(J - Je).max() < 1e-11
+
+
+def small_channel(d, x=("patch", "patch"), times=("0",), bcs=None):
+    """The channel in 4^3 hexes, its x sides plain patches, a uniform (1 0 0)
+    inside at each of times, the conditions bcs[time] where given; its
+    parameter file reads U alone."""
+    m = channel(d, 4, x=x)
+    for t in times:
+        foam_write.write_field(d, t, "U", m, np.tile([1., 0., 0.], (len(m["C"]), 1)), (bcs or {}).get(t))
+    return m, params_in(d, ["velocity_field=U", "ignore_pressure=true"])
+
+
+def refused_at(params, t0, message):
+    """interpol's output, refused with message at t0."""
+    r = run_app(INTERPOL, params, PROBE, ["t0=" + t0], check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr
+    assert message in r.stderr, r.stderr
+    return r.stdout
 
 
 @needs_openfoam
-def test_frozen_fields_on_the_steady_graded_channel(tmp_path):
-    """A steady case's last iteration traced with frozen_fields, through
-    tracers and partrac, beside an earlier iteration (here the field halved):
-    the run sees the t_frozen field throughout, as on the case holding it alone."""
-    src = solved("channel3d_graded/n32")
-    ends = {}
-    for name, init in (("tracers", ["init_mode=points_xyz", "Nrw=500", "Nrw_max=500"]),
-                       ("partrac", ["init_mode=uniform_x", "Nrw=100", "Nrw_max=2000", "ds_max=0.05",
-                                    "ds_min=0.001", "La=0.8"])):
-        for tag, extra in (("two", ("1500",)), ("one", ())):
-            d = tmp_path / (name + tag)
-            params = linked(src, "3000", d, ["velocity_field=U", "ignore_pressure=true"])
-            if extra:
-                (d / "1500").mkdir()
-                u = open(os.path.join(src, "3000", "U")).read()
-                (d / "1500" / "U").write_text(VECTOR.sub(
-                    lambda m: "(%r %r %r)" % tuple(0.5 * float(m.group(i)) for i in (1, 2, 3)), u))
-            run_app(app(name), params, init, ["mode=openfoam", "int_order=1", "Dm=0", "dt=0.01",
-                                              "t0=%s" % (extra[0] if extra else "3000"),
-                                              "T=%g" % ((1500 if extra else 3000) + 0.5), "x0=0.5", "y0=0.5",
-                                              "z0=0.3", "random=false", "seed=1", "dump_intv=0.5",
-                                              "stat_intv=0.5", "checkpoint_intv=1e9", "frozen_fields=true",
-                                              "t_frozen=3000", "num_threads=2"], timeout=600)
-            D = all_dumps(d)
-            ends[tag] = D[max(D)]
-        for key in ("points", "u"):
-            assert np.array_equal(ends["two"][key], ends["one"][key]), (name, key)
-        assert np.abs(ends["one"]["u"][:, 0]).max() > 0.5
+@pytest.mark.parametrize("condition,entries", [
+    ("surfaceNormalFixedValue", {"refValue": "uniform -1"}),
+    ("flowRateInletVelocity", {"volumetricFlowRate": "0.5"})])
+def test_an_unwritten_value_that_depends_on_the_patch_is_refused(tmp_path, condition, entries):
+    """A condition that sets its value without writing it is evaluated on a
+    one-cell probe: one whose value follows the patch's normals or areas
+    would give the probe's value on every face, so it is refused, asking for
+    the value written; noSlip, the same on any patch, is read."""
+    _, params = small_channel(tmp_path / "a", bcs={"0": {"left": "noSlip"}})
+    X, U, log = probe(params, "t0=0")
+    assert len(X) == 200 and "no-slip wall (left bottom top)" in log, log
+    _, params = small_channel(tmp_path / "b", bcs={"0": {"left": (condition, None, entries)}})
+    refused_at(params, "0", "0/U: patch left is %s, whose value is not written and depends on the patch's faces; "
+                            "write its value in the time directory" % condition)
 
 
-# The near-wall runs: tracers on a lattice through a checkpoint, Dm = 0, RK4,
-# dt one mean cell at the fastest point, five throughflows, at rest where
-# |u| < 1e-3 of the mean speed along the force
+@needs_openfoam
+def test_a_cell_the_split_inverts_is_refused(tmp_path):
+    """A 2D box of 2 x 2 cells, its middle point pulled towards the far
+    corner: that corner's cell is a dart whose centre lies outside it, so the
+    centre's fan has an inverted triangle and the load is refused, naming
+    the cell and checkMesh."""
+    d = tmp_path / "c"
+    m = foam_write.lattice_case(d, [0, 0.5, 1], [0, 0.5, 1], [0, 0.1],
+                                {"x": ("wall", "wall"), "y": ("wall", "wall"), "z": "empty"})
+    pts = d / "constant" / "polyMesh" / "points"
+    text = pts.read_text()
+    for z in ("0.0", "0.1"):
+        assert text.count("(0.5 0.5 %s)" % z) == 1
+        text = text.replace("(0.5 0.5 %s)" % z, "(0.95 0.95 %s)" % z)
+    pts.write_text(text)
+    foam_write.write_field(d, "0", "U", m, np.zeros((len(m["C"]), 3)))
+    refused_at(params_in(d, ["velocity_field=U", "ignore_pressure=true", "split=12"]), "0",
+               "simplices of the split flat or inverted (under 1e-12 of their cell) in 1 cells, the first in "
+               "cell 3; the mesh has warped, flat or inverted cells, which checkMesh -case . reports")
 
-NEAR_WALL = {"rsa2d": dict(time="189", dt=0.6698121145098501, steps=7898, rest=9.452259612219838e-06, lattice=70),
-             "spheres3d": dict(time="230", dt=0.6301918904131909, steps=368, rest=2.158362824587462e-05, lattice=16)}
-OFFSETS = [(0.5, 0.5, 0.5), (0.25, 0.75, 0.4), (0.75, 0.3, 0.65)]
+
+@needs_openfoam
+@pytest.mark.parametrize("written", [True, False])
+def test_a_patch_zero_at_the_first_stamp_and_not_at_a_later_is_refused(tmp_path, written):
+    """Where the inlet meets the no-slip walls, least squares picks the zero
+    patches by the first stamp's values: an inlet at rest at t = 1 and moving
+    at t = 2 is refused at t = 2, naming the patch. Its value written, or
+    unwritten from a table in time, evaluated at each stamp's own instant."""
+    if written:
+        bcs = {t: {"left": ("fixedValue", [v, 0., 0.])} for t, v in (("1", 0.), ("2", 1.))}
+    else:
+        table = {"uniformValue": "table ((1 (0 0 0)) (2 (1 0 0)))"}
+        bcs = {t: {"left": ("uniformFixedValue", None, table)} for t in ("1", "2")}
+    _, params = small_channel(tmp_path / "c", times=("1", "2"), bcs=bcs)
+    refused_at(params, "2", "U at 2: patch left is not zero at a point it shares with another patch that fixes "
+                            "the value, and was at the first stamp")
 
 
-def foam_list(path):
-    """The list of an ascii OpenFOAM mesh or field file, as text rows."""
-    text = open(path).read()
-    head = text.index("}", text.index("FoamFile")) + 1
-    body = text[head:]
-    m = re.search(r"(\d+)\s*\(", body)
-    n = int(m.group(1))
-    rows = re.findall(r"\(([^()]*)\)", body[m.end() - 1:])
-    return rows[:n] if len(rows) >= n else rows
+@needs_openfoam
+def test_a_time_without_the_pressure_is_refused_at_load(tmp_path):
+    """p at t = 1 but not at t = 2: refused before the node values are built,
+    naming the time."""
+    m, _ = small_channel(tmp_path / "c", times=("1", "2"))
+    foam_write.write_field(tmp_path / "c", "1", "p", m, m["C"][:, 0])
+    params = params_in(tmp_path / "c", ["velocity_field=U", "pressure_field=p"])
+    out = refused_at(params, "1", "/2/p: no such file; set pressure_field, or ignore_pressure=true")
+    assert "Nodes by" not in out, out
 
 
-def front_plane(src, time):
-    """rsa2d's fluid as triangles in the plane (each cell's front face fanned
-    from the cell centre) and its obstacle facets (midpoint, unit normal into
-    the fluid, length): the wall faces' edges on the front plane."""
-    poly = os.path.join(src, "constant", "polyMesh")
-    P = np.array([r.split() for r in foam_list(os.path.join(poly, "points"))], dtype=float)
-    text = open(os.path.join(poly, "faces")).read()
-    body = text[text.index("}", text.index("FoamFile")) + 1:]
-    body = body[re.search(r"\d+\s*\(", body).end():]
-    F = [np.array(m.split(), dtype=int) for m in re.findall(r"\d+\s*\(([^)]*)\)", body)]
-    own = open(os.path.join(poly, "owner")).read()
-    own = np.array(re.findall(r"\(([^)]*)\)", own[own.index("}", own.index("FoamFile")) + 1:], re.S)[0].split(), dtype=int)
-    C = np.array([r.split() for r in foam_list(os.path.join(src, time, "C"))], dtype=float)
-    bnd = open(os.path.join(poly, "boundary")).read()
-    patches = {m.group(1): dict(re.findall(r"(\w+)\s+([^;]+);", m.group(2)))
-               for m in re.finditer(r"(\w+)\s*\{([^}]*)\}", bnd[bnd.index("}", bnd.index("FoamFile")) + 1:])}
-    z0 = P[:, 2].min()
-    pe = patches["frontAndBack"]
-    tris, nodes = [], [P[:, :2]]
-    centre = len(P)
-    for f in range(int(pe["startFace"]), int(pe["startFace"]) + int(pe["nFaces"])):
-        if np.abs(P[F[f], 2] - z0).max() > 1e-12:
+@needs_openfoam
+def test_an_empty_cyclic_pair_loads(tmp_path):
+    """A cyclic pair with no faces says nothing of the periodic axes: the
+    channel with one more, empty, loads as without it."""
+    out = []
+    for ghosts in (False, True):
+        d = tmp_path / str(ghosts)
+        m = channel(d, 4)
+        end = m["patches"][-1]["start"] + m["patches"][-1]["size"]
+        for name, other in (("ghostA", "ghostB"), ("ghostB", "ghostA")) if ghosts else ():
+            m["patches"].append({"name": name, "type": "cyclic", "start": end, "size": 0,
+                                 "extra": {"neighbourPatch": other, "transformType": "translational",
+                                           "separation": "(0 0 %s)" % ("1" if name == "ghostA" else "-1")}})
+        foam_write.write_boundary(d, m["patches"])
+        foam_write.write_field(d, "0", "U", m, along_x(m, lambda z: 4 * z * (1 - z)))
+        out.append(probe(params_in(d, ["velocity_field=U", "ignore_pressure=true"]), "t0=0"))
+    (X0, U0, _), (X, U, log) = out
+    assert len(X) == 200 and np.array_equal(X, X0) and np.array_equal(U, U0), log
+
+
+@needs_openfoam
+def test_times_only_a_processor_directory_holds_are_refused(tmp_path):
+    """A run decomposed after t = 1 and not reconstructed: processor0 holds
+    U at t = 2 and 3, the root only at t = 1; refused naming the times."""
+    d = tmp_path / "c"
+    _, params = small_channel(d, times=("1",))
+    for t in ("0", "2", "3"):
+        shutil.copytree(d / "1", d / "processor0" / t)
+    refused_at(params, "1", "processor0 holds U at times the case's root lacks (2, 3); reconstruct them "
+                            "(reconstructPar -case . -newTimes) or remove the processor directories")
+
+
+@needs_openfoam
+@pytest.mark.parametrize("variable", ["WM_PROJECT_DIR", "WM_PROJECT_VERSION"])
+def test_another_openfoam_in_the_environment_is_refused(tmp_path, variable):
+    """The reader runs the OpenFOAM it was built against: another one sourced
+    is refused, naming both, rather than mixing their files."""
+    params = case_copy(CAVITY, tmp_path / "c")
+    other = str(tmp_path) if variable == "WM_PROJECT_DIR" else "0"
+    r = run_app(INTERPOL, params, PROBE, ["t0=10"], env={variable: other}, check=False, timeout=120)
+    assert r.returncode == 2, r.stdout[-1000:] + r.stderr
+    assert "%s is %s, the build's " % (variable, other) in r.stderr, r.stderr
+
+
+# --- solved fixtures --------------------------------------------------------
+#
+# Steady Stokes flows about one obstacle, cyclic on every side, under a body
+# force at 20 degrees to x, meshed and solved by OpenFOAM (their
+# generate_case.sh): data_example/openfoam_cylinder2d, an O-grid, and
+# openfoam_sphere3d, snappyHexMesh's. Curved no-slip walls met obliquely, where
+# u.n grows as the square of the distance. Tracers start next to the walls;
+# Dm = 0, RK4, dt one mean cell at the fastest point; at rest where |u| is
+# under 1e-3 of the mean speed along the force.
+
+CYLINDER = os.path.join(REPO, "data_example", "openfoam_cylinder2d")
+SPHERE = os.path.join(REPO, "data_example", "openfoam_sphere3d")
+
+
+def fixture_constants(path):
+    """The literal constants a fixture's generating script assigns, read without running it."""
+    out = {}
+    with open(path) as f:
+        body = ast.parse(f.read()).body
+    for node in body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
             continue
-        cell = own[f]
-        k = len(F[f])
-        tris += [(centre, F[f][i], F[f][(i + 1) % k]) for i in range(k)]
-        nodes.append(C[cell:cell + 1, :2])
-        centre += 1
-    X = np.concatenate(nodes)
-    pw = patches["walls"]
-    mids, normals, sizes = [], [], []
-    for f in range(int(pw["startFace"]), int(pw["startFace"]) + int(pw["nFaces"])):
-        front = [p for p in F[f] if abs(P[p, 2] - z0) < 1e-12]
-        a, b = P[front[0], :2], P[front[1], :2]
-        e = b - a
-        n = np.array([-e[1], e[0]]) / np.linalg.norm(e)
-        c = 0.5 * (a + b)
-        if np.dot(C[own[f], :2] - c, n) < 0:
-            n = -n
-        mids.append(c)
-        normals.append(n)
-        sizes.append(np.linalg.norm(e))
-    return X, np.array(tris), np.array(mids), np.array(normals), np.array(sizes), P[:, :2].min(0), P[:, :2].max(0)
+        try:
+            value = ast.literal_eval(node.value)
+        except ValueError:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name):
+            out[target.id] = value
+        elif isinstance(target, ast.Tuple):
+            out.update(zip((e.id for e in target.elts), value))
+    return out
 
 
-def in_fluid(tri, X, lo, hi):
-    """Whether each point, wrapped into the periodic box, lies in a fluid triangle."""
-    Y = lo + np.mod(X[:, :2] - lo, hi - lo)
-    return tri.get_trifinder()(Y[:, 0], Y[:, 1]) >= 0
+SPHERE_CASE = fixture_constants(os.path.join(SPHERE, "sphere_case.py"))
+SPHERE_CENTRE, SPHERE_RADIUS = np.array(SPHERE_CASE["C"]), SPHERE_CASE["R"]
 
 
-def from_checkpoint(params, points, dim, c, run, args, threads=4):
-    """tracers restarted from a checkpoint whose positions are `points`: a
-    two-step run writes the checkpoint, its positions are replaced, the
-    restart continues; returns the restart's dumps (in id order) and the id
-    of each point."""
-    t0 = float(c["time"])
-    seed = ["x0=%r" % points[:, 0].mean(), "y0=%r" % points[:, 1].mean(),
-            "z0=%r" % (points[:, 2].mean() if dim == 3 else 0.0)]
-    base = run + seed + ["init_mode=points_" + "xyz"[:dim], "int_order=1", "dt=%r" % c["dt"],
-                         "Nrw=%d" % len(points), "Nrw_max=%d" % len(points), "random=false", "seed=1",
-                         "frozen_fields=true", "t_frozen=" + c["time"], "t0=" + c["time"]]
-    run_app(TRACERS, params, base, ["T=%r" % (t0 + c["dt"]), "dump_intv=1e9", "stat_intv=1e9",
-                                    "checkpoint_intv=%r" % c["dt"], "num_threads=%d" % threads], timeout=1200)
-    put_points(params.parent, points)
-    ids = read_checkpoint(params.parent)["id"][:, 0].astype(int)
-    folder = checkpoint_folder(params.parent)
-    run_app(TRACERS, params, base, args, ["checkpoint_intv=1e9", "restart_folder=" + str(folder),
-                                          "num_threads=%d" % threads], timeout=3600)
-    return all_dumps(folder), ids
+def near_wall(time, dt, along, throughflows, **more):
+    """A fixture's run from what generate_case.sh's measure prints (dt, along the
+    mean speed along the force, h the mean cell size): at rest under 1e-3 of
+    along, as many steps as the throughflows take."""
+    return dict(time=time, dt=dt, rest=1e-3 * along, steps=int(np.ceil(throughflows / along / dt)), **more)
 
 
-def lattice(n, off, lo, hi, dim):
-    axes = [lo[a] + (np.arange(n) + off[a]) / n * (hi[a] - lo[a]) for a in range(dim)]
-    return np.stack(np.meshgrid(*axes, indexing="ij"), -1).reshape(-1, dim)
+NEAR_WALL = {CYLINDER: near_wall("548", 0.37981, 0.024649, 40, h=0.01981),
+             SPHERE: near_wall("219", 0.361877, 0.10918, 5)}
+
+
+def linked(src, time, d, lines):
+    """d with the case's constant, system and time linked in and a parameter file of `lines`."""
+    d.mkdir(parents=True)
+    for sub in ("constant", "system", time):
+        os.symlink(os.path.realpath(os.path.join(src, sub)), d / sub)
+    return params_in(d, lines)
+
+
+def cylinder_wall():
+    """The cylinder's wall facets on the front plane (midpoints, unit normals
+    into the fluid, lengths) and the polygon they bound, its corners in order."""
+    m = openfoam_expected.read_mesh(CYLINDER)
+    X = m["X"]
+    z0 = X[:, 2].min()
+    [wall] = [p for p in m["patches"] if p["name"] == "cylinder"]
+    ends = np.array([[X[q, :2] for q in m["faces"][f] if abs(X[q, 2] - z0) < 1e-12]
+                     for f in range(wall["start"], wall["start"] + wall["size"])])
+    a, b = ends[:, 0], ends[:, 1]
+    mids, sizes = 0.5 * (a + b), np.linalg.norm(b - a, axis=1)
+    normals = np.c_[a[:, 1] - b[:, 1], b[:, 0] - a[:, 0]] / sizes[:, None]
+    centre = a.mean(0)
+    normals *= np.sign(np.einsum("ij,ij->i", mids - centre, normals))[:, None]
+    corners = np.concatenate([a, b])
+    angle = np.arctan2(*(corners - centre).T[::-1])
+    return mids, normals, sizes, corners[np.argsort(angle)]
+
+
+def inside(polygon, X):
+    """Whether each point, wrapped into the unit box, is inside the polygon (an odd crossing count)."""
+    Y = np.mod(X[:, :2], 1.)[:, None]
+    a, b = polygon[None], np.roll(polygon, -1, axis=0)[None]
+    crosses = (a[..., 1] > Y[..., 1]) != (b[..., 1] > Y[..., 1])
+    at = a[..., 0] + (Y[..., 1] - a[..., 1]) * (b[..., 0] - a[..., 0]) / np.where(crosses, b[..., 1] - a[..., 1], 1.)
+    return (crosses & (Y[..., 0] < at)).sum(1) % 2 == 1
+
+
+def near_cylinder(mids, normals, sizes):
+    """Starts above every wall facet at a twentieth to two fifths of its length."""
+    return np.concatenate([mids + (r * sizes)[:, None] * normals for r in (0.05, 0.1, 0.2, 0.4)])
+
+
+def near_sphere(n=400):
+    """Starts above the sphere at 0.002 to 0.02, n directions a shell (a
+    Fibonacci lattice); the snapped facets lie inside the sphere."""
+    k = np.arange(n) + 0.5
+    theta, phi = np.arccos(1 - 2 * k / n), np.pi * (1 + 5 ** 0.5) * k
+    dirs = np.c_[np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+    return np.concatenate([SPHERE_CENTRE + (SPHERE_RADIUS + d) * dirs for d in (0.002, 0.005, 0.01, 0.02)])
+
+
+def from_checkpoint(params, points, c, run, args, threads=4):
+    """tracers restarted at the fixture's time, frozen there, from a
+    checkpoint whose positions are `points` (runs.from_points); returns the
+    restart's dumps (in id order) and the id of each point."""
+    folder, _ = from_points(TRACERS, params, points, c["dt"],
+                            run + ["frozen_fields=true", "t_frozen=" + c["time"], "num_threads=%d" % threads], args,
+                            t0=float(c["time"]), timeout=3600)
+    return all_dumps(folder), read_checkpoint(folder)["id"][:, 0].astype(int)
 
 
 def at_rest(params, points, dim, c, run):
-    """The fraction of the tracers from `points` at rest after five throughflows."""
+    """The fraction of the tracers from `points` at rest after the run, and its last dump."""
     T = float(c["time"]) + c["steps"] * c["dt"]
-    D, _ = from_checkpoint(params, points, dim, c, run,
+    D, _ = from_checkpoint(params, points, c, run,
                            ["T=%r" % T, "dump_intv=%r" % (c["steps"] * c["dt"]), "stat_intv=1e9"])
     last = D[max(D)]
     return float(np.mean(np.linalg.norm(last["u"][:, :dim], axis=1) < c["rest"])), last
 
 
+def rest_once(tmp_path_factory, d, src, points, dim, wall):
+    """The fraction at rest with wall_upgrade=wall and Dm = 0, run in d once per session."""
+    def run():
+        params = linked(src, NEAR_WALL[src]["time"], d, ["velocity_field=U", "ignore_pressure=true",
+                                                         "wall_upgrade=" + wall])
+        return at_rest(params, points, dim, NEAR_WALL[src], ["mode=openfoam", "Dm=0", "scheme=RK4"])[0]
+    return float(once(tmp_path_factory, "foam_rest_%s_%s_%s" % (os.path.basename(src), wall, digest(points)), run))
+
+
+def rest_with_and_without(tmp_path, tmp_path_factory, src, points, dim):
+    """The fraction at rest without the near-wall rule and with it."""
+    return {wall: rest_once(tmp_path_factory, tmp_path / wall, src, points, dim, wall) for wall in ("false", "true")}
+
+
 @needs_openfoam
-@pytest.mark.slow
 @pytest.mark.parametrize("nodes", ["least_squares", "inverse_distance"])
 @pytest.mark.parametrize("wall", ["false", "true"])
-def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
-    """Between obstacles met obliquely, a P1 field's u.n grows linearly above
-    each wall facet and tracers reach the walls and stop there (three
-    quarters of them in five throughflows); with the near-wall rule u.n
-    grows quadratically -- |u.n|/|u.t| ten times larger a decade further
-    out -- and a tenth as many stop, those at the obstacles' polygon
-    vertices. The nodes do not matter here: a wall facet's cells hold only
-    wall points, zero under either rule, and the cell centre. Averaged over
-    three shifted lattices, which is what separates the effect from the
-    sampling."""
-    pytest.importorskip("matplotlib")
-    import matplotlib.tri as mtri
-    c = NEAR_WALL["rsa2d"]
-    src = solved("rsa2d")
-    X, tris, mids, normals, sizes, lo, hi = front_plane(src, c["time"])
-    tri = mtri.Triangulation(X[:, 0], X[:, 1], tris)
-    params = linked(src, c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
-                                                      "nodes=" + nodes, "wall_upgrade=" + wall])
-    run = ["mode=openfoam", "Dm=0", "scheme=RK4"]
-    # |u.n|/|u.t| at 1e-3 and 1e-2 of each facet's length along its inward normal
+def test_the_near_wall_rule_makes_u_n_grow_as_the_square_at_the_cylinder(tmp_path, nodes, wall):
+    """Above each wall facet of the cylinder, at 1e-3 and 1e-2 of its length:
+    a P1 field's u.n grows linearly, as u.t does, so |u.n|/|u.t| is the same
+    at both; with the near-wall rule it grows as the square, ten times larger
+    a decade further out. The nodes do not matter: a wall facet's cells hold
+    only wall points, zero under either rule, and the cell centre."""
+    c = NEAR_WALL[CYLINDER]
+    mids, normals, sizes, _ = cylinder_wall()
+    params = linked(CYLINDER, c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
+                                                          "nodes=" + nodes, "wall_upgrade=" + wall])
     median = {}
     for rel in (1e-3, 1e-2):
         pts = mids + (rel * sizes)[:, None] * normals
         t = float(c["time"]) + 2 * c["dt"]
-        D, ids = from_checkpoint(params, pts, 2, c, run, ["T=%r" % t, "dump_intv=%r" % (2 * c["dt"]),
-                                                          "stat_intv=1e9"])
+        D, ids = from_checkpoint(params, pts, c, ["mode=openfoam", "Dm=0", "scheme=RK4"],
+                                 ["T=%r" % t, "dump_intv=%r" % (2 * c["dt"]), "stat_intv=1e9"])
         g = D[min(D, key=lambda k: abs(k - t))]
         assert np.abs(g["points"][ids][:, :2] - pts).max() < 1e-12
         u = g["u"][ids][:, :2]
@@ -1184,71 +1236,42 @@ def test_tracers_at_rest_near_the_obstacles_of_rsa2d(tmp_path, nodes, wall):
         ut = np.linalg.norm(u - un[:, None] * normals, axis=1)
         median[rel] = float(np.median(np.abs(un) / ut))
         shutil.rmtree(tmp_path / "c" / "Tracers")
-    print("rsa2d %s %s: |u.n|/|u.t| median %.4g at 1e-3, %.4g at 1e-2" % (nodes, wall, median[1e-3], median[1e-2]))
-    if wall == "true":
-        assert abs(median[1e-3] / 2.2e-4 - 1) < 0.02 and abs(median[1e-2] / 2.2e-3 - 1) < 0.02, median
-        assert abs(median[1e-2] / median[1e-3] - 10) < 0.1, median
-    else:
-        assert abs(median[1e-3] / 9.0e-2 - 1) < 0.02 and abs(median[1e-2] / 9.0e-2 - 1) < 0.02, median
-    rest = []
-    for off in OFFSETS:
-        P = lattice(c["lattice"], off, lo, hi, 2)
-        P = P[in_fluid(tri, P, lo, hi)]
-        assert 3600 < len(P) < 3700
-        rest.append(at_rest(params, P, 2, c, run)[0])
-        shutil.rmtree(tmp_path / "c" / "Tracers")
-    print("rsa2d %s %s: at rest %s, mean %.4f" % (nodes, wall, rest, np.mean(rest)))
-    if wall == "true":
-        assert abs(np.mean(rest) - 0.075) < 0.012, rest
-    else:
-        assert abs(np.mean(rest) - 0.76) < 0.02, rest
+    growth = median[1e-2] / median[1e-3]
+    assert abs(growth - (10. if wall == "true" else 1.)) < 0.05 * growth, median
 
 
 @needs_openfoam
-@pytest.mark.slow
-@pytest.mark.parametrize("wall", ["false", "true"])
-def test_tracers_at_rest_near_the_spheres(tmp_path, wall):
-    """The 3D obstacle case: with P1 about one tracer in sixty stops at a
-    sphere in five throughflows, with the near-wall rule none."""
-    c = NEAR_WALL["spheres3d"]
-    params = linked(solved("spheres3d"), c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
-                                                                      "wall_upgrade=" + wall])
-    centres = np.array([(0.30, 0.30, 0.30), (0.70, 0.35, 0.65), (0.35, 0.70, 0.70), (0.68, 0.68, 0.32)])
-    rest = []
-    for off in OFFSETS:
-        P = lattice(c["lattice"], off, np.zeros(3), np.ones(3), 3)
-        P = P[np.min(np.linalg.norm(P[:, None] - centres[None], axis=2), axis=1) > 0.13 + 1e-9]
-        rest.append(at_rest(params, P, 3, c, ["mode=openfoam", "Dm=0", "scheme=RK4"])[0])
-        shutil.rmtree(tmp_path / "c" / "Tracers")
-    print("spheres3d %s: at rest %s, mean %.4f" % (wall, rest, np.mean(rest)))
-    if wall == "true":
-        assert max(rest) <= 0.0005, rest
-    else:
-        assert abs(np.mean(rest) - 0.016) < 0.003, rest
+def test_tracers_stop_at_the_cylinder_without_the_near_wall_rule(tmp_path, tmp_path_factory):
+    """Tracers started next to the cylinder, forty throughflows: with a P1
+    field u.n is linear at the wall and a fifth of them reach it and stop;
+    with the near-wall rule a tenth as many stop, at the stagnation points."""
+    mids, normals, sizes, _ = cylinder_wall()
+    rest = rest_with_and_without(tmp_path, tmp_path_factory, CYLINDER, near_cylinder(mids, normals, sizes), 2)
+    assert rest["false"] > 0.1 and rest["true"] < 0.1 * rest["false"], rest
 
 
 @needs_openfoam
-@pytest.mark.slow
-def test_diffusing_tracers_stay_out_of_the_obstacles_of_rsa2d(tmp_path):
+def test_tracers_stop_at_the_sphere_without_the_near_wall_rule(tmp_path, tmp_path_factory):
+    """The same about the snapped sphere, five throughflows: with P1 some
+    stop at the wall, with the near-wall rule a tenth as many."""
+    rest = rest_with_and_without(tmp_path, tmp_path_factory, SPHERE, near_sphere(), 3)
+    assert rest["false"] > 0.02 and rest["true"] < 0.1 * rest["false"], rest
+
+
+@needs_openfoam
+def test_diffusing_tracers_stay_out_of_the_cylinder(tmp_path, tmp_path_factory):
     """With Dm > 0 every step is walked from its start and mirrored at the
-    walls: after five throughflows no tracer is inside an obstacle (in no
-    fluid triangle, the box wrapped), and the noise carries tracers off the
-    walls, so no more are at rest than without it."""
-    pytest.importorskip("matplotlib")
-    import matplotlib.tri as mtri
-    c = NEAR_WALL["rsa2d"]
-    src = solved("rsa2d")
-    X, tris, _, _, _, lo, hi = front_plane(src, c["time"])
-    tri = mtri.Triangulation(X[:, 0], X[:, 1], tris)
-    params = linked(src, c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true"])
-    P = lattice(c["lattice"], OFFSETS[0], lo, hi, 2)
-    P = P[in_fluid(tri, P, lo, hi)]
+    walls: after forty throughflows no tracer is inside the cylinder (the
+    box wrapped), and the noise carries tracers off the wall, so fewer are at
+    rest than without it."""
+    c = NEAR_WALL[CYLINDER]
+    mids, normals, sizes, polygon = cylinder_wall()
+    P = near_cylinder(mids, normals, sizes)
+    params = linked(CYLINDER, c["time"], tmp_path / "c", ["velocity_field=U", "ignore_pressure=true",
+                                                          "wall_upgrade=false"])
     # the noise a step about a tenth of a mean cell
-    Dm = (0.1 * 0.024655944680018402) ** 2 / (2 * c["dt"])
-    still, _ = at_rest(params, P, 2, c, ["mode=openfoam", "Dm=0", "scheme=RK4"])
-    shutil.rmtree(tmp_path / "c" / "Tracers")
+    Dm = (0.1 * c["h"]) ** 2 / (2 * c["dt"])
     moving, last = at_rest(params, P, 2, c, ["mode=openfoam", "Dm=%r" % Dm, "scheme=explicit"])
-    print("rsa2d Dm = %.3g: %d tracers, at rest %.4f, %.4f with Dm = 0; %d outside the fluid"
-          % (Dm, len(P), moving, still, (~in_fluid(tri, last["points"], lo, hi)).sum()))
-    assert in_fluid(tri, last["points"], lo, hi).all()
-    assert moving <= still, (moving, still)
+    still = rest_once(tmp_path_factory, tmp_path / "still", CYLINDER, P, 2, "false")
+    assert not inside(polygon, last["points"]).any()
+    assert still > 0.1 and moving < still, (moving, still)

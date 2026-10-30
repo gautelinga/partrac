@@ -13,7 +13,7 @@ inline partrac::Schema spatial_schema(){
   add_initializer_params(s);
   s.require<std::string>("mode", "interpolator type");
   s.require<double>("T", "integration time after which a node stops");
-  s.require<int>("int_order", "interpolation order");
+  add_int_order(s, "interpolation order");
   s.require<double>("dx_max", "max step length");
   s.require<double>("dxn", "normal step length");
   s.opt<double>("Dm", 0.0, "diffusivity, enters the folder name only");
@@ -28,7 +28,7 @@ inline partrac::Schema spatial_schema(){
   s.opt<double>("refine_intv", 100.0, "refinement interval");
   s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
-  s.opt<int>("filter_target", 0, "filter target");
+  s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("refine", false, "refine the mesh");
   s.opt<bool>("coarsen", false, "coarsen the mesh");
   s.opt<bool>("inject_edges", true, "inject edges too");
@@ -37,8 +37,6 @@ inline partrac::Schema spatial_schema(){
   s.opt<bool>("output_all_props", true, "dump all properties");
   s.choices("mode", interpol_modes());
   s.choices("outside", {"ignore", "mark", "remove"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
   return s;
 }
 

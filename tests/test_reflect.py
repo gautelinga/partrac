@@ -24,15 +24,14 @@ import os
 import shutil
 
 import numpy as np
-import pytest
 
 from dumps import dump_at, read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import checkpoint_folder, put_points, run_app
 
 TRACERS = app("tracers")
 
-pytestmark = pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+pytestmark = needs(TRACERS)
 
 
 def run(params, args):

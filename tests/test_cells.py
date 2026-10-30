@@ -15,14 +15,13 @@ line element), the analytic field, restarts with the cells in the
 checkpoint, the thread count, and diffusion, which it refuses.
 """
 
-import os
 
 import numpy as np
 import pytest
 
 from cases import ABC, KINDS, LINEAR, stamp_case
 from dumps import deformation_gradient, dump_at
-from paths import app
+from paths import app, needs
 from runs import (cells_counts, checkpoint_file, checkpoint_folder, copy_case, copy_example, halving_ratios,
                   read_checkpoint, run_app, same_checkpoint, same_dumps, same_stats)
 from test_stamp_cuts import TENSOR_BASE, alternating, flow_map
@@ -31,8 +30,7 @@ TRACERS = app("tracers")
 VECTORS = app("tracervectors")
 TENSORS = app("tracertensors")
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (TRACERS, VECTORS, TENSORS)),
-                                reason="the tracer apps are not built")
+needs_apps = needs(TRACERS, VECTORS, TENSORS)
 
 # 200 particles over the periodic 10^3 P2 tet case, u = (sin 2 pi y, sin 2 pi z, sin 2 pi x)
 TET = ("mode=tet init_mode=points_xyz x0=0.5 y0=0.5 z0=0.5 Nrw=200 Nrw_max=200 Dm=0 int_order=1 "

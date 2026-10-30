@@ -39,8 +39,8 @@ public:
   void evaluate(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   // What a step reads: velocity, acceleration and their gradients; P, Phi, cell_type stay zero
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
-  double get_t_min() { return fmt_.ts.get_t_min(); };
-  double get_t_max() { return fmt_.ts.get_t_max(); };
+  double get_t_min() const override { return fmt_.ts.get_t_min(); };
+  double get_t_max() const override { return fmt_.ts.get_t_max(); };
   double next_stamp_after(const double t) const override { return fmt_.ts.next_after(t); }
   // The two stamps are the same values, not a copy of them
   bool stamps_aliased() const { return stamps_.aliased(); }

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 #include "Error.hpp"
 #include "typedefs.hpp"
@@ -16,12 +17,13 @@
 namespace dolfin { class Cell; class GenericDofMap; }
 #endif
 
-// Buffers in evaluate are sized from Cell::n_dofs_max
-inline void check_dofs_fit(const Uint ncoeffs_u, const Uint ncoeffs_p,
+// P1, P2 or absent fields only
+inline void check_dofs_fit(const std::initializer_list<Uint> ncoeffs, const std::size_t n_verts,
                            const std::size_t n_dofs_max, const char* what){
-  if (ncoeffs_u > n_dofs_max || ncoeffs_p > n_dofs_max){
-    partrac::fail(what, ": element has ", ncoeffs_u, " and ", ncoeffs_p, " dofs, against a maximum of ", n_dofs_max);
-  }
+  for (const Uint n : ncoeffs)
+    if (n != 0 && n != n_verts && n != n_dofs_max){
+      partrac::fail(what, ": an element with ", n, " dofs a cell; P1 has ", n_verts, " and P2 ", n_dofs_max);
+    }
 }
 
 // Dof indices of all cells, flat, fixed stride

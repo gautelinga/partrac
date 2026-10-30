@@ -2,11 +2,13 @@
 
 #include <cmath>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "typedefs.hpp"
 #include "PointValues.hpp"
 #include "Params.hpp"
+#include "AnalyticInterpol.hpp"
 #include "expressions/Expr_ABCFlow.hpp"
 #include "expressions/Expr_BatchelorVortex.hpp"
 #include "expressions/Expr_BrinkmanCylinder.hpp"
@@ -115,6 +117,43 @@ TEST_CASE("ABCFlow", "[expr]") {
     REQUIRE(curl[i] == Approx(k*pv.U[i]).margin(1e-12));
 }
 
+TEST_CASE("ABCFlow with an oscillating A gives the time derivatives", "[expr]") {
+  // A and gradA are dU/dt and d(gradU)/dt, which int_order=2 steps by
+  Prm p = abc_params();
+  p["A_amp"] = "0.3";
+  p["A_omega"] = "2.0";
+  Expr_ABCFlow e(params_for<Expr_ABCFlow>(p));
+  const Vector3d x{1.3, 2.7, 4.1};
+  const double h = 1e-6;
+  for (const double t : {0., 0.4, 2.9}){
+    check_gradient(e, x, t);
+    PointValues pv(1.0), pp(1.0), pm(1.0);
+    e.eval(x, t, pv);
+    e.eval(x, t + h, pp);
+    e.eval(x, t - h, pm);
+    for (int i = 0; i < 3; ++i){
+      REQUIRE(pv.A[i] == Approx((pp.U[i] - pm.U[i])/(2*h)).margin(1e-8));
+      for (int j = 0; j < 3; ++j)
+        REQUIRE(pv.gradA(i, j) == Approx((pp.gradU(i, j) - pm.gradU(i, j))/(2*h)).margin(1e-8));
+    }
+  }
+  // Steady, or held at one time: no time derivatives
+  Expr_ABCFlow steady(params_for<Expr_ABCFlow>(abc_params()));
+  PointValues pv(1.0);
+  steady.eval(x, 0.7, pv);
+  REQUIRE(pv.A.norm() == 0.);
+  REQUIRE(pv.gradA.norm() == 0.);
+  auto forced = std::make_shared<Expr_ABCFlow>(params_for<Expr_ABCFlow>(p));
+  FrozenExpr frozen(params_for<Expr_ABCFlow>(p), forced, 0.4);
+  PointValues held(1.0), at(1.0);
+  frozen.eval(x, 2.9, held);
+  forced->eval(x, 0.4, at);
+  REQUIRE(held.U == at.U);
+  REQUIRE(at.A.norm() > 0.);
+  REQUIRE(held.A.norm() == 0.);
+  REQUIRE(held.gradA.norm() == 0.);
+}
+
 TEST_CASE("SineFlow", "[expr]") {
   Prm p = {{"flowdir", "1,0"}, {"depdir", "0,1"}, {"chi", "1.2154,3.1199"},
            {"u_inf", "0.7071"}, {"p_inf", "1.0"}, {"tau", "0.5"}, {"rho", "1.2"},
@@ -128,6 +167,50 @@ TEST_CASE("SineFlow", "[expr]") {
   e.eval({0.31, 0.62, 0.11}, 0.1, lo);
   e.eval({0.31, 0.62, 0.11}, 0.7, hi);
   REQUIRE(lo.U[0] != Approx(hi.U[0]).margin(1e-9));
+}
+
+TEST_CASE("SineFlow before t = 0 runs its phases backwards", "[expr]") {
+  // Phase -1 is the last of the cycle, flowdir 0 along y with chi 3.1199
+  Prm p = {{"flowdir", "1,0"}, {"depdir", "0,1"}, {"chi", "1.2154,3.1199"},
+           {"u_inf", "0.7071"}, {"p_inf", "1.0"}, {"tau", "0.5"}, {"rho", "1.2"},
+           {"Lx", "1.0"}, {"Ly", "1.0"}, {"Lz", "1.0"}};
+  Expr_SineFlow e(params_for<Expr_SineFlow>(p));
+  const Vector3d x{0.31, 0.62, 0.11};
+  PointValues before(1.0), cycle(1.0);
+  e.eval(x, -0.2, before);
+  e.eval(x, 0.8, cycle);
+  REQUIRE(before.U[0] == cycle.U[0]);
+  REQUIRE(before.U[1] == 0.);
+  REQUIRE(before.U[0] == Approx(0.7071*std::sin(2*M_PI*0.62 + 3.1199)));
+}
+
+TEST_CASE("SineFlow refuses phases it cannot run", "[expr]") {
+  const Prm good = {{"flowdir", "1,0"}, {"depdir", "0,1"}, {"chi", "0.1,0.2"},
+                    {"u_inf", "1.0"}, {"p_inf", "0.0"}, {"tau", "0.5"}, {"rho", "1.0"},
+                    {"Lx", "1.0"}, {"Ly", "1.0"}, {"Lz", "1.0"}};
+  REQUIRE_NOTHROW(params_for<Expr_SineFlow>(good));
+  const auto refused = [&](const std::string& key, const std::string& value, const std::string& message){
+    Prm p = good;
+    p[key] = value;
+    INFO(key << "=" << value);
+    try {
+      params_for<Expr_SineFlow>(p);
+      FAIL("not refused");
+    } catch (const partrac::ParamError& e){
+      bool found = false;
+      for (const auto& m : e.problems()) found = found || m.find(message) != std::string::npos;
+      INFO(e.what());
+      REQUIRE(found);
+    }
+  };
+  refused("flowdir", "", "flowdir, depdir and chi: lists of at least one entry");
+  refused("chi", "", "flowdir, depdir and chi: lists of at least one entry");
+  refused("depdir", "0,x", "flowdir, depdir and chi: lists of at least one entry");
+  refused("flowdir", "1,3", "flowdir and depdir: each entry 0, 1 or 2");
+  refused("depdir", "-1,1", "flowdir and depdir: each entry 0, 1 or 2");
+  refused("depdir", "1,1", "a phase flows along the direction it varies along");
+  refused("tau", "0", "tau must be positive");
+  refused("tau", "-0.5", "tau must be positive");
 }
 
 TEST_CASE("BatchelorVortex", "[expr]") {
@@ -225,7 +308,7 @@ namespace {
 Prm brinkman_params(){
   return {{"R", "1.0"}, {"H", "1.0"}, {"mu", "1.0"}, {"u_inf", "1.0"},
           {"p_inf", "1.0"}, {"rho", "1.2"}, {"x0", "0.0"}, {"y0", "0.0"},
-          {"z0", "0.0"}, {"rmax_intp", "20.0"}, {"Nintp", "400000"}};
+          {"z0", "0.0"}, {"rmax_intp", "2.9"}, {"Nintp", "40000"}};
 }
 
 }  // namespace
@@ -237,6 +320,10 @@ TEST_CASE("BrinkmanCylinder", "[expr]") {
   // outside the cylinder, and away from the interpolation end points
   const Vector3d x{2.1, 1.3, 0.0}, x2{-1.8, 0.4, 0.0};
   check_all(e, x, x2, 0.);
+  // the fluid is outside the cylinder, its surface included, at any z
+  REQUIRE(e.inside(x, 0.));
+  REQUIRE(e.inside({1.0, 0.0, 5.0}, 0.));
+  REQUIRE_FALSE(e.inside({0.5, 0.3, -2.0}, 0.));
 }
 
 

@@ -62,12 +62,13 @@ struct BareMesh : public MeshCore<Cell> {
     this->dim = m->geometry().dim();
     this->x_min = Vector3d::Zero();
     this->x_max = Vector3d(1., 1., this->dim == 3 ? 1. : 0.);
+    this->hmin_ = m->hmin();
     for (dolfin::CellIterator c(*m); !c.end(); ++c){
       dolfin_cells_.push_back(*c);
       this->cells_.push_back(Cell(*c));
     }
     build_facet_neighbours(this->facet_neigh_, m, dolfin_cells_, nullptr, this->periodic,
-                           this->x_min, this->x_max, this->dim, this->periodic_tol);
+                           this->x_min, this->x_max, this->dim, this->periodic_tol());
     this->set_period();
   }
   const Cell& cell(const int id) const { return this->cells_[std::size_t(id)]; }
@@ -97,8 +98,8 @@ struct BareMesh : public MeshCore<Cell> {
   void update(const double) {}
   void freeze(const double) {}
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) {}
-  double get_t_min() { return 0.; }
-  double get_t_max() { return 1.; }
+  double get_t_min() const override { return 0.; }
+  double get_t_max() const override { return 1.; }
 };
 
 template<typename Cell>

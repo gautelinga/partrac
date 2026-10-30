@@ -49,8 +49,11 @@ inline RunFolders make_run_folders(const std::string& base,
     create_folder(appfolder);
 
   std::string newfolder;
-  if (prm.get<std::string>("restart_folder") != ""){
-    newfolder = prm.get<std::string>("folder");
+  if (prm.has("restart_folder") && prm.get<std::string>("restart_folder") != ""){
+    // Resume in place
+    newfolder = prm.get<std::string>("restart_folder");
+    if (newfolder.back() != '/')
+      newfolder += "/";
   }
   else {
     newfolder = get_newfoldername(appfolder, prm);

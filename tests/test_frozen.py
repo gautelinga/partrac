@@ -10,11 +10,10 @@ every loader, and the clamp of t_frozen to the flow's times, are here.
 import os
 
 import numpy as np
-import pytest
 
 from dumps import dump_at
-from paths import REPO, app
-from runs import checkpoint_folder, continuous_and_resumed, copy_example, run_app
+from paths import REPO, app, needs
+from runs import continuous_and_resumed, copy_example, run_app
 
 TRACERS = app("tracers")
 SINE = os.path.join(REPO, "data_example", "sine_flow", "expr_params.dat")
@@ -22,7 +21,7 @@ ARGS = ("mode=analytic init_mode=points_xy x0=0.5 y0=0.5 z0=0.5 Nrw=50 Nrw_max=5
         "scheme=RK4 dt=0.05 stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1 frozen_fields=true")
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_a_frozen_expression_does_not_depend_on_the_time(tmp_path):
     """Frozen at t = 0.7, in another half period than either start, a run
     from t0 = 0 and the same run from t0 = 1.1, each across a switch of the
@@ -37,7 +36,7 @@ def test_a_frozen_expression_does_not_depend_on_the_time(tmp_path):
     assert np.array_equal(ends[0], ends[1])
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_t_frozen_is_clamped_to_the_flows_times(tmp_path):
     """A t_frozen before the flow's t_min = 0 freezes it at 0, and one past
     its t_max = 1e7 at 1e7, the run going on from t0 = 0 either way; the time
@@ -53,7 +52,7 @@ def test_t_frozen_is_clamped_to_the_flows_times(tmp_path):
     assert not np.array_equal(ends["start"], ends["end"])
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_frozen_fields_default_to_the_start_time(tmp_path):
     """Without t_frozen the fields are frozen at t0: a run from t0 = 0.7 ends
     where the run from t0 = 0 frozen at 0.7 does, after as many steps."""
@@ -65,7 +64,7 @@ def test_frozen_fields_default_to_the_start_time(tmp_path):
     assert np.array_equal(ends[0], ends[1])
 
 
-@pytest.mark.skipif(not os.path.exists(TRACERS), reason="tracers is not built")
+@needs(TRACERS)
 def test_a_resumed_run_stays_frozen_at_the_first_start(tmp_path):
     """The default t_frozen is recorded as the start time, so a run resumed
     later in time keeps the field of the first start, bit for bit the run

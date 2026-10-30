@@ -9,26 +9,18 @@ built from -- the keyed exchange, the sample sort with its way back, the
 exclusive scan, the reductions and the exact median -- are checked on their
 own.
 
-The one-rank path runs in process. The tables at one to four ranks run as MPI
-jobs, one a mesh, the rank counts shared out over the meshes, each running
-every check and reporting by its exit code; run as a script, this file is that
-job. The jobs skip where no launcher starts a job of several ranks for mpi4py,
-and fail there with PARTRAC_REQUIRE_MPI set.
+The one-rank path runs in process. The tables at two to four ranks run as MPI
+jobs through divfree_cases.mpi_batch, one a rank count, the rank counts shared
+out over the meshes, each running every check of each of its meshes as a
+case. The one-rank job runs in process too, where COMM_WORLD is one rank. The
+jobs skip where no launcher starts a job of several ranks for mpi4py, and fail
+there with PARTRAC_REQUIRE_MPI set.
 """
 
-import os
-import sys
-import traceback
-
 import numpy as np
+import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
-sys.path.insert(0, HERE)
-
-import pytest                      # noqa: E402
-
-from divfree_cases import (D, channel3d, mpi_run, relabel_by_global_id,  # noqa: E402
+from divfree_cases import (D, channel3d, launcher_or_skip, mpi_batch, relabel_by_global_id,
                            topo_cases)
 
 import divfree_dist as DD          # noqa: E402
@@ -194,6 +186,33 @@ def last_rank_empty(gcells, gid, ncells, nverts, comm, kind):
     return np.full(len(gcells), min(comm.rank, comm.size - 2), np.int64)
 
 
+def box_facts(ref, per):
+    """What the box's geometry and its literal flags say, not `Topo`: a node's
+    master is it moved by whole periods along periodic axes and not at all along
+    the others, every node on a periodic axis's high face has its master on the
+    low face, and the periodic facets and the walls are the facets on the faces
+    of the periodic axes and of the others. Returns the count."""
+    per = np.asarray(per, bool)[:ref.dim]
+    period = ref.x_max - ref.x_min
+    x, m = ref.node_x, ref.master
+    d = x - x[m]
+    assert np.allclose(d[:, ~per], 0.0)
+    k = d[:, per] / period[per]
+    assert np.allclose(k, np.round(k)) and set(np.round(k).ravel()) <= {0.0, 1.0}
+    assert np.array_equal(m[m], m)
+    for a in np.nonzero(per)[0]:
+        hi = np.isclose(x[:, a], ref.x_max[a])
+        assert hi.any() and np.allclose(x[m[hi], a], ref.x_min[a]), a
+    fx = ref.X[ref.facet_verts]
+    on = [np.zeros(ref.facet_exterior.shape, bool) for _ in range(2)]
+    for a in range(ref.dim):
+        for v in (ref.x_min[a], ref.x_max[a]):
+            on[int(per[a])] |= np.all(np.isclose(fx[..., a], v), axis=-1)
+    assert np.array_equal(ref.facet_periodic, on[1])
+    assert np.array_equal(ref.facet_exterior & ~ref.facet_periodic, on[0] & ~on[1])
+    return 6
+
+
 def job(mesh, per):
     """The MPI job of one mesh: blocks and every partitioner this PETSc has,
     the refusal of each it lacks, a partition that leaves a rank without a
@@ -202,7 +221,7 @@ def job(mesh, per):
     X, cells, ci = D.read_mesh_h5(mesh)
     X = X[:, :cells.shape[1] - 1]
     ref = D.Topo(X, cells, per)
-    n = 0
+    n = box_facts(ref, per)
     for partition in ("blocks",) + DD.PARTITIONERS:
         if partition == "blocks" or D.PETSc.Sys.hasExternalPackage(partition):
             n += check_tables(mesh, per, partition, comm, ref, ci)
@@ -290,25 +309,17 @@ def blocks_job():
     return n
 
 
-def main(argv):
-    comm = MPI.COMM_WORLD
-    try:
-        if argv[0] == "blocks":
-            n = blocks_job()
-        else:
-            n = job(argv[0], [c == "T" for c in argv[1]])
-    except BaseException:
-        sys.stderr.write("rank %d:\n%s" % (comm.rank, traceback.format_exc()))
-        sys.stderr.flush()
-        comm.Abort(1)
-    n = comm.reduce(n, root=0)
-    if comm.rank == 0:
-        print("PASSED %d checks on %d ranks" % (n, comm.size))
-    return 0
+def mesh_case(mesh, per):
+    """A case of mpi_batch: job, printing the flags it was given and how many
+    checks the rank ran."""
+    print("flags %s" % [bool(p) for p in per])
+    print("%d checks" % job(mesh, per))
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+def blocks_case():
+    """A case of mpi_batch: blocks_job, printing how many checks the rank
+    ran."""
+    print("%d checks" % blocks_job())
 
 
 # ------------------------------------------------------------------ the cases
@@ -334,13 +345,6 @@ def write_mesh(folder, name):
     if labelled:
         relabel_by_global_id(folder)
     return folder / "mesh.h5", per
-
-
-def run_job(ranks, *args):
-    """This file as an MPI job; its output when it passed."""
-    r = mpi_run(ranks, [os.path.abspath(__file__)] + list(args), timeout=300)
-    assert r.returncode == 0 and "PASSED" in r.stdout, r.stdout[-3000:] + r.stderr[-5000:]
-    return r.stdout
 
 
 # -------------------------------------------------------------- in process
@@ -426,12 +430,13 @@ def test_a_partitioner_this_petsc_lacks_is_refused_by_name():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("ranks", [2, 4])
-def test_the_building_blocks_across_ranks_give_the_serial_answers(ranks):
+def test_the_building_blocks_across_ranks_give_the_serial_answers(tmp_path, ranks):
     """The sample sort with its way back, the scan, the keyed reductions and
     the exact median, each on keys and values spread unevenly over the ranks --
     the second rank with no key at all, many repeated -- against the same
     computation on all of them together."""
-    assert "PASSED" in run_job(ranks, "blocks")
+    said = mpi_batch(ranks, blocks_case, {"blocks": []}, tmp_path)["blocks"]
+    assert all(int(s.split()[-2]) > 0 for s in said), said
 
 
 # each mesh at one rank count, every count on 2D and 3D meshes; one mesh at one rank
@@ -439,8 +444,8 @@ MESH_RANKS = [(name, 2 + k % 3) for k, name in enumerate(sorted(CASES))] + [(sor
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("name,ranks", MESH_RANKS, ids=["%s-%d" % c for c in MESH_RANKS])
-def test_the_distributed_tables_are_the_serial_ones(tmp_path, name, ranks):
+@pytest.mark.parametrize("ranks", [1, 2, 3, 4])
+def test_the_distributed_tables_are_the_serial_ones(tmp_path, ranks):
     """Read in blocks, and partitioned by PT-Scotch and moved: each rank's
     tables are `Topo`'s restricted to its cells, the globals are the serial
     ones on every rank (the median edge length bit for bit), every node is
@@ -449,12 +454,28 @@ def test_the_distributed_tables_are_the_serial_ones(tmp_path, name, ranks):
     gathered, every table is `Topo`'s array for array. A partitioner this
     PETSc lacks is refused. A rank left without a cell builds its empty share
     and the others' tables are still the serial ones: a rank that raised alone
-    there would leave the rest waiting in the next exchange."""
+    there would leave the rest waiting in the next exchange. Every mesh of
+    this rank count, one job; one rank in this process."""
     pytest.importorskip("h5py")
-    mesh, per = write_mesh(tmp_path, name)
-    out = run_job(ranks, mesh, "".join("T" if p else "F" for p in per))
-    if ranks > 1 and name.endswith("shuffled"):
-        assert "ptscotch moved cells" in out
+    if ranks > 1:
+        launcher_or_skip()
+    names = [n for n, r in MESH_RANKS if r == ranks]
+    meshes = {name: write_mesh(tmp_path / name, name) for name in names}
+    if ranks == 1:
+        # COMM_WORLD here is one rank
+        for name, (mesh, per) in meshes.items():
+            assert job(mesh, per) > 40, name
+        return
+    said = mpi_batch(ranks, mesh_case, {name: [str(mesh), [bool(p) for p in per]]
+                                        for name, (mesh, per) in meshes.items()},
+                     tmp_path / "jobs")
+    for name in names:
+        assert all(int(s.split()[-2]) > 0 for s in said[name]), (name, said[name])
+        # the flags the job used are the case's, not lost on their way to it
+        flags = "flags %s" % [bool(p) for p in CASES[name][2]]
+        assert all(flags in s for s in said[name]), (name, said[name])
+        if name.endswith("shuffled"):
+            assert "ptscotch moved cells" in said[name][0], (name, said[name])
 
 
 def test_the_triply_periodic_fixture_has_corners_that_need_the_chain():

@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dumps import deformation_gradient, dump_at
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import continuous_and_resumed, copy_example, run_app
 
 VECTORS = app("tracervectors")
@@ -29,8 +29,7 @@ TENSORS = app("tracertensors")
 POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 LINEAR = os.path.join(REPO, "data_example", "linear_flow", "expr_params.dat")
 
-needs_partrac = pytest.mark.skipif(not (os.path.exists(VECTORS) and os.path.exists(TENSORS)),
-                                   reason="tracervectors or tracertensors is not built")
+needs_partrac = needs(VECTORS, TENSORS)
 
 # points_x places the particles on the x axis, and a line element starts
 # along the init_mode's axis, so rhohat(0) = +-e_x exactly. tracervectors

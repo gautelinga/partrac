@@ -73,9 +73,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
   int cell_id = cell_id_rw[inode];
   
   if (check_if_inside){
-    double t0 = 0.; // not needed?
-    
-    bool inside = intp->locate(x_rw_new, t0, cell_id);
+    bool inside = intp->locate(x_rw_new, cell_id);
     if (!inside){
       std::cout << "Insertion failed! Need something more refined here." << std::endl;
 
@@ -100,7 +98,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
 
       for (Uint iddx=1; iddx < 1000; ++iddx){
         dx1 = iddx * ddx;
-        inside = intp->locate(x_rw_new + dx1 * n0, t0, cell_id);
+        inside = intp->locate(x_rw_new + dx1 * n0, cell_id);
         if (inside){
           break;
         }

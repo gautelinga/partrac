@@ -32,7 +32,7 @@ import pytest
 
 from cases import ABC
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -47,8 +47,7 @@ BASE = ("mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw_max=200000 "
         "dt=%g stat_intv=1e9 checkpoint_intv=1e9 random=false seed=1"
         % (INTV, DT)).split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def sweep_rate(n):
@@ -83,8 +82,7 @@ def lines(tmp_path, extra):
 
 def module_run(tmp_path_factory, name, extra, example=HAGEN):
     """(folder, run()) of a run in a folder of its own, for a run that several tests read."""
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     d = tmp_path_factory.mktemp(name)
     return d, run(d, extra, example)
 

@@ -1,3 +1,6 @@
+#ifndef __ANALYTICINTERPOL_HPP
+#define __ANALYTICINTERPOL_HPP
+
 #include "Error.hpp"
 #include "Interpol.hpp"
 #include "Params.hpp"
@@ -14,15 +17,17 @@
 #include "expressions/Expr_TaylorCouette.hpp"
 #include "expressions/Expr_LinearFlow.hpp"
 
-#ifndef __ANALYTICINTERPOL_HPP
-#define __ANALYTICINTERPOL_HPP
-
 // An expression evaluated at one time whatever the time asked
 class FrozenExpr final : public Expr {
 public:
   FrozenExpr(const partrac::Params& expr_params, std::shared_ptr<Expr> e, const double t)
     : Expr(expr_params), e(std::move(e)), t(t) {}
-  void eval(const Vector3d &x, const double, PointValues& ptvals) { e->eval(x, t, ptvals); }
+  // Held: no time derivatives
+  void eval(const Vector3d &x, const double, PointValues& ptvals) {
+    e->eval(x, t, ptvals);
+    ptvals.A.setZero();
+    ptvals.gradA.setZero();
+  }
   bool inside(const Vector3d &x, const double) { return e->inside(x, t); }
   bool has_wall() const { return e->has_wall(); }
   double sdf(const Vector3d &x) const { return e->sdf(x); }
@@ -79,8 +84,8 @@ public:
     return false;
   };
   void enable_reflection() { can_reflect = expr->has_wall(); };
-  double get_t_min() { return expr_params.get<double>("t_min"); };
-  double get_t_max() { return expr_params.get<double>("t_max"); };
+  double get_t_min() const override { return expr_params.get<double>("t_min"); };
+  double get_t_max() const override { return expr_params.get<double>("t_max"); };
   using Interpol::locate;
   using Interpol::evaluate;
 protected:

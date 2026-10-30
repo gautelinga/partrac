@@ -17,7 +17,7 @@ import pytest
 
 from divfree_cases import (D, channel2d, channel3d, interpol_probe,
                            relabel_by_global_id, smooth_noslip, write_case)
-from paths import REPO, app
+from paths import REPO, app, needs
 
 PER = [True, True, False]
 
@@ -35,7 +35,7 @@ def cleaned_channel(folder, dim):
     return params
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@needs(app("tracers"))
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
 def test_thread_count_does_not_change_the_field(tmp_path, dim, mode):
     """Each cell's interior values are built on their own, so a run at 1 and at
@@ -75,7 +75,7 @@ def test_thread_count_does_not_change_the_field(tmp_path, dim, mode):
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+@needs(app("interpol"))
 def test_a_case_labelled_by_global_cell_id_reads_as_the_same_field(tmp_path):
     """A cleaned case whose mesh's `cell_indices` is a permutation -- what
     `mpirun -n 8` writes -- read through `divfree=true` gives the field the same
@@ -104,7 +104,7 @@ def test_a_case_labelled_by_global_cell_id_reads_as_the_same_field(tmp_path):
         assert np.abs(a["u" + c] - b["u" + c]).max() < 1e-12 * scale, c
 
 
-@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+@needs(app("interpol"))
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
 def test_the_loader_gives_the_field_the_cleaner_writes_on_the_split_mesh(tmp_path, dim, mode):
     """`divfree=true` on the cleaned macro field and a plain P2 read of the
@@ -136,7 +136,7 @@ def walled_run(params, dim, mode, scheme):
 SEALED_WARNING = "steps declined on a divfree = true field with no open boundary"
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@needs(app("tracers"))
 @pytest.mark.parametrize("scheme", ["RK4", "explicit"])
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
 def test_a_cleaned_closed_channel_declines_no_step(tmp_path, dim, mode, scheme):
@@ -149,7 +149,7 @@ def test_a_cleaned_closed_channel_declines_no_step(tmp_path, dim, mode, scheme):
     assert SEALED_WARNING not in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracervectors_spatial")), reason="tracervectors_spatial is not built")
+@needs(app("tracervectors_spatial"))
 def test_a_spatial_march_on_a_cleaned_closed_channel_leaves_none(tmp_path):
     """The march in path length on the same channel declines the steps of
     particles done with their time T and of particles at rest, which have not
@@ -166,7 +166,7 @@ def test_a_spatial_march_on_a_cleaned_closed_channel_leaves_none(tmp_path):
     assert SEALED_WARNING not in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@needs(app("tracers"))
 @pytest.mark.parametrize("dim,mode", [(2, "triangle"), (3, "tet")], ids=["triangle", "tet"])
 def test_a_closed_channel_cleaned_with_open_walls_warns_of_its_declined_steps(tmp_path, dim, mode):
     """The channel's field with the midpoints of its wall facets given a

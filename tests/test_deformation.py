@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -41,7 +41,7 @@ def analytic_line(n=200):
     return np.sqrt(np.diff(x) ** 2 + np.diff(z) ** 2).sum(), np.abs(np.diff(x)).sum()
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_line_length_matches_the_analytic_value(tmp_path):
     """A 200-node line along x reports the initial length s0 and the stretched
     length s of the same polyline in the exact flow, under length columns. If
@@ -59,7 +59,7 @@ def test_line_length_matches_the_analytic_value(tmp_path):
     assert "A" not in st and "A0" not in st
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_sheet_area_grows_and_is_finite(tmp_path):
     """A flat sheet sheared by the flow reports an area A larger than its initial
     area A0 and a finite, positive mean log-elongation, under area columns, so
@@ -75,7 +75,7 @@ def test_sheet_area_grows_and_is_finite(tmp_path):
     assert "s" not in st and "s0" not in st
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_refinement_tracks_the_curve_better(tmp_path):
     """Refining a coarse line brings its length closer to the arc length of the
     exact parabola. The split edges must keep their reference length consistent,
@@ -94,7 +94,7 @@ def test_refinement_tracks_the_curve_better(tmp_path):
     assert e_fine < 1e-4
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 @pytest.mark.parametrize("scheme,int_order", [("explicit", 1), ("explicit", 2),
                                               ("RK4", 1)])
 def test_plane_poiseuille_advects_only_along_the_axis(tmp_path, scheme, int_order):

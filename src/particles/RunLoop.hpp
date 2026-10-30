@@ -115,14 +115,16 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   return Run{prm, intp, out, std::move(gens), t0, T, frozen_fields, false, t0};
 }
 
-// Load checkpoint or initial state
-inline bool load_or_initialize(Run& run, Topology& mesh){
+// Load checkpoint or initial state (init if given)
+inline bool load_or_initialize(Run& run, Topology& mesh,
+                               const std::function<InitialState()>& init = nullptr){
   const bool restarting = run.prm.get<std::string>("restart_folder") != "";
   if (restarting){
     mesh.load_checkpoint(run.prm.get<std::string>("restart_folder") + "/Checkpoints", run.prm);
+    mesh.check_dim();
   }
   else {
-    mesh.load_initial_state(set_initial_state(run.intp, run.prm, run.gens[0]), run.prm);
+    mesh.load_initial_state(init ? init() : set_initial_state(run.intp, run.prm, run.gens[0]), run.prm);
   }
   mesh.compute_maps();
   return restarting;
@@ -147,6 +149,66 @@ inline OutputFields mesh_output_fields(const partrac::Params& prm, Topology& mes
   f.H = full && mesh.dim() > 0 && mesh.computes_curvature();
   f.n = full && mesh.dim() > 1 && mesh.computes_curvature();
   return f;
+}
+
+// Refinement and coarsening on step intervals
+struct Remesher {
+  Topology& mesh;
+  const bool refine, coarsen, verbose;
+  const double refine_intv, coarsen_intv, dump_intv, step;
+
+  Remesher(Topology& mesh, const partrac::Params& prm, const double step)
+    : mesh(mesh), refine(prm.get<bool>("refine")), coarsen(prm.get<bool>("coarsen")),
+      verbose(prm.get<bool>("verbose")), refine_intv(prm.get<double>("refine_intv")),
+      // Coarsen at refine_intv when coarsening is off
+      coarsen_intv(coarsen ? prm.get<double>("coarsen_intv") : refine_intv),
+      dump_intv(prm.get<double>("dump_intv")), step(step) {}
+
+  // Initial refinement and coarsening
+  void initial(const bool restarting, const bool inject){
+    if (refine && !restarting && !inject && mesh.dim() > 0){
+      std::cout << "Initial refinement" << std::endl;
+      Uint n_add = mesh.refine();
+      if (verbose)
+        std::cout << "Added " << n_add << " edges." << std::endl;
+    }
+    if (coarsen && !restarting && !inject && mesh.dim() > 0){
+      std::cout << "Initial coarsening" << std::endl;
+      Uint n_rem = mesh.coarsen(true);
+      if (verbose)
+        std::cout << "Removed " << n_rem << " edges." << std::endl;
+    }
+    mesh.compute_interior();
+  }
+
+  // Curvature, refinement, coarsening
+  void reshape(const int it){
+    if ((refine && at_interval(it, refine_intv, step)) || at_interval(it, coarsen_intv, step)
+        || at_interval(it, dump_intv, step)){
+      mesh.compute_interior();
+    }
+    if (refine && at_interval(it, refine_intv, step) && it > 0){
+      Uint n_add = mesh.refine();
+      if (verbose)
+        std::cout << "Added " << n_add << " edges." << std::endl;
+    }
+    if (at_interval(it, coarsen_intv, step)){
+      Uint n_rem = mesh.coarsen(coarsen);
+      if (verbose)
+        std::cout << "Removed " << n_rem << " edges." << std::endl;
+    }
+  }
+};
+
+// Where the stuck particles are
+inline void report_stuck(const ParticleSet& ps, const std::vector<Uint>& nodes, const double t){
+  Vector3d x_stuck = {0., 0., 0.};
+  for (const Uint i : nodes)
+    x_stuck += ps.x(i);
+  x_stuck /= nodes.size();
+  std::cout << nodes.size() << " nodes could not move at t = " << t
+            << ", centred on (" << x_stuck[0] << ", " << x_stuck[1] << ", "
+            << x_stuck[2] << ")" << std::endl;
 }
 
 // Particles that could not step: ignore, reinject, mark or remove
@@ -178,15 +240,8 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
   }
   if (outside == "mark")
     for (const Uint i : nodes) ps.set_c(i, 2.0);
-  if (verbose){
-    Vector3d x_stuck = {0., 0., 0.};
-    for (const Uint i : nodes)
-      x_stuck += ps.x(i);
-    x_stuck /= nodes.size();
-    std::cout << nodes.size() << " nodes could not move at t = " << t
-              << ", centred on (" << x_stuck[0] << ", " << x_stuck[1] << ", "
-              << x_stuck[2] << ")" << std::endl;
-  }
+  if (verbose)
+    report_stuck(ps, nodes, t);
   // Remove last: slots shift
   if (outside == "remove"){
     std::vector<bool> node_isactive(ps.N(), true);
@@ -296,7 +351,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   double t = time_at(it);
 
   const std::string& newfolder = run.out.run;
-  prm.dump(newfolder, t);
+  prm.dump(newfolder, time_name(t, dt));
 
   // Loop constants
   const double dump_intv = prm.get<double>("dump_intv");
@@ -310,7 +365,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // S is computed in the refresh
   const bool refresh_S = ps.carries() == TransportElement::Vector;
 
-  std::string h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
+  std::string h5fname = newfolder + "/data_from_t" + time_name(t, dt) + ".h5";
   // No dump file when dumping is off
   H5::H5File h5f;
   if (dump_intv > 0.){
@@ -324,7 +379,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
 
   std::ofstream statfile;
   if (stat_intv > 0.){
-    statfile.open(newfolder + "/tdata_from_t" + std::to_string(t) + ".dat");
+    statfile.open(newfolder + "/tdata_from_t" + time_name(t, dt) + ".dat");
     write_stats_header(statfile, hooks.statistics ? hooks.statistics(0., stepper.counters())
                                                   : mesh.stats_header_columns(ds_max));
   }
@@ -384,11 +439,11 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
 
     // Dump detailed data
     if (at_interval(it, dump_intv, dt)){
-      std::string groupname = std::to_string(t);
+      const std::string groupname = time_name(t, dt);
       try {
         // A new file at each chunk, the first made at the start
         if (chunk_steps > 0 && it % chunk_steps == 0 && it > 0){
-          h5fname = newfolder + "/data_from_t" + std::to_string(t) + ".h5";
+          h5fname = newfolder + "/data_from_t" + groupname + ".h5";
           { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
         }
         h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);

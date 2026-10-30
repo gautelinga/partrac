@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from dumps import read_stats
-from paths import REPO, app
+from paths import REPO, app, needs
 from runs import copy_example, run_app
 
 PARTRAC = app("partrac")
@@ -29,7 +29,7 @@ EXAMPLES = [pytest.param(c, marks=pytest.mark.slow) if c == "brinkman_cylinder" 
             for c in analytic_examples()]
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 @pytest.mark.parametrize("case", EXAMPLES)
 def test_every_shipped_analytic_example_runs(case, tmp_path):
     """Every analytic example runs two steps and writes finite statistics with particles left.

@@ -12,6 +12,7 @@ function(partrac_add_app name)
   set_target_properties(${name} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin/")
   install(TARGETS ${name} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  set_property(GLOBAL APPEND PROPERTY PARTRAC_APPS ${name})
 endfunction()
 
 # Retired app name: TARGET with ARGS before the caller's
@@ -52,4 +53,5 @@ function(partrac_add_wrapper name)
   set_target_properties(${name} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin/")
   install(TARGETS ${name} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  set_property(GLOBAL APPEND PROPERTY PARTRAC_APPS ${name})
 endfunction()

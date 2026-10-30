@@ -134,7 +134,7 @@ public:
   void dump(const std::string& folder) const;              // folder/params.dat
   void dump_tmp(const std::string& folder) const;          // folder/params.dat.tmp
   void commit_dump(const std::string& folder) const;       // params.dat.tmp over params.dat
-  void dump(const std::string& folder, double t) const;    // folder/params_from_t<t>.dat
+  void dump(const std::string& folder, const std::string& t) const;   // folder/params_from_t<t>.dat
 
   const detail::SchemaImpl* schema() const { return m_schema.get(); }
 

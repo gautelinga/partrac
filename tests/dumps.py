@@ -46,11 +46,12 @@ def dump_at(case_dir, t, raw=False):
     raise AssertionError("no dump at t = %g under %s" % (t, case_dir))
 
 
-def all_dumps(case_dir, pattern="data_from_t*.h5", raw=False):
+def all_dumps(case_dir, pattern="data_from_t*.h5", raw=False, names=None):
     """time -> every dataset dumped then, over every file under case_dir matching pattern.
 
-    In id order, or as written (with `id`) if raw. Times are rounded to 1e-9,
-    so they can be looked up by the value they were dumped at.
+    In id order, or as written (with `id`) if raw; with names, only those
+    datasets. Times are rounded to 1e-9, so they can be looked up by the value
+    they were dumped at.
     """
     h5py = pytest.importorskip("h5py")
     read = as_written if raw else by_id
@@ -58,7 +59,8 @@ def all_dumps(case_dir, pattern="data_from_t*.h5", raw=False):
     for f in sorted(case_dir.rglob(pattern)):
         with h5py.File(f, "r") as h:
             for key in h:
-                out[round(float(key), 9)] = read(h[key])
+                g = h[key] if names is None else {k: h[key][k] for k in ("id",) + tuple(names)}
+                out[round(float(key), 9)] = read(g)
     return out
 
 

@@ -12,13 +12,12 @@ The kernel's own properties on the lattice (a step in one region is RK4's bit
 for bit; faces crossed; resting at walls) are in test_cells.cpp.
 """
 
-import os
 
 import numpy as np
 import pytest
 
 from dumps import all_dumps, deformation_gradient, dump_at, read_stats
-from paths import app, built_with_dolfin
+from paths import app, built_with_dolfin, needs
 from runs import (cells_counts, checkpoint_folder, copy_case, halving_ratios, read_checkpoint, run_app,
                   same_checkpoint, same_dumps)
 from test_structured import wall_felbm
@@ -26,8 +25,7 @@ from test_structured import wall_felbm
 TRACERS = app("tracers")
 TENSORS = app("tracertensors")
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(a) for a in (TRACERS, TENSORS)),
-                                reason="the tracer apps are not built")
+needs_apps = needs(TRACERS, TENSORS)
 
 # 400 particles over the lattice's fluid
 ARGS = ("mode=felbm init_mode=points_xyz x0=8 y0=8 z0=8 Nrw=400 Nrw_max=400 Dm=0 int_order=1 "

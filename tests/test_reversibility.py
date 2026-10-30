@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import checkpoint_folder, run_app
 
 PARTRAC = app("partrac")
@@ -39,8 +39,7 @@ BASE = ("mode=analytic init_mode=strip_x La=1.0 x0=0 y0=0 z0=0 Nrw=100 "
         "int_order=1 dt=%g stat_intv=1e9 random=false seed=1 "
         "integrate_tau=true tau_intv=%g tau_max=0" % (DT, DT)).split()
 
-needs_partrac = pytest.mark.skipif(not os.path.exists(PARTRAC),
-                                   reason="partrac is not built")
+needs_partrac = needs(PARTRAC)
 
 
 def resumed_dumps(case):
@@ -88,8 +87,7 @@ def errors(dump):
 @pytest.fixture(scope="module")
 def refined(tmp_path_factory):
     """errors() of the round trip with refinement only."""
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     return errors(there_and_back(tmp_path_factory.mktemp("refined"),
                                  ["coarsen=false", "ds_min=1e-12"]))
 
@@ -97,8 +95,7 @@ def refined(tmp_path_factory):
 @pytest.fixture(scope="module")
 def coarsened(tmp_path_factory):
     """errors() of the round trip with refinement and coarsening."""
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     return errors(there_and_back(tmp_path_factory.mktemp("coarsened"),
                                  ["coarsen=true", "coarsen_intv=0.01", "ds_min=0.008"]))
 
@@ -263,8 +260,7 @@ def folded_sheet(tmp_path_factory):
     Four half periods fold the sheet enough that the stars of collapsed edges
     are not planar.
     """
-    if not os.path.exists(PARTRAC):
-        pytest.skip("partrac is not built")
+    need(PARTRAC)
     root = tmp_path_factory.mktemp("folded_sheet")
     sheet = ["init_mode=sheet_xz", "Lb=0.5", "ds_init=0.05"]
     mesh = ["ds_max=0.02", "refine=true", "refine_intv=%g" % DT_S]

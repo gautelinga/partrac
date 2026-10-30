@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 
 from dumps import all_dumps
-from paths import REPO, app
+from paths import REPO, app, needs
 from pieces import in_pieces
 from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
@@ -46,8 +46,7 @@ DT = 8.0
 BASE = ("mode=analytic init_mode=points_z x0=0 y0=0 z0=0 Nrw=100 Nrw_max=100 "
         "Dm=0 int_order=1 stat_intv=1e9 random=false seed=1 outside=ignore").split()
 
-needs_apps = pytest.mark.skipif(not all(os.path.exists(app(a)) for a in APPS),
-                                reason="the tracer apps are not built")
+needs_apps = needs(*[app(a) for a in APPS])
 
 
 def params():

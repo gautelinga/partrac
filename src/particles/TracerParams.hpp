@@ -38,11 +38,9 @@ inline void add_common(partrac::Schema& s, const TracerDefaults& d, const std::s
   s.require<std::string>("init_mode", "initial distribution: points_<directions>, as points_xy");
   s.require<Uint>("Nrw", "number of particles");
   s.require<Uint>("Nrw_max", "max number of particles");
-  if (d.int_order > 0)
-    s.opt<int>("int_order", d.int_order, "integration order");
-  else
-    s.require<int>("int_order", "integration order");
+  add_int_order(s, "integration order", d.int_order);
   s.opt<std::string>("init_weight", "uniform", "what the initial points are sampled by: uniform, u, ux, uy or uz");
+  s.choices("init_weight", {"uniform", "u", "ux", "uy", "uz"});
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.opt<bool>("output_J", d.output_J, "dump the velocity gradient at each particle");
   s.opt<bool>("output_S", false, "dump the stretching rates along the frame (tracertensors)");
@@ -68,8 +66,6 @@ inline void add_common(partrac::Schema& s, const TracerDefaults& d, const std::s
 
   s.choices("mode", interpol_modes());
   s.token_choices("init_mode", "_", {"points"});
-  s.check([](const partrac::Params& p){ return p.get<int>("int_order") <= 2; },
-          "int_order must be 1 or 2");
 }
 
 }  // namespace tracer_params_detail

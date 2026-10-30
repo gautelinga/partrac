@@ -34,7 +34,7 @@ public:
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection();
   // Outward unit normal of the cell's wall facets, their mean at an edge; zero off the wall
-  Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
+  Vector3d get_boundary_normal(const Vector3d &x, const int cell_id) const override;
   double hmin() const { return hmin_; }
   Uint cell_count() const { return cells_.size(); }
   // (d! volume)^(1/d): the barycentric gradients' determinant is its inverse
@@ -109,10 +109,10 @@ protected:
   double t_next = 0.;
   std::vector<bool> periodic = {false, false, false};
   bool include_pressure = true;
-  double periodic_tol = 1e-12;   // heuristic
 
   Uint dim;
-  double hmin_ = 0.;    // the shortest cell diameter
+  double hmin_ = 0.;    // the shortest edge
+  double periodic_tol() const { return mesh_tables::periodic_match_tol(hmin_); }
   Uint ncoeffs_u;
   Uint ncoeffs_p = 0;   // stays 0 when pressure is ignored
 

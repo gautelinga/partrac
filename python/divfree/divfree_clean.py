@@ -71,7 +71,8 @@ LOC_EDGES = {3: [(1, 2), (0, 2), (0, 1)],
 
 REST_TOL = 1e-8          # |u| <= this times max |u| is at rest; --rest-tol
 BOUNDARY_W = 1e4         # least-change weight of a free midpoint on an exterior facet
-PERIODIC_TOL = 1e-12     # the dolfin HDF5 loaders' own; the XDMF tet meshes use 1e-4
+PERIODIC_TOL = None      # periodic images: within PERIODIC_REL of the shortest edge,
+PERIODIC_REL = 1e-2      # as partrac's loaders match them
 MINRES_RTOL = 1e-12      # relative tolerance of the KKT solve, before refinement
 FLUX_TOL = 1e-9          # net flux a loader refuses, relative to the cell's scale
 FLUX_FLOOR = 1e-6        # a cell's scale is at least this of the stamp's largest facet flux
@@ -147,6 +148,14 @@ def _facet_multiplicity(F, nverts):
     return out
 
 
+def match_tol(X, edges, tol, comm):
+    """tol, or a fraction PERIODIC_REL of the mesh's shortest edge over every rank."""
+    if tol is not None:
+        return tol
+    h = np.min(np.linalg.norm(X[edges[:, 0]] - X[edges[:, 1]], axis=1)) if len(edges) else np.inf
+    return PERIODIC_REL * comm.allreduce(float(h), op=MPI.MIN)
+
+
 class Topo(Ranks):
     """Mesh arrays, the edge and facet tables, the periodic masters and the held
     set of a whole mesh. Nodes are the vertices, then the edges; the serial ids
@@ -167,6 +176,7 @@ class Topo(Ranks):
         self.x_max = self.X.max(axis=0)
         self._edges()
         self._geometry()
+        periodic_tol = match_tol(self.X, self.edges, periodic_tol, self.comm)
         self._facets(periodic_tol)
         self._periodic(periodic_tol)
         self._exterior()
@@ -242,12 +252,21 @@ class Topo(Ranks):
                     continue
                 lo = np.nonzero(x[:, a] < self.x_min[a] + tol)[0]
                 hi = np.nonzero((x[:, a] > self.x_max[a] - tol) & (link == np.arange(n)))[0]
-                if len(lo) == 0 or len(hi) == 0:
+                if len(hi) == 0:
                     continue
                 q = x[hi].copy()
                 q[:, a] -= self.x_max[a] - self.x_min[a]
-                d, j = cKDTree(x[lo]).query(q)
-                ok = d < tol
+                if len(lo):
+                    d, j = cKDTree(x[lo]).query(q)
+                    ok = d < tol
+                else:
+                    ok = np.zeros(len(hi), bool)
+                if not ok.all():
+                    axis = "xyz"[a]
+                    raise ValueError("periodic_%s: %d nodes on the %s faces have no image within "
+                                     "%.3g on the other face, one at %s: the mesh is not periodic "
+                                     "along %s" % (axis, int((~ok).sum()), axis, tol,
+                                                   x[hi[~ok][0]].tolist(), axis))
                 link[hi[ok]] = lo[j[ok]]
         master = np.arange(n, dtype=np.int32)
         for _ in range(self.dim + 1):
@@ -2177,8 +2196,8 @@ def main(argv=None):
                         "in every stamp is at rest, and one at rest on an exterior facet the "
                         "mesh does not pair is held (default %(default)g)")
     p.add_argument("--periodic-tol", type=float, default=PERIODIC_TOL,
-                   help="position tolerance pairing periodic images (default %(default)g, "
-                        "the dolfin HDF5 loaders' own)")
+                   help="position tolerance pairing periodic images (default %g of the "
+                        "shortest edge, as partrac's loaders)" % PERIODIC_REL)
     p.add_argument("--partition", choices=("ptscotch", "parmetis", "blocks"), default=None,
                    help="how the cells are shared out over the ranks: PETSc's PT-Scotch "
                         "(the default on several ranks) or ParMETIS on their dual graph, or "
@@ -2186,6 +2205,13 @@ def main(argv=None):
     a = p.parse_args(argv)
     if not (a.check or a.out):
         p.error("--out is required unless --check is given")
+    # every rank refuses alike, before any collective
+    if a.penalty is not None and not (np.isfinite(a.penalty) and a.penalty >= 0.0):
+        p.error("--penalty must be a finite number, 0 or more")
+    if not (np.isfinite(a.rest_tol) and a.rest_tol >= 0.0):
+        p.error("--rest-tol must be a finite number, 0 or more")
+    if a.periodic_tol is not None and not (np.isfinite(a.periodic_tol) and a.periodic_tol > 0.0):
+        p.error("--periodic-tol must be a finite number above 0")
     try:
         _run(a)
     except Exception as exc:

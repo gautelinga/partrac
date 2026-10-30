@@ -10,6 +10,7 @@
 #include <vector>
 #include <omp.h>
 #include "Error.hpp"
+#include "wait_policy.hpp"
 #include "files.hpp"
 #include "H5Cpp.h"
 
@@ -125,10 +126,9 @@ inline SepdataSelection sepdata_selection(const partrac::Params& prm, const std:
 }
 
 // Separation data
-inline void write_separation_data(const std::string& folder, const double t, const ParticleSet& ps,
-                                  const SepdataSelection& sel){
-    const std::string sepdatafname = folder + "/sepdata_from_t" + std::to_string(t) + ".h5";
-    const std::string groupname = std::to_string(t);
+inline void write_separation_data(const std::string& folder, const std::string& groupname,
+                                  const ParticleSet& ps, const SepdataSelection& sel){
+    const std::string sepdatafname = folder + "/sepdata_from_t" + groupname + ".h5";
 
     std::vector<Vector3d> xyz_;
     std::vector<double> w_;
@@ -166,11 +166,6 @@ static int run(int argc, char* argv[])
                   << "======================================================================" << std::endl;
     }
 
-    // Input parameters
-    if (argc < 2) {
-        std::cout << "Please specify an input file." << std::endl;
-        return 1;
-    }
     partrac::Params prm = partrac::parse_or_exit(weighted_walkers_schema(), argc, argv);
 
     Run run = start_run(prm, "WeightedWalkers");
@@ -188,16 +183,10 @@ static int run(int argc, char* argv[])
     // Gaussian strip or circle
     const std::vector<std::string> key = split_string(prm.get<std::string>("init_mode"), "_");
     const Uint dim = contains(key[0], "strip") ? 2 : 3;
-    if (prm.get<std::string>("restart_folder") != ""){
-        mesh.load_checkpoint(prm.get<std::string>("restart_folder") + "/Checkpoints", prm);
-    }
-    else if (dim == 2){
-        mesh.load_initial_state(init_gaussian_strip(key, run.intp, prm, run.gens[0]), prm);
-    }
-    else {
-        mesh.load_initial_state(init_gaussian_circle(key, run.intp, prm, run.gens[0]), prm);
-    }
-    mesh.compute_maps();
+    load_or_initialize(run, mesh, [&](){
+        return dim == 2 ? init_gaussian_strip(key, run.intp, prm, run.gens[0])
+                        : init_gaussian_circle(key, run.intp, prm, run.gens[0]);
+    });
     if (check_only(run, ps, mesh))
         return 0;
 
@@ -229,7 +218,7 @@ static int run(int argc, char* argv[])
         return cloud_stats_columns(t, ps, counters.get_declined());
     };
     hooks.after_statistics = [&](const int, const double t){
-        write_separation_data(sepdatafolder, t, ps, selection);
+        write_separation_data(sepdatafolder, time_name(t, dt), ps, selection);
     };
     // Resampling
     hooks.after_step = [&](const int it, const double t){
@@ -243,13 +232,24 @@ static int run(int argc, char* argv[])
         }
     };
     hooks.keep_going = [&]{ return !nothing_left; };
+    // Walkers that cannot step stay
+    const std::string outside = "ignore";
+    const bool verbose = prm.get<bool>("verbose");
+    hooks.outside = [&](const std::vector<Uint>& nodes, const double t){
+        if (verbose && !nodes.empty())
+            report_stuck(ps, nodes, t);
+    };
+    OutsideTotals totals{outside, *run.intp, [&]{ return integrator.get_declined(); }};
+    totals.attach(hooks, verbose);
 
     run_loop(run, ps, mesh, stepper, output_fields, dt, hooks);
+    totals.finish(std::cout);
 
     return 0;
 }
 
 int main(int argc, char* argv[])
 {
+  partrac::wait_passively(argv);
   return partrac::report_errors([&]{ return run(argc, argv); });
 }

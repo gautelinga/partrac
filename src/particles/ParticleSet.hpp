@@ -50,6 +50,7 @@ public:
     void compute_strip_curvature(const EdgesType &edges, const Node2EdgesType &node2edges);
     bool has_space() const { return Nrw < Nrw_max; };
     bool has_space(const Uint n) const { return Nrw + n <= Nrw_max; };
+    Uint capacity() const { return Nrw_max; };
     Uint N() const { return Nrw; };
     void set_N(Uint n) { Nrw=n; };
     // Old text checkpoints

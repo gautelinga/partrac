@@ -26,7 +26,7 @@ TopologyOptions mesh_options(const partrac::Params& prm){
   o.curv_refine_factor = prm.get<double>("curv_refine_factor");
   o.cut_if_stuck = prm.get<bool>("cut_if_stuck");
   o.inject_edges = prm.get<bool>("inject_edges");
-  o.filter_target = prm.get<int>("filter_target");
+  o.filter_target = prm.get<Uint>("filter_target");
   return o;
 }
 
@@ -175,18 +175,34 @@ Uint Topology::coarsen(const bool full){
   // Skip if no edge is below the cut
   Uint n = 0;
   if (ds_shortest <= ds_cut * (1. + 1e-9))
-    n = coarsening(*this, ps, ds_cut, opts.curv_refine_factor);
+    n = coarsening(*this, ps, ds_cut, full ? opts.ds_max : 0., opts.curv_refine_factor);
   check_topology();
   return n;
+}
+
+// Cull needed after injection?
+static bool injection_leaves_debris(const Connectivity& m, const bool inject_edges){
+  for (const auto& face : m.faces)
+    if (face.second <= 0.)
+      return true;
+  // Left-over rungs or copies
+  if (inject_edges ? m.faces.empty() : m.edges.empty())
+    return false;
+  std::vector<bool> on_edge(m.pos_inj.size(), false);
+  for (const auto& edge : m.edges_inj)
+    on_edge[edge.first[0]] = on_edge[edge.first[1]] = true;
+  return std::find(on_edge.begin(), on_edge.end(), false) != on_edge.end();
 }
 
 Uint Topology::inject(){
   Uint n = injection(*this, ps, opts.inject_edges, opts.verbose);
   // Cull what is no longer at the inlet
-  std::vector<bool> face_isactive(faces.size(), true);
-  std::vector<bool> edge_isactive(edges.size(), true);
-  std::vector<bool> node_isactive(ps.N(), true);
-  remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
+  if (injection_leaves_debris(*this, opts.inject_edges)){
+    std::vector<bool> face_isactive(faces.size(), true);
+    std::vector<bool> edge_isactive(edges.size(), true);
+    std::vector<bool> node_isactive(ps.N(), true);
+    remove_inactive(*this, face_isactive, edge_isactive, node_isactive, ps);
+  }
   check_topology();
   return n;
 }
@@ -235,6 +251,30 @@ bool Topology::resize_doublings(const double ds){
   return resizing_doublings(edges, edge_doublings(), ps, ds);
 }
 
+// Edges between nodes below n_nodes
+static void check_edges(const std::string& file, const std::string& name, const EdgesType& edges, const Uint n_nodes){
+  for (Uint i = 0; i < edges.size(); ++i)
+    if (edges[i].first[0] >= n_nodes || edges[i].first[1] >= n_nodes)
+      partrac::fail(file, ": edge ", i, " of '", name, "' joins nodes ", edges[i].first[0],
+                    " and ", edges[i].first[1], ", of ", n_nodes);
+}
+
+// Faces of edges below n_edges
+static void check_faces(const std::string& file, const FacesType& faces, const Uint n_edges){
+  for (Uint i = 0; i < faces.size(); ++i)
+    for (Uint j = 0; j < 3; ++j)
+      if (faces[i].first[j] >= n_edges)
+        partrac::fail(file, ": face ", i, " names edge ", faces[i].first[j], ", of ", n_edges);
+}
+
+// Entries below n
+static void check_list(const std::string& file, const std::string& name, const std::vector<Uint>& li,
+                       const Uint n, const std::string& what){
+  for (Uint i = 0; i < li.size(); ++i)
+    if (li[i] >= n)
+      partrac::fail(file, ": entry ", i, " of '", name, "' names ", what, " ", li[i], ", of ", n);
+}
+
 // Node pairs, stored lengths, tau and rho_prev
 static void write_edges(H5::H5File& h5f, const EdgesType& edges, const std::string& suffix){
   const Uint n = edges.size();
@@ -261,12 +301,9 @@ static void read_edges(const H5::H5File& h5f, EdgesType& edges, const std::strin
   hdf52doubles(h5f, "dl0" + suffix, n, 1, dl0);
   hdf52doubles(h5f, "edge_tau" + suffix, n, 1, tau);
   hdf52doubles(h5f, "edge_rho_prev" + suffix, n, 1, rho_prev);
-  for (Uint i = 0; i < n; ++i){
-    if (nodes[2*i] >= n_nodes || nodes[2*i+1] >= n_nodes)
-      partrac::fail(h5f.getFileName(), ": edge ", i, " of 'edges", suffix, "' joins nodes ", nodes[2*i],
-                    " and ", nodes[2*i+1], ", of ", n_nodes);
+  for (Uint i = 0; i < n; ++i)
     edges.push_back({{nodes[2*i], nodes[2*i+1]}, dl0[i], tau[i], rho_prev[i]});
-  }
+  check_edges(h5f.getFileName(), "edges" + suffix, edges, n_nodes);
 }
 
 // Edge triples, stored areas, tau and rho_prev
@@ -295,21 +332,16 @@ static void read_faces(const H5::H5File& h5f, FacesType& faces, const Uint n_edg
   hdf52doubles(h5f, "dA0", n, 1, dA0);
   hdf52doubles(h5f, "face_tau", n, 1, tau);
   hdf52doubles(h5f, "face_rho_prev", n, 1, rho_prev);
-  for (Uint i = 0; i < n; ++i){
-    for (Uint j = 0; j < 3; ++j)
-      if (tri[3*i+j] >= n_edges)
-        partrac::fail(h5f.getFileName(), ": face ", i, " names edge ", tri[3*i+j], ", of ", n_edges);
+  for (Uint i = 0; i < n; ++i)
     faces.push_back({{tri[3*i], tri[3*i+1], tri[3*i+2]}, dA0[i], tau[i], rho_prev[i]});
-  }
+  check_faces(h5f.getFileName(), faces, n_edges);
 }
 
 // Indices below n
 static void read_list(const H5::H5File& h5f, const std::string& name, std::vector<Uint>& li,
                       const Uint n, const std::string& what){
   hdf52ulongs(h5f, name, hdf5_rows(h5f, name), 1, li);
-  for (Uint i = 0; i < li.size(); ++i)
-    if (li[i] >= n)
-      partrac::fail(h5f.getFileName(), ": entry ", i, " of '", name, "' names ", what, " ", li[i], ", of ", n);
+  check_list(h5f.getFileName(), name, li, n, what);
 }
 
 // t in a params file, or NaN
@@ -402,6 +434,7 @@ void Topology::load_checkpoint(const std::string& checkpointsfolder, const partr
   }
 }
 
+// Check indices as for HDF5
 void Topology::load_text_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm){
   std::string posfile = checkpointsfolder + "/positions.pos";
   ps.load_positions(posfile);
@@ -409,8 +442,12 @@ void Topology::load_text_checkpoint(const std::string& checkpointsfolder, const 
   load_faces(facefile, faces);
   std::string edgefile = checkpointsfolder + "/edges.edge";
   load_edges(edgefile, edges);
+  check_edges(edgefile, "edges", edges, ps.N());
+  check_faces(facefile, faces, edges.size());
+  // Optional
   if (records_doublings){
-    load_list(checkpointsfolder + "/doublings.list", doublings);
+    if (std::ifstream(checkpointsfolder + "/doublings.list"))
+      load_list(checkpointsfolder + "/doublings.list", doublings);
     doublings.resize(edges.size(), 0);
   }
   std::string colfile = checkpointsfolder + "/colors.col";
@@ -420,10 +457,13 @@ void Topology::load_text_checkpoint(const std::string& checkpointsfolder, const 
     load_vector_field(posinjfile, pos_inj);
     std::string edgesinjfile = checkpointsfolder + "/edges_inj.edge";
     load_edges(edgesinjfile, edges_inj);
+    check_edges(edgesinjfile, "edges_inj", edges_inj, pos_inj.size());
     std::string edgesinletfile = checkpointsfolder + "/edges_inlet.list";
     std::string nodesinletfile = checkpointsfolder + "/nodes_inlet.list";
     load_list(edgesinletfile, edges_inlet);
     load_list(nodesinletfile, nodes_inlet);
+    check_list(edgesinletfile, "edges_inlet", edges_inlet, edges.size(), "edge");
+    check_list(nodesinletfile, "nodes_inlet", nodes_inlet, ps.N(), "node");
   }
   if (has_t_loc(prm)){
     ps.load_scalar(checkpointsfolder + "/t_loc.dat", "t_loc");
@@ -513,6 +553,8 @@ void Topology::load_initial_state(const InitialState& init_state, partrac::Param
                 << "will be refined to match, so the injected curve gets finer "
                 << "as the run goes on." << std::endl;
   }
+  if (!ps.has_space(init_state.nodes.size()))
+    partrac::fail("the initial state has ", init_state.nodes.size(), " nodes, more than Nrw_max = ", ps.capacity());
   ps.add(init_state.nodes, 0);
   // Actual counts; Nrw is the request
   prm.set<Uint>("Nrw_init", ps.N());

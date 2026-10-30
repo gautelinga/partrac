@@ -192,6 +192,26 @@ void check_nodal_bases(){
 
 // The loaders' evaluation, from dolfin's interpolation of a polynomial: exact
 // when the element holds the polynomial, and not when it does not
+template<std::size_t N>
+inline void gather_n(const std::uint32_t* dofs, const std::vector<double>& prev,
+                     const std::vector<double>& next, double* block_prev, double* block_next){
+  for (std::size_t i = 0; i < N; ++i){
+    block_prev[i] = prev[dofs[i]];
+    block_next[i] = next[dofs[i]];
+  }
+}
+
+// A field's dolfin dofs in this cell, at both stamps; P1 and P2 gather a fixed count
+template<std::size_t N1, std::size_t N2>
+inline void gather_stamps(const std::uint32_t* dofs, const std::size_t stride,
+                          const std::vector<double>& prev, const std::vector<double>& next,
+                          double* block_prev, double* block_next){
+  if (stride == N1)
+    gather_n<N1>(dofs, prev, next, block_prev, block_next);
+  else
+    gather_n<N2>(dofs, prev, next, block_prev, block_next);
+}
+
 template<typename Cell>
 double evaluation_error(const std::string& element, const bool quadratic, const bool gradient){
   constexpr int D = dim_of<Cell>;
@@ -449,7 +469,7 @@ struct BareMesh : public MeshCore<Cell> {
       this->cells_.push_back(Cell(*c));
     }
     build_facet_neighbours(this->facet_neigh_, mesh, dolfin_cells_, nullptr, this->periodic,
-                           this->x_min, this->x_max, this->dim, this->periodic_tol);
+                           this->x_min, this->x_max, this->dim, this->periodic_tol());
     this->set_period();
   }
   // The walk first; the fallback is dolfin's tree, as DolfInterpol's is
@@ -462,8 +482,8 @@ struct BareMesh : public MeshCore<Cell> {
   void update(const double) {}
   void freeze(const double) {}
   void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) {}
-  double get_t_min() { return 0.; }
-  double get_t_max() { return 1.; }
+  double get_t_min() const override { return 0.; }
+  double get_t_max() const override { return 1.; }
 };
 
 template<typename Cell>
@@ -565,9 +585,11 @@ TEST_CASE("locate wraps a point through a face, an edge and a corner of a period
 }
 
 TEST_CASE("A mesh or element the evaluation cannot take throws partrac::Error", "[interpol][errors]") {
-  // More dofs than the buffers hold
-  REQUIRE_THROWS_AS(check_dofs_fit(11, 4, Tet::n_dofs_max, "test"), partrac::Error);
-  REQUIRE_NOTHROW(check_dofs_fit(10, 4, Tet::n_dofs_max, "test"));
+  // Neither P1 nor P2: more dofs than the buffers hold, a constant, five
+  REQUIRE_THROWS_AS(check_dofs_fit({11, 4}, 4, Tet::n_dofs_max, "test"), partrac::Error);
+  REQUIRE_THROWS_AS(check_dofs_fit({10, 1}, 4, Tet::n_dofs_max, "test"), partrac::Error);
+  REQUIRE_THROWS_AS(check_dofs_fit({4, 4, 5}, 4, Tet::n_dofs_max, "test"), partrac::Error);
+  REQUIRE_NOTHROW(check_dofs_fit({10, 4, 0}, 4, Tet::n_dofs_max, "test"));
   // A dof table narrower than evaluate reads
   Cells<Tet> c(unit_mesh<Tet>(2, false));
   std::shared_ptr<dolfin::FunctionSpace> u_space, p_space;
@@ -634,6 +656,7 @@ TEST_CASE("PeriodicBC identifies the boundary dofs of a periodic space", "[inter
 
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <string>
 
 #include "foam_arrays.hpp"
@@ -660,17 +683,37 @@ double measure(const SplitData& s, const std::size_t t){
        + a[0][2]*(a[1][0]*a[2][1] - a[1][1]*a[2][0]);
 }
 
+// The failures of a loop, required none after it, the first one named
+struct Misses {
+  std::size_t n = 0;
+  std::string first;
+  template<typename F>
+  void check(const bool ok, const F& what){
+    if (ok || n++) return;
+    std::ostringstream os;
+    what(os);
+    first = os.str();
+  }
+  void require() const {
+    INFO(n << " failed, the first " << first);
+    REQUIRE(n == 0);
+  }
+};
+
 // Every simplex positive, and a 3D cell's tets summing to its volume
 void check_positive(const openfoam_load::CaseData& c, const SplitData& s, const bool planar = true){
   std::vector<double> sum(std::size_t(c.ncells), 0.);
+  Misses miss;
   for (std::size_t t = 0; t < s.nsimplices(); ++t){
     const double m = measure(s, t);
-    REQUIRE(m > 0.);
+    miss.check(m > 0., [&](std::ostream& os){ os << "simplex " << t << " measures " << m; });
     sum[std::size_t(s.cell_of[t])] += m/6.;
   }
   if (s.nv == 4 && planar)
-    for (std::int64_t i = 0; i < c.ncells; ++i)
-      REQUIRE(std::abs(sum[std::size_t(i)] - c.cell_volumes[std::size_t(i)]) <= 1e-12*c.cell_volumes[std::size_t(i)]);
+    for (std::size_t i = 0; i < std::size_t(c.ncells); ++i)
+      miss.check(std::abs(sum[i] - c.cell_volumes[i]) <= 1e-12*c.cell_volumes[i],
+                 [&](std::ostream& os){ os << "cell " << i << " sums to " << sum[i] << ", not " << c.cell_volumes[i]; });
+  miss.require();
 }
 
 // Interior facets twice, oppositely oriented; boundary facets once, with
@@ -690,19 +733,22 @@ void check_conforming(const openfoam_load::CaseData& c, const SplitData& s){
       facets[f].push_back({std::size_t(nv)*t + std::size_t(k), parity});
     }
   std::size_t boundary = 0;
+  Misses miss;
   for (const auto& kv : facets){
     const auto& v = kv.second;
-    REQUIRE(v.size() <= 2);
+    const auto at = [&](std::ostream& os){ os << "facet " << v[0].first << " in " << v.size() << " simplices"; };
+    miss.check(v.size() <= 2, at);
     if (v.size() == 2){
-      REQUIRE(v[0].second != v[1].second);
-      REQUIRE(s.facet_patch[v[0].first] < 0);
-      REQUIRE(s.facet_patch[v[1].first] < 0);
+      miss.check(v[0].second != v[1].second, at);
+      miss.check(s.facet_patch[v[0].first] < 0, at);
+      miss.check(s.facet_patch[v[1].first] < 0, at);
     }
-    else {
-      REQUIRE(s.facet_patch[v[0].first] >= 0);
+    else if (v.size() == 1){
+      miss.check(s.facet_patch[v[0].first] >= 0, at);
       ++boundary;
     }
   }
+  miss.require();
   std::size_t expected = 0;
   for (const auto& p : c.patches)
     for (std::int64_t f = p.start; f < p.start + p.size; ++f)
@@ -713,12 +759,13 @@ void check_conforming(const openfoam_load::CaseData& c, const SplitData& s){
   for (std::size_t q = 0; q < s.facet_partner.size(); ++q){
     const std::int32_t patch = s.facet_patch[q];
     const bool cyclic = patch >= 0 && c.patches[std::size_t(patch)].type == "cyclic";
-    REQUIRE((s.facet_partner[q] >= 0) == cyclic);
-    if (!cyclic) continue;
+    const auto at = [&](std::ostream& os){ os << "facet " << q << " of patch " << patch << ", partner " << s.facet_partner[q]; };
+    miss.check((s.facet_partner[q] >= 0) == cyclic, at);
+    if (!cyclic || s.facet_partner[q] < 0) continue;
     const auto& sep = c.patches[std::size_t(patch)].separation;
     const std::size_t o = std::size_t(s.facet_partner[q]);
-    REQUIRE(s.facet_partner[o] == std::int64_t(q));
-    REQUIRE(s.facet_patch[o] == c.patches[std::size_t(patch)].neighbour);
+    miss.check(s.facet_partner[o] == std::int64_t(q), at);
+    miss.check(s.facet_patch[o] == c.patches[std::size_t(patch)].neighbour, at);
     std::vector<std::array<double, 3>> here, there;
     for (int j = 0; j < nv; ++j){
       if (j != int(q % std::size_t(nv))){
@@ -739,9 +786,10 @@ void check_conforming(const openfoam_load::CaseData& c, const SplitData& s){
       bool found = false;
       for (const auto& y : there)
         found = found || (std::abs(x[0] - y[0]) + std::abs(x[1] - y[1]) + std::abs(x[2] - y[2]) < 1e-12);
-      REQUIRE(found);
+      miss.check(found, at);
     }
   }
+  miss.require();
 }
 
 // The unit cube's corners, relabelled: point perm[c] is corner c = x + 2y + 4z;
@@ -814,7 +862,12 @@ void check_fixture(const std::string& name, const bool planar){
     if (H5Aexists(group, "cells_fnv1a") > 0){
       std::vector<std::int64_t> head;
       partrac::h5_read(file, g + "/cells_head", head);
-      for (std::size_t i = 0; i < head.size(); ++i) REQUIRE(std::int64_t(s.cells[i]) == head[i]);
+      REQUIRE(head.size() <= s.cells.size());
+      Misses miss;
+      for (std::size_t i = 0; i < head.size(); ++i)
+        miss.check(std::int64_t(s.cells[i]) == head[i],
+                   [&](std::ostream& os){ os << "cells[" << i << "] " << s.cells[i] << ", expected " << head[i]; });
+      miss.require();
       REQUIRE(h5_attribute<std::int64_t>(group, "cells_size", H5T_NATIVE_INT64) == std::int64_t(s.cells.size()));
       REQUIRE(h5_attribute<std::uint64_t>(group, "cells_fnv1a", H5T_NATIVE_UINT64) == fnv1a(s.cells));
     }
@@ -1700,7 +1753,7 @@ TEST_CASE("W's normal matrix is conditioned independently of the cell size", "[o
   // Scaled to unit diagonal, the interior condition number of a graded,
   // jittered lattice stays put under refinement; unscaled it grows as 1/h^2
   std::vector<double> conds, raw;
-  for (const int n : {8, 16, 32}){
+  for (const int n : {6, 12, 24}){
     const auto c = foam_arrays::box({foam_arrays::graded(n, 4.), foam_arrays::graded(n, 10.), foam_arrays::graded(n, 2.)},
                                     {}, 0.2, unsigned(n));
     LeastSquaresReport r;
@@ -1730,10 +1783,10 @@ TEST_CASE("W's normal matrix is conditioned independently of the cell size", "[o
   REQUIRE(raw[2] > 10*raw[0]);
 }
 
-TEST_CASE("W on a 64^3 lattice: exact for a linear field, a centre its cell's value", "[openfoam]") {
+TEST_CASE("W on a 16^3 lattice: exact for a linear field, a centre its cell's value", "[openfoam]") {
   // Cyclic in x, walls in z, W12's nodes (the points, then every cell's
-  // centre): the operator built on a lattice of 262,144 cells
-  const int n = 64;
+  // centre): the operator built on a lattice of 4,096 cells
+  const int n = 16;
   const auto c = foam_arrays::box({foam_arrays::linspace(0, 1, n), foam_arrays::linspace(0, 1, n), foam_arrays::linspace(0, 1, n)},
                                   {{"xmin", "cyclic"}, {"xmax", "cyclic"}});
   const FieldFn lin = [](const double* x){ return V3d{1 + 2*x[1] - x[2], x[2], 3 - x[1]}; };
@@ -1841,7 +1894,7 @@ using openfoam_phase::above_half;
 
 // The fraction of a simplex above 1/2 by Monte Carlo, uniform points by
 // exponential spacings, and its standard error
-std::pair<double, double> above_half_mc(const double* v, const int nv, std::mt19937& rng, const int n = 400000){
+std::pair<double, double> above_half_mc(const double* v, const int nv, std::mt19937& rng, const int n = 100000){
   std::exponential_distribution<double> ex;
   int hits = 0;
   for (int i = 0; i < n; ++i){

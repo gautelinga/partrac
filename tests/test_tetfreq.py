@@ -23,14 +23,13 @@ non-periodic faces vanish there, so a tracer started inside stays inside. That
 is the second thing checked: RK4 runs and no particle leaves the box.
 """
 
-import os
 
 import numpy as np
 import pytest
 
 from cases import shared_dir
 from dumps import all_dumps
-from paths import app
+from paths import app, need
 from runs import copy_case, run_app
 
 INTERPOL = app("interpol")
@@ -159,8 +158,7 @@ def freq_case(request, tmp_path, mesh_dir, triangle_freq_dir):
     The copy is private because the apps write their output beside the input.
     """
     mode = request.param
-    if not os.path.exists(INTERPOL):
-        pytest.skip("interpol is not built")
+    need(INTERPOL)
     src = triangle_freq_dir if mode == "trianglefreq" else mesh_dir("tetfreq")
     d = copy_case(src, tmp_path / "case")
     cfg = d / "dolfin_params.dat"
@@ -213,8 +211,7 @@ def test_tracers_run_and_stay_in_the_box(freq_case):
     """
     pytest.importorskip("h5py")
     mode, d, cfg, _, centre, bounded = freq_case
-    if not os.path.exists(TRACERS):
-        pytest.skip("tracers is not built")
+    need(TRACERS)
     run_app(TRACERS, cfg, "mode=" + mode,
             "Dm=0 dt=0.005 T=0.05 Nrw=200 Nrw_max=2000 dump_intv=0.01 "
             "stat_intv=1e9 checkpoint_intv=1e9 init_mode=points_xy int_order=2 "
@@ -238,8 +235,7 @@ def test_frozen_fields_sum_the_modes_once(freq_case):
     for bit."""
     pytest.importorskip("h5py")
     mode, d, cfg, exact, centre, _ = freq_case
-    if not os.path.exists(TRACERS):
-        pytest.skip("tracers is not built")
+    need(TRACERS)
     t_frozen = 0.362
     ends = []
     for t0 in (0.0, 0.55):

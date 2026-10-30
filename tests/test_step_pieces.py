@@ -30,13 +30,12 @@ progress line.
 """
 
 import math
-import os
 
 import numpy as np
 import pytest
 
 from dumps import all_dumps, read_stats
-from paths import app
+from paths import app, needs
 from pieces import in_pieces
 from runs import checkpoint_folder, put_points, run_app
 from wall_cases import dolfin_mesh
@@ -49,8 +48,7 @@ R0_EULER = 0.92                      # explicit Euler
 DT = 0.5
 N_TRACERS = 96
 
-pytestmark = pytest.mark.skipif(not all(os.path.exists(app(a)) for a in APPS),
-                                reason="the tracer apps are not built")
+pytestmark = needs(*[app(a) for a in APPS])
 
 
 def facet_normals():
@@ -246,8 +244,7 @@ def spatial_once(int_order):
 MARCH_DS = {1: 0.46, 2: 0.92}
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracervectors_spatial")),
-                    reason="tracervectors_spatial is not built")
+@needs(app("tracervectors_spatial"))
 @pytest.mark.parametrize("int_order", [1, 2])
 @pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
 def test_a_march_step_leaving_the_fluid_is_taken_in_pieces(tmp_path, dim, int_order):

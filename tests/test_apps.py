@@ -30,7 +30,7 @@ import pytest
 from cases import (ABC, APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
                    wrapper_kind)
 from dumps import all_dumps, read_stats
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import copy_case, copy_example, read_checkpoint, run_app
 
 
@@ -84,19 +84,20 @@ def test_app_runs(name, kind, args, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
     A failure means a user of that app cannot run on that kind of input, or
     gets a stats file whose columns are labelled wrongly. Exiting 0 is not
     enough: an app that stops before its first step still writes its initial
-    dump and parameters.
+    dump and parameters. Every app that steps ends saying how many steps it
+    declined.
     """
     binary = app(name)
-    if not os.path.exists(binary):
-        pytest.skip(name + " is not built")
+    need(binary)
 
     d, cfg = case_dir(kind, tmp_path, mesh_dir, felbm_dir, xdmf_dir)
     if name == "interpol":
         run_app(binary, cfg, args)
         assert list(d.rglob("interpolation.h5part")), "interpol finished but wrote nothing"
         return
-    run_app(binary, cfg, args, FIRST_STEP.get(name, "dump_intv=0.02"))
+    r = run_app(binary, cfg, args, FIRST_STEP.get(name, "dump_intv=0.02"))
     assert max(all_dumps(d, raw=True), default=0) > 0, "no dump after the first step"
+    assert re.search(r"^Steps declined: \d+ \(outside=", r.stdout, re.M), r.stdout[-1000:]
     # read_stats checks every row against the header
     for stats in d.rglob("tdata_from_t*.dat"):
         read_stats(stats)
@@ -118,7 +119,7 @@ def unconditional_apps():
     return {n for n in names if n not in WRAPPERS or WRAPPERS[n][0] in names}
 
 
-@pytest.mark.skipif(not os.path.exists(app("partrac")), reason="apps are not built")
+@needs(app("partrac"))
 def test_every_built_app_is_listed():
     """Every executable in the bin directory is in APPS or the wrapper table,
     and every app built whatever the options are is there.
@@ -127,7 +128,7 @@ def test_every_built_app_is_listed():
     that stopped being built would turn its tests into skips.
     """
     # Executables only: CMake also writes build_features.txt there. The
-    # BUILD_APP_ options can leave out the apps added inside an if block.
+    # PARTRAC_BUILD_ options can leave out the apps added inside an if block.
     bindir = os.path.dirname(app("partrac"))
     built = {f for f in os.listdir(bindir)
              if os.path.isfile(os.path.join(bindir, f)) and os.access(os.path.join(bindir, f), os.X_OK)}
@@ -145,8 +146,7 @@ def test_a_retired_name_finds_its_app_from_anywhere(tmp_path, how):
     symbolic link in another directory, from a working directory that has
     neither."""
     name = sorted(WRAPPERS)[0]
-    if not os.path.exists(app(name)):
-        pytest.skip(name + " is not built")
+    need(app(name))
     env = dict(os.environ)
     if how == "on PATH":
         argv = [name, "--help"]
@@ -162,6 +162,24 @@ def test_a_retired_name_finds_its_app_from_anywhere(tmp_path, how):
     assert r.returncode == 0, r.stdout[-1000:] + r.stderr
 
 
+@pytest.mark.parametrize("given, starts, spincount", [
+    ({}, 2, "0"),
+    ({"OMP_WAIT_POLICY": "active"}, 1, "30000000000"),
+    ({"GOMP_SPINCOUNT": "10000"}, 1, "10000")])
+def test_the_apps_wait_passively_unless_told_otherwise(given, starts, spincount):
+    """An app starts again with OMP_WAIT_POLICY=passive unless the waiting is
+    set, as libgomp's report at each start shows."""
+    env = {k: v for k, v in os.environ.items() if k not in ("OMP_WAIT_POLICY", "GOMP_SPINCOUNT")}
+    env.update(given, OMP_DISPLAY_ENV="verbose")
+    r = subprocess.run([app("tracers"), "--help"], env=env, capture_output=True, text=True,
+                       timeout=60)
+    assert r.returncode == 0, r.stderr
+    reports = re.findall(r"GOMP_SPINCOUNT = '(\d+)'", r.stderr)
+    if not reports:
+        pytest.skip("the OpenMP runtime is not libgomp")
+    assert len(reports) == starts and reports[-1] == spincount, r.stderr
+
+
 @pytest.mark.parametrize("name", sorted(WRAPPERS))
 def test_a_retired_name_runs_the_merged_app(name, tmp_path, mesh_dir, felbm_dir, xdmf_dir):
     """A retired name gives byte-identical h5 output to the merged app with its arguments pinned.
@@ -169,8 +187,7 @@ def test_a_retired_name_runs_the_merged_app(name, tmp_path, mesh_dir, felbm_dir,
     Scripts that still call a retired name must get the same results as the
     merged app, not a subtly different configuration.
     """
-    if not os.path.exists(app(name)):
-        pytest.skip(name + " is not built")
+    need(app(name))
     target, parts = WRAPPERS[name]
     kind = wrapper_kind(name)
     args = args_for(name).split()
@@ -195,8 +212,7 @@ SSS = ("Dm=0 dt=0.005 T=0.02 Nrw=100 Nrw_max=2000 dump_intv=1.0 stat_intv=1.0 "
        "random=false seed=1 ds_max=0.4 ds_min=0.1")
 
 
-@pytest.mark.skipif(not os.path.exists(app("static_space_stepper")),
-                    reason="static_space_stepper is not built")
+@needs(app("static_space_stepper"))
 @pytest.mark.parametrize("refine,coarsen", [("true", "false"), ("false", "true")])
 def test_the_initial_pass_follows_its_own_flag(tmp_path, refine, coarsen):
     """In static_space_stepper, the initial refinement runs iff refine=true and the initial coarsening iff coarsen=true.
@@ -227,8 +243,7 @@ def assert_stats_match_dumps(d):
     assert len({round(v, 9) for v in stats["ux_mean"]}) > 1
 
 
-@pytest.mark.skipif(not os.path.exists(app("static_space_stepper")),
-                    reason="static_space_stepper is not built")
+@needs(app("static_space_stepper"))
 def test_the_stepper_statistics_read_the_fields_where_they_are_written(tmp_path):
     """Each static_space_stepper statistics row has the mean of the velocities dumped at the same step.
 
@@ -248,8 +263,7 @@ def test_the_stepper_statistics_read_the_fields_where_they_are_written(tmp_path)
     assert_stats_match_dumps(d)
 
 
-@pytest.mark.skipif(not os.path.exists(app("filaments")),
-                    reason="filaments is not built")
+@needs(app("filaments"))
 def test_the_filaments_statistics_read_the_fields_where_they_are_written(tmp_path):
     """Each filaments statistics row has the mean of the velocities dumped at the same time.
 
@@ -277,7 +291,7 @@ PARTRAC_BASE = ("mode=analytic init_mode=uniform_x Nrw=100 Nrw_max=5000 ds_max=0
                 "checkpoint_intv=0.05 random=false seed=3")
 
 
-@pytest.mark.skipif(not os.path.exists(app("partrac")), reason="partrac is not built")
+@needs(app("partrac"))
 def test_statistics_do_not_depend_on_dump_verbosity(tmp_path):
     """minimal_output selects only what goes into the h5 dump. The statistics
     read the velocity whether or not it is dumped, so the mean velocities are
@@ -298,7 +312,7 @@ def test_statistics_do_not_depend_on_dump_verbosity(tmp_path):
     assert sizes["true"] < sizes["false"]
 
 
-@pytest.mark.skipif(not os.path.exists(app("tracers")), reason="tracers is not built")
+@needs(app("tracers"))
 def test_the_tracer_apps_start_in_random_slot_order(tmp_path):
     """The tracer apps shuffle their particle slots once, before the first step.
 
@@ -367,8 +381,7 @@ def test_the_result_does_not_depend_on_the_thread_count(
     an order dependence in the parallel loop, and results would change with
     the machine they run on.
     """
-    if not os.path.exists(app(name)):
-        pytest.skip(name + " is not built")
+    need(app(name))
     # enough particles and steps that every thread has work and several dumps
     # are compared; the spatial marchers stop at Ln instead of T
     work = ("Nrw=800 Nrw_max=8000 dt=0.005 dump_intv=0.05 stat_intv=1e9 "
@@ -405,7 +418,7 @@ SHEET_STATS = ("mode=analytic init_mode=sheet_xy La=0.6 Lb=0.6 ds_init=0.05 "
                "dump_intv=1e9 checkpoint_intv=0.05 random=false seed=3")
 
 
-@pytest.mark.skipif(not os.path.exists(app("partrac")), reason="partrac is not built")
+@needs(app("partrac"))
 @pytest.mark.parametrize("kind", ["strip", "sheet"])
 def test_partrac_positions_and_statistics_do_not_depend_on_the_thread_count(tmp_path, kind):
     """Positions on 4 threads are bit-identical to one thread, for a strip and
@@ -434,7 +447,7 @@ def test_partrac_positions_and_statistics_do_not_depend_on_the_thread_count(tmp_
     assert not bad, "columns differ beyond a reduction's rounding: %s" % bad
 
 
-@pytest.mark.skipif(not os.path.exists(app("partrac")), reason="partrac is not built")
+@needs(app("partrac"))
 def test_a_diffusive_run_is_reproducible(tmp_path):
     """With Brownian noise on 4 threads, two runs with the same seed are
     bit-identical. Each thread draws from its own generator, so this holds only
@@ -447,7 +460,7 @@ def test_a_diffusive_run_is_reproducible(tmp_path):
     assert np.array_equal(final_positions(a), final_positions(b))
 
 
-@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+@needs(app("interpol"))
 def test_a_bare_parameter_file_name_reads_the_case_in_the_working_directory(tmp_path, mesh_dir):
     """The loaders find the mesh and the stamps beside the parameter file, cut at
     its last slash; a bare name has none, so the working directory is taken."""

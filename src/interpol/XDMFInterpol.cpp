@@ -37,9 +37,6 @@ void XDMFFormat::load(I& intp, const std::string&)
   auto& prm = intp.dolfin_params;
   const std::string folder = intp.get_folder();
 
-  if constexpr (nv == 4)
-    intp.periodic_tol = 1e-4;   // the XDMF tet meshes need a looser match
-
   // One xdmf per field; the velocity's carries the mesh
   const std::string xdmffilename_u = folder + "/" + prm.template get<std::string>("u");
   const std::string xdmffilename_p = folder + "/"
@@ -70,28 +67,28 @@ void XDMFFormat::load(I& intp, const std::string&)
   intp.ncells_ = m.ncells;
   intp.nverts_ = m.nverts;
   intp.set_period();
+  intp.hmin_ = simplex_load::shortest_edge(m, nv);
 
   // A periodic space gave a vertex and its images one dof, so they read one value
   intp.vclass_ = mesh_tables::match_periodic_vertices(m.coords, m.nverts, intp.dim, intp.periodic,
-                                                      intp.x_min, intp.x_max, intp.periodic_tol);
+                                                      intp.x_min, intp.x_max, intp.periodic_tol());
   partrac::phase("periodic vertices");
 
   // The dofs are the vertices: no dofmap, and one node table for every field
   intp.ncoeffs_u = Uint(nv);
   intp.ncoeffs_p = Uint(nv);
   intp.ncoeffs_phi = Uint(nv);
-  check_dofs_fit(intp.ncoeffs_u, intp.ncoeffs_p, Cell::n_dofs_max, "XDMFInterpol");
+  check_dofs_fit({intp.ncoeffs_u, intp.ncoeffs_p}, Cell::n_verts, Cell::n_dofs_max, "XDMFInterpol");
   intp.u_dofs_.fill(m.topo, std::vector<std::uint32_t>(), m.ncells, nv, ne, false, m.nverts,
                     intp.vclass_.data());
   intp.u_dofs_.check_stride(intp.ncoeffs_u, "XDMFInterpol");
   partrac::phase("cell dofs");
 
   mesh_tables::build_facet_neighbours<nv>(m.topo, m.ncells, m.coords, intp.dim, intp.periodic,
-                                          intp.x_min, intp.x_max, intp.periodic_tol,
+                                          intp.x_min, intp.x_max, intp.periodic_tol(),
                                           intp.facet_neigh_);
   partrac::phase("facet table");
 
-  intp.hmin_ = simplex_load::shortest_edge(m, nv);
   intp.topo_ = std::move(m.topo);
   intp.coords_ = std::move(m.coords);
 }

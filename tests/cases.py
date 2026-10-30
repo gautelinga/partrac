@@ -14,6 +14,8 @@ import os
 import re
 import shutil
 
+import numpy as np
+
 from paths import REPO
 
 EXAMPLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
@@ -119,20 +121,26 @@ def args_for(name, kind=None):
 def write_felbm(d, fields, solid, times=(0, 100), extra=""):
     """Write a FELBM case in d: one output_k.h5 per time holding fields[k], and the solid mask.
 
-    fields[k] maps u_x, u_y, u_z, density and pressure to (nx, ny, nz) arrays,
-    indexed [ix, iy, iz]; they are written transposed, as the solver writes
-    them, so the loader reads x fastest. solid is written as given, first h5
-    axis z. felbm_params.dat names the timestamps file and the mask, followed
+    fields[k] maps u_x, u_y, u_z, density and pressure to (nx, ny, nz) arrays
+    indexed [ix, iy, iz]; solid is an (nz, ny, nx) array indexed [iz, iy, ix].
+    Both are written as FELBM's XDMFWriter writes them: dims (nx, ny, nz),
+    node (ix, iy, iz) at flat position ix + nx*(iy + ny*iz), so x varies
+    fastest against the dims' order; the fields as float32, the mask as
+    uint8. felbm_params.dat names the timestamps file and the mask, followed
     by the lines in extra.
     """
-    import numpy as np
     import h5py
+
+    def felbm_layout(a):
+        """a, indexed [ix, iy, iz], as FELBM stores it: dims (nx, ny, nz), x fastest."""
+        return np.asarray(a).ravel(order="F").reshape(np.shape(a))
+
     with h5py.File(d / "output_is_solid.h5", "w") as f:
-        f.create_dataset("is_solid", data=solid)
+        f.create_dataset("is_solid", data=felbm_layout(np.transpose(solid, (2, 1, 0))).astype(np.uint8))
     for k, stamp in enumerate(fields):
         with h5py.File(d / ("output_%d.h5" % k), "w") as f:
             for name, a in stamp.items():
-                f.create_dataset(name, data=np.transpose(a, (2, 1, 0)).astype(float))
+                f.create_dataset(name, data=felbm_layout(a).astype(np.float32))
     (d / "timestamps.dat").write_text("".join("%g\toutput_%d.h5\n" % (t, k)
                                               for k, t in enumerate(times)))
     (d / "felbm_params.dat").write_text(
@@ -189,3 +197,11 @@ def shared_dir(tmp_path_factory, name, build):
             build(d)
             done.touch()
     return d
+
+
+def once(tmp_path_factory, key, compute):
+    """compute(), an array, once per session for the key, whichever worker asks first."""
+    def build(d):
+        np.save(d / "value.npy", compute())
+
+    return np.load(shared_dir(tmp_path_factory, key, build) / "value.npy")

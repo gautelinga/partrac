@@ -121,6 +121,37 @@ def put_points(d, points):
     write_checkpoint(d, **{k: v for k, v in new.items() if k in ck})
 
 
+def from_points(binary, params, points, dt, args, then, t0=0., seed_point=None, timeout=900):
+    """Run binary on params from a checkpoint holding points (n x dim). A
+    first run of one step of dt from t0, its n particles drawn around
+    seed_point (by default the points' mean) with seed 1, writes the
+    checkpoint; its particles are put at points; the resume runs with then.
+    args, given to both runs, are what else they take (mode, scheme, Dm...).
+    Returns the folder resumed from, which the resumed run writes into, and
+    the resumed run."""
+    points = np.asarray(points, dtype=float)
+    n, dim = points.shape
+    seed = [float(v) for v in (points.mean(0) if seed_point is None else seed_point)] + [0.0] * (3 - dim)
+    base = ["init_mode=points_" + "xyz"[:dim], "int_order=1", "dt=%r" % dt, "t0=%r" % t0, "Nrw=%d" % n,
+            "Nrw_max=%d" % n, "x0=%r" % seed[0], "y0=%r" % seed[1], "z0=%r" % seed[2], "random=false", "seed=1"]
+    run_app(binary, params, base, args,
+            ["T=%r" % (t0 + dt), "dump_intv=1e9", "stat_intv=1e9", "checkpoint_intv=%r" % dt], timeout=timeout)
+    put_points(params.parent, points)
+    ck = checkpoint_folder(params.parent)
+    r = run_app(binary, params, base, args, then, ["checkpoint_intv=1e9", "restart_folder=" + str(ck)],
+                timeout=timeout)
+    return ck, r
+
+
+def interpolation(d):
+    """The columns of the one interpolation.h5part under d (interpol's probes), by name."""
+    h5py = pytest.importorskip("h5py")
+    [out] = list(d.rglob("interpolation.h5part"))
+    with h5py.File(out, "r") as h:
+        g = h[next(iter(h))]   # its one step
+        return {k: np.array(g[k]) for k in g}
+
+
 def write_text_checkpoint(folder, F_whole=False):
     """Rewrite the checkpoint.h5 in the Checkpoints folder `folder` as the text
     files older runs wrote, and remove it. With F_whole a tensor element is

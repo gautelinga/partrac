@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <limits>
+#include <sstream>
+#include <vector>
 #include "Error.hpp"
 #include "Interpol.hpp"
 #include "Params.hpp"
@@ -70,51 +73,57 @@ struct GridBlock {
   }
 };
 
-inline void load_field(H5::H5File &h5file
-                     , Grid3<double>& u
-                     , const std::string field
-                     , const int nx, const int ny, const int nz
-                     ){
-  std::vector<double> Uv(nx*ny*nz);
-  try {
-    H5::DataSet dset = h5file.openDataSet(field);
-    H5::DataSpace dspace = dset.getSpace();
-    dset.read(Uv.data(), H5::PredType::NATIVE_DOUBLE, dspace, dspace);
-  } catch (const H5::Exception&){
-    partrac::fail(h5file.getFileName(), ": cannot read the dataset '", field, "'");
+// "8x12x16 (1536 points)"
+inline std::string lattice_shape(const hsize_t* dims, const int rank){
+  std::ostringstream s;
+  hsize_t total = 1;
+  for (int i=0; i<rank; ++i){
+    s << (i ? "x" : "") << dims[i];
+    total *= dims[i];
   }
-  for (int ix=0; ix<nx; ++ix){
-    for (int iy=0; iy<ny; ++iy){
-      for (int iz=0; iz<nz; ++iz){
-  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix];
-      }
-    }
-  }
+  s << " (" << total << " points)";
+  return s.str();
 }
 
-inline void load_int_field_as_bool(H5::H5File &h5file
-                                 , Grid3<unsigned char>& u
-                                 , const std::string field
-                                 , const int nx
-                                 , const int ny
-                                 , const int nz
-)
-{
-  std::vector<int> Uv(nx*ny*nz);
+// FELBM layout: dims n, x fastest
+template<typename T>
+inline std::vector<T> read_lattice(H5::H5File &h5file, const std::string& field, const H5::PredType& type,
+                                   const Uint n[3]){
+  std::vector<T> Uv;
   try {
     H5::DataSet dset = h5file.openDataSet(field);
     H5::DataSpace dspace = dset.getSpace();
-    dset.read(Uv.data(), H5::PredType::NATIVE_INT, dspace, dspace);
+    const int rank = dspace.getSimpleExtentNdims();
+    std::vector<hsize_t> dims(rank);
+    dspace.getSimpleExtentDims(dims.data(), NULL);
+    if (rank != 3 || dims[0] != n[0] || dims[1] != n[1] || dims[2] != n[2]){
+      const hsize_t m[3] = {n[0], n[1], n[2]};
+      partrac::fail(h5file.getFileName(), ": dataset '", field, "' is ", lattice_shape(dims.data(), rank),
+                    ", is_solid ", lattice_shape(m, 3));
+    }
+    Uv.resize(std::size_t(n[0])*n[1]*n[2]);
+    dset.read(Uv.data(), type, dspace, dspace);
   } catch (const H5::Exception&){
     partrac::fail(h5file.getFileName(), ": cannot read the dataset '", field, "'");
   }
-  for (int ix=0; ix<nx; ++ix){
-    for (int iy=0; iy<ny; ++iy){
-      for (int iz=0; iz<nz; ++iz){
-  	    u(ix, iy, iz) = Uv[nx*ny*iz+nx*iy+ix] != 0;
-      }
-    }
-  }
+  return Uv;
+}
+
+inline void load_field(H5::H5File &h5file, Grid3<double>& u, const std::string& field, const Uint n[3]){
+  const std::vector<double> Uv = read_lattice<double>(h5file, field, H5::PredType::NATIVE_DOUBLE, n);
+  for (std::size_t ix=0; ix<n[0]; ++ix)
+    for (std::size_t iy=0; iy<n[1]; ++iy)
+      for (std::size_t iz=0; iz<n[2]; ++iz)
+        u(ix, iy, iz) = Uv[(iz*n[1] + iy)*n[0] + ix];
+}
+
+inline void load_int_field_as_bool(H5::H5File &h5file, Grid3<unsigned char>& u, const std::string& field,
+                                   const Uint n[3]){
+  const std::vector<int> Uv = read_lattice<int>(h5file, field, H5::PredType::NATIVE_INT, n);
+  for (std::size_t ix=0; ix<n[0]; ++ix)
+    for (std::size_t iy=0; iy<n[1]; ++iy)
+      for (std::size_t iz=0; iz<n[2]; ++iz)
+        u(ix, iy, iz) = Uv[(iz*n[1] + iy)*n[0] + ix] != 0;
 }
 
 inline void load_h5(const std::string h5filename
@@ -123,9 +132,7 @@ inline void load_h5(const std::string h5filename
                   , Grid3<double>& uz
                   , Grid3<double>& rho
                   , Grid3<double>& p
-                  , const int nx
-                  , const int ny
-                  , const int nz
+                  , const Uint n[3]
                   , const bool verbose
                   , const bool ignore_density
                   , const bool ignore_pressure
@@ -142,14 +149,14 @@ inline void load_h5(const std::string h5filename
   } catch (const H5::Exception&){
     partrac::fail("cannot open ", h5filename);
   }
-  load_field(h5file, ux, "u_x", nx, ny, nz);
-  load_field(h5file, uy, "u_y", nx, ny, nz);
+  load_field(h5file, ux, "u_x", n);
+  load_field(h5file, uy, "u_y", n);
   if (!ignore_uz)
-    load_field(h5file, uz, "u_z", nx, ny, nz);
+    load_field(h5file, uz, "u_z", n);
   if (!ignore_density)
-    load_field(h5file, rho, "density", nx, ny, nz);
+    load_field(h5file, rho, "density", n);
   if (!ignore_pressure)
-    load_field(h5file, p, "pressure", nx, ny, nz);
+    load_field(h5file, p, "pressure", n);
   h5file.close();
 }
 
@@ -178,23 +185,6 @@ inline double inner_product(const double ww[2][2][2], const double bb[2][2][2]){
   }
   return sum;
 }
-inline void matrix_product(double v[3][3][3], const Grid3<double>& u, const Uint ind[3][2], const double W[3][3][3][2][2][2]){
-  for (Uint i=0; i<3; ++i){
-    for (Uint j=0; j<3; ++j){
-      for (Uint k=0; k<3; ++k){
-        v[i][j][k] = 0.;
-        for (Uint l=0; l<2; ++l){
-          for (Uint m=0; m<2; ++m){
-            for (Uint n=0; n<2; ++n){
-              v[i][j][k] += W[i][j][k][l][m][n] * u(ind[0][l], ind[1][m], ind[2][n]);
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
 inline void compute_solid_local(bool is_solid_3[3][3][3], const Grid3<unsigned char>& isSolid, const Uint ind[3][2]){
   for (Uint i=0; i<3; ++i){
     for (Uint j=0; j<3; ++j){
@@ -220,17 +210,6 @@ inline void compute_solid_local(bool is_solid_3[3][3][3], const Grid3<unsigned c
   }
 }
 
-inline void enforce_noslip(double V[2][2][2], const bool is_solid_2[2][2][2]){
-  for (Uint i=0; i<2; ++i){
-    for (Uint j=0; j<2; ++j){
-      for (Uint k=0; k<2; ++k){
-        if (is_solid_2[i][j][k])
-          V[i][j][k] = 0.;
-      }
-    }
-  }
-}
-
 template<typename T>
 inline void get_subcube(T V[2][2][2], const T v[3][3][3], const bool sub_x[3]){
   for (Uint i=0; i<2; ++i){
@@ -242,11 +221,26 @@ inline void get_subcube(T V[2][2][2], const T v[3][3][3], const bool sub_x[3]){
   }
 }
 
+// Sub-cube nodes refined by W, zero at solids
 inline void compute_velocity_subcube(double V[2][2][2], const Grid3<double>& u, const bool is_solid_2[2][2][2], const bool sub_x[3], const Uint ind[3][2], const double W[3][3][3][2][2][2]){
-  double v[3][3][3];
-  matrix_product(v, u, ind, W);
-  get_subcube(V, v, sub_x);
-  enforce_noslip(V, is_solid_2);
+  double c[2][2][2];
+  for (Uint l=0; l<2; ++l)
+    for (Uint m=0; m<2; ++m)
+      for (Uint n=0; n<2; ++n)
+        c[l][m][n] = u(ind[0][l], ind[1][m], ind[2][n]);
+  for (Uint i=0; i<2; ++i){
+    for (Uint j=0; j<2; ++j){
+      for (Uint k=0; k<2; ++k){
+        const double (&w)[2][2][2] = W[sub_x[0] + i][sub_x[1] + j][sub_x[2] + k];
+        double v = 0.;
+        for (Uint l=0; l<2; ++l)
+          for (Uint m=0; m<2; ++m)
+            for (Uint n=0; n<2; ++n)
+              v += w[l][m][n] * c[l][m][n];
+        V[i][j][k] = is_solid_2[i][j][k] ? 0. : v;
+      }
+    }
+  }
 }
 
 // A region of the lattice, x never wrapped: a floor cell whose nodes are all
@@ -278,7 +272,7 @@ public:
   bool reflect(const Vector3d& x, Vector3d& dx, CellPos& pos);
   void enable_reflection() { can_reflect = true; };
   // Outward unit normal toward the solid nodes next to x's node; zero away from walls
-  Vector3d get_boundary_normal(const Vector3d &x, int& cell_id);
+  Vector3d get_boundary_normal(const Vector3d &x, const int cell_id) const override;
   double hmin() const { return dx.minCoeff(); };
   bool compute_ind(const Vector3d &x, Uint _ind[3][2], int _ix_fl[3]);
   void probe_space_bulk(const Vector3d &x, 
@@ -315,8 +309,15 @@ public:
                    double _dwux_z[2][2][2], double _dwuy_x[2][2][2], double _dwuy_y[2][2][2],
                    double _dwuy_z[2][2][2], double _dwuz_x[2][2][2], double _dwuz_y[2][2][2],
                    double _dwuz_z[2][2][2]) const;
-  double get_t_min() { return ts.get_t_min(); };
-  double get_t_max() { return ts.get_t_max(); };
+  // 1D weights of a floor cell, or of its sub-cube
+  void bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const;
+  static void sub_wq(const double xd[3], const bool up[3], double wq[3][2]);
+  // Wrapped node indices of floor cell f; all fluid?
+  void cell_ind(const int f[3], Uint ind[3][2]) const;
+  bool fluid_cell(const Uint ind[3][2]) const;
+  bool fluid_cell(const std::array<int, 3>& f) const;
+  double get_t_min() const override { return ts.get_t_min(); };
+  double get_t_max() const override { return ts.get_t_max(); };
   double next_stamp_after(const double t) const override { return ts.next_after(t); }
   using Interpol::locate;
   using Interpol::evaluate;
@@ -332,6 +333,7 @@ protected:
 
   GridBlock<unsigned char> solid_;   // not bool (vector<bool>)
   GridBlock<double> fields_;
+  double zero_ = 0.;                 // every node of an ignored field
   Grid3<unsigned char> isSolid;
   Grid3<double> ux_prev, uy_prev, uz_prev;
   Grid3<double> ux_next, uy_next, uz_next;
@@ -379,12 +381,8 @@ public:
   // The same without the gradient
   void held_velocity(const int id, const levels_type& lev, const double t, const Held& h, PointValues& fields) const;
 private:
-  // The 1D weights of a floor cell, and of the region R at x
-  void bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const;
+  // 1D weights of region R at x
   void region_wq(const LatticeRegion& R, const Vector3d& x, double wq[3][2]) const;
-  // The wrapped node indices of floor cell f
-  void cell_ind(const std::array<int, 3>& f, Uint ind[3][2]) const;
-  bool fluid_cell(const std::array<int, 3>& f) const;
   int node_id(const std::array<int, 3>& f, const int sub) const;
   bool solid_node(const std::array<int, 3>& f, const int sub) const;
   // The region holding x: the floor cell, else the sub-cube of x's halves
@@ -451,6 +449,10 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   } catch (const H5::Exception&){
     partrac::fail(solid_filename, ": cannot read the dataset 'is_solid'");
   }
+  // Region ids are ints
+  if (dims[0] > INT_MAX || dims[1] > INT_MAX || dims[2] > INT_MAX
+      || dims[0]*dims[1] > hsize_t(INT_MAX) || dims[0]*dims[1]*dims[2] > hsize_t(INT_MAX))
+    partrac::fail(solid_filename, ": is_solid is ", lattice_shape(dims, 3), ", more than ", INT_MAX, " nodes");
   for (Uint i=0; i<3; ++i)
     n[i] = dims[i];
   x_min << 0., 0., 0.;
@@ -465,13 +467,20 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   // Create arrays
   solid_.resize(n[0], n[1], n[2], 1);
   isSolid = solid_.field(0);
-  fields_.resize(n[0], n[1], n[2], 10);
+  // Stored fields; ignored ones read zero_
+  fields_.resize(n[0], n[1], n[2], 4 + 2*(!ignore_uz + !ignore_density + !ignore_pressure));
   Uint f = 0;
-  for (Grid3<double>* g : {&ux_prev, &ux_next, &uy_prev, &uy_next, &uz_prev, &uz_next,
-                           &rho_prev, &rho_next, &p_prev, &p_next})
-    *g = fields_.field(f++);
+  const auto assign = [&](const bool read, Grid3<double>& prev, Grid3<double>& next){
+    prev = read ? fields_.field(f++) : Grid3<double>{&zero_, 0, 0, 0};
+    next = read ? fields_.field(f++) : Grid3<double>{&zero_, 0, 0, 0};
+  };
+  assign(true, ux_prev, ux_next);
+  assign(true, uy_prev, uy_next);
+  assign(!ignore_uz, uz_prev, uz_next);
+  assign(!ignore_density, rho_prev, rho_next);
+  assign(!ignore_pressure, p_prev, p_next);
 
-  load_int_field_as_bool(solid_file, isSolid, "is_solid", n[0], n[1], n[2]);
+  load_int_field_as_bool(solid_file, isSolid, "is_solid", n);
   solid_file.close();
 
   double wwx[3][2];
@@ -496,7 +505,7 @@ inline StructuredLattice::StructuredLattice(const std::string& infilename, const
   }
 }
 
-inline Vector3d StructuredLattice::get_boundary_normal(const Vector3d &x, int&){
+inline Vector3d StructuredLattice::get_boundary_normal(const Vector3d &x, const int) const {
   return lattice_wall_normal(x, dx, n, [this](const Uint i, const Uint j, const Uint k){
     return isSolid(i, j, k) != 0;
   });
@@ -544,15 +553,13 @@ inline void StructuredLattice::update(const double t){
     else {
       std::cout << "Previous: Timestep = " << sp.prev.t << ", filename = " << sp.prev.filename << std::endl;
       load_h5(folder + "/" + sp.prev.filename,
-              ux_prev, uy_prev, uz_prev, rho_prev, p_prev,
-              n[0], n[1], n[2],
+              ux_prev, uy_prev, uz_prev, rho_prev, p_prev, n,
               verbose, ignore_density, ignore_pressure, ignore_uz);
     }
 
     std::cout << "Next: Timestep = " << sp.next.t << ", filename = " << sp.next.filename << std::endl;
     load_h5(folder + "/" + sp.next.filename,
-            ux_next, uy_next, uz_next, rho_next, p_next,
-            n[0], n[1], n[2], 
+            ux_next, uy_next, uz_next, rho_next, p_next, n,
             verbose, ignore_density, ignore_pressure, ignore_uz);
 
     is_initialized = true;
@@ -638,9 +645,17 @@ inline void StructuredConstInterpol::check_gradient() const {
   }
 }
 
-inline void StructuredInterpol::bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const {
+inline void StructuredLattice::bulk_wq(const Vector3d& x, const int ix_fl[3], double wq[3][2]) const {
   for (Uint i=0; i<3; ++i){
     double wxi = (x[i]-dx[i]*ix_fl[i])/dx[i];
+    wq[i][0] = 1 - wxi;
+    wq[i][1] =     wxi;
+  }
+}
+
+inline void StructuredLattice::sub_wq(const double xd[3], const bool up[3], double wq[3][2]){
+  for (Uint i=0; i<3; ++i){
+    double wxi = up[i] ? 2 * xd[i] - 1.0: 2 * xd[i];
     wq[i][0] = 1 - wxi;
     wq[i][1] =     wxi;
   }
@@ -651,24 +666,23 @@ inline void StructuredInterpol::region_wq(const LatticeRegion& R, const Vector3d
     bulk_wq(x, R.f.data(), wq);
     return;
   }
+  double xd[3];
+  bool up[3];
   for (Uint i=0; i<3; ++i){
-    const double xd = x[i]/dx[i] - R.f[i];
-    double wxi = (R.sub >> i) & 1 ? 2 * xd - 1.0: 2 * xd;
-    wq[i][0] = 1 - wxi;
-    wq[i][1] =     wxi;
+    xd[i] = x[i]/dx[i] - R.f[i];
+    up[i] = (R.sub >> i) & 1;
   }
+  sub_wq(xd, up, wq);
 }
 
-inline void StructuredInterpol::cell_ind(const std::array<int, 3>& f, Uint ind[3][2]) const {
+inline void StructuredLattice::cell_ind(const int f[3], Uint ind[3][2]) const {
   for (Uint i=0; i<3; ++i){
     ind[i][0] = imodulo(f[i], n[i]);
     ind[i][1] = imodulo(ind[i][0] + 1, n[i]);
   }
 }
 
-inline bool StructuredInterpol::fluid_cell(const std::array<int, 3>& f) const {
-  Uint ind[3][2];
-  cell_ind(f, ind);
+inline bool StructuredLattice::fluid_cell(const Uint ind[3][2]) const {
   for (Uint i=0; i<2; ++i)
     for (Uint j=0; j<2; ++j)
       for (Uint k=0; k<2; ++k)
@@ -677,10 +691,17 @@ inline bool StructuredInterpol::fluid_cell(const std::array<int, 3>& f) const {
   return true;
 }
 
+inline bool StructuredLattice::fluid_cell(const std::array<int, 3>& f) const {
+  Uint ind[3][2];
+  cell_ind(f.data(), ind);
+  return fluid_cell(ind);
+}
+
 inline int StructuredInterpol::node_id(const std::array<int, 3>& f, const int sub) const {
   const int s = sub < 0 ? 0 : sub;
-  return int((imodulo(f[0] + (s & 1), n[0])*n[1] + imodulo(f[1] + ((s >> 1) & 1), n[1]))*n[2]
-             + imodulo(f[2] + ((s >> 2) & 1), n[2]));
+  const std::size_t i = imodulo(f[0] + (s & 1), n[0]), j = imodulo(f[1] + ((s >> 1) & 1), n[1]),
+                    k = imodulo(f[2] + ((s >> 2) & 1), n[2]);
+  return int((i*n[1] + j)*n[2] + k);
 }
 
 inline bool StructuredInterpol::solid_node(const std::array<int, 3>& f, const int sub) const {
@@ -914,6 +935,7 @@ inline void StructuredInterpol::motion_at(const double _wq[3][2], const LatticeN
                   Uzx_next, Uzy_next, Uzz_next;
 
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
+    fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
 }
 
@@ -1079,12 +1101,12 @@ inline void StructuredInterpol::evaluate(const Vector3d &x, const double t, cons
                 Uzx_next, Uzy_next, Uzz_next;
 
   fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
-
+  fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
 }
 
 inline void StructuredInterpol::hold(const LatticeRegion& R, Held& h) const {
   Uint ind[3][2];
-  cell_ind(R.f, ind);
+  cell_ind(R.f.data(), ind);
   const bool sub_x[3] = {bool(R.sub & 1), bool(R.sub & 2), bool(R.sub & 4)};
   gather(ind, R.sub < 0, sub_x, h);
 }
@@ -1106,22 +1128,8 @@ inline bool StructuredLattice::compute_ind(const Vector3d &x, Uint _ind[3][2], i
   for (Uint i=0; i<3; ++i){
     _ix_fl[i] = floor(x[i]/dx[i]);
   }
-
-  for (Uint i=0; i<3; ++i){
-    _ind[i][0] = imodulo(_ix_fl[i], n[i]);
-    _ind[i][1] = imodulo(_ind[i][0] + 1, n[i]);
-  }
-
-  for (Uint i=0; i<2; ++i){
-    for (Uint j=0; j<2; ++j){
-      for (Uint k=0; k<2; ++k){
-        if (isSolid(_ind[0][i], _ind[1][j], _ind[2][k])) {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
+  cell_ind(_ix_fl, _ind);
+  return fluid_cell(_ind);
 }
 
 inline void StructuredLattice::probe_space_bulk(const Vector3d &x, 
@@ -1132,15 +1140,8 @@ inline void StructuredLattice::probe_space_bulk(const Vector3d &x,
     double _dw_y[2][2][2],
     double _dw_z[2][2][2]
   ){
-  // Computes ind, w, dw...
   double _wq[3][2];
-
-  for (Uint i=0; i<3; ++i){
-    double wxi = (x[i]-dx[i]*_ix_fl[i])/dx[i];
-    _wq[i][0] = 1 - wxi;
-    _wq[i][1] =     wxi;
-  }
-
+  bulk_wq(x, _ix_fl, _wq);
   bulk_weights(_wq, _w, _dw_x, _dw_y, _dw_z);
 }
 
@@ -1202,57 +1203,10 @@ inline void StructuredLattice::probe_space_boundary(
   compute_solid_local(is_solid_3, isSolid, _ind);
   get_subcube(_is_solid_2, is_solid_3, _sub_x);
 
-  double _wq[3][2] = {{0., 0.}, {0., 0.}, {0., 0.}};
-  for (Uint i=0; i<3; ++i){
-    double wxi = _sub_x[i] ? 2 * xd[i] - 1.0: 2 * xd[i];
-    _wq[i][0] = 1 - wxi;
-    _wq[i][1] =     wxi;
-  }
-
-  double gamma = 2;
-  for (Uint i=0; i<2; ++i){
-    for (Uint j=0; j<2; ++j){
-      for (Uint k=0; k<2; ++k){
-        double wqux = _wq[0][i];
-        double dwqux = dwq[0][i];
-        double wquy = _wq[1][j];
-        double dwquy = dwq[1][j];
-        double wquz = _wq[2][k];
-        double dwquz = dwq[2][k];
-
-        if (_is_solid_2[i == 0 ? 1 : 0][j][k]){
-          wqux = pow(_wq[0][i], gamma);
-          dwqux = gamma * pow(_wq[0][i], gamma-1) * dwq[0][i];
-        }
-
-        if (_is_solid_2[i][j == 0 ? 1 : 0][k]){
-          wquy = pow(_wq[1][j], gamma);
-          dwquy = gamma * pow(_wq[1][j], gamma-1) * dwq[1][j];
-        }
-
-        if (_is_solid_2[i][j][k == 0 ? 1 : 0]){
-          wquz = pow(_wq[2][k], gamma);
-          dwquz = gamma * pow(_wq[2][k], gamma-1) * dwq[2][k];
-        }
-
-        _wux[i][j][k] = wqux     * _wq[1][j] * _wq[2][k];
-        _wuy[i][j][k] = _wq[0][i] * wquy     * _wq[2][k];
-        _wuz[i][j][k] = _wq[0][i] * _wq[1][j] * wquz;
-
-        _dwux_x[i][j][k] = 2 * dwqux * _wq[1][j] * _wq[2][k];
-        _dwux_y[i][j][k] = 2 *  wqux * dwq[1][j] * _wq[2][k];
-        _dwux_z[i][j][k] = 2 *  wqux * _wq[1][j] * dwq[2][k];
-
-        _dwuy_x[i][j][k] = 2 * dwq[0][i] *  wquy * _wq[2][k];
-        _dwuy_y[i][j][k] = 2 * _wq[0][i] * dwquy * _wq[2][k];
-        _dwuy_z[i][j][k] = 2 * _wq[0][i] *  wquy * dwq[2][k];
-
-        _dwuz_x[i][j][k] = 2 * dwq[0][i] * _wq[1][j] *  wquz;
-        _dwuz_y[i][j][k] = 2 * _wq[0][i] * dwq[1][j] *  wquz;
-        _dwuz_z[i][j][k] = 2 * _wq[0][i] * _wq[1][j] * dwquz;
-      }
-    }
-  }
+  double _wq[3][2];
+  sub_wq(xd, _sub_x, _wq);
+  sub_weights(_wq, _is_solid_2, _wux, _wuy, _wuz, _dwux_x, _dwux_y, _dwux_z,
+              _dwuy_x, _dwuy_y, _dwuy_z, _dwuz_x, _dwuz_y, _dwuz_z);
 }
 
 __attribute__((always_inline))

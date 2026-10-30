@@ -108,9 +108,7 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
 
   std::map<std::pair<std::size_t, std::size_t>, Vector3d> side_normal;
   std::vector<Vector3d> n_sum(nverts, Vector3d::Zero());
-  std::vector<Vector3d> n_first(nverts, Vector3d::Zero());
   std::vector<std::uint32_t> n_count(nverts, 0);
-  std::vector<bool> corner(nverts, false);
   for (const std::size_t s : slots){
     const std::uint32_t* row = topo.data() + (s/nv)*nv;
     const int k = int(s % nv);
@@ -118,8 +116,6 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
     for (int j = 0; j < nv; ++j){
       if (j == k) continue;
       const std::size_t iv = klass(row[j]);
-      if (n_count[iv] == 0) n_first[iv] = n;
-      else if ((nv == 3 && n_count[iv] > 1) || n_first[iv].dot(n) < 0.5) corner[iv] = true;
       n_sum[iv] += n;
       ++n_count[iv];
       side_normal.emplace(std::make_pair(klass(row[k]), klass(row[j])),
@@ -144,7 +140,7 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
         const std::size_t cw = klass(iw);
         if constexpr (nv == 3) we = {0.5, 0., 0., 0.5};
         else                   we = {0., 0., 0., 0., 0., 0.};
-        if (n_count[cw] == 0 || corner[cw]) continue;
+        if (n_count[cw] == 0) continue;
         const Vector3d edge = point_of(coords, iv, gdim) - point_of(coords, iw, gdim);
         const auto side = side_normal.find({klass(iv), cw});
         const Vector3d n = (side != side_normal.end() ? side->second : n_sum[cw]).normalized();
@@ -345,7 +341,7 @@ void check_renumbering(const Mesh<Cell::n_verts>& m, const std::vector<bool>& pe
 }  // namespace
 
 TEST_CASE("The wall edge table equals the reference construction bit for bit, in 3D", "[interpol][wall]") {
-  SECTION("a box walled on every side: edges and corners") {
+  SECTION("a box walled on every side: edges and corners at rest") {
     const std::vector<bool> periodic = {false, false, false};
     const Mesh<4> m = tet_lattice({5, 4, 3}, periodic);
     REQUIRE(check_against_reference<Tet>(m) > 0);

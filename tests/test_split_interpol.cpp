@@ -32,6 +32,7 @@
 #include "Tet.hpp"
 #include "Triangle.hpp"
 #include "case_dir.hpp"
+#include "dolfin_cases.hpp"
 #include "divfree_poly.hpp"
 #include "dolfin_ref.hpp"
 #include "taylor_hood.hpp"
@@ -96,23 +97,6 @@ public:
   explicit PExpr(const Uint gdim) : gdim_(gdim) {}
   void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
     v[0] = 0.7*x[0] - 0.4*x[1] + (gdim_ == 3 ? 0.3*x[2] : 0.) + 0.2;
-  }
-private:
-  Uint gdim_;
-};
-
-// A quadratic, so a P2 space holds it exactly
-double phi_exact(const Vector3d& x, const Uint gdim){
-  return x[0]*x[0] - x[0]*x[1] + 0.5*x[1]*x[1] + (gdim == 3 ? x[2]*x[2] - 0.3*x[2] : 0.);
-}
-
-class PhiExpr : public dolfin::Expression {
-public:
-  explicit PhiExpr(const Uint gdim) : gdim_(gdim) {}
-  void eval(dolfin::Array<double>& v, const dolfin::Array<double>& x) const override {
-    Vector3d xx = Vector3d::Zero();
-    for (Uint d = 0; d < gdim_; ++d) xx[d] = x[d];
-    v[0] = phi_exact(xx, gdim_);
   }
 private:
   Uint gdim_;
@@ -235,9 +219,7 @@ template<typename Cell>
 void write_case(const CaseDir& c, const std::size_t n, const CaseOpts& o){
   constexpr int nv = Cell::n_verts;
   constexpr Uint gdim = nv - 1;
-  std::shared_ptr<dolfin::Mesh> mesh;
-  if constexpr (nv == 3) mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitSquareMesh(n, n));
-  else                   mesh = std::make_shared<dolfin::Mesh>(dolfin::UnitCubeMesh(n, n, n));
+  const auto mesh = unit_box<Cell>(n);
   if (o.squash > 0.){
     std::vector<double>& xs = mesh->coordinates();
     for (std::size_t k = 1; k < xs.size(); k += gdim) xs[k] *= o.squash;
@@ -255,10 +237,7 @@ void write_case(const CaseDir& c, const std::size_t n, const CaseOpts& o){
   if (!o.phi_el.empty())
     F = lagrange_space<gdim, false>(o.phi_el, mesh, pbc, "phase field");
 
-  {
-    dolfin::HDF5File f(MPI_COMM_WORLD, (c.path / "mesh.h5").string(), "w");
-    f.write(*mesh, "mesh");
-  }
+  write_mesh(c, *mesh);
   std::ofstream stamps(c.path / "timestamps.dat");
   for (int k = 0; k < o.nstamps; ++k){
     dolfin::Function u(V), p(P);
@@ -292,25 +271,6 @@ void write_case(const CaseDir& c, const std::size_t n, const CaseOpts& o){
     << "velocity_space=" << o.u_el << "\npressure_space=P1\ntimestamps=timestamps.dat\n"
     << "mesh=mesh.h5\ndivfree=true\n"
     << "periodic_x=" << (o.periodic ? "true" : "false") << "\n";
-}
-
-void append(const std::string& params, const std::string& lines){
-  std::ofstream(params, std::ios::app) << lines;
-}
-
-// Points spread over the box, a quarter of them in the first layer of cells
-// above the walls, where no slip is what the construction buys
-std::vector<Vector3d> points(const Uint gdim, const std::size_t n, const double layer){
-  std::mt19937 rng(7);
-  std::uniform_real_distribution<double> any(0.01, 0.99), low(0.001, layer);
-  std::vector<Vector3d> pts;
-  for (std::size_t i = 0; i < n; ++i){
-    Vector3d x = Vector3d::Zero();
-    for (Uint d = 0; d < gdim; ++d) x[d] = any(rng);
-    if (i % 4 == 0) x[i/4 % gdim] = low(rng);
-    pts.push_back(x);
-  }
-  return pts;
 }
 
 template<typename Cell>

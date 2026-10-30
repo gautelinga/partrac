@@ -338,8 +338,8 @@ void Params::dump(const std::string& folder) const {
   commit_dump(folder);
 }
 
-void Params::dump(const std::string& folder, const double t) const {
-  write_to(folder + "/params_from_t" + std::to_string(t) + ".dat");
+void Params::dump(const std::string& folder, const std::string& t) const {
+  write_to(folder + "/params_from_t" + t + ".dat");
 }
 
 // Schema
@@ -449,8 +449,11 @@ Params Schema::parse(const std::vector<std::string>& args) const {
   // so it must work even when required parameters are absent.
   if (p.m_help) return p;
 
-  if (!positional_seen && !m_impl->positional_doc.empty())
+  if (!positional_seen && !m_impl->positional_doc.empty()){
     problems.push_back("no input file given, expected " + m_impl->positional_doc);
+    // No arguments: report the missing file only
+    if (cmd.empty()) throw ParamError(m_impl->app, std::move(problems));
+  }
 
   // --- 2. validate command-line keys -------------------------------------
   for (const auto& kv : cmd) {

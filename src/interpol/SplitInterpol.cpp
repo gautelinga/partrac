@@ -104,7 +104,6 @@ SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
   req.include_phi = include_phi;
   req.n_dofs_max = Cell::n_dofs_max;
   req.periodic = periodic;
-  req.periodic_tol = periodic_tol;
   simplex_load::request_from_params(req, dolfin_params, get_folder());
   u_field = req.u_field;
   p_field = req.p_field;
@@ -272,34 +271,11 @@ template<typename Cell>
 void SplitInterpol<Cell>::update(const double t)
 {
   const auto sp = ts_.get(t);
-  const std::string prev_file = get_folder() + "/" + sp.prev.filename;
-  const std::string next_file = get_folder() + "/" + sp.next.filename;
-
-  if (partrac::stamp_reload(is_initialized, {t_prev, t_next}, {sp.prev.t, sp.next.t})){
-    partrac::phase_begin("update");
-    const auto fill = stamps_.load(prev_file, next_file,
-                                   [&](const std::string& key, Stamp& s){ read_stamp(key, s); });
-    std::cout << "Prev: Timestep = " << sp.prev.t << ", "
-              << partrac::stamp_note(fill.first, sp.prev.filename) << std::endl;
-    std::cout << "Next: Timestep = " << sp.next.t << ", "
-              << partrac::stamp_note(fill.second, sp.next.filename) << std::endl;
-
-    u_prev_ = stamps_.prev().u.data();
-    u_next_ = stamps_.next().u.data();
-    int_prev_ = stamps_.prev().u_int.data();
-    int_next_ = stamps_.next().u_int.data();
-    p_prev_ = stamps_.prev().p.data();
-    p_next_ = stamps_.next().p.data();
-    phi_prev_ = stamps_.prev().phi.data();
-    phi_next_ = stamps_.next().phi.data();
-
-    partrac::phase("vector read");
-    partrac::phase_total();
-
-    is_initialized = true;
-    t_prev = sp.prev.t;
-    t_next = sp.next.t;
-  }
+  partrac::update_bracket(stamps_, is_initialized, t_prev, t_next, sp.prev, sp.next,
+                          [&](const auto& end){ return get_folder() + "/" + end.filename; },
+                          [](const auto& end){ return end.filename; },
+                          [&](const std::string& key, Stamp& s){ read_stamp(key, s); },
+                          [&](const Stamp& prev, const Stamp& next){ point(prev, next); });
   t_update = t;
 }
 
@@ -314,19 +290,27 @@ void SplitInterpol<Cell>::freeze(const double t)
     partrac::blend(a, stamps_.prev().u_int, stamps_.next().u_int, frozen_.u_int);
     partrac::blend(a, stamps_.prev().p, stamps_.next().p, frozen_.p);
     partrac::blend(a, stamps_.prev().phi, stamps_.next().phi, frozen_.phi);
-    u_prev_ = frozen_.u.data();
-    int_prev_ = frozen_.u_int.data();
-    p_prev_ = frozen_.p.data();
-    phi_prev_ = frozen_.phi.data();
+    point(frozen_, frozen_);
   }
-  u_next_ = u_prev_;
-  int_next_ = int_prev_;
-  p_next_ = p_prev_;
-  phi_next_ = phi_prev_;
+  else
+    point(stamps_.prev(), stamps_.prev());
   // A single stamp: the weight is zero and the rate too at every t
   t_prev = t;
   t_next = t;
   std::cout << "Fields frozen at t = " << t << std::endl;
+}
+
+template<typename Cell>
+void SplitInterpol<Cell>::point(const Stamp& prev, const Stamp& next)
+{
+  u_prev_ = prev.u.data();
+  u_next_ = next.u.data();
+  int_prev_ = prev.u_int.data();
+  int_next_ = next.u_int.data();
+  p_prev_ = prev.p.data();
+  p_next_ = next.p.data();
+  phi_prev_ = prev.phi.data();
+  phi_next_ = next.phi.data();
 }
 
 template class SplitInterpol<Triangle>;

@@ -17,7 +17,7 @@ import subprocess
 import pytest
 
 from cases import APPS, args_for
-from paths import REPO, app
+from paths import REPO, app, need, needs
 from runs import copy_example, read_checkpoint, run_app
 
 PARTRAC = app("partrac")
@@ -38,8 +38,8 @@ INIT_MODES = [
     ("ellipsoid_xy", ["La=0.5", "Lb=0.5"]),
     ("pair_xyz", ["ds_init=0.1"]),
     ("pairs_xyz", ["ds_init=0.1"]),
-    ("points_x", ["init_weight=none", "ds_init=0.1"]),
-    ("points_xy", ["init_weight=none"]),
+    ("points_x", ["init_weight=uniform", "ds_init=0.1"]),
+    ("points_xy", ["init_weight=uniform"]),
     ("randomgaussianstrip_x_y", ["La=0.5", "Lb=0.1"]),
     ("randomgaussiancircle_xy", ["La=0.5", "Lb=0.1"]),
 ]
@@ -50,6 +50,7 @@ BAD_CASES = [
     (["init_mode=ellipsoid_xy"], "La"),                         # conditionally required
     (["init_mode=strip_x"], "La"),                              # conditionally required
     (["init_mode=uniform_x", "exit_plane=x"], "filter_intv"),   # conditionally required
+    (["init_mode=uniform_x", "exit_plane=x"], "Ln"),            # conditionally required
     (["init_mode=uniform_x", "inject=true"], "inject_intv"),    # conditionally required
     (["init_mode=uniform_x", "Nrw=1"], "Nrw"),                  # no interval to step
     (["init_mode=uniform_x", "ds_ini=0.1"], "ds_init"),         # typo; test_params.cpp pins the other parse errors
@@ -59,6 +60,9 @@ BAD_CASES = [
     (["init_mode=file:"], "init_mode"),                         # no path
     (["init_mode="], "init_mode is empty"),                     # its own check, before the shape check
     (["init_mode=from_file:positions.h5"], "was from_file"),    # the old form, named in the refusal
+    (["init_mode=uniform_x", "int_order=0"], "int_order must be 1 or 2"),
+    (["init_mode=uniform_x", "int_order=3"], "int_order must be 1 or 2"),
+    (["init_mode=uniform_x", "filter_target=-1"], "filter_target"),
 ]
 
 
@@ -88,7 +92,7 @@ def dumped_params(case_dir):
     return dict(l.split("=", 1) for l in files[0].read_text().splitlines() if "=" in l)
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 @pytest.mark.parametrize("init_mode,extra", INIT_MODES, ids=[m for m, _ in INIT_MODES])
 def test_init_mode_constructs(case, init_mode, extra):
     """Every init_mode builds its initializer from valid parameters and --check
@@ -99,7 +103,7 @@ def test_init_mode_constructs(case, init_mode, extra):
     assert "Check OK" in r.stdout
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 @pytest.mark.parametrize("extra,expected", BAD_CASES,
                          ids=[e[0].split("=")[0] + ":" + k.replace(" ", "_") for e, k in BAD_CASES])
 def test_bad_parameters_are_rejected(case, extra, expected):
@@ -111,7 +115,7 @@ def test_bad_parameters_are_rejected(case, extra, expected):
     assert expected in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_dry_run_writes_nothing(case):
     """--check leaves the case directory untouched, so validating a case never
     creates output folders or overwrites results from an earlier run."""
@@ -127,8 +131,7 @@ def test_every_app_checks_without_running(name, case):
     and the initial state, says so, and stops before the time loop, leaving
     the case directory untouched. An app that ignored the flag would run the
     whole simulation and write its folders."""
-    if not os.path.exists(app(name)):
-        pytest.skip(name + " is not built")
+    need(app(name))
     before = set(os.listdir(case))
     r = run_app(app(name), case / "expr_params.dat", ["--check"], args_for(name, "analytic"),
                 check=False, timeout=300)
@@ -137,7 +140,7 @@ def test_every_app_checks_without_running(name, case):
     assert set(os.listdir(case)) == before
 
 
-@pytest.mark.skipif(not os.path.exists(app("interpol")), reason="interpol is not built")
+@needs(app("interpol"))
 def test_interpol_refuses_check(case):
     """interpol has no run to stop before: --check is refused, not ignored."""
     r = run_app(app("interpol"), case / "expr_params.dat", ["--check"], args_for("interpol", "analytic"),
@@ -146,7 +149,7 @@ def test_interpol_refuses_check(case):
     assert "--check" in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_dump_interval_is_clamped_to_the_timestep(case):
     """An output interval shorter than dt is raised to dt, and the raised value is
     recorded. Intervals become integer step counts, and rounding down to zero
@@ -161,7 +164,7 @@ def test_dump_interval_is_clamped_to_the_timestep(case):
     assert float(prm["stat_intv"]) == 0.4
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_nrw_is_an_input_and_the_counts_are_recorded_separately(case):
     """Nrw stays the requested count in the dumped parameters, while Nrw_init and
     Nrw_current record how many particles were placed and remain. A dumped
@@ -180,7 +183,7 @@ def test_nrw_is_an_input_and_the_counts_are_recorded_separately(case):
     assert len(read_checkpoint(case)["points"]) == int(prm["Nrw_current"])
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_an_interval_of_zero_turns_that_output_off(case):
     """An interval of 0 turns that output off entirely, at t = 0 too, and writes
     no file; it is not clamped to every step and does not divide by zero. With
@@ -200,7 +203,7 @@ def test_an_interval_of_zero_turns_that_output_off(case):
     assert [f for f in on if f.startswith("tdata_from_t")]
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_a_negative_interval_is_rejected(case):
     """A negative output interval is rejected by --check with a message saying so,
     since it has no meaning as a step count."""
@@ -209,7 +212,7 @@ def test_a_negative_interval_is_rejected(case):
     assert "negative" in r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_a_huge_interval_does_not_overflow_the_step_count(case):
     """A very large interval, the usual way to make an output effectively never
     happen, runs normally. Its step count must not overflow into a negative
@@ -220,7 +223,7 @@ def test_a_huge_interval_does_not_overflow_the_step_count(case):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_help_lists_required_parameters(case):
     """--help succeeds and lists the required parameters, so a user can find out
     what a case file must contain without reading the source."""
@@ -231,7 +234,7 @@ def test_help_lists_required_parameters(case):
         assert key in r.stdout
 
 
-@pytest.mark.skipif(not os.path.exists(PARTRAC), reason="partrac is not built")
+@needs(PARTRAC)
 def test_no_input_file_is_a_usage_error():
     """partrac without arguments loads, prints its usage hint and exits nonzero.
 
@@ -239,5 +242,5 @@ def test_no_input_file_is_a_usage_error():
     wrong architecture), and makes sure scripts see a usage error as a failure.
     """
     r = subprocess.run(PARTRAC, capture_output=True, text=True, timeout=60)
-    assert "Specify an input file." in r.stdout
-    assert r.returncode != 0
+    assert "no input file given" in r.stderr
+    assert r.returncode == 2
