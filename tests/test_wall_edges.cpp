@@ -285,7 +285,7 @@ std::size_t check_against_reference(const Mesh<Cell::n_verts>& m){
   const Uint dim = Cell::n_verts - 1;
   std::vector<std::int32_t> index, ref_index;
   std::vector<WallEdges<Cell>> cells, ref_cells;
-  near_wall::build_wall_edges<Cell>(m.topo, m.coords, m.ncells(), m.nverts(), dim, m.across,
+  near_wall::build_wall_edges<Cell>(m.topo, m.coords, m.ncells(), m.nverts(), dim, m.across, {},
                                     m.vclass, index, cells, false);
   ref::build_wall_edges<Cell>(m.topo, m.coords, m.ncells(), m.nverts(), dim, m.across,
                               m.vclass, ref_index, ref_cells);
@@ -309,9 +309,9 @@ void check_renumbering(const Mesh<Cell::n_verts>& m, const std::vector<bool>& pe
   check_against_reference<Cell>(r);
   std::vector<std::int32_t> index, r_index;
   std::vector<WallEdges<Cell>> cells, r_cells;
-  near_wall::build_wall_edges<Cell>(m.topo, m.coords, m.ncells(), m.nverts(), dim, m.across,
+  near_wall::build_wall_edges<Cell>(m.topo, m.coords, m.ncells(), m.nverts(), dim, m.across, {},
                                     m.vclass, index, cells, false);
-  near_wall::build_wall_edges<Cell>(r.topo, r.coords, r.ncells(), r.nverts(), dim, r.across,
+  near_wall::build_wall_edges<Cell>(r.topo, r.coords, r.ncells(), r.nverts(), dim, r.across, {},
                                     r.vclass, r_index, r_cells, false);
   constexpr auto edge_ends = WallRule<Cell>::edge_ends;
   std::size_t differ = 0;

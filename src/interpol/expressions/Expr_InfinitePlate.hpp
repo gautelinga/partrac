@@ -44,6 +44,10 @@ public:
     ptvals.gradU << 2 * alpha * r[0], 0., 0.,
                     - 2 * alpha * r[1], - 2 * alpha * r[0], 0.,
                     0., 0., 0.;
+    if (convective)
+      ptvals.convGradU << 2 * alpha * ptvals.U[0], 0., 0.,
+                          - 2 * alpha * ptvals.U[1], - 2 * alpha * ptvals.U[0], 0.,
+                          0., 0., 0.;
   };
 private:
   double mu;  // Viscosity

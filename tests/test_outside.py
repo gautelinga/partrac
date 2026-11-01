@@ -9,15 +9,15 @@ same floating-point operations. Upstream of the sphere the flow runs into it;
 with a long step, an RK4 stage point lands inside the sphere, where the formula
 still returns a velocity that is not the flow's.
 
-Two things are pinned:
+Three things are pinned:
 
 - an RK4 step with a stage point or its end outside is taken again in
   halves, a half that fails halved again down to dt/64, every stage of every
-  piece inside, and declined if a piece of dt/64 fails; a
-  failed stage used to contribute zero velocity, which froze a tracer whose
-  second stage left the fluid on the start point for good. Positions after
-  one step match the reference for every transport element, since the
-  position update does not depend on what else a particle carries;
+  piece inside, and declined if a piece of dt/64 fails; no stage outside
+  contributes a velocity, so a tracer is never frozen on its start point by a
+  stage that left the fluid. Positions after one step match the reference for
+  every transport element, since the position update does not depend on what
+  else a particle carries;
 - a particle placed outside the fluid (by editing a checkpoint) reports zero
   velocity, pressure and density in the dumps and does not move, under both
   schemes;

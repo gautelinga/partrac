@@ -457,6 +457,10 @@ void request_from_params(Request& r, const partrac::Params& prm, const std::stri
   // is still refused
   r.want_u = declared_degree(prm.get<std::string>("velocity_space"), "velocity");
   r.want_p = r.include_pressure ? declared_degree(prm.get<std::string>("pressure_space"), "pressure") : 0;
+  // Checked whenever given, compared where the phase field is read
+  const int phi = prm.has("phase_field_space") ? declared_degree(prm.get<std::string>("phase_field_space"),
+                                                                 "phase field") : 0;
+  if (r.include_phi) r.want_phi = phi;
 }
 
 void build_tables(const Request& r, Tables& t){
@@ -486,6 +490,9 @@ void build_tables(const Request& r, Tables& t){
     t.el_phi = read_element(r.field_file, r.phi_field, nv);
     if (t.el_phi.ncomp != 1)
       partrac::fail(r.field_file, ": '", r.phi_field, "' has ", t.el_phi.ncomp, " components, not one");
+    if (r.want_phi && r.want_phi != t.el_phi.degree)
+      partrac::fail(r.infilename, ": phase_field_space is P", r.want_phi, ", but '", r.phi_field,
+                    "' in ", r.field_file, " is of degree ", t.el_phi.degree);
   }
   t.ncoeffs_u = Uint(nodes_per_cell(nv, t.el_u.degree));
   t.ncoeffs_p = r.include_pressure ? Uint(nodes_per_cell(nv, t.el_p.degree)) : 0;

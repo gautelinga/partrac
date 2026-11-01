@@ -33,10 +33,13 @@ static int run(int argc, char* argv[])
 
   const bool restarting = load_or_initialize(run, mesh);
 
+  const bool filter = prm.get<bool>("filter");
+  if (filter && !mesh.faces.empty())
+    partrac::fail("filter=true filters a strip; a sheet is not supported");
+
   if (check_only(run, ps, mesh))
     return 0;
 
-  const bool filter = prm.get<bool>("filter");
   const bool inject = prm.get<bool>("inject");
   const bool verbose = prm.get<bool>("verbose");
 

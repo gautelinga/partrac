@@ -71,6 +71,14 @@ private:
        0.,     -k*sy,   k*cz,
        k*cx,    0.,    -k*sz,
       -k*sx,    k*cy,   0.;
+    // (U.grad) gradU: each entry varies along one axis
+    if (convective){
+      const Vector3d& U = ptvals.U;
+      ptvals.convGradU <<
+         0.,          -k*k*cy*U[1], -k*k*sz*U[2],
+        -k*k*sx*U[0],  0.,          -k*k*cz*U[2],
+        -k*k*cx*U[0], -k*k*sy*U[1],  0.;
+    }
 
     // Time derivatives, when forced
     if (A_amp != 0.){

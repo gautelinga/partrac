@@ -270,9 +270,9 @@ OLDER_CLOUD_KEYS = "inject_edges=1\ncut_if_stuck=1\ncurv_refine_factor=0\nfilter
                          "stat_intv=1e9 dump_intv=1e9 random=false seed=1"),
 ])
 def test_a_cloud_checkpoint_from_an_older_run_still_resumes(tmp_path, name, args):
-    """Older tracer and walker runs wrote four placeholder keys of a mesh's
-    remeshing into their params.dat, which their schemas no longer declare. A
-    restart reads past them; any other key it does not know is still refused."""
+    """A tracer or walker params.dat holding the four placeholder remeshing keys
+    their schemas do not declare still resumes: a restart reads past them, and
+    any other key it does not know is refused."""
     need(app(name))
     params = copy_example(POISEUILLE, tmp_path)
     run_app(app(name), params, args)

@@ -63,6 +63,8 @@ list(APPEND PARTRAC_INTERPOL_SOURCES
   interpol/SimplexFreqInterpol_wall.cpp
   interpol/XDMFInterpol.cpp
   interpol/near_wall.cpp
+  interpol/wall_split.cpp
+  interpol/wall_facets.cpp
   interpol/xdmf_helpers.cpp
   interpol/phase_timing.cpp
   interpol/openfoam_host.cpp

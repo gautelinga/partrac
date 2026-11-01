@@ -22,10 +22,6 @@ bool try_parse_bool(const std::string& s, bool& out) {
   return false;
 }
 
-// Small helpers
-
-namespace {
-
 std::string trim(const std::string& s) {
   const char* ws = " \t\n\r\f\v";
   const auto b = s.find_first_not_of(ws);
@@ -33,6 +29,10 @@ std::string trim(const std::string& s) {
   const auto e = s.find_last_not_of(ws);
   return s.substr(b, e - b + 1);
 }
+
+// Small helpers
+
+namespace {
 
 // Parse a real, requiring the whole string to be consumed
 bool try_parse_real(const std::string& s, double& out) {

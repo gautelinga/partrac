@@ -43,8 +43,8 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
   req.include_phi = include_phi;
   req.n_dofs_max = Cell::n_dofs_max;
   req.periodic = intp.periodic;
-  // The declared elements are checked whether the tables are rebuilt or read
-  // from the cache
+  // The declared elements, checked against the field file's where the tables
+  // are rebuilt, else against the cache's
   simplex_load::request_from_params(req, prm, folder);
   u_field = req.u_field;
   p_field = req.p_field;
@@ -74,6 +74,14 @@ void DolfinH5Format::load(I& intp, const std::string& infilename)
                    && (!include_phi || cache.ncoeffs_phi > 0);
   if (cached){
     std::cout << "Mesh cache: read from " << cache_file << std::endl;
+    const auto declared = [&](const int want, const Uint n, const char* key, const std::string& field){
+      if (want && Uint(simplex_load::nodes_per_cell(nv, want)) != n)
+        partrac::fail(infilename, ": ", key, " is P", want, ", but '", field, "' in the mesh cache ", cache_file,
+                      " has ", n, " nodes a cell");
+    };
+    declared(req.want_u, cache.ncoeffs_u, "velocity_space", u_field);
+    if (include_pressure) declared(req.want_p, cache.ncoeffs_p, "pressure_space", p_field);
+    if (include_phi) declared(req.want_phi, cache.ncoeffs_phi, "phase_field_space", phi_field);
     intp.dim = cache.gdim;
     intp.x_min = cache.x_min;
     intp.x_max = cache.x_max;

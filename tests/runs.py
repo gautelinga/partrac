@@ -153,9 +153,9 @@ def interpolation(d):
 
 
 def write_text_checkpoint(folder, F_whole=False):
-    """Rewrite the checkpoint.h5 in the Checkpoints folder `folder` as the text
-    files older runs wrote, and remove it. With F_whole a tensor element is
-    written whole, as F.ten, as before its factors were carried."""
+    """Rewrite the checkpoint.h5 in the Checkpoints folder `folder` as text
+    checkpoint files, and remove it. With F_whole a tensor element is written
+    whole, as F.ten, rather than as its factors."""
     h5py = pytest.importorskip("h5py")
     folder = pathlib.Path(folder)
     with h5py.File(folder / "checkpoint.h5", "r") as h:

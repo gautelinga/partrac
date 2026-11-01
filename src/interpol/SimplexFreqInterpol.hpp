@@ -7,7 +7,8 @@
 // SimplexInterpol reads a stamp and held by node, so an evaluation gathers the
 // cell's nodes out of each component in turn. With wall_upgrade, a wall cell's
 // components are summed and the sum raised by the near-wall rule, at the wall
-// vertices where every component is at rest.
+// vertices (P1) or wall entities (P2) where every component is at rest, or
+// on the walls wall_facets names.
 
 #include <array>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include "MeshCore.hpp"
 #include "FreqStamps.hpp"
 #include "near_wall.hpp"
+#include "wall_split.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
 #include <omp.h>
@@ -88,27 +90,30 @@ protected:
   std::vector<double> coords_;
   std::size_t ncells_ = 0, nverts_ = 0;
 
-  // Near walls: P1 to P2 by the edge rule, or P2 plus the quartic terms
+  // Near walls: P1 to P2 by the edge rule, or P2 plus the wall correction
   bool wall_upgrade_ = false;
   bool upgrade_p2_ = false;
   std::vector<std::uint32_t> vclass_;
-  std::vector<std::int32_t> wall_index_;   // -1: no wall vertex at rest
+  std::vector<std::int32_t> wall_index_;   // -1: none at rest
   std::vector<near_wall::WallEdges<Cell>> wall_cells_;
-  near_wall::UpgradeTable<Cell> upgrade_;
-  std::vector<std::uint8_t> rest_;   // by wall cell: the vertices at rest in every component
-  // The wall vertices at rest, from every component's values
-  void rest_masks();
+  // P1, by wall cell: the vertices at rest in every component
+  std::vector<std::uint8_t> rest_;
+  // P2: the wall cells, their entities at rest in every component, and their tables
+  wall_split::Tables<Cell::n_verts> split_;
+  // The wall vertices or wall entities at rest: all those of wall_facets'
+  // walls (walls, by cell), else those at rest in every component
+  void rest_masks(const std::vector<std::uint8_t>& walls);
   // A wall cell at bary, out of line: the components summed with their weights,
   // then raised; component k's block at blocks + k*stride, gathered here if
   // blocks is null
   __attribute__((noinline))
   void wall_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf, const double* blocks,
                const std::size_t stride, PointValues& fields) const;
-  // A P2 wall cell, out of line: P2 plus the terms of the summed blocks B (the
-  // velocity's) and Bt (its rate's)
+  // A P2 wall cell, out of line: P2 of the summed blocks (the velocity's and
+  // its rate's) plus their wall correction
   __attribute__((noinline))
-  void upgrade_at(const int id, const std::array<double, 4>& bary, const double* B, const double* Bt,
-                  PointValues& fields) const;
+  void upgrade_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf, const double* blocks,
+                  const std::size_t stride, PointValues& fields) const;
   // Without gradients: the velocity and its rate at bary in cell id, out of line
   __attribute__((noinline))
   void velocity_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,

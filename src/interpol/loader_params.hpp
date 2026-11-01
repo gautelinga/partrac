@@ -12,6 +12,25 @@ inline void add_wall_upgrade(partrac::Schema& s, const bool def, const std::stri
   s.replaced("wall_p2", "wall_upgrade = true (wall_p2 = edge) or false (wall_p2 = none)");
 }
 
+// The no-slip walls as a facet file names them, for wall_upgrade
+inline void add_wall_facets(partrac::Schema& s){
+  s.optional<std::string>("wall_facets", "XDMF facet file (meshio's, markers per facet) naming the no-slip walls "
+                                         "wall_upgrade raises the velocity at, all at rest; without it the "
+                                         "exterior facets off the periodic sides at rest in the velocity");
+  s.optional<std::string>("wall_markers", "markers of wall_facets' no-slip walls, values and inclusive ranges as "
+                                          "3,5,7:106; required with wall_facets");
+  s.check([](const partrac::Params& p){ return !p.has("wall_markers") || p.has("wall_facets"); },
+          "wall_markers selects facets of wall_facets, which is not given");
+  s.check([](const partrac::Params& p){ return !p.has("wall_facets") || p.has("wall_markers"); },
+          "wall_facets needs wall_markers, the markers of its no-slip walls");
+  s.check([](const partrac::Params& p){
+            return !p.has("wall_markers")
+              || p.get<std::string>("wall_markers").find_first_not_of(" \t") != std::string::npos; },
+          "wall_markers is empty; give the markers of the no-slip walls, as 3,5,7:106");
+  s.check([](const partrac::Params& p){ return !p.has("wall_facets") || p.get<bool>("wall_upgrade"); },
+          "wall_facets names the walls of wall_upgrade, which is false");
+}
+
 // Every mesh loader
 inline void add_mesh_params(partrac::Schema& s, const bool three_d){
   s.opt<bool>("periodic_x", false, "periodic along x");
@@ -36,6 +55,8 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
   s.require<std::string>("velocity_space", mode == "fenics" ? "velocity element, P1 to P4"
                                                             : "velocity element, P1 or P2");
   s.require<std::string>("pressure_space", "pressure element, as P1 or P2");
+  s.optional<std::string>("phase_field_space", "phase field element, as P1 or P2; checked against the field "
+                                               "file or the mesh cache where the phase field is read");
   if (mode == "fenics"){
     // Read by DolfInterpol only
     s.opt<std::string>("renumber_cells", "auto", "renumber cells by their dofs: auto (if poorly ordered), never, always");
@@ -47,8 +68,11 @@ inline partrac::Schema dolfin_h5_schema(const std::string& mode){
     s.opt<bool>("include_phi", false, "read a phase field");
     s.opt<std::string>("phase_field", "phi", "phase field dataset in the field files");
     add_wall_upgrade(s, false, "raise the velocity's order next to walls at rest: a P1 velocity to P2 "
-                               "(the edge rule), a P2 one by quartic terms; modes xdmftet, xdmftriangle "
-                               "and openfoam default to true");
+                               "(the edge rule), a P2 one by quartic terms and a correction in the cells with "
+                               "a wall vertex at rest; the walls are wall_facets', else those at rest in the "
+                               "first stamp with flow, which every later stamp must keep at rest; modes xdmftet, "
+                               "xdmftriangle and openfoam default to true");
+    add_wall_facets(s);
     s.opt<bool>("divfree", false, "evaluate a P2 velocity on each cell's barycentric split, where it is "
                                   "pointwise divergence-free; every cell's net flux must already be zero, "
                                   "which python/divfree/divfree_clean.py prepares; refuses wall_upgrade = true "
@@ -71,7 +95,9 @@ inline partrac::Schema simplex_freq_schema(const std::string& mode){
   add_field_names(s);
   s.optional<double>("tau", "base period of `t_k a_k file` lines, 0 or less for none; not read with omega_k");
   add_wall_upgrade(s, false, "raise the velocity's order next to walls at rest in every component: a P1 "
-                             "velocity to P2 (the edge rule), a P2 one by quartic terms");
+                             "velocity to P2 (the edge rule), a P2 one by quartic terms and a correction in the "
+                             "cells with a wall vertex at rest");
+  add_wall_facets(s);
   s.require<double>("t_min", "start of the time interval");
   s.require<double>("t_max", "end of the time interval");
   s.check([](const partrac::Params& p){ return p.get<double>("t_max") >= p.get<double>("t_min"); },
@@ -90,8 +116,10 @@ inline partrac::Schema xdmf_schema(const std::string& mode){
   s.require_if<std::string>("phi", [](const partrac::Params& p){ return p.get<bool>("include_phi"); },
                             "include_phi is true", "phase field XDMF file");
   s.opt<bool>("include_pf", false, "not read");
-  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1); "
-                            "the dolfin modes tet and triangle default to false");
+  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1); the walls are "
+                            "wall_facets', else those at rest in the first stamp with flow, which every later "
+                            "stamp must keep at rest; the dolfin modes tet and triangle default to false");
+  add_wall_facets(s);
   return s;
 }
 
@@ -108,7 +136,12 @@ inline partrac::Schema openfoam_schema(){
   s.opt<std::string>("nodes", "least_squares", "values of U and p at the mesh points: least_squares (exact for "
                                                "linear fields) or inverse_distance (cellPoint's)");
   s.choices("nodes", {"least_squares", "inverse_distance"});
-  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1)");
+  add_wall_upgrade(s, true, "velocity next to walls at rest: true (quadratic) or false (P1); the walls are "
+                            "those at rest in each stamp");
+  s.optional<std::string>("wall_facets", "not read in mode openfoam");
+  s.optional<std::string>("wall_markers", "not read in mode openfoam");
+  s.check([](const partrac::Params& p){ return !p.has("wall_facets") && !p.has("wall_markers"); },
+          "wall_facets and wall_markers are not read in mode openfoam: its walls are those at rest in the velocity");
   s.optional<std::string>("phase_field", "phase field in the time directories, a volScalarField such as "
                                           "alpha.water; none read without it");
   s.opt<bool>("include_phi", false, "not read: phase_field names the phase field");

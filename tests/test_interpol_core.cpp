@@ -961,10 +961,10 @@ TEST_CASE("Dompierre's split takes each of the eight cases of the far faces' dia
   check_conforming(c, s);
 }
 
-TEST_CASE("A hex whose centre fan folds takes Dompierre's split under W12", "[openfoam]") {
+TEST_CASE("A hex whose centre fan folds takes Dompierre's split under split=12", "[openfoam]") {
   // Corners 2 and 7 of the unit cube pulled in: faces so warped that the fan
   // from the cell centre has a tet under 1e-12 of the cell, while Dompierre's
-  // tets from a corner are positive and fill it, so W12 falls back to them
+  // tets from a corner are positive and fill it, so split=12 falls back to them
   const std::array<int, 8> perm = {0, 1, 2, 3, 4, 5, 6, 7};
   auto p = cube_points(perm);
   p[2] = {0., 0.5, -0.5};
@@ -978,7 +978,7 @@ TEST_CASE("A hex whose centre fan folds takes Dompierre's split under W12", "[op
   check_conforming(c, s);
 }
 
-TEST_CASE("W12 is twelve tets a hex, the cell centre first", "[openfoam]") {
+TEST_CASE("split=12 is twelve tets a hex, the cell centre first", "[openfoam]") {
   const auto c = foam_arrays::lattice({3, 2, 2});
   const SplitData s = openfoam_split::split(c, 12);
   REQUIRE(s.nsimplices() == 12*std::size_t(c.ncells));
@@ -1106,15 +1106,14 @@ TEST_CASE("The stand-in node values are volPointInterpolation's on a lattice", "
   REQUIRE(wall == 3*3*4);
 }
 
-// The least-squares node values W, rule by rule, on hex lattices built here
-// and on the fixtures. W's promise is exactness for linear fields everywhere
-// -- interior, face, edge and corner points -- whatever the conditions,
-// which needs the next ring at boundary points (their cells' centres are
-// coplanar), the fixed
-// faces' values where the condition fixes them and never where it does not,
-// mirrored cells at symmetry planes, and the cells across cyclic seams; and
-// no-slip nodes exactly at rest, so the near-wall rule fires. The inverse-
-// distance stand-in, cellPoint's oracle, is pinned alongside.
+// The least-squares node values, rule by rule, on hex lattices built here and
+// on the fixtures. They must be exact for linear fields at interior, face,
+// edge and corner points whatever the conditions, which needs the next ring at
+// boundary points (their cells' centres are coplanar), the fixed faces' values
+// exactly where the condition fixes them, mirrored cells at symmetry planes
+// and the cells across cyclic seams; and no-slip nodes exactly at rest, so the
+// near-wall rule fires. The inverse-distance stand-in, cellPoint's oracle, is
+// pinned alongside.
 #include <functional>
 #include <numeric>
 #include <set>
@@ -1131,7 +1130,7 @@ using V3d = std::array<double, 3>;
 using FieldFn = std::function<V3d(const double*)>;
 using Conds = std::map<std::string, std::string>;
 
-// Every mesh point a node, in point order; with centres, every cell's centre after them (W12's nodes)
+// Every mesh point a node, in point order; with centres, every cell's centre after them (split=12's nodes)
 SplitData point_nodes(const CaseData& c, const bool centres = false){
   SplitData s;
   const std::size_t np = c.npoints();
@@ -1182,7 +1181,7 @@ std::vector<int> all_comps(const int k){
   return v;
 }
 
-// W's node values, k a node
+// The least-squares node values, k a node
 std::vector<double> ls_values(const CaseData& c, const SplitData& s, const FieldData& f,
                               LeastSquaresReport* r = nullptr, const double tol = LeastSquares::default_rank_tol,
                               LeastSquares* keep = nullptr){
@@ -1282,7 +1281,7 @@ std::array<double, 4> eigenvalues4(std::array<std::array<double, 4>, 4> a){
 
 }  // namespace
 
-TEST_CASE("W is exact for linear fields at every point with Dirichlet and zeroGradient sides", "[openfoam]") {
+TEST_CASE("The least-squares nodes are exact for linear fields at every point with Dirichlet and zeroGradient sides", "[openfoam]") {
   // Fixed faces take the value; zeroGradient faces are not data, and the
   // next ring keeps every point exact, interior to corner; a fixed node is the
   // patch's value whatever the cells hold, a fitted one moves with them
@@ -1325,7 +1324,7 @@ TEST_CASE("W is exact for linear fields at every point with Dirichlet and zeroGr
   }
 }
 
-TEST_CASE("W with mirrored cells gives a symmetric field no normal component on the planes", "[openfoam]") {
+TEST_CASE("The least-squares nodes with mirrored cells give a symmetric field no normal component on the planes", "[openfoam]") {
   // Each cell and its mirror carry opposite normal components at equal
   // weights, edges of two planes included; without the mirror it is O(h^2)
   for (const std::string type : {"symmetry", "symmetryPlane"}){
@@ -1350,7 +1349,7 @@ TEST_CASE("W with mirrored cells gives a symmetric field no normal component on 
   }
 }
 
-TEST_CASE("W is exact at symmetry planes for linear fields with the symmetry", "[openfoam]") {
+TEST_CASE("The least-squares nodes are exact at symmetry planes for linear fields with the symmetry", "[openfoam]") {
   // Symmetry faces are not data; the mirrored cells enter the fit with the
   // mirrored value, so the face, edge (two planes) and corner (two planes and
   // a zeroGradient side) points stay exact, a vector's normal component zero
@@ -1375,7 +1374,7 @@ TEST_CASE("W is exact at symmetry planes for linear fields with the symmetry", "
     }
 }
 
-TEST_CASE("W's rank test fires at exactly the boundary points of a lattice", "[openfoam]") {
+TEST_CASE("The least-squares rank test fires at exactly the boundary points of a lattice", "[openfoam]") {
   // A boundary point's cells have coplanar centres, an interior point's do not
   const auto c = foam_arrays::box({foam_arrays::linspace(0, 1, 6), foam_arrays::linspace(0, 1, 6), foam_arrays::linspace(0, 1, 6)});
   LeastSquaresReport r;
@@ -1384,7 +1383,7 @@ TEST_CASE("W's rank test fires at exactly the boundary points of a lattice", "[o
   for (std::size_t p = 0; p < c.npoints(); ++p) REQUIRE(int(r.ring[p]) == (cls[p] > 0 ? 2 : 1));
 }
 
-TEST_CASE("W's rank test sends the nearly coplanar rings of a jittered boundary to the next ring", "[openfoam]") {
+TEST_CASE("The least-squares rank test sends the nearly coplanar rings of a jittered boundary to the next ring", "[openfoam]") {
   // Jittered interior points leave a boundary point's cells off their plane
   // by a little: scaled to unit diagonal the test at 1e-3 still takes the next
   // ring, and the boundary error of a smooth field stays the uniform
@@ -1428,7 +1427,7 @@ TEST_CASE("W's rank test sends the nearly coplanar rings of a jittered boundary 
   REQUIRE(e["jitter 1e-8"] > 100*e["uniform"]);
 }
 
-TEST_CASE("W's rank test never fires inside an aspect-1000 boundary layer", "[openfoam]") {
+TEST_CASE("The least-squares rank test never fires inside an aspect-1000 boundary layer", "[openfoam]") {
   // Scaled to unit diagonal the normal matrix does not see the cells'
   // aspect; scaled by the mean distance alone its condition is the aspect squared
   const auto c = foam_arrays::box(scaled(foam_arrays::linspace(0, 1, 12), 1., foam_arrays::linspace(0, 1, 12), 1.,
@@ -1483,7 +1482,7 @@ FieldData cavity_field(const CaseData& c, const std::string& lid = "ymax", const
 
 }  // namespace
 
-TEST_CASE("W's zero wins where a moving lid meets the no-slip walls", "[openfoam]") {
+TEST_CASE("The least-squares nodes' zero wins where a moving lid meets the no-slip walls", "[openfoam]") {
   // The lid's corners are at rest (cellPoint gives half the lid speed there),
   // the lid's other points exactly at its speed, the walls exactly at rest
   for (const bool two_d : {true, false}){
@@ -1525,7 +1524,7 @@ TEST_CASE("The inverse-distance nodes give the lid's corners half its speed", "[
   REQUIRE(n == 4);
 }
 
-TEST_CASE("W reproduces a moving wall's linear profile along it", "[openfoam]") {
+TEST_CASE("The least-squares nodes reproduce a moving wall's linear profile along it", "[openfoam]") {
   // A wall whose value varies linearly: its nodes, the patch's edges and
   // corners included, take a fit over the patch's faces, their next ring
   // where the first is one-sided
@@ -1576,7 +1575,7 @@ V3d periodic_field(const double* x){
 
 }  // namespace
 
-TEST_CASE("W gives a point's cyclic images one value and a seam point an interior point's accuracy", "[openfoam]") {
+TEST_CASE("The least-squares nodes give a point's cyclic images one value and a seam point an interior point's accuracy", "[openfoam]") {
   // Periodic in x and y, walls in z: the images read their master's row, whose
   // ring takes the cells on every side, so a seam point is its translate
   // mid-channel; with zeroGradient walls a wall point beside the seam takes
@@ -1660,9 +1659,8 @@ double idw_interior_error(const std::vector<double>& xs, const std::vector<doubl
 }  // namespace
 
 TEST_CASE("The inverse-distance nodes converge at second order on a graded lattice, first on an alternating one", "[openfoam]") {
-  // A linear field on the graded lattice (ratios 4 and 10): 1.7e-2, 4.2e-3,
-  // 1.1e-3, 2.6e-4 at n = 8 .. 64; a smooth one on h, 2h, h, 2h at rate 1,
-  // where least squares keeps 2
+  // A linear field on the graded lattice (ratios 4 and 10), against its
+  // reference errors; a smooth one on h, 2h, h, 2h at rate 1, where least squares keeps 2
   const FieldFn lin2 = [](const double* x){ return V3d{1 + 2*x[0] - 3*x[1], 0., 0.}; };
   const double expect[4] = {1.7e-2, 4.2e-3, 1.1e-3, 2.6e-4};
   int i = 0;
@@ -1749,7 +1747,7 @@ TEST_CASE("The inverse-distance nodes lose the normal component at a symmetry pl
   REQUIRE(ux > 0.);
 }
 
-TEST_CASE("W's normal matrix is conditioned independently of the cell size", "[openfoam]") {
+TEST_CASE("The least-squares normal matrix is conditioned independently of the cell size", "[openfoam]") {
   // Scaled to unit diagonal, the interior condition number of a graded,
   // jittered lattice stays put under refinement; unscaled it grows as 1/h^2
   std::vector<double> conds, raw;
@@ -1783,8 +1781,8 @@ TEST_CASE("W's normal matrix is conditioned independently of the cell size", "[o
   REQUIRE(raw[2] > 10*raw[0]);
 }
 
-TEST_CASE("W on a 16^3 lattice: exact for a linear field, a centre its cell's value", "[openfoam]") {
-  // Cyclic in x, walls in z, W12's nodes (the points, then every cell's
+TEST_CASE("The least-squares nodes on a 16^3 lattice: exact for a linear field, a centre its cell's value", "[openfoam]") {
+  // Cyclic in x, walls in z, split=12's nodes (the points, then every cell's
   // centre): the operator built on a lattice of 4,096 cells
   const int n = 16;
   const auto c = foam_arrays::box({foam_arrays::linspace(0, 1, n), foam_arrays::linspace(0, 1, n), foam_arrays::linspace(0, 1, n)},
@@ -1802,7 +1800,7 @@ TEST_CASE("W on a 16^3 lattice: exact for a linear field, a centre its cell's va
     for (int d = 0; d < 3; ++d) REQUIRE(u[3*i + std::size_t(d)] == f.internal[3*std::size_t(s.node_cell[i]) + std::size_t(d)]);
 }
 
-TEST_CASE("W refuses a stamp whose conditions differ from the first stamp's", "[openfoam]") {
+TEST_CASE("The least-squares nodes refuse a stamp whose conditions differ from the first stamp's", "[openfoam]") {
   // The rows are fixed at load: a patch that fixes the value at one stamp and
   // not at another is refused, naming the patch and the stamp
   const auto c = cavity_box(4, false);
@@ -1820,9 +1818,9 @@ TEST_CASE("W refuses a stamp whose conditions differ from the first stamp's", "[
   REQUIRE_THROWS_WITH(w.apply(later, {0, 1, 2}, u), Catch::Contains("U at 8: patch xmin is inletOutlet"));
 }
 
-TEST_CASE("W on the checked-in channel: linear in z exact at every point of the split", "[openfoam]") {
+TEST_CASE("The least-squares nodes on the checked-in channel: linear in z exact at every point of the split", "[openfoam]") {
   // The jittered channel (cyclic in x and y, walls in z) through the test
-  // reader and the W12 split: exact with fixed walls or zeroGradient ones
+  // reader and split=12: exact with fixed walls or zeroGradient ones
   // (the next ring), the images one value, a centre its cell's value
   const auto c = foam_arrays::read_case(std::string(PARTRAC_SOURCE_DIR) + "/data_example/openfoam_channel3d");
   const SplitData s = openfoam_split::split(c, 12);
@@ -1841,7 +1839,7 @@ TEST_CASE("W on the checked-in channel: linear in z exact at every point of the 
   }
 }
 
-TEST_CASE("W on the checked-in cavity: the lid's corners at rest, the pressure fitted at the walls", "[openfoam]") {
+TEST_CASE("The least-squares nodes on the checked-in cavity: the lid's corners at rest, the pressure fitted at the walls", "[openfoam]") {
   // Through the test reader and the 2D split: zero wins at the lid's corners
   // (the inverse-distance nodes give half the lid speed), the lid at its
   // speed; the pressure's walls are zeroGradient, so no node is fixed and the
@@ -1886,7 +1884,7 @@ TEST_CASE("W on the checked-in cavity: the lid's corners at rest, the pressure f
 
 // The phase field: the volume above 1/2 of a P1 field, closed form per
 // simplex; each fanned cell's centre moved so its cell's volume above 1/2 is
-// its volume fraction's, which W6's hexes, without a centre, cannot; and a
+// its volume fraction's, which split=6's hexes, without a centre, cannot; and a
 // gradient of its own, the least-squares fit's, exact for linear fields
 namespace {
 
@@ -1999,7 +1997,7 @@ TEST_CASE("The volume above 1/2 of a linear field on a simplex is exact for ever
 }
 
 TEST_CASE("A mixed fanned cell's centre brings its volume above 1/2 to its volume fraction's within [0, 1]", "[openfoam]") {
-  // W12 on a jittered lattice and a 2D box, cellPoint's node values of a tanh
+  // split=12 on a jittered lattice and a 2D box, cellPoint's node values of a tanh
   // step across a tilted plane and across a sphere: a cell within purity of 0
   // or 1 keeps its centre; a corrected one is V_c alpha_c to 1e-12 of V_c;
   // a clipped one, which the 3D cases have, sits at 0 or 1 with its target
@@ -2078,7 +2076,7 @@ TEST_CASE("A cell of volume fraction 0 against a point past 1/2 keeps its centre
   REQUIRE(r.worst_after > 0.);
 }
 
-TEST_CASE("Under W6 a hex has no centre and its nodes are left as they are", "[openfoam]") {
+TEST_CASE("Under split=6 a hex has no centre and its nodes are left as they are", "[openfoam]") {
   // Dompierre's tets on every hex: no node moves, the error is reported, and
   // every cell counts as off without a centre where it is
   const CaseData c = phase_lattice(false);
@@ -2161,10 +2159,10 @@ TEST_CASE("The patches are classed by the velocity's condition, and the split ke
   }
 }
 
-TEST_CASE("A case with every point on a no-slip wall is refused under W6 and warned of under W12", "[openfoam]") {
+TEST_CASE("A case with every point on a no-slip wall is refused under split=6 and warned of under split=12", "[openfoam]") {
   // One cell thick between the no-slip walls zmin and zmax, cyclic in x and
-  // y: every point is fixed at zero, so W6's tets, which have no other node,
-  // give zero velocity throughout, and W12's only the cell centres carry the
+  // y: every point is fixed at zero, so split=6's tets, which have no other node,
+  // give zero velocity throughout, and split=12's only the cell centres carry the
   // flow. The case is not read as 2D, its walls are the case's. Two cells
   // thick, every cell has a free point and nothing is said
   const FieldFn poiseuille = [](const double* x){ return V3d{4*x[2]*(1 - x[2]), 0., 0.}; };
@@ -2191,7 +2189,7 @@ TEST_CASE("Cells with every point on a no-slip wall are counted and warned of un
   // row: that row's four cells have every point on a wall, the others a free
   // point at the top. A warning gives the count and the fraction, and what it
   // means under each split, with no refusal; zmax walled throughout is the
-  // all-walls case, still refused under W6
+  // all-walls case, still refused under split=6
   auto c = foam_arrays::lattice({4, 4, 1}, {true, false, false});
   openfoam_load::Patch strip = c.patches.back();
   strip.name = "zmax_wall";

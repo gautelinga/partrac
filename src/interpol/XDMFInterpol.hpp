@@ -19,6 +19,7 @@ template<typename Cell, typename Format> class StampedInterpol;
 struct XDMFFormat {
   using Key = Uint;   // the stamp's index in the timestamps
   static constexpr bool vertex_fields = true;
+  static constexpr bool named_walls = true;   // accepts wall_facets
   static partrac::Schema schema(int D);
 
   MultiTimestamps ts;
@@ -28,10 +29,11 @@ struct XDMFFormat {
   // One stamp's fields by vertex
   template<typename I> void read(I& intp, const Key& it, typename I::Stamp& s);
   template<typename I> Key key(const I&, const MultiStamp& st) const { return st.it; }
-  std::string name(const MultiStamp& st) const {
-    const auto path = ts.get_path("u", st.it);
+  std::string name(const Key it) const {
+    const auto path = ts.get_path("u", it);
     return path[0] + ":" + path[1];
   }
+  std::string name(const MultiStamp& st) const { return name(st.it); }
 };
 
 #include "StampedInterpol.hpp"

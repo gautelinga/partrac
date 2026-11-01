@@ -21,6 +21,9 @@
 #include "ParticleSet.hpp"
 #include "case_dir.hpp"
 #include "stepping.hpp"
+#include "SpatialIntegrator.hpp"
+#include "TimeScheme.hpp"
+#include "tracervectors/tracervectors_schema.hpp"
 
 namespace {
 
@@ -77,16 +80,21 @@ bool rule_end(AnalyticInterpol& intp, Vector3d x, const double t, const double d
   return true;
 }
 
-// One noisy step of order int_order and length dt from the ring at radius s0
-void check_noisy_pieces(const int int_order, const double dt, const double s0){
-  CaseDir c("explicit_pieces");
+// Taylor-Couette with the rolls and the decay off: speed 1 around the axis
+std::shared_ptr<AnalyticInterpol> ring_field(const CaseDir& c){
   {
     std::ofstream f(c.file("expr_params.dat"));
     f << "t_min=0.0\nt_max=1e7\nx_min=-2.5\ny_min=-2.5\nz_min=-1.5\nx_max=2.5\ny_max=2.5\nz_max=1.5\n"
          "Lx=5.0\nLy=5.0\nLz=3.0\nexpression=taylor_couette\np_inf=0.0\nrho=1.0\n"
          "R=2.5\nH=3.0\nK=0.0\na=0.4\nc1=0.0\nc2=1.2\nc3=0.0\nx0=0.0\ny0=0.0\nz0=0.0\n";
   }
-  auto intp = std::make_shared<AnalyticInterpol>(c.file("expr_params.dat"));
+  return std::make_shared<AnalyticInterpol>(c.file("expr_params.dat"));
+}
+
+// One noisy step of order int_order and length dt from the ring at radius s0
+void check_noisy_pieces(const int int_order, const double dt, const double s0){
+  CaseDir c("explicit_pieces");
+  auto intp = ring_field(c);
   // Not enable_reflection: the field cannot reflect
   REQUIRE(!intp->can_reflect);
   const double t = 0., Dm = 1e-4;
@@ -147,4 +155,53 @@ void check_noisy_pieces(const int int_order, const double dt, const double s0){
 TEST_CASE("A noisy explicit step beyond a wall it cannot reflect off is taken in pieces sharing its noise", "[pieces]"){
   SECTION("first order"){ check_noisy_pieces(1, 0.5, 2.48); }
   SECTION("second order"){ check_noisy_pieces(2, 1.5, 2.48); }
+}
+
+// (U.grad) gradU is computed only where a step reads it: the second-order
+// explicit or spatial step of a carried element. Asked for, it reaches the
+// expression, frozen before or after; the ring's is nonzero
+TEST_CASE("Only a second-order step of a carried element asks for J's rate along the path", "[pieces]"){
+  CaseDir c("explicit_pieces_convective");
+  std::vector<std::mt19937> gens(1);
+  const Vector3d x(1.7, 0.4, 0.2);
+  const auto computed = [&](Interpol& intp){
+    PointValues pv(1.0);
+    REQUIRE(intp.evaluate(x, pv));
+    return pv.convGradU.norm() > 0.;
+  };
+  const auto asks = [&](const std::string& scheme, const int int_order, const TransportElement E){
+    auto intp = ring_field(c);
+    const partrac::Params prm = tracervectors_schema().parse(
+        {"tracervectors", c.file("expr_params.dat"), "mode=analytic", "init_mode=points", "Nrw=1",
+         "Nrw_max=1", "Dm=0", "dt=0.1", "T=1", "scheme=" + scheme, "int_order=" + std::to_string(int_order)});
+    intp->update(0.);
+    TimeScheme(prm, gens).prepare(*intp, E);
+    REQUIRE(computed(*intp) == intp->wants_convective());
+    return intp->wants_convective();
+  };
+  for (const TransportElement E : {TransportElement::Vector, TransportElement::Tensor}){
+    REQUIRE(asks("explicit", 2, E));
+    REQUIRE_FALSE(asks("explicit", 1, E));
+    REQUIRE_FALSE(asks("RK4", 2, E));
+    REQUIRE_FALSE(asks("RK4cells", 2, E));
+  }
+  REQUIRE_FALSE(asks("explicit", 2, TransportElement::Point));
+
+  const auto spatial_asks = [&](const int int_order, const TransportElement E){
+    auto intp = ring_field(c);
+    SpatialIntegrator(int_order, 1e-7, 1e9, 1e9).prepare(*intp, E);
+    return intp->wants_convective();
+  };
+  REQUIRE(spatial_asks(2, TransportElement::Vector));
+  REQUIRE_FALSE(spatial_asks(1, TransportElement::Vector));
+  REQUIRE_FALSE(spatial_asks(2, TransportElement::Point));
+
+  auto before = ring_field(c);
+  before->freeze(0.);
+  before->set_needs_convective(true);
+  REQUIRE(computed(*before));
+  auto after = ring_field(c);
+  after->set_needs_convective(true);
+  after->freeze(0.);
+  REQUIRE(computed(*after));
 }

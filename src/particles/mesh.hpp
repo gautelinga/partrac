@@ -63,9 +63,10 @@ Uint coarsening(Connectivity& m,
                 const double ds_max,
                 const double curv_refine_factor);
 
-bool filtering(Connectivity& m,
-               ParticleSet& ps,
-               const Uint filter_target);
+// Thin a strip to filter_target edges
+bool strip_filtering(Connectivity& m,
+                     ParticleSet& ps,
+                     const Uint filter_target);
 
 bool resizing(EdgesType &edges,
               Node2EdgesType &node2edges,

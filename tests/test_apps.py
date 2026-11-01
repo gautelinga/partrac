@@ -31,7 +31,7 @@ from cases import (ABC, APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
                    wrapper_kind)
 from dumps import all_dumps, read_stats
 from paths import REPO, app, need, needs
-from runs import copy_case, copy_example, read_checkpoint, run_app
+from runs import copy_case, copy_example, merged, read_checkpoint, run_app
 
 
 def smoke_cells():
@@ -178,6 +178,47 @@ def test_the_apps_wait_passively_unless_told_otherwise(given, starts, spincount)
     if not reports:
         pytest.skip("the OpenMP runtime is not libgomp")
     assert len(reports) == starts and reports[-1] == spincount, r.stderr
+
+
+def cpu_list(text):
+    """The CPUs of an affinity list such as 0-3,8."""
+    out = set()
+    for part in text.split(","):
+        lo, _, hi = part.partition("-")
+        out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+@pytest.mark.parametrize("places", ["listed", "default"])
+def test_the_threads_of_a_restarted_app_keep_their_places(tmp_path, places):
+    """With OMP_PROC_BIND, the threads of the second start spread over the places.
+
+    libgomp binds the first start's main thread to its first place before main,
+    and the exec keeps that mask: unrestored, the second start finds one place
+    and puts every thread on it. Places listed in OMP_PLACES, or libgomp's own
+    from the process's mask, the two threads run on two places of that mask.
+    """
+    cpus = sorted(os.sched_getaffinity(0))
+    if len(cpus) < 2:
+        pytest.skip("one cpu to run on")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("OMP_", "GOMP_"))}
+    env.update(OMP_NUM_THREADS="2", OMP_DISPLAY_AFFINITY="TRUE", OMP_AFFINITY_FORMAT="omp-affinity %n %A")
+    if places == "listed":
+        env.update(OMP_PROC_BIND="spread", OMP_PLACES="{%d},{%d}" % tuple(cpus[:2]))
+    else:
+        env.update(OMP_PROC_BIND="true")
+    cfg = copy_example(EXAMPLE, tmp_path / "case")
+    r = subprocess.run([app("tracers"), str(cfg)] + merged(args_for("tracers", "analytic")),
+                       env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout[-1000:] + r.stderr
+    got = set(re.findall(r"^omp-affinity \d+ (\S+)$", r.stdout + r.stderr, re.M))
+    if not got:
+        pytest.skip("the OpenMP runtime does not display its affinity")
+    if places == "listed":
+        assert got == {str(c) for c in cpus[:2]}, r.stdout[-1000:] + r.stderr
+    else:
+        assert len(got) == 2, r.stdout[-1000:] + r.stderr
+        assert all(cpu_list(g) <= set(cpus) for g in got), (got, cpus)
 
 
 @pytest.mark.parametrize("name", sorted(WRAPPERS))

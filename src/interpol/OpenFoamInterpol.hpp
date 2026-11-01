@@ -1,17 +1,9 @@
 #ifndef __OPENFOAMINTERPOL_HPP
 #define __OPENFOAMINTERPOL_HPP
 
-// An OpenFOAM case traced in place: the polyMesh split into tets (or, one cell
-// thick between an empty pair, its front plane into triangles), each time
-// directory a stamp, the cyclic pairs the periodic box. The velocity and the
-// pressure are P1 on the split, their node values by least squares (exact for
-// linear fields) or cellPoint's by inverse distance (openfoam_nodes.hpp), each
-// field's operator built at load from its first stamp's conditions. A phase
-// field is P1 on cellPoint's node values, each fanned cell's centre moved so
-// its volume above 1/2 is its volume fraction's (openfoam_phase.hpp); its
-// gradient is P1 on the least-squares fit's. Every boundary facet but a
-// cyclic one's is a wall, whatever its patch. The files are read through
-// openfoam_load.hpp; nothing here includes OpenFOAM.
+// An OpenFOAM case in place: the polyMesh split into tets (triangles between an
+// empty pair), a stamp per time directory, P1 fields on node values from
+// openfoam_nodes.hpp and openfoam_phase.hpp; every non-cyclic boundary facet a wall
 
 #include <string>
 #include <vector>
@@ -28,6 +20,7 @@ template<typename Cell, typename Format> class StampedInterpol;
 struct OpenFoamFormat {
   using Key = std::string;   // the time directory
   static constexpr bool vertex_fields = true;
+  static constexpr bool named_walls = false;   // accepts wall_facets
   static partrac::Schema schema(int D);
 
   Timestamps ts;

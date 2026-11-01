@@ -1,32 +1,14 @@
 #!/usr/bin/env python3
 """The divergence cleaner's mesh tables, shared out over the MPI ranks.
 
-`divfree_clean.Topo` builds the edge, facet and periodic tables of the whole
-mesh on every rank, which at tens of millions of cells is more than a rank can
-hold. `DistTopo` builds the same tables for each rank's own cells only, in the
-serial numbering: a vertex is its row of `mesh/coordinates`, a cell its row of
-`mesh/topology`, an edge its rank among the sorted vertex pairs of the whole
-mesh, so everything written from these tables is the same at every rank count.
-
-What needs the whole mesh is found by exchange rather than by holding it:
-
-  * the edges and facets by a sample sort of their vertex keys across the
-    ranks, numbered by an exclusive scan of the distinct keys each rank holds;
-  * the periodic masters on the nodes of the periodic faces alone, a surface,
-    which every rank pairs as `Topo` pairs the whole mesh;
-  * a flag or value of a node by a reduction over the ranks that touch it (or
-    over its periodic images), at a rank that owns it;
-  * the median edge length, which the penalty is measured in, by bisection on
-    the value with allreduced counts: exact, not gathered.
-
-The cells are read in contiguous blocks and moved to the ranks a graph
-partitioner gives them on their dual graph, so a rank's cells are a compact
-region and few of its nodes are shared; or left in their blocks. A rank may be
-left with no cell, and builds its empty share.
-
-The building blocks -- `Exchange`, `exscan`, `sample_sort`, `number_keys`,
-`reduce_keyed`, `exact_select` -- take arrays and a communicator and hold no
-mesh, so the field, the step and the writer are built from them too.
+`DistTopo` builds `divfree_clean.Topo`'s edge, facet and periodic tables for
+each rank's own cells, in the serial numbering (a vertex its row of
+`mesh/coordinates`, a cell its row of `mesh/topology`, an edge its rank among
+the sorted vertex pairs), so the output is the same at every rank count. What
+needs the whole mesh is found by exchange; the building blocks (`Exchange`,
+`exscan`, `SampleSort`, `number_keys`, `Reduction`, `reduce_keyed`,
+`exact_select`, `periodic_masters`) take arrays and a communicator and hold no
+mesh.
 """
 
 import os
@@ -63,15 +45,24 @@ class Exchange:
     number of arrays of rows, of any trailing shape."""
 
     def __init__(self, comm, dest):
-        dest = np.asarray(dest, np.int64)
+        # ranks as uint16 sort by radix
+        dest = np.asarray(dest).astype(np.uint16 if comm.size <= 1 << 16 else np.int64)
         self.comm = comm
         # rows already in rank order are sent as they are, without a copy
         self.order = (None if np.all(dest[1:] >= dest[:-1])
                       else np.argsort(dest, kind="stable"))
         self.sent = np.bincount(dest, minlength=comm.size).astype(np.int64)
+        # a rank past the communicator, or a negative one wrapped
+        assert len(self.sent) == comm.size, "an address outside the communicator"
         self.received = np.empty(comm.size, np.int64)
         comm.Alltoall(self.sent, self.received)
         self.n_in = int(self.received.sum())
+        # MPI counts are C ints: refused on every rank together
+        rows = comm.allreduce(max(int(self.sent.sum()), self.n_in), op=MPI.MAX)
+        top = int(np.iinfo(np.int32).max)
+        if rows > top:
+            raise ValueError("a rank exchanges %d rows, past the %d MPI's counts hold; "
+                             "more ranks reach it" % (rows, top))
 
     def _move(self, a, sc, rc):
         a = np.ascontiguousarray(a)
@@ -82,10 +73,15 @@ class Exchange:
             return self._move(a.view(np.uint8), sc, rc).view(bool)
         rest = a.shape[1:]
         w = int(np.prod(rest, dtype=np.int64))
+        # a row one datatype, the counts in rows
         out = np.empty((int(rc.sum()),) + rest, a.dtype)
         t = _mpitype(a.dtype)
-        self.comm.Alltoallv([a, (sc * w, _displs(sc) * w), t],
-                            [out, (rc * w, _displs(rc) * w), t])
+        row = t.Create_contiguous(w).Commit() if w > 1 else t
+        try:
+            self.comm.Alltoallv([a, (sc, _displs(sc)), row], [out, (rc, _displs(rc)), row])
+        finally:
+            if row is not t:
+                row.Free()
         return out
 
     def forward(self, a):
@@ -119,8 +115,11 @@ def exscan(n, comm):
 
 def block_owner(ids, total, size):
     """The rank whose `_split` block of range(total) holds each id."""
-    starts = np.array([_split(total, size, r)[0] for r in range(size)], np.int64)
-    return np.searchsorted(starts, np.asarray(ids, np.int64), side="right") - 1
+    q, rem = divmod(int(total), size)
+    ids = np.asarray(ids, np.int64)
+    # the first rem blocks hold q + 1 ids, the others q
+    big = rem * (q + 1)
+    return np.where(ids < big, ids // (q + 1), rem + (ids - big) // max(q, 1))
 
 
 def _lex_order(k):
@@ -143,10 +142,13 @@ class SampleSort:
         k = np.asarray(keys, np.int64)
         k = k[:, None] if k.ndim == 1 else k
         size = comm.size
+        # sorted here first, so the rows arrive as one sorted run a sender
+        self.local = _lex_order(k)
+        k = k[self.local]
         if size == 1:
             dest = np.zeros(len(k), np.int64)
         else:
-            s = np.sort(k[:, 0])
+            s = k[:, 0]
             take = s[np.linspace(0, len(s) - 1, SAMPLES).astype(np.int64)] if len(s) \
                 else s
             allk = np.sort(np.concatenate(comm.allgather(take)))
@@ -157,61 +159,66 @@ class SampleSort:
             dest = np.searchsorted(split, k[:, 0], side="right")
         self.ex = Exchange(comm, dest)
         got = self.ex.forward(k)
-        self.order = _lex_order(got)
+        # one run is sorted already
+        self.order = _lex_order(got) if size > 1 else slice(None)
         self.keys = got[self.order]
-        self.payload = [self.ex.forward(p)[self.order] for p in payload]
+        self.payload = [self.ex.forward(np.asarray(p)[self.local])[self.order]
+                        for p in payload]
 
     def back(self, values):
         v = np.asarray(values)
         out = np.empty_like(v)
         out[self.order] = v
-        return self.ex.back(out)
-
-
-def sample_sort(keys, comm, payload=()):
-    """`SampleSort` of the keys: the sorted share, its payload rows, and the
-    way back to the keys' own ranks and positions."""
-    return SampleSort(keys, comm, payload)
+        got = self.ex.back(out)
+        out = np.empty_like(got)
+        out[self.local] = got
+        return out
 
 
 def _groups(k):
-    """(the group of every row of sorted 2D keys, the first row of every group)."""
+    """(the group of every row of sorted keys, (n,) or (n, w), the first row of
+    every group)."""
     new = np.ones(len(k), bool)
     if len(k) > 1:
-        new[1:] = np.any(k[1:] != k[:-1], axis=1)
+        new[1:] = k[1:] != k[:-1] if k.ndim == 1 else np.any(k[1:] != k[:-1], axis=1)
     return np.cumsum(new) - 1, np.flatnonzero(new)
 
 
-def number_keys(keys, comm, payload=()):
-    """(the id of every key, the number of distinct keys, the multiplicity of
-    every key, the sort). A key's id is its rank among the distinct keys of all
-    ranks together, so it is the serial numbering whatever the rank count."""
-    s = SampleSort(keys, comm, payload)
+def number_keys(keys, comm):
+    """(the id of every key, the number of distinct keys). A key's id is its
+    rank among the distinct keys of all ranks together, so it is the serial
+    numbering whatever the rank count."""
+    s = SampleSort(keys, comm)
     grp, first = _groups(s.keys)
     off, total = exscan(len(first), comm)
-    cnt = np.diff(np.append(first, len(s.keys)))
-    s.group, s.first, s.count, s.offset = grp, first, cnt, off
-    return s.back(off + grp), total, s.back(cnt[grp]), s
+    return s.back(off + grp), total
 
 
-def _reduce_sorted(keys, values, op):
-    """(the distinct keys, the op over the values of each)."""
-    o = np.argsort(keys, kind="stable")
-    k = keys[o]
-    grp, first = _groups(k.reshape(-1, 1))
-    red = _OPS[op].reduceat(values[o], first) if len(first) else values[:0]
-    return k[first], grp, o, red
+def _reduceat(v, first, op):
+    """The op over the runs of v starting at first; ops a column for 2D v."""
+    if isinstance(op, str):
+        return _OPS[op].reduceat(v, first) if len(first) else v[:0]
+    return np.stack([_reduceat(v[:, j], first, o) for j, o in enumerate(op)], axis=1)
 
 
-def _reduce_exchange(ex, keys, values, op):
-    """Every received copy of a key reduced with the others, each sender
-    answered with the reduction of its key."""
-    k = ex.forward(keys)
-    v = ex.forward(values)
-    _, grp, o, red = _reduce_sorted(k, v, op)
-    ans = np.empty_like(v)
-    ans[o] = red[grp]
-    return ex.back(ans)
+class Reduction:
+    """The op over every row of all ranks with the same key, at the rank the
+    exchange sends it to, returned to every row: built once for the keys and
+    used for any number of value arrays. Each key's values are reduced in the
+    order of their sending ranks, and in each sender's order within."""
+
+    def __init__(self, ex, keys):
+        self.ex = ex
+        k = ex.forward(np.asarray(keys, np.int64))
+        self.order = np.argsort(k, kind="stable")
+        self.group, self.first = _groups(k[self.order])
+
+    def __call__(self, values, op):
+        """op 'max', 'min', 'or' or 'sum', or one a column of 2D values."""
+        v = self.ex.forward(values)
+        ans = np.empty_like(v)
+        ans[self.order] = _reduceat(v[self.order], self.first, op)[self.group]
+        return self.ex.back(ans)
 
 
 def reduce_keyed(keys, values, op, comm, total):
@@ -219,7 +226,7 @@ def reduce_keyed(keys, values, op, comm, total):
     same key, returned to every one of them. The keys are ids in range(total),
     reduced at the rank whose `_split` block holds the id."""
     ex = Exchange(comm, block_owner(keys, total, comm.size))
-    return _reduce_exchange(ex, np.asarray(keys, np.int64), np.asarray(values), op)
+    return Reduction(ex, keys)(np.asarray(values), op)
 
 
 def _sortable(v):
@@ -267,50 +274,196 @@ def exact_median(values, comm):
     return float(np.mean(np.array([a, b])))
 
 
+# ------------------------------------------------------------ periodic pairing
+
+
+# 2^64 / golden ratio: Fibonacci hashing
+_MIX = np.uint64(0x9E3779B97F4A7C15)
+
+
+def hash_owner(ids, size):
+    """A rank for every id, spread evenly whatever pattern the ids follow."""
+    h = np.asarray(ids, np.int64).astype(np.uint64) * _MIX
+    return ((h >> np.uint64(32)) % np.uint64(size)).astype(np.int64)
+
+
+def _face_grid(a, x_min, x_max, r, size):
+    """(the axes but a, the cells along each, the scale to a cell index, the
+    origin): about four cells a rank over the face of axis a, none narrower
+    than 4 r."""
+    axes = [b for b in range(len(x_min)) if b != a]
+    want = int(np.ceil((4 * size) ** (1.0 / max(len(axes), 1))))
+    ncell, scale = [], []
+    for b in axes:
+        ext = x_max[b] - x_min[b]
+        n = 1 if ext <= 0 else want if 4 * r * want <= ext else max(1, int(ext // (4 * r)))
+        ncell.append(n)
+        scale.append(n / ext if ext > 0 else 0.0)
+    return axes, np.array(ncell, np.int64), scale, [x_min[b] for b in axes]
+
+
+def _face_cells(x, grid, w):
+    """The first and last cell of the points x widened by w on either side,
+    (n, 2) an axis of the grid: at most two apart by one."""
+    axes, ncell, scale, x0 = grid
+    return [np.stack([np.clip(np.floor((v - o) * k), 0, n - 1).astype(np.int64)
+                      for v in (x[:, b] - w, x[:, b] + w)], axis=1)
+            for b, n, k, o in zip(axes, ncell, scale, x0)]
+
+
+def _cell_rank(c, ncell, size):
+    """The rank of every cell, (n, axes) indices, round the ranks in turn."""
+    lin = np.zeros(len(c), np.int64)
+    for j, n in enumerate(ncell):
+        lin = lin * n + c[:, j]
+    return lin % size
+
+
+def _pair_axis(hg, hx, link, a, x_min, x_max, tol, comm):
+    """`Topo._periodic`'s links along axis a of the face nodes this rank is
+    home to, (hg, hx) sorted by id: every node on the high face not linked yet
+    to the nearest node on the low face to its image, found at the rank of the
+    image's cell, where every low node within 2 tol of the cell is sent."""
+    size, dim = comm.size, hx.shape[1]
+    lo = np.flatnonzero(hx[:, a] < x_min[a] + tol)
+    hi = np.flatnonzero((hx[:, a] > x_max[a] - tol) & (link == hg))
+    r = 2.0 * tol
+    grid = _face_grid(a, x_min, x_max, r, size)
+    ncell = grid[1]
+    span = _face_cells(hx[lo], grid, r)
+    # a low node to every rank of a cell within r, once a rank
+    copies = []
+    for off in np.ndindex(*([2] * len(span))):
+        ok = np.ones(len(lo), bool)
+        c = np.empty((len(lo), len(span)), np.int64)
+        for j, s in enumerate(span):
+            c[:, j] = s[:, 0] + off[j]
+            ok &= c[:, j] <= s[:, 1]
+        copies.append(np.stack([lo, _cell_rank(c, ncell, size)], axis=1)[ok])
+    lr = np.unique(np.concatenate(copies), axis=0) if copies else np.zeros((0, 2), np.int64)
+    hspan = _face_cells(hx[hi], grid, 0.0)
+    hc = (np.stack([s[:, 0] for s in hspan], axis=1) if hspan
+          else np.zeros((len(hi), 0), np.int64))
+    # a row: the id's bits, the low ones as they are and the high ones as -1 - id
+    rows = np.empty((len(lr) + len(hi), 1 + dim))
+    code = rows.view(np.int64)
+    code[:len(lr), 0] = hg[lr[:, 0]]
+    code[len(lr):, 0] = -1 - hg[hi]
+    rows[:len(lr), 1:] = hx[lr[:, 0]]
+    rows[len(lr):, 1:] = hx[hi]
+    ex = Exchange(comm, np.concatenate([lr[:, 1], _cell_rank(hc, ncell, size)]))
+    got = ex.forward(rows)
+    del rows
+    g = got.view(np.int64)[:, 0]
+    isq = g < 0
+    lg, lx = g[~isq], got[~isq, 1:]
+    o = np.argsort(lg)
+    lg, lx = lg[o], lx[o]
+    qg, x = -1 - g[isq], got[isq, 1:]
+    q = x.copy()
+    q[:, a] -= x_max[a] - x_min[a]
+    if len(lg) and len(q):
+        from scipy.spatial import cKDTree
+        d, j = cKDTree(lx).query(q)
+        ok = d < tol
+    else:
+        j, ok = np.zeros(len(q), np.int64), np.zeros(len(q), bool)
+    bad = int(comm.allreduce(int((~ok).sum())))
+    if bad:
+        k = np.flatnonzero(~ok)
+        first = ((int(qg[k].min()), x[k[np.argmin(qg[k])]].tolist()) if len(k)
+                 else (np.iinfo(np.int64).max, []))
+        raise D._not_periodic(a, bad, tol, comm.allreduce(first, op=MPI.MIN)[1])
+    ans = np.full(len(g), -1, np.int64)
+    ans[isq] = lg[j]
+    link = link.copy()
+    link[hi] = ex.back(ans)[len(lr):]
+    return link
+
+
+def _chase(hg, link, steps, comm):
+    """link applied steps times to every node this rank is home to, each step
+    asking the next node's home for its link; a node linked to itself ends."""
+    m = link.copy()
+    act = np.flatnonzero(m != hg)
+    for _ in range(steps - 1):
+        if not comm.allreduce(len(act)):
+            break
+        ex = Exchange(comm, hash_owner(m[act], comm.size))
+        nxt = ex.back(link[np.searchsorted(hg, ex.forward(m[act]))])
+        moved = nxt != m[act]
+        m[act] = nxt
+        act = act[moved]
+    return m
+
+
+def periodic_masters(gid, x, ask, periodic, x_min, x_max, tol, comm):
+    """`Topo._periodic`'s master of every id in ask, the pairing being of the
+    nodes (gid, x) of all ranks together, each node on one rank only; an id
+    given by no rank is its own master. No rank holds more than its share:
+    each node is kept at a home rank by its id, and paired along each axis at
+    the rank of its place on the face."""
+    size = comm.size
+    home = Exchange(comm, hash_owner(gid, size))
+    hg = home.forward(np.asarray(gid, np.int64))
+    hx = home.forward(np.asarray(x, float))
+    del home
+    o = np.argsort(hg)
+    hg, hx = hg[o], hx[o]
+    link = hg.copy()
+    for a in np.nonzero(periodic)[0]:
+        link = _pair_axis(hg, hx, link, a, x_min, x_max, tol, comm)
+    master = _chase(hg, link, len(x_min) + 1, comm)
+    ask = np.asarray(ask, np.int64)
+    ex = Exchange(comm, hash_owner(ask, size))
+    q = ex.forward(ask)
+    at = np.minimum(np.searchsorted(hg, q), max(len(hg) - 1, 0))
+    hit = hg[at] == q if len(hg) else np.zeros(len(q), bool)
+    return ex.back(np.where(hit, master[at] if len(hg) else q, q))
+
+
 # ------------------------------------------------------------------ facets
 
 
-def _facet_keys(gcells, nverts):
-    """(the sorted global vertices of every facet, (n*nv, nv-1); their int64
-    keys, (n*nv, 1) in 2D and (n*nv, 2) in 3D). Facet o of a cell misses its
-    vertex o."""
-    nv = gcells.shape[1]
-    F = np.stack([np.sort(gcells[:, [i for i in range(nv) if i != o]], axis=1)
-                  for o in range(nv)], axis=1).reshape(-1, nv - 1)
-    first = F[:, 0].astype(np.int64) * np.int64(nverts) + F[:, 1]
-    key = first[:, None] if nv == 3 else np.stack([first, F[:, 2].astype(np.int64)], axis=1)
-    return F, key
-
-
-def facet_pass(gcells, cell_gid, nverts, comm):
-    """(how many cells hold each facet, the other cell of a facet two cells
-    hold or -1), both (n, nv) for the rank's cells given by global vertex ids.
-    Run on the contiguous blocks it is the dual graph the partition is found
-    on; run on the final cells it is the exterior facets."""
+def facet_pass(gcells, cell_gid, nverts, comm, neighbours=True):
+    """(whether one cell alone holds each facet; the other cell of a facet two
+    cells hold, -1 where none does, or None without neighbours), both (n, nv)
+    for the rank's cells given by global vertex ids: the exterior facets, and
+    the dual graph the partition is found on."""
     n, nv = gcells.shape
-    _, key = _facet_keys(gcells, nverts)
-    owner = np.repeat(np.asarray(cell_gid, np.int64), nv)
-    _, _, cnt, s = number_keys(key, comm, payload=(owner,))
+    key = D.facet_keys(D.cell_facets(gcells), nverts)
+    payload = (np.repeat(np.asarray(cell_gid, np.int64), nv),) if neighbours else ()
+    s = SampleSort(key, comm, payload)
+    grp, first = _groups(s.keys)
+    cnt = np.diff(np.append(first, len(s.keys)))[grp]
+    if not neighbours:
+        return s.back(cnt == 1).reshape(n, nv), None
     cell = s.payload[0]
     pos = np.arange(len(cell))
-    start = s.first[s.group]
-    two = s.count[s.group] == 2
+    start = first[grp]
     partner = np.where(pos == start, pos + 1, start)
-    nb = np.where(two, cell[np.minimum(partner, len(cell) - 1)], -1) if len(cell) \
+    nb = np.where(cnt == 2, cell[np.minimum(partner, len(cell) - 1)], -1) if len(cell) \
         else np.zeros(0, np.int64)
-    return cnt.reshape(n, nv), s.back(nb).reshape(n, nv)
+    both = s.back(np.stack([cnt, nb], axis=1))
+    return (both[:, 0] == 1).reshape(n, nv), both[:, 1].reshape(n, nv)
 
 
-def _partition(gcells, gid, ncells, nverts, comm, kind):
+def _partition(nb, ncells, comm, kind):
     """The rank each of the rank's cells goes to: PETSc's MatPartitioning of
-    the dual graph, cells adjacent where they share a facet."""
-    _, nb = facet_pass(gcells, gid, nverts, comm)
+    the dual graph, cells adjacent where they share a facet; nb the other cell
+    of each facet, -1 where there is none."""
     has = nb >= 0
     # each row's neighbours ascending, the missing ones sorted past them
     rows = np.sort(np.where(has, nb, np.iinfo(np.int64).max), axis=1)
     cols = rows[rows < np.iinfo(np.int64).max]
+    # the partitioners count the graph's ids and adjacencies in PETSc's integers
+    adj = int(comm.allreduce(len(cols)))
+    if max(int(ncells), adj) > np.iinfo(PETSc.IntType).max:
+        raise ValueError("partition=%s: a dual graph of %d cells and %d adjacencies needs a "
+                         "PETSc built with 64-bit indices; partition=blocks needs none"
+                         % (kind, ncells, adj))
     indptr = np.concatenate([[0], np.cumsum(has.sum(axis=1))]).astype(PETSc.IntType)
-    n = len(gcells)
+    n = len(nb)
     A = PETSc.Mat().createAIJ(size=((n, ncells), (n, ncells)),
                               csr=(indptr, cols.astype(PETSc.IntType), np.ones(len(cols))),
                               comm=comm)
@@ -354,10 +507,8 @@ class DistTopo(D.Ranks):
 
     Globals, the same on every rank: dim, nv (vertices a cell), ncells_global,
     nverts_global, nedges_global, nnodes_global (nverts_global + nedges_global),
-    periodic, x_min, x_max, vol_total, mesh_h (the serial `mesh_h` bit for bit),
-    node_block (the `_split` block of the serial node ids this rank writes),
-    vert_block (its block of `mesh/coordinates`), partition (how the cells were
-    shared out; 'blocks' on one rank).
+    periodic, x_min, x_max, vol_total, partition (how the cells were shared
+    out; 'blocks' on one rank).
 
     Per rank, local indices into the rank's own vertices, edges and nodes, of
     which it holds ncells, nverts, nedges and nnodes = nverts + nedges:
@@ -365,24 +516,25 @@ class DistTopo(D.Ranks):
       cells       (nc, nv)        the rank's cells, local vertices; ascending cell_gid
       cell_gid    (nc,)           their serial ids, the rows of mesh/topology
       cell_index  (nc,)           their mesh/cell_indices labels, or None
-      vert_gid    (lv,)           serial ids of the vertices they touch, ascending
-      X           (lv, dim)       their coordinates
+      X           (lv, dim)       the coordinates of the vertices they touch
       edges       (le, 2)         the local vertex pairs of their edges, sorted
-      edge_gid    (le,)           serial edge ids, ascending
       cell_edge   (nc, ne)        local edges in LOC_EDGES order
-      node_gid    (ln,)           vert_gid, then nverts_global + edge_gid, ascending
+      node_gid    (ln,)           serial node ids, ascending: the vertices' rows of
+                                  mesh/coordinates, then nverts_global + the edges'
       node_x      (ln, dim)       vertices, then edge midpoints
-      J, Jinv, detJ, vol, facet_n the serial geometry of the rank's cells
-      facet_verts (nc, nv, nv-1)  local vertices of facet o, the one missing vertex o
-      facet_exterior, facet_periodic, facet_boundary (nc, nv); cell_boundary (nc,)
+      J, Jinv, vol, facet_n       the serial geometry of the rank's cells
+      facet_boundary (nc, nv); cell_boundary (nc,)
       master      (ln,)           the serial node id of each node's periodic master
       boundary_node, held_node, at_rest (ln,); boundary_edge, held_edge (le,)
       node_owner  (ln,)           the rank that holds the serial-smallest cell
                                   containing the node
       first_cell  (ln,)           that cell's serial id
+      node_shared (ln,)           whether another rank holds the node too
+      node_turn   (ln,)           the rank a node's copies are reduced at: the
+                                  first rank holding it at or after gid mod size,
+                                  round the ranks
 
-    Nothing of global size is held but the periodic faces' nodes while they are
-    paired.
+    Nothing of global size is held.
     """
 
     @classmethod
@@ -409,8 +561,11 @@ class DistTopo(D.Ranks):
                   if "mesh/cell_indices" in f else None)
             Xd = f["mesh/coordinates"]
             self.nverts_global = int(Xd.shape[0])
-            self.vert_block = _split(self.nverts_global, size, rank)
-            v0, v1 = self.vert_block
+            # edge and facet keys pack two vertex ids in an int64
+            if self.nverts_global ** 2 >= 2 ** 63:
+                raise ValueError("%s: %d vertices, past the %d that a pair of them packed in "
+                                 "64 bits holds" % (mesh_path, self.nverts_global, int(2 ** 31.5)))
+            v0, v1 = _split(self.nverts_global, size, rank)
             Xb = np.ascontiguousarray(np.asarray(Xd[v0:v1])[:, :self.dim], dtype=float)
         self.periodic = np.asarray(periodic, dtype=bool)[:self.dim]
         self.x_min = np.full(self.dim, np.inf) if not len(Xb) else Xb.min(axis=0)
@@ -418,99 +573,122 @@ class DistTopo(D.Ranks):
         comm.Allreduce(MPI.IN_PLACE, self.x_min, op=MPI.MIN)
         comm.Allreduce(MPI.IN_PLACE, self.x_max, op=MPI.MAX)
         gid = np.arange(c0, c1, dtype=np.int64)
-        if size > 1 and partition != "blocks":
-            dest = _partition(gcells, gid, self.ncells_global, self.nverts_global, comm, partition)
-            ex = Exchange(comm, dest)
-            gcells, gid = ex.forward(gcells), ex.forward(gid)
+        moved = self.partition != "blocks"
+        ext, nb = facet_pass(gcells, gid, self.nverts_global, comm, neighbours=moved)
+        if moved:
+            ex = Exchange(comm, _partition(nb, self.ncells_global, comm, partition))
+            del nb
+            gcells, gid, ext = ex.forward(gcells), ex.forward(gid), ex.forward(ext)
             ci = ex.forward(ci) if ci is not None else None
             o = np.argsort(gid)
-            gcells, gid = gcells[o], gid[o]
+            gcells, gid, ext = gcells[o], gid[o], ext[o]
             ci = ci[o] if ci is not None else None
         self.cell_gid, self.cell_index = gid, ci
-        self._build(gcells, Xb, periodic_tol)
+        self._build(gcells, ext, Xb, v0, periodic_tol)
         return self
 
     # ---- the tables, on the final cells
-    def _build(self, gcells, Xb, tol):
+    def _build(self, gcells, ext, Xb, v0, tol):
         comm = self.comm
         self.ncells = len(gcells)
-        self.vert_gid, inv = np.unique(gcells, return_inverse=True)
+        vert_gid, inv = np.unique(gcells, return_inverse=True)
         self.cells = inv.reshape(gcells.shape).astype(np.int32)
-        self.nverts = len(self.vert_gid)
+        self.nverts = len(vert_gid)
         # the coordinates from the vertices' block owners
-        v0 = self.vert_block[0]
-        ex = Exchange(comm, block_owner(self.vert_gid, self.nverts_global, comm.size))
-        self.X = ex.back(Xb[ex.forward(self.vert_gid) - v0])
+        ex = Exchange(comm, block_owner(vert_gid, self.nverts_global, comm.size))
+        self.X = ex.back(Xb[ex.forward(vert_gid) - v0])
         self.loc = np.array(LOC_EDGES[self.nv])
-        self._edges()
+        self._edges(vert_gid)
         tol = D.match_tol(self.X, self.edges, tol, comm)
         # the serial formulas, on the rank's cells
         geo = types.SimpleNamespace(X=self.X, cells=self.cells, ncells=self.ncells,
                                     nv=self.nv, dim=self.dim)
         D.Topo._geometry(geo)
-        self.J, self.detJ, self.Jinv = geo.J, geo.detJ, geo.Jinv
+        self.J, self.Jinv = geo.J, geo.Jinv
         self.vol, self.facet_n = geo.vol, geo.facet_n
-        self._facets(gcells, tol)
-        self._owners()
-        self._periodic(Xb, tol)
+        del geo
+        self._facets(ext, tol)
+        shared = self._owners()
+        face = self._periodic(Xb, v0, tol)
+        # a node no other rank holds, in no periodic class, is its master class alone
+        sel = np.flatnonzero(shared | face)
+        m = self.master[sel]
+        self._masters = sel, Reduction(Exchange(comm, block_owner(m, self.nnodes_global,
+                                                                  comm.size)), m)
         self._exterior()
         self.vol_total = float(np.sum(comm.allgather(float(np.sum(self.vol)))))
-        self.mesh_h = D.mesh_h(self)
-        self.node_block = _split(self.nnodes_global, comm.size, comm.rank)
         self.set_held(None)
 
-    def _edges(self):
+    def _edges(self, vert_gid):
         # local vertices are in serial order, so a sorted local pair is a sorted serial one
         pair = np.sort(self.cells[:, self.loc], axis=2).reshape(-1, 2)
-        g = self.vert_gid[pair]
-        key = g[:, 0] * np.int64(self.nverts_global) + g[:, 1]
-        ids, self.nedges_global, _, _ = number_keys(key, self.comm)
-        self.edge_gid, inv = np.unique(ids, return_inverse=True)
-        self.nedges = len(self.edge_gid)
+        g = vert_gid[pair]
+        key, at, inv = np.unique(g[:, 0] * np.int64(self.nverts_global) + g[:, 1],
+                                 return_index=True, return_inverse=True)
+        del g
+        # the distinct keys ascend, and so do their ids
+        edge_gid, self.nedges_global = number_keys(key, self.comm)
+        self.nedges = len(edge_gid)
         self.cell_edge = inv.reshape(self.ncells, len(self.loc)).astype(np.int32)
-        self.edges = np.zeros((self.nedges, 2), np.int32)
-        self.edges[inv] = pair
+        self.edges = pair[at]
         self.nnodes_global = self.nverts_global + self.nedges_global
         self.nnodes = self.nverts + self.nedges
-        self.node_gid = np.concatenate([self.vert_gid, self.nverts_global + self.edge_gid])
+        self.node_gid = np.concatenate([vert_gid, self.nverts_global + edge_gid])
         self.node_x = np.vstack([self.X,
                                  0.5 * (self.X[self.edges[:, 0]] + self.X[self.edges[:, 1]])])
 
-    def _facets(self, gcells, tol):
-        cnt, _ = facet_pass(gcells, self.cell_gid, self.nverts_global, self.comm)
-        self.facet_exterior = cnt == 1
-        F, _ = _facet_keys(self.cells, self.nverts)
-        self.facet_verts = F.reshape(self.ncells, self.nv, self.nv - 1)
+    def _facets(self, ext, tol):
+        """The boundary the rule classifies: exterior facets the mesh does not
+        pair."""
         per = np.zeros((self.ncells, self.nv), bool)
-        for d in range(self.dim):
-            if not self.periodic[d]:
-                continue
-            xd = self.X[:, d][self.facet_verts]
-            for v in (self.x_min[d], self.x_max[d]):
-                per |= np.all(np.abs(xd - v) < tol, axis=2)
-        self.facet_periodic = per
+        for o in range(self.nv):
+            f = self.cells[:, [i for i in range(self.nv) if i != o]]
+            for d in np.nonzero(self.periodic)[0]:
+                xd = self.X[f, d]
+                for v in (self.x_min[d], self.x_max[d]):
+                    per[:, o] |= np.all(np.abs(xd - v) < tol, axis=1)
+        self.facet_boundary = ext & ~per
+        self.cell_boundary = self.facet_boundary.any(axis=1)
 
     def cell_nodes(self):
         """The local nodes of every cell: its vertices, then its edges."""
         return np.concatenate([self.cells, self.nverts + self.cell_edge], axis=1)
 
     def _owners(self):
+        """node_owner, first_cell, node_shared (held by other ranks too),
+        node_turn (the rank reducing it) and that reduction; returns node_shared."""
         # the cells ascend, so the last write of the reversed list is the smallest
         cn = self.cell_nodes()
         first = np.full(self.nnodes, self.ncells_global, np.int64)
         first[cn[::-1].ravel()] = np.repeat(self.cell_gid[::-1], cn.shape[1])
-        size = self.comm.size
-        code = reduce_keyed(self.node_gid, first * size + self.comm.rank, "min",
-                            self.comm, self.nnodes_global)
-        self.first_cell = code // size
-        self.node_owner = (code % size).astype(np.int32)
-        self._node_ex = Exchange(self.comm, self.node_owner)
+        del cn
+        comm, g = self.comm, self.node_gid
+        size, rank = comm.size, comm.rank
+        # the first cell's rank, a rank touching the node by turns, the copies
+        v = np.stack([first * size + rank, (rank - g) % size, np.ones(self.nnodes, np.int64)],
+                     axis=1)
+        del first
+        red = reduce_keyed(g, v, ("min", "min", "sum"), comm, self.nnodes_global)
+        self.first_cell = red[:, 0] // size
+        self.node_owner = (red[:, 0] % size).astype(np.int32)
+        shared = red[:, 2] > 1
+        self.node_shared = shared
+        self.node_turn = ((g + red[:, 1]) % size).astype(np.int32)
+        self._nodes = np.flatnonzero(shared), self.shared_reduction()
+        return shared
+
+    @staticmethod
+    def _reduce(plan, values, op):
+        sel, red = plan
+        out = np.array(values)
+        out[sel] = red(out[sel], op)
+        return out
 
     def reduce_nodes(self, values, op):
         """The op ('max', 'min', 'or', 'sum') over every rank's copy of each of
-        the rank's nodes, at the node's owner, returned to every rank that
-        touches it. With 'sum' each copy counts once."""
-        return _reduce_exchange(self._node_ex, self.node_gid, np.asarray(values), op)
+        the rank's nodes, returned to every rank that touches it. With 'sum'
+        each copy counts once."""
+        return self._reduce(self._nodes, values, op)
 
     def reduce_masters(self, values, op):
         """The op over every copy of every periodic image of each node's master,
@@ -518,20 +696,21 @@ class DistTopo(D.Ranks):
         rank's copy of every image counts once, so the callers pass each rank's
         partial sums, gathered at `class_index`, and they add up to the class's
         total as `Topo.reduce_masters` adds its one copy of each node."""
-        return reduce_keyed(self.master, np.asarray(values), op, self.comm, self.nnodes_global)
+        return self._reduce(self._masters, values, op)
 
     def median(self, values):
         """np.median of every rank's values together, exactly."""
         return exact_median(values, self.comm)
 
-    def _periodic(self, Xb, tol):
+    def _periodic(self, Xb, v0, tol):
         """The periodic faces' nodes, every rank's, paired as `Topo` pairs the
-        whole mesh: no other node is in a pairing, so the masters are the
-        serial ones."""
+        whole mesh by `periodic_masters`: no other node is in a pairing, so
+        the masters are the serial ones. Returns which of the rank's nodes are
+        on those faces."""
         comm = self.comm
         self.master = self.node_gid.copy()
         if not self.periodic.any():
-            return
+            return np.zeros(self.nnodes, bool)
 
         def on_face(x):
             m = np.zeros(len(x), bool)
@@ -541,37 +720,29 @@ class DistTopo(D.Ranks):
 
         # the vertices by their block, so one in no cell is paired too; the
         # midpoints by their owner
+        lv = self.nverts
         vb = np.nonzero(on_face(Xb))[0]
-        ex = self.node_x[self.nverts:]
-        eo = np.nonzero(on_face(ex) & (self.node_owner[self.nverts:] == comm.rank))[0]
-        mine_gid = np.concatenate([self.vert_block[0] + vb,
-                                   self.nverts_global + self.edge_gid[eo]]).astype(np.int64)
-        mine_x = np.vstack([Xb[vb], ex[eo]])
-        sg = np.concatenate(comm.allgather(mine_gid))
-        sx = np.vstack(comm.allgather(mine_x))
-        o = np.argsort(sg)
-        sg, sx = sg[o], sx[o]
-        surf = types.SimpleNamespace(nnodes=len(sg), node_x=sx, periodic=self.periodic,
-                                     dim=self.dim, x_min=self.x_min, x_max=self.x_max)
-        D.Topo._periodic(surf, tol)
-        at = np.searchsorted(sg, self.node_gid)
-        at = np.minimum(at, max(len(sg) - 1, 0))
-        hit = (sg[at] == self.node_gid) if len(sg) else np.zeros(self.nnodes, bool)
-        self.master[hit] = sg[surf.master[at[hit]]]
+        ex = self.node_x[lv:]
+        eo = np.nonzero(on_face(ex) & (self.node_owner[lv:] == comm.rank))[0]
+        g = np.concatenate([v0 + vb, self.node_gid[lv + eo]])
+        x = np.vstack([Xb[vb], ex[eo]])
+        # every rank's copy of a face node, the same bits as its sender's
+        hit = on_face(self.node_x)
+        self.master[hit] = periodic_masters(g, x, self.node_gid[hit], self.periodic,
+                                            self.x_min, self.x_max, tol, comm)
+        return hit
 
     def _exterior(self):
-        """The boundary the rule classifies: exterior facets the mesh does not
-        pair. A vertex is on it if any rank's cell puts it there; an edge if any
-        image of its master is."""
-        ef = self.facet_exterior & ~self.facet_periodic
-        self.facet_boundary = ef
-        self.cell_boundary = ef.any(axis=1)
+        """A vertex is on the boundary if any rank's cell puts it there; an edge
+        if any image of its master is."""
+        ef = self.facet_boundary
         node = np.zeros(self.nnodes, bool)
         for o in range(self.nv):
+            f = [i for i in range(self.nv) if i != o]
             loc = [j for j, (a, b) in enumerate(LOC_EDGES[self.nv]) if a != o and b != o]
             k = np.nonzero(ef[:, o])[0]
             if len(k):
-                node[self.facet_verts[k, o].ravel()] = True
+                node[self.cells[np.ix_(k, f)].ravel()] = True
                 node[self.nverts + self.cell_edge[np.ix_(k, loc)].ravel()] = True
         lv = self.nverts
         node[:lv] = self.reduce_nodes(node, "or")[:lv]
@@ -587,71 +758,8 @@ class DistTopo(D.Ranks):
         self.at_rest = (np.zeros(self.nnodes, bool) if at_rest is None
                         else np.asarray(at_rest, bool))
         held = self.boundary_node & self.at_rest
-        held[lv:] = self.reduce_masters(held, "or")[lv:]
+        # nothing at rest holds nothing
+        if at_rest is not None:
+            held[lv:] = self.reduce_masters(held, "or")[lv:]
         self.held_node = held
         self.held_edge = held[lv:].copy()
-
-    # ---- for the tests and the comparisons
-    def gather(self, root=0, mesh_path=None):
-        """The tables assembled on root in the serial order, with `Topo`'s
-        names; None on the other ranks. Root then holds every table of the whole
-        mesh, the Jacobians and normals too, so this is for the tests and small
-        meshes; what a large one needs on one rank is gathered by itself. A
-        vertex in no cell is taken from mesh_path's coordinates, as unpaired and
-        off the boundary."""
-        comm = self.comm
-        lv = self.nverts
-        cellpart = dict(
-            gid=self.cell_gid, cells=self.vert_gid[self.cells],
-            cell_edge=self.edge_gid[self.cell_edge],
-            facet_verts=self.vert_gid[self.facet_verts],
-            facet_exterior=self.facet_exterior, facet_periodic=self.facet_periodic,
-            facet_boundary=self.facet_boundary, cell_boundary=self.cell_boundary,
-            vol=self.vol, facet_n=self.facet_n, J=self.J, Jinv=self.Jinv, detJ=self.detJ)
-        if self.cell_index is not None:
-            cellpart["cell_index"] = self.cell_index
-        own = self.node_owner == comm.rank
-        nodepart = dict(gid=self.node_gid[own], master=self.master[own],
-                        boundary_node=self.boundary_node[own], held_node=self.held_node[own],
-                        at_rest=self.at_rest[own], node_x=self.node_x[own])
-        eown = own[lv:]
-        edgepart = dict(gid=self.edge_gid[eown], edges=self.vert_gid[self.edges[eown]])
-        parts = comm.gather((cellpart, nodepart, edgepart), root=root)
-        if comm.rank != root:
-            return None
-        out = types.SimpleNamespace(dim=self.dim, nv=self.nv, ncells=self.ncells_global,
-                                    nverts=self.nverts_global, nedges=self.nedges_global,
-                                    nnodes=self.nnodes_global, periodic=self.periodic,
-                                    x_min=self.x_min, x_max=self.x_max)
-
-        def place(i, n, names, dtypes):
-            for name in names:
-                a = [p[i][name] for p in parts]
-                g = np.concatenate([p[i]["gid"] for p in parts])
-                v = np.concatenate(a)
-                full = np.zeros((n,) + v.shape[1:], dtypes.get(name, v.dtype))
-                full[g] = v
-                setattr(out, name, full)
-
-        i32 = np.int32
-        place(0, self.ncells_global, [k for k in cellpart if k != "gid"],
-              dict(cells=i32, cell_edge=i32, facet_verts=i32))
-        place(2, self.nedges_global, ["edges"], dict(edges=i32))
-        n = self.nnodes_global
-        g = np.concatenate([p[1]["gid"] for p in parts])
-        out.master = np.arange(n, dtype=i32)
-        out.master[g] = np.concatenate([p[1]["master"] for p in parts])
-        for name in ("boundary_node", "held_node", "at_rest"):
-            a = np.zeros(n, bool)
-            a[g] = np.concatenate([p[1][name] for p in parts])
-            setattr(out, name, a)
-        out.node_x = np.zeros((n, self.dim))
-        out.node_x[g] = np.vstack([p[1]["node_x"] for p in parts])
-        missing = np.setdiff1d(np.arange(self.nverts_global), g[g < self.nverts_global])
-        if len(missing):
-            X, _, _ = D.read_mesh_h5(mesh_path)
-            out.node_x[missing] = X[missing, :self.dim]
-        out.X = out.node_x[:self.nverts_global]
-        out.boundary_edge = out.boundary_node[self.nverts_global:]
-        out.held_edge = out.held_node[self.nverts_global:]
-        return out

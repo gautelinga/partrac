@@ -4,6 +4,7 @@
 #include "p12_eval.hpp"
 #include "phase_timing.hpp"
 #include "simplex_load.hpp"
+#include "wall_facets.hpp"
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -104,10 +105,27 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   wall_upgrade_ = dolfin_params.template get<bool>("wall_upgrade");
   if (wall_upgrade_){
     upgrade_p2_ = near_wall::velocity_p2<Cell>(ncoeffs_u);
+    // The no-slip walls: wall_facets', else the exterior facets off the periodic sides
+    std::vector<std::uint8_t> walls;
+    if (dolfin_params.has("wall_facets"))
+      walls = wall_facets::load(get_folder(), dolfin_params.template get<std::string>("wall_facets"),
+                                dolfin_params.template get<std::string>("wall_markers"),
+                                topo_, coords_, ncells_, dim, facet_neigh_, verbose);
     near_wall::build_tables<Cell>(topo_, coords_, ncells_, nverts_, dim, periodic, x_min, x_max,
-                                  periodic_tol(), facet_neigh_, upgrade_p2_, vclass_, wall_index_,
-                                  wall_cells_, upgrade_, verbose);
-    rest_masks();
+                                  periodic_tol(), facet_neigh_, walls, upgrade_p2_, vclass_, wall_index_,
+                                  wall_cells_, split_.cell, verbose);
+    if (walls.empty()) near_wall::warn_velocity_walls(wall_index_);
+    rest_masks(walls);
+    if (!walls.empty()){
+      std::vector<const std::vector<double>*> us;
+      std::vector<double> amps;
+      for (std::size_t k = 0; k < u_nodes_.size(); ++k){
+        us.push_back(&u_nodes_[k]);
+        amps.push_back(fs.get(int(k)).a);
+      }
+      near_wall::check_moving_walls<Cell>(u_dofs_, wall_index_, upgrade_p2_, split_.cell, wall_cells_, us, {},
+                                          "the frequency components", amps);
+    }
     partrac::phase("wall edges");
   }
 
@@ -125,28 +143,42 @@ void SimplexFreqInterpol<Cell>::update(const double t)
 }
 
 template<typename Cell>
-void SimplexFreqInterpol<Cell>::rest_masks()
+void SimplexFreqInterpol<Cell>::rest_masks(const std::vector<std::uint8_t>& walls)
 {
   // One tolerance for the sum: round-off of the largest value it can reach
   double tol = 0.;
   for (std::size_t k = 0; k < u_nodes_.size(); ++k)
     tol += std::abs(fs.get(int(k)).a)*near_wall::rest_tolerance(u_nodes_[k]);
-  rest_.assign(upgrade_p2_ ? upgrade_.cells.size() : wall_cells_.size(), 0);
+  // wall_facets' walls are at rest
+  const std::size_t ncomp = walls.empty() ? u_nodes_.size() : 0;
+  if (!upgrade_p2_) rest_.assign(wall_cells_.size(), 0);
 #pragma omp parallel for schedule(static)
   for (std::size_t i = 0; i < ncells_; ++i){
     const std::int32_t w = wall_index_[i];
     if (w < 0) continue;
-    unsigned rest = upgrade_p2_ ? upgrade_.cells[std::size_t(w)].wall : wall_cells_[std::size_t(w)].wall;
-    for (std::size_t k = 0; k < u_nodes_.size() && rest; ++k){
+    unsigned rest = upgrade_p2_ ? split_.cell[std::size_t(w)].rest : wall_cells_[std::size_t(w)].wall;
+    for (std::size_t k = 0; k < ncomp && rest; ++k){
       std::array<double, Cell::n_dofs_max*3> u;
-      gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[i], u_dofs_.stride(), u_nodes_[k].data(),
-                                                            u.data());
-      rest = near_wall::rest_vertices<Cell>(u.data(), ncoeffs_u, std::uint8_t(rest), tol);
+      if (upgrade_p2_){
+        gather_node_values_n<Cell::n_dofs_max, D>(u_dofs_[i], u_nodes_[k].data(), u.data());
+        rest = wall_split::rest_entities<Cell>(u.data(), rest, tol);
+      }
+      else {
+        gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[i], u_dofs_.stride(), u_nodes_[k].data(),
+                                                              u.data());
+        rest = near_wall::rest_vertices<Cell>(u.data(), ncoeffs_u, std::uint8_t(rest), tol);
+      }
     }
-    rest_[std::size_t(w)] = std::uint8_t(rest);
-    // None at rest: read as without the rule
-    if (!rest) wall_index_[i] = -1;
+    if (upgrade_p2_) split_.cell[std::size_t(w)].rest = std::uint16_t(rest);
+    else {
+      rest_[std::size_t(w)] = std::uint8_t(rest);
+      // None at rest: read as without the rule
+      if (!rest) wall_index_[i] = -1;
+    }
   }
+  if (upgrade_p2_)
+    near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, walls, vclass_,
+                                      wall_index_, split_, verbose);
 }
 
 template class SimplexFreqInterpol<Triangle>;

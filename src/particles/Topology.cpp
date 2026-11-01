@@ -223,7 +223,7 @@ void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
 }
 
 bool Topology::filter(){
-  bool changed = filtering(*this, ps, opts.filter_target);
+  bool changed = strip_filtering(*this, ps, opts.filter_target);
   check_topology();
   return changed;
 }

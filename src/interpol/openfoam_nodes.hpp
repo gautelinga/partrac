@@ -26,10 +26,11 @@ bool is_data(const openfoam_load::FieldPatch& p);
 // What a boundary patch is to the tracers, by the velocity's condition
 enum class PatchClass : std::int8_t { wall, moving_wall, cyclic, other };
 
-// Per patch: a no-slip wall where the condition is data and zero on every
-// face, a moving wall where it is data, nonzero and along every face, cyclic,
-// else other (inlets, outlets, symmetry, empty); zero to 1e-12 of the field's
-// largest value
+// Per patch: a no-slip wall where the condition is data, fixed in time
+// (noSlip, fixedValue, movingWallVelocity) and zero on every face; a moving
+// wall where it is data and fixed in time but nonzero, along every face;
+// cyclic; else other (inlets, outlets, symmetry, empty); zero to 1e-12 of the
+// field's largest value
 std::vector<PatchClass> classify_patches(const openfoam_load::CaseData& c,
                                          const openfoam_load::FieldData& u);
 const char* class_name(PatchClass k);
@@ -75,7 +76,8 @@ public:
   static constexpr double default_rank_tol = 1e-3;
   LeastSquares() = default;
   // From the first stamp's field: its conditions, and its fixed patches'
-  // values to tell uniform from varying and whether zero wins at a node
+  // values to tell whether zero wins at a node and, where the condition fixes
+  // them in time or is uniformFixedValue, uniform from varying
   LeastSquares(const Geometry& g, const openfoam_split::SplitData& s, const openfoam_load::FieldData& f,
                LeastSquaresReport* report = nullptr, double rank_tol = default_rank_tol);
   // The split's node values, comps per node; a stamp unlike the first refused
@@ -94,6 +96,8 @@ private:
   // Per patch at load: whether data, its condition, its faces
   std::vector<char> data_;
   std::vector<std::string> name_, condition_;
+  // A data patch the rows take as uniform, and a wall at rest at the first stamp
+  std::vector<char> uniform_, at_rest_;
   std::vector<std::size_t> patch_start_, patch_size_;
   // Node n: a centre (its cell), or a point whose row is ref_[n]
   std::vector<std::int8_t> kind_;

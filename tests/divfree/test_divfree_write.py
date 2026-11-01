@@ -29,8 +29,9 @@ import pytest
 from cases import shared_dir
 from paths import need
 from divfree_cases import (D, INTERPOL, channel2d, channel3d, each_case, interpol_probe,
-                           launcher_or_skip, mpi_batch, mpi_or_skip, mpi_run, relabel_by_global_id,
-                           smooth_noslip, write_case)
+                           launcher_or_skip, mpi_batch, mpi_or_skip, mpi_run, p2_eval, read_topo,
+                           relabel_by_global_id, smooth_noslip, write_case, write_checkpoint,
+                           write_vector)
 
 import divfree_write as W          # noqa: E402
 
@@ -56,8 +57,7 @@ def make_case(folder, dim):
 
 def _read(cfg):
     """(case, topology, the fields of every stamp file by name)."""
-    case = D.read_case(cfg)
-    t = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, t = read_topo(cfg)
     first = case["folder"] / case["stamps"][0][1]
     names = [n for _, n in case["stamps"]]
     tables = {f: D.DofTable(first, f, t, case["cell_indices"]) for f in ("u", "phi")}
@@ -74,12 +74,12 @@ def serial_output(cfg, out):
     dim = t.dim
     for i, (name, v) in enumerate(vals.items()):
         if i == 0:
-            D.write_checkpoint(out / name, "u", v["u"], t, 2, cell_indices=case["cell_indices"])
-            D.write_checkpoint(out / name, "phi", v["phi"], t, 2, mode="a",
-                               cell_indices=case["cell_indices"])
+            write_checkpoint(out / name, "u", v["u"], t, 2, cell_indices=case["cell_indices"])
+            write_checkpoint(out / name, "phi", v["phi"], t, 2, mode="a",
+                             cell_indices=case["cell_indices"])
         else:
-            D.write_vector(out / name, "u", v["u"], 2, dim, dim)
-            D.write_vector(out / name, "phi", v["phi"], 2, 1, dim, mode="a")
+            write_vector(out / name, "u", v["u"], 2, dim, dim)
+            write_vector(out / name, "phi", v["phi"], 2, 1, dim, mode="a")
         assert D.copy_group(case["folder"] / name, out / name, "p")
     (out / "timestamps.dat").write_text((case["folder"] / "timestamps.dat").read_text())
     return list(vals)
@@ -333,7 +333,7 @@ def test_three_ranks_write_a_case_that_reads_back(tmp_path, three_rank_writes, d
         cell[inside] = k
     assert (cell >= 0).all(), "a probe point is in no cell"
     U = got["up_0.h5"]["u"]
-    assert np.abs(val - D.p2_eval(t, U, pts, cell)).max() < 1e-12 * np.abs(U).max()
+    assert np.abs(val - p2_eval(t, U, pts, cell)).max() < 1e-12 * np.abs(U).max()
 
 
 # -------------------------------------------------------------- the MPI job

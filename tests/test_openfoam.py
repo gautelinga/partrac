@@ -1,7 +1,7 @@
 """mode=openfoam on the checked-in OpenFOAM cases, through the apps.
 
 With the inverse-distance node values (nodes=inverse_distance, OpenFOAM's
-volPointInterpolation) on the W12 split, which is cellPoint's own
+volPointInterpolation) on split=12, which is cellPoint's own
 decomposition, interpol must reproduce OpenFOAM's cellPoint at the points it
 probes: cellpoint_U.txt beside each case holds OpenFOAM's values at
 interpol's own 200 points (seed 1, one thread), so the whole path -- the
@@ -197,7 +197,7 @@ def test_a_condition_that_changes_between_stamps_is_refused(tmp_path):
 def test_rk4cells_on_the_channel_is_rk4_on_its_linear_field(tmp_path):
     """The channel's field is linear (exact under the least-squares nodes), so
     landing on facets costs RK4cells nothing: its positions and F are RK4's to
-    RK4's own error, and it crosses facets of the W12 split without relocating."""
+    RK4's own error, and it crosses facets of split=12 without relocating."""
     out = {}
     for scheme in ("RK4cells", "RK4"):
         params = case_copy(CHANNEL, tmp_path / scheme)
@@ -558,12 +558,12 @@ def phase_line(log):
 @needs_openfoam
 @pytest.mark.parametrize("split", ["12", "6"])
 def test_the_volume_above_one_half_is_the_cells_volume_fractions(tmp_path, split):
-    """W12 moves the centre of each mixed cell, within [0, 1], until its
+    """split=12 moves the centre of each mixed cell, within [0, 1], until its
     volume above 1/2 is V_c alpha_c; a cell within 1e-6 of 0 or 1 is pure and
     keeps its centre. Here every mixed cell reaches its target (none clipped
     or unreachable), so what is left of the sum's error is the pure cells':
     under 1e-6 of the sum V_c alpha_c, against 1e-2 at the nodes; the pure
-    count is the mesh's, the target the mesh's sum. W6, with no centre, logs
+    count is the mesh's, the target the mesh's sum. split=6, with no centre, logs
     its error and moves nothing. The phase gradient, P1 on the least-squares
     fit's, points along the exact normal near the interface, within 5
     degrees."""
@@ -1021,6 +1021,86 @@ def test_a_patch_zero_at_the_first_stamp_and_not_at_a_later_is_refused(tmp_path,
     _, params = small_channel(tmp_path / "c", times=("1", "2"), bcs=bcs)
     refused_at(params, "2", "U at 2: patch left is not zero at a point it shares with another patch that fixes "
                             "the value, and was at the first stamp")
+
+
+def nodes_line(log):
+    """The log's line on the velocity's least-squares node values."""
+    return next(l for l in log.splitlines() if l.startswith("Nodes by least squares, U:"))
+
+
+@needs_openfoam
+def test_a_patch_whose_condition_may_change_its_values_is_fitted_and_never_a_wall(tmp_path):
+    """An inlet at rest at t = 1, a placeholder, and a profile at t = 2, by a
+    condition that may change its values (flowRateInletVelocity), the walls
+    slip: at t = 2 it is no no-slip wall, and its nodes are fitted, as when
+    the profile is the first stamp."""
+    m = channel(tmp_path / "a", 4, x=("patch", "patch"))
+    p = next(p for p in m["patches"] if p["name"] == "left")
+    yz = m["fc"][p["start"]:p["start"] + p["size"], 1:]
+    profile = np.c_[1 + yz[:, 0] + yz[:, 1] ** 2, np.zeros((len(yz), 2))]
+    slip = {"bottom": "slip", "top": "slip"}
+    inlet = {"1": ("flowRateInletVelocity", [0., 0., 0.], {"volumetricFlowRate": "0"}),
+             "2": ("flowRateInletVelocity", profile, {"volumetricFlowRate": "0.5"})}
+    X, U, logs = {}, {}, {}
+    for case, times in (("a", ("1", "2")), ("b", ("2",))):
+        _, params = small_channel(tmp_path / case, times=times, bcs={t: {"left": inlet[t], **slip} for t in times})
+        X[case], U[case], logs[case] = probe(params, "t0=2")
+    assert "Boundary facets: 0 no-slip wall," in logs["a"], logs["a"]
+    assert nodes_line(logs["a"]) == nodes_line(logs["b"]), (nodes_line(logs["a"]), nodes_line(logs["b"]))
+    assert np.array_equal(X["a"], X["b"]) and np.allclose(U["a"], U["b"], rtol=0, atol=1e-12)
+
+
+@needs_openfoam
+def test_a_patch_uniform_by_its_condition_keeps_the_average(tmp_path):
+    """uniformFixedValue, uniform at every stamp, takes the face average at
+    its nodes as a uniform fixedValue does; a uniform flowRateInletVelocity,
+    which may vary later, is fitted."""
+    table = {"uniformValue": "table ((0 (1 0 0)) (1 (2 0 0)))"}
+    lines = {}
+    for name, bc in (("fixed", ("fixedValue", [1., 0., 0.])), ("table", ("uniformFixedValue", None, table)),
+                     ("rate", ("flowRateInletVelocity", [1., 0., 0.], {"volumetricFlowRate": "1"}))):
+        _, params = small_channel(tmp_path / name, bcs={"0": {"left": bc}})
+        lines[name] = nodes_line(probe(params, "t0=0")[2])
+    assert lines["table"] == lines["fixed"] != lines["rate"], lines
+
+
+@needs_openfoam
+def test_a_later_stamp_unlike_the_first_where_the_rows_rest_on_it_is_refused(tmp_path):
+    """The node rows take the first stamp's uniform patches as uniform, its
+    walls at rest as at rest and its conditions as every stamp's: a uniform
+    fixedValue inlet that varies across its faces at a later stamp, one that
+    turns into flowRateInletVelocity, and a fixedValue wall that starts moving
+    are refused there, naming the patch."""
+    m = channel(tmp_path / "v", 4, x=("patch", "patch"))
+    p = next(p for p in m["patches"] if p["name"] == "left")
+    varied = np.c_[1 + m["fc"][p["start"]:p["start"] + p["size"], 1], np.zeros((p["size"], 2))]
+    bcs = {"1": {"left": ("fixedValue", [1., 0., 0.])}, "2": {"left": ("fixedValue", varied)}}
+    _, params = small_channel(tmp_path / "v", times=("1", "2"), bcs=bcs)
+    refused_at(params, "2", "U at 2: patch left (fixedValue) is not uniform, and was at the first stamp")
+    slip = {"bottom": "slip", "top": "slip"}
+    bcs = {t: {"left": ("fixedValue", [v, 0., 0.]), **slip} for t, v in (("1", 0.), ("2", 1.))}
+    _, params = small_channel(tmp_path / "w", times=("1", "2"), bcs=bcs)
+    refused_at(params, "2", "U at 2: patch left (fixedValue) is not at rest, and was at the first stamp")
+    bcs = {"1": {"left": ("fixedValue", [1., 0., 0.])},
+           "2": {"left": ("flowRateInletVelocity", [1., 0., 0.], {"volumetricFlowRate": "1"})}}
+    _, params = small_channel(tmp_path / "c", times=("1", "2"), bcs=bcs)
+    refused_at(params, "2", "U at 2: patch left is flowRateInletVelocity, and was fixedValue at the first stamp")
+
+
+@needs_openfoam
+def test_a_uniform_condition_that_changes_in_time_loads(tmp_path):
+    """uniformFixedValue may change its value from stamp to stamp, uniform in
+    space at each: (1 0 0) at t = 1 and (2 0 0) at t = 2 load, the inlet's
+    nodes at the later stamp's value: faster near the inlet than at t = 1, the
+    same in the far half."""
+    table = {"uniformValue": "table ((1 (1 0 0)) (2 (2 0 0)))"}
+    bcs = {t: {"left": ("uniformFixedValue", None, table)} for t in ("1", "2")}
+    _, params = small_channel(tmp_path / "u", times=("1", "2"), bcs=bcs)
+    X, U1, _ = probe(params, "t0=1")
+    X, U2, log = probe(params, "t0=2")
+    assert len(X) == 200, log
+    du = U2 - U1
+    assert du[:, 0].max() > 0.5 and np.abs(du[X[:, 0] > 0.5]).max() == 0., log
 
 
 @needs_openfoam

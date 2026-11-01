@@ -1,7 +1,9 @@
 #include "SimplexFreqInterpol.hpp"
 #include "near_wall.hpp"
+#include "wall_split.hpp"
 #include "p12_eval.hpp"
 #include <array>
+#include <utility>
 
 // A wall cell's evaluation, in a unit of its own: apart from the evaluations,
 // whose inlining it would change
@@ -26,6 +28,12 @@ inline void sum_blocks(const std::uint32_t* nodes, const std::vector<std::vector
   }
 }
 
+// A thread's last P2 wall cell, ready at the weights' owner and time last asked
+template<typename Cell>
+using Memo = wall_split::Memo<Cell, std::pair<std::uint64_t, double>>;
+template<typename Cell>
+Memo<Cell>& memo(){ static thread_local Memo<Cell> m; return m; }
+
 }  // namespace
 
 template<typename Cell>
@@ -35,13 +43,12 @@ void SimplexFreqInterpol<Cell>::wall_at(const int id, const std::array<double, 4
 {
   constexpr int nv = Cell::n_verts;
   constexpr std::size_t n2 = Cell::n_dofs_max;
-  const std::size_t w = std::size_t(wall_index_[id]);
-  const unsigned rest = rest_[w];
-  const bool gradient = wants_gradient();
-  std::array<double, D*n2> B, Bt;
-
   if (!upgrade_p2_){
+    const std::size_t w = std::size_t(wall_index_[id]);
+    const unsigned rest = rest_[w];
+    const bool gradient = wants_gradient();
     // P1: the summed blocks' P2 ones (the edge rule)
+    std::array<double, D*n2> B, Bt;
     sum_blocks<nv, D>(u_dofs_[id], u_nodes_, wf, blocks, stride, B.data(), Bt.data());
     std::array<double, D*n2> B2, Bt2;
     near_wall::raise_block<Cell>(B.data(), B2.data(), wall_cells_[w], rest);
@@ -58,52 +65,45 @@ void SimplexFreqInterpol<Cell>::wall_at(const int id, const std::array<double, 4
     return;
   }
 
-  sum_blocks<n2, D>(u_dofs_[id], u_nodes_, wf, blocks, stride, B.data(), Bt.data());
-  upgrade_at(id, bary, B.data(), Bt.data(), fields);
+  upgrade_at(id, bary, wf, blocks, stride, fields);
 }
 
 template<typename Cell>
-void SimplexFreqInterpol<Cell>::upgrade_at(const int id, const std::array<double, 4>& bary, const double* B,
-                                           const double* Bt, PointValues& fields) const
+void SimplexFreqInterpol<Cell>::upgrade_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,
+                                           const double* blocks, const std::size_t stride,
+                                           PointValues& fields) const
 {
-  constexpr int nv = Cell::n_verts;
   constexpr std::size_t n2 = Cell::n_dofs_max;
-  const std::size_t w = std::size_t(wall_index_[id]);
-  const unsigned rest = rest_[w];
-  const bool gradient = wants_gradient();
-  const near_wall::UpgradeCell& wc = upgrade_.cells[w];
-  const std::uint32_t terms = upgrade_.spans[w].mask;
-  constexpr int nt = near_wall::n_terms<Cell>;
-  std::array<double, D*nt> c, ct;
-  near_wall::upgrade_coefficients<Cell>(B, c.data(), wc, terms, upgrade_.normals.data() + wc.normals, rest);
-  near_wall::upgrade_coefficients<Cell>(Bt, ct.data(), wc, terms, upgrade_.normals.data() + wc.normals, rest);
-  std::array<double, n2> N, Nx, Ny, Nz;   // Nz unused in 2D
-  cell_basis(cells_[id], bary, n2, N.data(), "u");
-  const near_wall::TermProducts<Cell> P(bary);
-  std::array<double, nt> W;
-  near_wall::term_weights<Cell>(bary, P, W.data());
-  Vector3d U = block_value<D>(N.data(), B, n2);
-  Vector3d A = block_value<D>(N.data(), Bt, n2);
-  near_wall::add_terms<Cell>(W.data(), terms, c.data(), ct.data(), U, A);
-  fields.U = U;
-  fields.A = A;
-  if (gradient){
-    cell_deriv(cells_[id], bary, n2, Nx.data(), Ny.data(), Nz.data(), "u");
-    Matrix3d gradU = block_gradient<D>(Nx.data(), Ny.data(), Nz.data(), B, n2);
-    Matrix3d gradA = block_gradient<D>(Nx.data(), Ny.data(), Nz.data(), Bt, n2);
-    std::array<Vector3d, nv> g;
-    for (int q = 0; q < nv; ++q) g[std::size_t(q)] = cells_[id].bary_grad(q);
-    near_wall::add_term_gradients<Cell>(bary, P, g, terms, c.data(), ct.data(), gradU, gradA);
+  const wall_split::WallCell& c = split_.cell[std::size_t(wall_index_[id])];
+  Memo<Cell>& m = memo<Cell>();
+  const std::pair<std::uint64_t, double> key{wf.owner, wf.t};
+  if (m.key != key || m.id != id){
+    std::array<double, D*n2> B, Bt;
+    sum_blocks<n2, D>(u_dofs_[id], u_nodes_, wf, blocks, stride, B.data(), Bt.data());
+    wall_split::ready<Cell>(cells_[id], split_, c, B.data(), Bt.data(), m.ready);
+    m.key = key;
+    m.id = id;
+  }
+  Vector3d U = Vector3d::Zero(), A = Vector3d::Zero();
+  if (wants_gradient()){
+    Matrix3d gradU = Matrix3d::Zero(), gradA = Matrix3d::Zero();
+    wall_split::add_ready<Cell, true>(split_, c, m.ready, bary, U, A, gradU, gradA);
     fields.gradU = gradU;
     fields.gradA = gradA;
   }
+  else {
+    Matrix3d unused;
+    wall_split::add_ready<Cell, false>(split_, c, m.ready, bary, U, A, unused, unused);
+  }
+  fields.U = U;
+  fields.A = A;
 }
 
 template void SimplexFreqInterpol<Triangle>::wall_at(const int, const std::array<double, 4>&, const FreqWeights&,
                                                      const double*, const std::size_t, PointValues&) const;
 template void SimplexFreqInterpol<Tet>::wall_at(const int, const std::array<double, 4>&, const FreqWeights&,
                                                 const double*, const std::size_t, PointValues&) const;
-template void SimplexFreqInterpol<Triangle>::upgrade_at(const int, const std::array<double, 4>&, const double*,
-                                                        const double*, PointValues&) const;
-template void SimplexFreqInterpol<Tet>::upgrade_at(const int, const std::array<double, 4>&, const double*,
-                                                   const double*, PointValues&) const;
+template void SimplexFreqInterpol<Triangle>::upgrade_at(const int, const std::array<double, 4>&, const FreqWeights&,
+                                                        const double*, const std::size_t, PointValues&) const;
+template void SimplexFreqInterpol<Tet>::upgrade_at(const int, const std::array<double, 4>&, const FreqWeights&,
+                                                   const double*, const std::size_t, PointValues&) const;

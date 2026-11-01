@@ -1258,10 +1258,9 @@ Uint coarsening(Connectivity& m,
   return 0;
 }
 
-inline bool strip_filtering(Connectivity& m,
-                            ParticleSet& ps,
-                            const Uint filter_target){
-  FacesType& faces = m.faces;
+bool strip_filtering(Connectivity& m,
+                     ParticleSet& ps,
+                     const Uint filter_target){
   EdgesType& edges = m.edges;
 
   const Uint n_edges = edges.size();
@@ -1280,50 +1279,11 @@ inline bool strip_filtering(Connectivity& m,
       edge_isactive[ids[k]] = false;
     }
   }
-  // Remove orphaned nodes
-  std::vector<bool> face_isactive(faces.size(), true);   // a strip has none
+  // Remove orphaned nodes; a strip has no faces
+  std::vector<bool> no_faces;
   std::vector<bool> node_isactive(ps.N(), true);
-  remove_inactive(m, face_isactive, edge_isactive, node_isactive, ps);
+  remove_inactive(m, no_faces, edge_isactive, node_isactive, ps);
   return true;
-}
-
-inline bool sheet_filtering(Connectivity& m,
-                            ParticleSet& ps,
-                            const Uint filter_target){
-  FacesType& faces = m.faces;
-  EdgesType& edges = m.edges;
-
-  partrac::fail("sheet_filtering has never been tested and is not supported");
-  if (faces.size() <= filter_target)
-    return false;
-  std::vector<Uint> ids(faces.size());
-  iota(ids.begin(), ids.end(), 0);
-
-  // FIXME: Should be made thread safe
-  std::random_device rd;
-  std::mt19937 g(rd());
-  std::shuffle(ids.begin(), ids.end(), g);
-
-  std::vector<bool> face_isactive(faces.size(), false);
-  for (Uint iface=0; iface < filter_target; ++iface){
-    face_isactive[ids[iface]] = true;   // shuffled
-  }
-
-  std::vector<bool> edge_isactive(edges.size(), true);
-  std::vector<bool> node_isactive(ps.N(), true);
-  remove_inactive(m, face_isactive, edge_isactive, node_isactive, ps);
-  return true;
-}
-
-bool filtering(Connectivity& m,
-               ParticleSet& ps,
-               const Uint filter_target){
-  if (m.faces.size() > 0){
-    return sheet_filtering(m, ps, filter_target);
-  }
-  else{
-    return strip_filtering(m, ps, filter_target);
-  }
 }
 
 bool resizing(EdgesType &edges,

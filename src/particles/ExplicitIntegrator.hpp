@@ -16,6 +16,8 @@ public:
     // One loop for all transport elements
     template<TransportElement E = TransportElement::Point, typename Interp>
     std::vector<Uint> step(Interp& intp, ParticleSet& ps, const double t, const double dt);
+    // What the step reads of the fields, for elements E
+    void prepare(Interpol& intp, const TransportElement E) const { prepare_carried(intp, E, int_order); }
 protected:
   double Dm;
   int int_order;

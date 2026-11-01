@@ -160,9 +160,8 @@ std::size_t nudge_midpoints(dolfin::Function& u, const dolfin::FunctionSpace& V,
 // cell's three y levels carry one quadratic in y, so on any mesh the P2
 // interpolant of such data is that quadratic: div u = 0 pointwise and every net
 // flux is exactly zero, whatever g. Here g is 1 above y = 0.5 and `quiet`
-// below, so the lower cells are numerically dead -- the bead pack's dead-end
-// pores, where the Stokes velocity is at the solver's noise floor and a cell's
-// own facet fluxes are round-off. `kick` is then added to the y component of
+// below, so the lower cells are numerically dead, their own facet fluxes
+// round-off, as in dead-end pores. `kick` is then added to the y component of
 // one midpoint down there, and is the stamp's only net flux.
 void layered_velocity(dolfin::Function& u, const dolfin::FunctionSpace& V,
                       const Uint gdim, const std::size_t n,
@@ -484,6 +483,25 @@ TEST_CASE("SplitInterpol reads a periodic mesh", "[split]"){
 TEST_CASE("SplitInterpol refuses what it cannot read", "[split]"){
   check_refusals<Triangle>("bad2d", 4);
   check_refusals<Tet>("bad3d", 2);
+}
+
+// A solver may write phase_field_space; where the phase field is read it must be the file's element
+TEST_CASE("phase_field_space names the phase field's element", "[split]"){
+  CaseOpts o;
+  o.phi_el = "P2";
+  CaseDir c("phispace");
+  write_case<Triangle>(c, 4, o);
+  append(c.params(), "include_phi=true\nphase_field_space=P2\n");
+  REQUIRE(SplitInterpol<Triangle>(c.params()).has_phase_field());
+  CaseDir d("phispace_wrong");
+  write_case<Triangle>(d, 4, o);
+  append(d.params(), "include_phi=true\nphase_field_space=P1\n");
+  REQUIRE_THROWS_AS(SplitInterpol<Triangle>(d.params()), partrac::Error);
+  // Not read without include_phi
+  CaseDir e("phispace_unread");
+  write_case<Triangle>(e, 4, o);
+  append(e.params(), "phase_field_space=P1\n");
+  REQUIRE_FALSE(SplitInterpol<Triangle>(e.params()).has_phase_field());
 }
 
 // The factory picks SplitInterpol from this key; the plain loader would read

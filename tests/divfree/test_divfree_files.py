@@ -11,8 +11,9 @@ by name. Some tests need h5py, one dolfin, to write the reference layout with.
 import numpy as np
 import pytest
 
-from divfree_cases import (D, channel2d, channel3d, relabel_by_global_id,
-                           smooth_noslip, walled, write_case)
+from divfree_cases import (D, channel2d, channel3d, one_rank_main, p2_eval, read_back,
+                           read_mesh_h5, read_topo, relabel_by_global_id, same_but_wide,
+                           smooth_noslip, two_stamp_channel, walled, write_case, write_checkpoint)
 
 
 # ------------------------------------------------------- the checkpoint layout
@@ -26,7 +27,7 @@ def test_the_written_checkpoint_holds_what_the_loaders_open(tmp_path):
     h5py = pytest.importorskip("h5py")
     X, cells = channel3d(2)
     t, U = walled(X, cells, 3, field=smooth_noslip)
-    D.write_checkpoint(tmp_path / "u.h5", "u", U, t, 2)
+    write_checkpoint(tmp_path / "u.h5", "u", U, t, 2)
     with h5py.File(tmp_path / "u.h5", "r") as f:
         assert set(f["u"].keys()) == {"cell_dofs", "x_cell_dofs", "cells", "vector_0"}
         sig = f["u"].attrs["signature"]
@@ -38,7 +39,7 @@ def test_the_written_checkpoint_holds_what_the_loaders_open(tmp_path):
         assert np.array_equal(np.array(f["u/cells"]), np.arange(t.ncells))
         assert cd.max() < len(np.array(f["u/vector_0"]))
     D.write_mesh_h5(tmp_path / "mesh.h5", X, cells)
-    _, topo, ci = D.read_mesh_h5(tmp_path / "mesh.h5")
+    _, topo, ci = read_mesh_h5(tmp_path / "mesh.h5")
     back = D.DofTable(tmp_path / "u.h5", "u", t, ci).values(tmp_path / "u.h5")
     assert np.array_equal(back, U)
 
@@ -68,7 +69,7 @@ def test_the_written_layout_matches_a_dolfin_written_one(tmp_path):
     with df.HDF5File(mesh.mpi_comm(), str(tmp_path / "df_u.h5"), "w") as f:
         f.write(u, "u")
     D.write_mesh_h5(tmp_path / "our_mesh.h5", X, cells)
-    D.write_checkpoint(tmp_path / "our_u.h5", "u", U, t, 2)
+    write_checkpoint(tmp_path / "our_u.h5", "u", U, t, 2)
 
     def layout(path):
         out = {}
@@ -87,6 +88,86 @@ def test_the_written_layout_matches_a_dolfin_written_one(tmp_path):
         assert f["u"].attrs["signature"] == g["u"].attrs["signature"]
 
 
+def test_cell_dofs_are_int64_from_int32_top_dofs_on(monkeypatch):
+    """dolfin writes `cell_dofs` in its index type: int32 while every dof
+    fits, and int64, as a dolfin of 64-bit indices writes it, from
+    INT32_TOP dofs on, the same numbers either way."""
+    X, cells = channel2d(3)
+    t = D.Topo(X, cells, [False, False])
+    for degree, ncomp, n in ((2, 2, 2 * t.nnodes), (1, 1, t.nverts)):
+        want = D._cell_dofs(t, degree, ncomp)
+        assert want.dtype == np.int32
+        monkeypatch.setattr(D, "INT32_TOP", n + 1)
+        assert D._cell_dofs(t, degree, ncomp).dtype == np.int32
+        monkeypatch.setattr(D, "INT32_TOP", n)
+        got = D._cell_dofs(t, degree, ncomp)
+        assert got.dtype == np.int64 and np.array_equal(got, want)
+        monkeypatch.undo()
+
+
+def wide_run(cfg, out, monkeypatch):
+    """The tool on one rank with every dof table int64 and the dof table's
+    (slot, dof) pairs sorted as two keys; what it printed."""
+    with monkeypatch.context() as m:
+        m.setattr(D, "INT32_TOP", 1)
+        m.setattr(D, "KEY_TOP", 1)
+        return one_rank_main([cfg, "--out", out])
+
+
+@pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
+def test_an_int64_dof_table_holds_the_field_an_int32_one_does(tmp_path, monkeypatch, dim):
+    """With INT32_TOP lowered to one every `cell_dofs` the tool writes is
+    int64 and with KEY_TOP lowered to one the dof table it reads pairs its
+    slots and dofs as two keys: the output is the default run's but for the
+    type of `cell_dofs`, and reads back, through the tool's reader and
+    evaluated, as the same field. The int64 output read as input cleans to
+    the same case again."""
+    pytest.importorskip("h5py")
+    X, cells, per, fields, phi = two_stamp_channel(dim)
+    cfg = write_case(tmp_path / "in", X, cells, fields, per, stamps=["0", "1"], phi=phi)
+    a, b = tmp_path / "narrow", tmp_path / "wide"
+    one_rank_main([cfg, "--out", a])
+    wide_run(cfg, b, monkeypatch)
+    same_but_wide(a, b)
+    names = ["u_0000.h5", "u_0001.h5"]
+    case, t = read_topo(b / "dolfin_params.dat")
+    pts = t.X[t.cells].mean(axis=1)
+    for f in ("u", "phi"):
+        for x, y in zip(read_back(a, names, f), read_back(b, names, f)):
+            assert np.array_equal(x, y)
+            if f == "u":
+                assert np.array_equal(p2_eval(t, x, pts, np.arange(t.ncells)),
+                                      p2_eval(t, y, pts, np.arange(t.ncells)))
+    # the int64 tables read as a case's own
+    c = tmp_path / "again"
+    one_rank_main([b / "dolfin_params.dat", "--out", c])
+    for x, y in zip(read_back(a, names), read_back(c, names)):
+        assert np.abs(x - y).max() <= 1e-12 * np.abs(x).max()
+
+
+def test_the_dof_table_pairs_as_two_keys_what_it_packs_into_one(tmp_path, monkeypatch):
+    """Past a 64-bit key the dof table sorts its (slot, dof) pairs as two keys:
+    every table it keeps is the packed one's, bit for bit, on a field whose
+    cells agree and on one whose cells name two dofs for a node."""
+    pytest.importorskip("h5py")
+    X, cells = channel2d(3)
+    t = D.Topo(X, cells, [False, False])
+    U = np.random.default_rng(12).normal(size=(t.nnodes, 2))
+    for kind in ("agree", "cells disagree"):
+        cfg = write_case(tmp_path / kind, X, cells, [U], [False, False])
+        if kind != "agree":
+            poke_checkpoint(tmp_path / kind, kind, t.ncells)
+        first = tmp_path / kind / "up_0.h5"
+        packed = D.DofTable(first, "u", t)
+        with monkeypatch.context() as m:
+            m.setattr(D, "KEY_TOP", 1)
+            two = D.DofTable(first, "u", t)
+        assert packed._distinct == two._distinct == (kind == "agree")
+        for k in ("_slot", "_dof", "_pick"):
+            x, y = getattr(packed, k), getattr(two, k)
+            assert x.dtype == y.dtype and np.array_equal(x, y), (kind, k)
+
+
 def test_reading_a_field_does_not_allocate_the_whole_gather(tmp_path):
     """The dof table names ten nodes a cell where the field holds one value a
     node, so gathering the whole of it at once costs several times the field
@@ -97,7 +178,7 @@ def test_reading_a_field_does_not_allocate_the_whole_gather(tmp_path):
     X, cells = channel3d(20)
     t = D.Topo(X, cells, [False] * 3)
     U = smooth_noslip(t.node_x)
-    D.write_checkpoint(tmp_path / "u.h5", "u", U, t, 2)
+    write_checkpoint(tmp_path / "u.h5", "u", U, t, 2)
     dof = D.DofTable(tmp_path / "u.h5", "u", t, None)
     tracemalloc.start()
     got = dof.values(tmp_path / "u.h5")
@@ -156,9 +237,8 @@ def test_a_case_labelled_by_global_cell_id_cleans_to_the_same_field(tmp_path):
         assert np.array_equal(np.array(f["u/cells"]), gid), "the rows are not labelled"
         # the pressure comes through untouched, so the file must agree with itself
         assert np.array_equal(np.array(f["p/cells"]), gid)
-    case = D.read_case(out / "dolfin_params.dat")
+    case, ct = read_topo(out / "dolfin_params.dat")
     assert np.array_equal(case["cell_indices"], gid), "the input's mesh is the output's"
-    ct = D.Topo(case["X"], case["cells"], case["periodic"])
     assert D.check_case(out / "dolfin_params.dat", quiet=True) < 1e-10
     for name in ("u_0000.h5", "u_0001.h5"):
         U = D.DofTable(out / "u_0000.h5", "u", ct, case["cell_indices"]).values(out / name)
@@ -299,8 +379,7 @@ def test_field_file_reaches_the_tool_from_the_command_line(tmp_path):
                    str(tmp_path / "in" / "up_1.h5")]) == 0
     names = (tmp_path / "out" / "timestamps.dat").read_text().split()[1::2]
     assert names == ["u_0000.h5", "u_0000.h5"]
-    case = D.read_case(tmp_path / "out" / "dolfin_params.dat")
-    ct = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, ct = read_topo(tmp_path / "out" / "dolfin_params.dat")
     out = tmp_path / "out" / "u_0000.h5"
     Uc = D.DofTable(out, "u", ct, case["cell_indices"]).values(out)
     assert np.abs(Uc[:ct.nverts] - fields[1][:ct.nverts]).max() == 0.0
@@ -319,8 +398,7 @@ def test_the_split_option_writes_a_divergence_free_field(tmp_path):
     t = D.Topo(X, cells, [True, False])
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
     D.clean_case(cfg, tmp_path / "out", split=True, write_key=False, verbose=False)
-    case = D.read_case(tmp_path / "out" / "dolfin_params.dat")
-    st = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, st = read_topo(tmp_path / "out" / "dolfin_params.dat")
     assert st.ncells == t.ncells * 3 and st.nverts == t.nverts + t.ncells
     U = D.DofTable(tmp_path / "out" / "u_0000.h5", "u", st, case["cell_indices"]).values(
         tmp_path / "out" / "u_0000.h5")
@@ -328,7 +406,7 @@ def test_the_split_option_writes_a_divergence_free_field(tmp_path):
     k = rng.integers(0, st.ncells, 40)
     w = rng.dirichlet(np.ones(3), 40)
     pts = np.einsum('ni,nij->nj', w, st.X[st.cells[k]])
-    assert np.abs(D.p2_eval(st, U, pts, k, grad=True)).max() < 1e-9 * np.abs(U).max()
+    assert np.abs(p2_eval(st, U, pts, k, grad=True)).max() < 1e-9 * np.abs(U).max()
 
 
 def test_the_split_option_writes_its_own_mesh_and_its_own_labels(tmp_path):
@@ -341,11 +419,10 @@ def test_the_split_option_writes_its_own_mesh_and_its_own_labels(tmp_path):
     cfg = write_case(tmp_path / "in", X, cells, [smooth_noslip(t.node_x)], [True, False])
     relabel_by_global_id(tmp_path / "in")
     D.clean_case(cfg, tmp_path / "out", split=True, write_key=False, verbose=False)
-    case = D.read_case(tmp_path / "out" / "dolfin_params.dat")
+    case, st = read_topo(tmp_path / "out" / "dolfin_params.dat")
     assert np.array_equal(case["cell_indices"], np.arange(t.ncells * 3))
     with h5py.File(tmp_path / "out" / "u_0000.h5", "r") as f:
         assert np.array_equal(np.array(f["u/cells"]), np.arange(t.ncells * 3))
-    st = D.Topo(case["X"], case["cells"], case["periodic"])
     U = D.DofTable(tmp_path / "out" / "u_0000.h5", "u", st, case["cell_indices"]).values(
         tmp_path / "out" / "u_0000.h5")
     assert np.isfinite(U).all()
@@ -369,8 +446,7 @@ def test_the_split_option_resamples_a_p2_phase_field_exactly(tmp_path):
     cfg = write_case(tmp_path / "in", X, cells, [U, 0.5 * U], [False, False], phi=phi)
     D.clean_case(cfg, tmp_path / "out", split=True, write_key=False, verbose=False)
     out = tmp_path / "out"
-    case = D.read_case(out / "dolfin_params.dat")
-    st = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, st = read_topo(out / "dolfin_params.dat")
     dof = D.DofTable(out / "u_0000.h5", "phi", st, case["cell_indices"])
     assert dof.degree == 2 and st.ncells == 3 * t.ncells
     for k, name in enumerate(("u_0000.h5", "u_0001.h5")):
@@ -378,25 +454,23 @@ def test_the_split_option_resamples_a_p2_phase_field_exactly(tmp_path):
         assert np.abs(dof.values(out / name) - want).max() < 1e-12, name
 
 
-def test_a_p1_series_past_the_read_cache_cleans_as_one_read_into_it(tmp_path, monkeypatch):
-    """The stamps that fit the read budget are kept from the pass that finds the
-    held set; the others are read again for the cleaning, and a P1 one lifted
-    to P2 again. Either way the stamp cleaned is the same."""
+def test_a_p1_stamp_kept_from_the_first_read_cleans_as_one_read_again(tmp_path):
+    """The first stamp is kept from the pass that finds the held set and the
+    others are read again for the cleaning, a P1 one lifted to P2 again. The
+    same stamp first in one series and second in another cleans the same."""
     pytest.importorskip("h5py")
     X, cells = channel2d(6)
     t = D.Topo(X, cells, [True, False])
     fields = [smooth_noslip(t.node_x), 0.5 * smooth_noslip(t.node_x)]
-    cfg = write_case(tmp_path / "in", X, cells, fields, [True, False], degree=1)
-    a = D.clean_case(cfg, tmp_path / "cached", verbose=False)
-    monkeypatch.setattr(D, "READ_CACHE_BYTES", 0)
-    b = D.clean_case(cfg, tmp_path / "reread", verbose=False)
+    a = D.clean_case(write_case(tmp_path / "in_a", X, cells, fields, [True, False], degree=1),
+                     tmp_path / "a", verbose=False)
+    b = D.clean_case(write_case(tmp_path / "in_b", X, cells, fields[::-1], [True, False],
+                                degree=1), tmp_path / "b", verbose=False)
     assert a["degree_in"] == b["degree_in"] == 1
-    case = D.read_case(tmp_path / "cached" / "dolfin_params.dat")
-    ct = D.Topo(case["X"], case["cells"], case["periodic"])
-    dof = D.DofTable(tmp_path / "cached" / "u_0000.h5", "u", ct, case["cell_indices"])
-    for name in ("u_0000.h5", "u_0001.h5"):
-        assert np.array_equal(dof.values(tmp_path / "cached" / name),
-                              dof.values(tmp_path / "reread" / name)), name
+    case, ct = read_topo(tmp_path / "a" / "dolfin_params.dat")
+    dof = D.DofTable(tmp_path / "a" / "u_0000.h5", "u", ct, case["cell_indices"])
+    for x, y in (("u_0000.h5", "u_0001.h5"), ("u_0001.h5", "u_0000.h5")):
+        assert np.array_equal(dof.values(tmp_path / "a" / x), dof.values(tmp_path / "b" / y)), x
 
 
 def poke_checkpoint(folder, kind, ncells):
@@ -438,6 +512,11 @@ def poke_checkpoint(folder, kind, ncells):
             a = g["vector_0"][:-1]
             del g["vector_0"]
             g["vector_0"] = a
+        elif kind == "a dof past a 64-bit key":
+            a = g["cell_dofs"][()].astype(np.int64)
+            a[0] = 2 ** 60
+            del g["cell_dofs"]
+            g["cell_dofs"] = a
     if kind == "node without a value":
         with h5py.File(folder / "mesh.h5", "r+") as m:
             X = np.array(m["mesh/coordinates"])
@@ -456,6 +535,8 @@ MALFORMED = {
     "a cell named twice": r"'u/cells' leaves a cell of the mesh without a row",
     "a dof past the values":
         r"up_0\.h5: 'u' holds \d+ values, fewer than its dof table names",
+    "a dof past a 64-bit key":
+        r"up_0\.h5: 'u' holds \d+ values, fewer than its dof table names",
     "components": r"'u' has 1 components, not 2",
 }
 
@@ -464,10 +545,11 @@ MALFORMED = {
 def test_a_malformed_checkpoint_is_refused_by_name(tmp_path, kind):
     """The dof table is read as the loaders read it, so a file they would refuse
     or misread -- a ragged or unknown row, a table longer than the mesh or with
-    fewer labels than rows, a cell no row names, a dof past the values, a node
-    no cell gives a value or two cells give two, an element with no degree or
-    the wrong number of components -- is refused before anything is cleaned,
-    naming the file and what is wrong in it."""
+    fewer labels than rows, a cell no row names, a dof past the values, even
+    one too large to pair with a node in one key, a node no cell gives a value
+    or two cells give two, an element with no degree or the wrong number of
+    components -- is refused before anything is cleaned, naming the file and
+    what is wrong in it."""
     pytest.importorskip("h5py")
     X, cells = channel2d(3)
     t = D.Topo(X, cells, [False, False])

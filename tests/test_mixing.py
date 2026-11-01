@@ -252,10 +252,8 @@ def test_a_radial_strip_winds_into_the_point_vortex_spiral(tmp_path):
     """Section 2.6 and figure 5: a radial strip from 0.6 to 1.8 out from a point
     vortex of circulation 14.2 winds into a spiral whose length is closed form,
     and partrac matches it to 1e-3 through an eight-fold elongation."""
-    # A Batchelor vortex whose core R1 = 0.1 sits well inside R_IN is a point
-    # vortex there, with circulation 2 pi u0 R1 and no axial jet (q = 0). Two
-    # time units already wind the spiral eight-fold, at far less cost than the
-    # paper's t = 10.
+    # A Batchelor vortex with core R1 = 0.1 well inside R_IN is a point vortex
+    # there, circulation 2 pi u0 R1, no axial jet (q = 0)
     circulation, R1, T = 14.2, 0.1, 2.0
     u0 = circulation / (2 * np.pi * R1)
     st = run(tmp_path, BATCHELOR, VORTEX_BASE,

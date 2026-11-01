@@ -10,8 +10,7 @@
 - the step-size note: a step that crosses more than one cell cuts across
   streamlines and wall layers, which reads as trapping or false stretching.
 - random = true draws one seed, prints it and names the run folder after it,
-  so the run can be repeated with random = false and that seed; before, each
-  thread drew its own and the folder named a seed that was never used.
+  so the run can be repeated with random = false and that seed.
 """
 
 import os

@@ -109,7 +109,7 @@ struct Request {
   std::string u_field, p_field, phi_field;
   const char* what = "";        // the loader, named in the errors
   int nv = 3;
-  int want_u = 0, want_p = 0;   // the declared degrees
+  int want_u = 0, want_p = 0, want_phi = 0;   // the declared degrees
   bool include_pressure = true;
   bool include_phi = false;     // a phase field, in the element its file gives
   std::size_t n_dofs_max = 0;   // what an evaluation's buffers hold

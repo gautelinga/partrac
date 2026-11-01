@@ -2,17 +2,18 @@
 unit tests hold the C++ split to simplex for simplex. A port of the rules,
 written apart from the C++ and sharing none of it:
 
-  faces   each fanned from findFaceBasePts' base point: the first whose fan
-          has tetrahedron quality above 1e-30 with the cell centres on both
-          sides (across a cyclic, the owner side's choice), else the best
-  W12     every cell the fan from its centre over its faces' triangles, a hex
-          whose fan has a tet under 1e-12 of the cell taking W6's split
-  W6      a hex Dompierre's split from the lowest (cyclic master, id) corner
-          its three faces' diagonals meet at, 5 tets when no far diagonal
-          passes the opposite corner, where every tet is above 1e-12 of the
-          cell and they add up to the fan's volume; else the fan
-  2D      the front plane of the empty pair: each face fanned from its cell
-          centre (W12), or a quad cut along its base point's diagonal (W6)
+  faces     each fanned from findFaceBasePts' base point: the first whose fan
+            has tetrahedron quality above 1e-30 with the cell centres on both
+            sides (across a cyclic, the owner side's choice), else the best
+  split=12  every cell the fan from its centre over its faces' triangles, a hex
+            whose fan has a tet under 1e-12 of the cell taking split=6's split
+  split=6   a hex Dompierre's split from the lowest (cyclic master, id) corner
+            its three faces' diagonals meet at, 5 tets when no far diagonal
+            passes the opposite corner, where every tet is above 1e-12 of the
+            cell and they add up to the fan's volume; else the fan
+  2D        the front plane of the empty pair: each face fanned from its cell
+            centre (split=12), or a quad cut along its base point's diagonal
+            (split=6)
 
 and the patch of every simplex facet that is a boundary face's triangle (2D:
 a side face's edge), looked up among all of them. The geometry is OpenFOAM's

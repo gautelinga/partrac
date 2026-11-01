@@ -1,19 +1,11 @@
 """The cleaner's output files written by every rank from its own rows.
 
-The layout is `divfree_clean`'s serial writers'; what changes is who writes
-it. Each rank passes its contiguous block of the rows in serial order -- cells
-`[c0, c1)`, nodes `[n0, n1)` -- the bounds an exclusive scan of the counts over
-the ranks; a rank may pass none. Every call of `BlockWriter` is collective and
-returns once the file is complete.
-
-Two routes, the same datasets from the same code: through h5py's MPI driver,
-each rank writing its slab in pieces of at most PIECE_BYTES; or gathered to
-the first rank, which then holds the whole field and writes it through the
-serial driver. The first is taken where h5py has MPI and there is more than
-one rank, unless PARTRAC_HDF5_GATHER is 1 or true. A failure on one rank
-would leave the others in a collective, so every write runs under `guard`,
-which aborts the job naming the rank and what it could not write; on one rank
-the exception is raised.
+dolfin's checkpoint layout. Each rank passes its contiguous block of the rows in
+serial order (cells `[c0, c1)`, nodes `[n0, n1)`), possibly none; every call of
+`BlockWriter` is collective and returns once the file is complete. Written
+through h5py's MPI driver where it has one and there is more than one rank,
+else gathered through the first rank; PARTRAC_HDF5_GATHER=1 or true forces the
+gather. A failure on one rank aborts the job (`guard`).
 """
 
 import contextlib
@@ -51,9 +43,19 @@ def parallel_hdf5(comm):
     return bool(comm.allreduce(ok, op=MPI.LAND))
 
 
+def _piece_rows(rowbytes):
+    """The rows a piece of at most PIECE_BYTES holds."""
+    return max(1, PIECE_BYTES // max(int(rowbytes), 1))
+
+
+def _ceil_div(n, step):
+    """n / step rounded up: the pieces of step rows that n rows take."""
+    return -(-int(n) // step)
+
+
 def _pieces(n, rowbytes):
     """[a, b) ranges of n rows, each at most PIECE_BYTES."""
-    step = max(1, PIECE_BYTES // max(int(rowbytes), 1))
+    step = _piece_rows(rowbytes)
     return [(a, min(a + step, n)) for a in range(0, n, step)]
 
 
@@ -64,17 +66,36 @@ def _nloc(degree, dim):
 
 def _create(g, name, n, dtype):
     """A contiguous one-dimensional dataset, never filled: every entry is
-    written."""
+    written. None where g is: a rank that holds no file."""
+    if g is None:
+        return None
     dcpl = h5py.h5p.create(h5py.h5p.DATASET_CREATE)
     dcpl.set_fill_time(h5py.h5d.FILL_TIME_NEVER)
     return g.create_dataset(name, (n,), dtype=dtype, dcpl=dcpl)
 
 
-def _put(dset, start, rows):
-    """rows written into dset from row start on, a piece at a time."""
-    rowbytes = rows.itemsize * int(np.prod(rows.shape[1:], dtype=np.int64))
-    for a, b in _pieces(len(rows), rowbytes):
-        dset[start + a:start + b] = rows[a:b]
+def _write(dset, a, b, data):
+    """data into dset's rows [a, b); with none, a write of nothing, which is a
+    rank's share of a collective write it has no rows for."""
+    if b > a:
+        dset[a:b] = data
+        return
+    fs = dset.id.get_space()
+    fs.select_none()
+    ms = h5py.h5s.create_simple((1,))
+    ms.select_none()
+    dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
+    dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
+    dset.id.write(ms, fs, np.empty(1, dset.dtype), dxpl=dxpl)
+
+
+def _collective(dset, lo, hi, step, most, rows):
+    """dset's rows [lo, hi) from rows(a, b), in `most` collective writes of at
+    most step rows, as many as every other rank makes."""
+    with dset.collective:
+        for i in range(most):
+            a, b = min(lo + i * step, hi), min(lo + (i + 1) * step, hi)
+            _write(dset, a, b, rows(a, b))
 
 
 def _check_path(path, mode):
@@ -144,50 +165,67 @@ class BlockWriter:
             raise
         f.close()
 
-    # ---- blocks
-    def _bounds(self, n):
-        """(this rank's first row, the total) from every rank's row count."""
-        counts = np.array(self.comm.allgather(int(n)), dtype=np.int64)
-        return int(counts[:self.comm.rank].sum()), int(counts.sum())
+    # ---- rows
+    def _counts(self, *n):
+        """Every rank's counts, a row a rank, from one exchange."""
+        return np.array(self.comm.allgather([int(k) for k in n]), np.int64)
 
-    def _gather(self, rows):
-        """Every rank's rows, in rank order, on the first rank (None on the
-        others), sent a piece at a time."""
-        comm = self.comm
-        if comm.size == 1:
-            return rows
-        counts = comm.allgather(len(rows))
+    def _put(self, dset, rows, counts, width=1):
+        """Every rank's rows into dset, in rank order: rows this rank's, counts
+        every rank's, width the dataset's entries a row. On the parallel route
+        each rank writes its own; otherwise the first rank writes them all,
+        receiving the others' a piece at a time."""
+        comm, rank = self.comm, self.comm.rank
         rowbytes = rows.itemsize * int(np.prod(rows.shape[1:], dtype=np.int64))
-        if comm.rank != 0:
-            for a, b in _pieces(len(rows), rowbytes):
-                comm.Send(np.ascontiguousarray(rows[a:b]), dest=0, tag=_TAG)
-            return None
-        out = np.empty((sum(counts),) + rows.shape[1:], rows.dtype)
-        out[:counts[0]] = rows
-        off = counts[0]
-        for r in range(1, comm.size):
-            for a, b in _pieces(counts[r], rowbytes):
-                comm.Recv(out[off + a:off + b], source=r, tag=_TAG)
-            off += counts[r]
-        return out
-
-    def _rows(self, rows):
-        """(the rows this rank writes, their first row in the whole, the total):
-        its own on the parallel route, all of them on the first rank otherwise."""
-        start, total = self._bounds(len(rows))
+        step = _piece_rows(rowbytes)
+        start = np.concatenate([[0], np.cumsum(counts)])
+        flat = rows.reshape(-1)
         if self.parallel:
-            return rows, start, total
-        return self._gather(rows), 0, total
+            most = max(_ceil_div(c, step) for c in counts)
+            s0 = int(start[rank])
+            _collective(dset, s0 * width, (s0 + len(rows)) * width, step * width, most,
+                        lambda a, b: flat[a - s0 * width:b - s0 * width])
+            return
+        if rank:
+            for a, b in _pieces(len(rows), rowbytes):
+                comm.Send(rows[a:b], dest=0, tag=_TAG)
+            return
+        buf = np.empty((min(step, int(counts[1:].max(initial=0))),) + rows.shape[1:],
+                       rows.dtype)
+        for r in range(comm.size):
+            for a, b in _pieces(int(counts[r]), rowbytes):
+                piece = rows[a:b] if r == 0 else buf[:b - a]
+                if r:
+                    comm.Recv(piece, source=r, tag=_TAG)
+                dset[(start[r] + a) * width:(start[r] + b) * width] = piece.reshape(-1)
+
+    def _offsets(self, dset, counts, per):
+        """`x_cell_dofs`, each writing rank its own slab of it and the last the
+        final row: row k is k*per."""
+        size, total = self.comm.size, int(counts.sum())
+        if not self.parallel:
+            if dset is not None:
+                for a, b in _pieces(total + 1, 8):
+                    dset[a:b] = np.arange(a, b, dtype=np.uint64) * per
+            return
+        m = counts + (np.arange(size) == size - 1)
+        lo = int(counts[:self.comm.rank].sum())
+        step = _piece_rows(8)
+        _collective(dset, lo, lo + int(m[self.comm.rank]), step,
+                    max(_ceil_div(k, step) for k in m),
+                    lambda a, b: np.arange(a, b, dtype=np.uint64) * per)
 
     # ---- the writers
     def write_checkpoint(self, path, field, cd_rows, gid_rows, values_rows, degree, ncomp,
                          dim, mode="w"):
         """A first file's field: the dof table, the cell labels and the values
-        of every rank's blocks, as `divfree_clean.write_checkpoint` writes
-        them."""
+        of every rank's blocks, in dolfin's checkpoint layout. The dof table is
+        int64 where any rank's rows are, as `_cell_dofs` makes them past
+        int32, and int32 otherwise."""
         with self.guard("write %s" % path):
             per = _nloc(degree, dim) * ncomp
-            cd = np.ascontiguousarray(cd_rows, dtype=np.int32)
+            wide = np.asarray(cd_rows).dtype.itemsize > 4
+            cd = np.ascontiguousarray(cd_rows, dtype=np.int64 if wide else np.int32)
             if cd.size == 0:
                 cd = cd.reshape(0, per)
             if cd.ndim != 2 or cd.shape[1] != per:
@@ -199,37 +237,34 @@ class BlockWriter:
                 raise ValueError("%s: '%s' has %d cell labels for %d dof rows"
                                  % (path, field, len(gid), len(cd)))
             vals = self._values(path, field, values_rows, ncomp)
-            cd, c0, ncells = self._rows(cd.ravel().reshape(-1, per))
-            gid = self._rows(gid)[0]
-            vals, n0, nnodes = self._rows(vals)
+            counts = self._counts(len(cd), len(vals))
+            ncells, nnodes = (int(k) for k in counts.sum(axis=0))
+            if self.comm.allreduce(wide, op=MPI.LOR):
+                cd = cd.astype(np.int64, copy=False)
             with self._file(path, mode) as f:
-                if f is not None:
-                    g = self._group(f, field, degree, ncomp, dim)
-                    dcd = _create(g, "cell_dofs", ncells * per, np.int32)
-                    dxc = _create(g, "x_cell_dofs", ncells + 1, np.uint64)
-                    dgid = _create(g, "cells", ncells, np.uint64)
-                    dv = _create(g, "vector_0", nnodes * ncomp, np.float64)
+                g = None if f is None else self._group(f, field, degree, ncomp, dim)
+                dcd = _create(g, "cell_dofs", ncells * per, cd.dtype)
+                dxc = _create(g, "x_cell_dofs", ncells + 1, np.uint64)
+                dgid = _create(g, "cells", ncells, np.uint64)
+                dv = _create(g, "vector_0", nnodes * ncomp, np.float64)
+                if dv is not None:
                     dv.attrs["partition"] = np.array([0], dtype=np.uint64)
-                    _put(dcd, c0 * per, cd.ravel())
-                    _put(dgid, c0, gid)
-                    _put(dv, n0 * ncomp, vals.ravel())
-                    m = len(cd)
-                    last = self.comm.rank == self.comm.size - 1 or not self.parallel
-                    for a, b in _pieces(m + (1 if last else 0), 8):
-                        dxc[c0 + a:c0 + b] = np.arange(c0 + a, c0 + b, dtype=np.uint64) * per
+                self._put(dcd, cd, counts[:, 0], per)
+                self._put(dgid, gid, counts[:, 0])
+                self._put(dv, vals, counts[:, 1], ncomp)
+                self._offsets(dxc, counts[:, 0], per)
             self._done()
 
     def write_vector(self, path, field, values_rows, degree, ncomp, dim, mode="w"):
-        """A later stamp or component: `<field>/vector_0` and the signature, as
-        `divfree_clean.write_vector` writes them."""
+        """A later stamp or component: `<field>/vector_0` and the signature, all
+        a loader opens of it."""
         with self.guard("write %s" % path):
             vals = self._values(path, field, values_rows, ncomp)
-            vals, n0, nnodes = self._rows(vals)
+            counts = self._counts(len(vals))
             with self._file(path, mode) as f:
-                if f is not None:
-                    g = self._group(f, field, degree, ncomp, dim)
-                    _put(_create(g, "vector_0", nnodes * ncomp, np.float64), n0 * ncomp,
-                         vals.ravel())
+                g = None if f is None else self._group(f, field, degree, ncomp, dim)
+                self._put(_create(g, "vector_0", int(counts.sum()) * ncomp, np.float64),
+                          vals, counts[:, 0], ncomp)
             self._done()
 
     def _values(self, path, field, values_rows, ncomp):
@@ -296,10 +331,13 @@ class BlockWriter:
                             if self.comm.rank == 0:
                                 d[()] = o[()]
                             continue
-                        r0, r1 = _clean()._split(o.shape[0], self.comm.size, self.comm.rank)
-                        rowbytes = o.dtype.itemsize * int(np.prod(o.shape[1:], dtype=np.int64))
-                        for p, q in _pieces(r1 - r0, rowbytes):
-                            d[r0 + p:r0 + q] = o[r0 + p:r0 + q]
+                        block = [_clean()._split(o.shape[0], self.comm.size, r)
+                                 for r in range(self.comm.size)]
+                        step = _piece_rows(o.dtype.itemsize
+                                           * int(np.prod(o.shape[1:], dtype=np.int64)))
+                        r0, r1 = block[self.comm.rank]
+                        most = max(_ceil_div(j1 - j0, step) for j0, j1 in block)
+                        _collective(d, r0, r1, step, most, lambda j0, j1: o[j0:j1])
         return True
 
     # ---- text

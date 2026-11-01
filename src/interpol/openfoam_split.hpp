@@ -3,8 +3,8 @@
 
 // A conforming simplex split of an OpenFOAM polyMesh. Every face is fanned
 // from findFaceBasePts' base point (the owner's, reused across a cyclic).
-// W12: each cell the fan from its centre over its faces' triangles,
-// cellPoint's own tets; W6: a hex Dompierre's 5 or 6 tets where its face
+// split=12: each cell the fan from its centre over its faces' triangles,
+// cellPoint's own tets; split=6: a hex Dompierre's 5 or 6 tets where its face
 // diagonals meet at a corner, else the fan. A cell with a flat tet takes the
 // other split. 2D: the front plane of an empty pair. Needs no OpenFOAM.
 
@@ -39,7 +39,7 @@ struct SplitData {
   std::size_t nnodes() const { return node_kind.size(); }
 };
 
-// The split of a case, W12 or W6; a case with an empty pair gives triangles
+// The split of a case, split=12 or split=6; a case with an empty pair gives triangles
 SplitData split(const openfoam_load::CaseData& c, int tets_per_hex);
 
 // Face base points by findFaceBasePts; failures counted, the first kept

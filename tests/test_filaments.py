@@ -12,8 +12,8 @@ outside=reinject is for edges stuck because the field is underresolved, not a
 boundary condition: a node whose step the field carries into a solid is
 declined, and on a steady field declined again at every step. The case is a
 voxel channel along the x-y diagonal, five lattice nodes across, whose wall
-nodes still carry flow; at dt = 2 a step covers more of it than the lattice
-resolves. A diffusive move out of the domain is not stuck, and the schema
+nodes still carry flow; at dt = 160 a step covers more of it than the
+lattice resolves. A diffusive move out of the domain is not stuck, and the schema
 refuses to reinject it.
 """
 
@@ -116,7 +116,7 @@ def voxel_channel(d):
 
 
 # at dt = 160 even the 64th of a step that RK4 retries a failed step in covers
-# more of the channel than the lattice resolves, so nodes stick (at dt = 80 none do)
+# more of the channel than the lattice resolves, so nodes stick
 CHANNEL = ("mode=felbm scheme=RK4 int_order=1 Dm=0 dt=160 T=800 Nrw=2000 Nrw_max=4000 "
            "init_mode=pairs_xy_xy ds_init=0.5 x0=16 y0=16 z0=16 dump_intv=160 stat_intv=160 "
            "checkpoint_intv=1e9 resize=doublings resize_target=ds_init random=false seed=1")

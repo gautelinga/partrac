@@ -17,9 +17,10 @@ import sys
 import numpy as np
 import pytest
 
-from divfree_cases import (CLEANER, D, INTERPOL, channel2d, channel3d, cleaner_main,
-                           each_case, interpol_probe, launcher_or_skip, mpi_batch, mpi_clean,
-                           one_rank_main, pocket_case, same_log, same_output, smooth_noslip,
+from divfree_cases import (CLEANER, D, INTERPOL, channel2d, channel3d, cleaner_main, each_case,
+                           interpol_probe, launcher_or_skip, mpi_batch, mpi_clean, mpi_or_skip,
+                           one_rank_main, p2_eval, pocket_case, read_back, read_topo,
+                           same_but_wide, same_log, same_output, smooth_noslip,
                            two_stamp_channel, write_case)
 from paths import needs
 
@@ -46,8 +47,7 @@ def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
     g = interpol_probe(out / "dolfin_params.dat", mode, 60)
     pts = np.stack([g[a] for a in "xyz"[:dim]], axis=1)
     got = np.stack([g["u" + a] for a in "xyz"[:dim]], axis=1)
-    case = D.read_case(out / "dolfin_params.dat")
-    ct = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, ct = read_topo(out / "dolfin_params.dat")
     U = D.DofTable(out / "u_0000.h5", "u", ct, case["cell_indices"]).values(out / "u_0000.h5")
     cell = np.full(len(pts), -1)
     for k, c in enumerate(ct.cells):
@@ -55,7 +55,7 @@ def test_a_cleaned_case_reads_back_as_the_field_it_holds(tmp_path, dim, mode):
         inside = (lam >= -1e-12).all(axis=0) & (lam.sum(axis=0) <= 1 + 1e-12)
         cell[inside] = k
     assert (cell >= 0).all(), "a probe point is in no cell"
-    want = D.p2_eval(ct, U, pts, cell)
+    want = p2_eval(ct, U, pts, cell)
     assert np.abs(got - want).max() < 1e-12 * np.abs(U).max()
 
 
@@ -119,8 +119,7 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, channel_runs, dim)
         assert sum("wrote 2 stamps" in l for l in lines) == 1
         out = tmp_path / ("out%d" % n)
         assert D.check_case(out / "dolfin_params.dat", quiet=True) <= D.FLUX_TOL
-        case = D.read_case(out / "dolfin_params.dat")
-        ct = D.Topo(case["X"], case["cells"], case["periodic"])
+        case, ct = read_topo(out / "dolfin_params.dat")
         got[n] = [D.DofTable(out / "u_0000.h5", "u", ct, case["cell_indices"]).values(
             out / name) for name in ("u_0000.h5", "u_0001.h5")]
     held = D.Topo(X, cells, per)
@@ -141,6 +140,49 @@ def test_three_ranks_clean_the_case_one_rank_cleans(tmp_path, channel_runs, dim)
     for c in "xyz"[:dim]:
         assert np.array_equal(a[c], b[c]), c
         assert np.abs(a["u" + c] - b["u" + c]).max() < 1e-8 * scale, c
+
+
+def wide_clean(route, cfg, out):
+    """A case of mpi_batch: the command line with every dof table int64 and
+    the dof table's (slot, dof) pairs sorted as two keys, on the route: gather
+    as PARTRAC_HDF5_GATHER asks for it, parallel the writer's own choice."""
+    os.environ.pop("PARTRAC_HDF5_GATHER", None)
+    if route == "gather":
+        os.environ["PARTRAC_HDF5_GATHER"] = "1"
+    D.INT32_TOP, D.KEY_TOP = 1, 1
+    return D.main([cfg, "--out", out])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dim", [2, 3], ids=["2d", "3d"])
+def test_three_ranks_write_int64_dof_tables_of_the_same_field(tmp_path, channel_runs, dim):
+    """With INT32_TOP and KEY_TOP lowered to one, three ranks write every
+    `cell_dofs` int64 and read the input's dof table as two keys, on either
+    route: the output is the three-rank default run's but for the type of
+    `cell_dofs`, to round-off, and reads back, through the tool's reader and
+    evaluated, as the one-rank run's field. The parallel route is skipped
+    only where the job's h5py has no MPI driver."""
+    pytest.importorskip("h5py")
+    d = channel_runs(dim)
+    said = mpi_batch(3, wide_clean, {r: [r, d / "in" / "dolfin_params.dat", tmp_path / r]
+                                     for r in ("parallel", "gather")}, tmp_path / "jobs")
+    names = ["u_0000.h5", "u_0001.h5"]
+    case, t = read_topo(d / "one" / "dolfin_params.dat")
+    pts = t.X[t.cells].mean(axis=1)
+    one = read_back(d / "one", names)
+    scale = max(float(np.abs(u).max()) for u in one)
+    for route in ("gather", "parallel"):
+        log = "".join(said[route])
+        if route == "gather":
+            assert "gathered to rank 0" in log, log
+        # three ranks need not repeat their own last bit from one run to the next
+        same_but_wide(d / "three", tmp_path / route, 1e-12)
+        for x, y in zip(one, read_back(tmp_path / route, names)):
+            assert np.abs(x - y).max() < 1e-12 * scale
+            assert np.abs(p2_eval(t, x, pts, np.arange(t.ncells))
+                          - p2_eval(t, y, pts, np.arange(t.ncells))).max() < 1e-12 * scale
+    if "through parallel HDF5" not in "".join(said["parallel"]):
+        mpi_or_skip("this h5py has no MPI driver, so there is no parallel route")
 
 
 # (dim, kind) of every pocket case, each under both partitions

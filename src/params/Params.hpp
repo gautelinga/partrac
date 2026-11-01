@@ -241,6 +241,8 @@ std::string peek_file(const std::string& path, const std::string& key);
 bool peek_bool(const std::string& path, const std::string& key);
 // true/True/TRUE/1/yes/on and their negatives; false for anything else
 bool try_parse_bool(const std::string& s, bool& out);
+// s without its leading and trailing whitespace
+std::string trim(const std::string& s);
 void report(const ParamError& e, std::ostream& out);
 
 // Template definitions

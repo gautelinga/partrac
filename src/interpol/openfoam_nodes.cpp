@@ -255,6 +255,19 @@ const char* const not_data[] = {"zeroGradient", "inletOutlet", "outletInlet", "c
                                 "extrapolatedCalculated", "symmetry", "symmetryPlane", "empty",
                                 "cyclic", "slip", "fixedFluxPressure"};
 
+// Conditions that can be a wall: at rest stays at rest, uniform stays uniform
+const char* const fixed_in_time_conditions[] = {"noSlip", "fixedValue", "movingWallVelocity"};
+
+bool fixed_in_time(const openfoam_load::FieldPatch& p){
+  for (const char* n : fixed_in_time_conditions) if (p.condition == n) return true;
+  return false;
+}
+
+// Uniform over the patch at every stamp, its value in time from a table or function
+bool uniform_by_condition(const openfoam_load::FieldPatch& p){
+  return p.condition == "uniformFixedValue";
+}
+
 // The last ring tried, and the eigenvalue below which the normal matrix is singular
 constexpr int last_ring = 2;
 constexpr double singular = 1e-12;
@@ -776,7 +789,7 @@ std::vector<PatchClass> classify_patches(const CaseData& c, const FieldData& u){
       continue;
     }
     const std::size_t size = std::size_t(patch.size), b0 = std::size_t(patch.start - c.n_internal);
-    if (!is_data(p) || p.values.size() != 3*size) continue;
+    if (!is_data(p) || !fixed_in_time(p) || p.values.size() != 3*size) continue;
     bool zero = true, along = true;
     for (std::size_t f = 0; f < size; ++f){
       const double* v = &p.values[3*f];
@@ -927,7 +940,7 @@ LeastSquares::LeastSquares(const Geometry& g, const SplitData& s, const FieldDat
     partrac::fail(f.name, " at ", f.time, " has ", f.ncomp, " components: a scalar or a vector is reconstructed");
   const std::size_t k = std::size_t(f.ncomp);
 
-  // The patches: data or not, and a data patch uniform or varying at load
+  // The patches: data or not, and a data patch uniform at every stamp or not
   const std::size_t npatch = c.patches.size();
   data_.assign(npatch, 0);
   Builder b{g, c, f, data_, std::vector<char>(npatch, 0), std::vector<char>(npatch, 1)};
@@ -949,9 +962,19 @@ LeastSquares::LeastSquares(const Geometry& g, const SplitData& s, const FieldDat
   b.tol = 1e-12*vmax;
   for (std::size_t i = 0; i < npatch; ++i){
     if (!data_[i]) continue;
+    if (!fixed_in_time(f.patches[i]) && !uniform_by_condition(f.patches[i])) b.uniform[i] = 0;
     const auto& v = f.patches[i].values;
     for (std::size_t j = 0; j < v.size(); ++j)
       if (std::abs(v[j] - v[j % k]) > b.tol) b.uniform[i] = 0;
+  }
+  uniform_.assign(npatch, 0);
+  at_rest_.assign(npatch, 0);
+  for (std::size_t i = 0; i < npatch; ++i){
+    if (!data_[i]) continue;
+    uniform_[i] = b.uniform[i];
+    at_rest_[i] = fixed_in_time(f.patches[i]) &&
+                  std::all_of(f.patches[i].values.begin(), f.patches[i].values.end(),
+                              [&](const double v){ return std::abs(v) <= b.tol; });
   }
   b.rank_tol = rank_tol;
   b.quantum = 1e-9*g.size;
@@ -1081,6 +1104,25 @@ void LeastSquares::apply(const FieldData& f, const std::vector<int>& comps, std:
                     z ? "was not" : "was", " at the first stamp; the node values keep the first stamp's zero patches "
                     "at such points");
   }
+  // Conditions, and the values they keep, as at the first stamp
+  for (std::size_t i = 0; i < data_.size(); ++i){
+    if (!data_[i]) continue;
+    const auto& p = f.patches[i];
+    if (p.condition != condition_[i])
+      partrac::fail(f.name, " at ", f.time, ": patch ", name_[i], " is ", p.condition, ", and was ", condition_[i],
+                    " at the first stamp; the node values keep the first stamp's conditions");
+    double dev = 0., top = 0.;
+    for (std::size_t j = 0; j < p.values.size(); ++j){
+      dev = std::max(dev, std::abs(p.values[j] - p.values[j % k]));
+      top = std::max(top, std::abs(p.values[j]));
+    }
+    if (uniform_[i] && dev > 1e-12*vmax)
+      partrac::fail(f.name, " at ", f.time, ": patch ", name_[i], " (", p.condition, ") is not uniform, and was at "
+                    "the first stamp; the node values take its faces' mean");
+    if (at_rest_[i] && top > 1e-12*vmax)
+      partrac::fail(f.name, " at ", f.time, ": patch ", name_[i], " (", p.condition, ") is not at rest, and was at "
+                    "the first stamp; the node values keep the first stamp's walls");
+  }
   const std::size_t nc = comps.size();
   const std::size_t nn = kind_.size();
   out.assign(nn*nc, 0.);
@@ -1183,7 +1225,7 @@ std::size_t LeastSquares::bytes() const {
        + 8*(start_.capacity() + coef_.capacity() + patch_start_.capacity() + patch_size_.capacity())
        + 72*mirror_table_.capacity() + data_.capacity()
        + 4*(zero_patch_.capacity() + zero_col_.capacity()) + zero_at_load_.capacity()
-       + 8*(zero_start_.capacity() + zero_coef_.capacity());
+       + 8*(zero_start_.capacity() + zero_coef_.capacity()) + uniform_.capacity() + at_rest_.capacity();
 }
 
 std::size_t InverseDistance::bytes() const {

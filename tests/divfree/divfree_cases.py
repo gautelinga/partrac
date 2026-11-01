@@ -20,6 +20,7 @@ import traceback
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 
 from paths import REPO, app
 
@@ -259,7 +260,79 @@ PATHS = [None, 0.0]
 PATH_IDS = ["penalised", "smallest"]
 
 
+# ------------------------------------------------------- the system in scipy
+
+
+def flux_matrix(topo, unknowns=None):
+    """(C, the columns' master edges, edge -> column) with C the net flux of the
+    rank's cells in the change of the free edge midpoints; its rows are the
+    cells in order and its columns the `free_unknowns` the rank's cells reach,
+    d a master; on a whole mesh, every unknown in order."""
+    if unknowns is None:
+        u = D.free_unknowns(topo)
+        unknowns = (u.master, u.col)
+    free_master, col = unknowns
+    V, gc = D.flux_cell_blocks(topo, col, slice(None))
+    ok = gc >= 0
+    C = sp.csr_matrix((V[ok], (np.repeat(np.arange(len(V)), ok.sum(axis=1)), gc[ok])),
+                      shape=(topo.ncells, topo.dim * len(free_master)))
+    C.sum_duplicates()
+    return C, free_master, col
+
+
+def stiffness_matrix(topo, col, n, gamma, wd):
+    """W + gamma Q as a CSR from the divergence blocks alone, entry by entry:
+    the diagonal weights wd, zero where the caller does not carry them, plus
+    gamma vol_K Be^T M Be of every cell at its unknowns' columns."""
+    K = sp.diags(wd).tocsr()
+    if not gamma:
+        return K
+    Be, gc = D.div_edge_blocks(topo, col, slice(None))
+    Q = gamma * np.einsum('k,kan,ab,kbm->knm', topo.vol, Be, D.mass_p1(topo.dim), Be)
+    r, c = np.broadcast_arrays(gc[:, :, None], gc[:, None, :])
+    ok = (r >= 0) & (c >= 0)
+    return K + sp.coo_matrix((Q[ok], (r[ok], c[ok])), shape=(n, n)).tocsr()
+
+
 # --------------------------------------------------------------- cases on disk
+
+
+def write_checkpoint(path, field, values, topo, degree, mode="w", cell_indices=None):
+    """One field as a dolfin checkpoint: the dof table, the cell list and the
+    values, in the numbering `write_vector` then reuses.
+
+    The rows are the mesh's own, and `cells` labels them by global cell id, as
+    dolfin does: `cell_indices` is the map the mesh beside them carries, which a
+    reader composes through to find the row it wants. Without it the labels are
+    `0..n-1`, which is the map a serially written mesh carries."""
+    import h5py
+    values = np.ascontiguousarray(values, dtype=float)
+    ncomp = values.shape[1]
+    cd = D._cell_dofs(topo, degree, ncomp)
+    gid = (np.arange(topo.ncells) if cell_indices is None
+           else np.asarray(cell_indices)).astype(np.uint64)
+    if len(gid) != topo.ncells:
+        raise ValueError("%s: %d cell indices for %d cells" % (path, len(gid), topo.ncells))
+    with h5py.File(str(path), mode) as f:
+        g = f.create_group(field)
+        g.attrs["signature"] = np.bytes_(D._signature(degree, ncomp, topo.dim))
+        g.create_dataset("cell_dofs", data=cd.ravel())
+        g.create_dataset("x_cell_dofs",
+                         data=np.arange(topo.ncells + 1, dtype=np.uint64) * cd.shape[1])
+        g.create_dataset("cells", data=gid)
+        v = g.create_dataset("vector_0", data=values.ravel())
+        v.attrs["partition"] = np.array([0], dtype=np.uint64)
+
+
+def write_vector(path, field, values, degree, ncomp, dim, mode="w"):
+    """A later stamp or component: `<field>/vector_0`, which is all `read_vector`
+    opens, and the signature, which the frequency loader checks on every
+    component against the first."""
+    import h5py
+    with h5py.File(str(path), mode) as f:
+        g = f.create_group(field)
+        g.attrs["signature"] = np.bytes_(D._signature(degree, ncomp, dim))
+        g.create_dataset("vector_0", data=np.ascontiguousarray(values, dtype=float).ravel())
 
 
 def write_case(folder, X, cells, fields, periodic, stamps=None, freq=None, degree=2,
@@ -277,19 +350,19 @@ def write_case(folder, X, cells, fields, periodic, stamps=None, freq=None, degre
         names.append(name)
         vals = U if degree == 2 else U[:t.nverts]
         if i == 0:
-            D.write_checkpoint(folder / name, "u", vals, t, degree)
+            write_checkpoint(folder / name, "u", vals, t, degree)
         else:
-            D.write_vector(folder / name, "u", vals, degree, dim, dim)
+            write_vector(folder / name, "u", vals, degree, dim, dim)
         p = np.zeros((t.nverts, 1))
         if i == 0:
-            D.write_checkpoint(folder / name, "p", p, t, 1, mode="a")
+            write_checkpoint(folder / name, "p", p, t, 1, mode="a")
         else:
-            D.write_vector(folder / name, "p", p, 1, 1, dim, mode="a")
+            write_vector(folder / name, "p", p, 1, 1, dim, mode="a")
         if phi is not None:
             if i == 0:
-                D.write_checkpoint(folder / name, "phi", phi[i], t, 2, mode="a")
+                write_checkpoint(folder / name, "phi", phi[i], t, 2, mode="a")
             else:
-                D.write_vector(folder / name, "phi", phi[i], 2, 1, dim, mode="a")
+                write_vector(folder / name, "phi", phi[i], 2, 1, dim, mode="a")
     per = "".join("periodic_%s=%s\n" % (a, "true" if p else "false")
                   for a, p in zip("xyz", list(periodic) + [False] * (3 - dim)))
     if freq is not None:
@@ -326,18 +399,19 @@ def relabel_by_global_id(folder, seed=3):
     return gid
 
 
-def two_cells(folder):
+def two_cells(folder, degree=2):
     """channel2d(1): two cells, walls at rest, periodic in x, the diagonal's
     midpoint moved so that there is a step to take. Its two unknowns, the
     diagonal and the periodic pair of vertical edges, both lie in the first
     cell, so on two ranks the second cell's rank owns neither of them under
-    the first-cell rule, and on three a rank has no cell at all."""
+    the first-cell rule, and on three a rank has no cell at all. degree 1
+    writes the vertices' values alone."""
     X, cells = channel2d(1)
     t = D.Topo(X, cells, [True, False])
     U = smooth_noslip(t.node_x)
     mid = t.node_x[t.nverts:]
     U[t.nverts + np.nonzero(np.abs(mid[:, 0] - mid[:, 1]) < 1e-12)[0]] += [0.3, -0.1]
-    return write_case(folder, X, cells, [U], [True, False])
+    return write_case(folder, X, cells, [U], [True, False], degree=degree)
 
 
 def pocket_case(folder, dim, kind):
@@ -348,12 +422,9 @@ def pocket_case(folder, dim, kind):
     others, so its own largest facet flux is 1e-8 of the stamp's.
 
     kind 'closed': walls at rest, so every boundary midpoint is held and the
-    closed domain's flux rows leave the net flux untouched. In 2D the data's
-    periodic seam carries a net flux of 1e-11 of the cells' scales summed,
-    which is shared out over the cells and left in every one of them, below
-    what a loader refuses. The 3D channel's rows are dependent beyond the
-    constant (rank 159 of 162), so a net flux shared out by scale leaves the
-    solve a part it cannot reach, and there the net is the data's round-off.
+    closed domain's flux rows leave the net flux untouched; in 2D a small net
+    flux on the periodic seam is shared out over the cells, below what a
+    loader refuses, and in 3D the net is the data's round-off.
     kind 'moving wall': the top wall moves along x, so its midpoints are free,
     at the boundary weight. Two stamps, the second half the first."""
     X, cells = channel2d(6) if dim == 2 else channel3d(3)
@@ -433,8 +504,7 @@ def read_back(out, names, field="u"):
     """The field of each named file of a cleaned case by node, read through the
     tool's own reader on the whole mesh: a file whose values sit at the wrong
     rows reads back as another field, or is refused, whatever wrote it."""
-    case = D.read_case(out / "dolfin_params.dat")
-    t = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, t = read_topo(out / "dolfin_params.dat")
     dof = D.DofTable(out / names[0], field, t, case["cell_indices"])
     return [dof.values(out / name) for name in names]
 
@@ -465,6 +535,35 @@ def same_output(a, b, scale, bound=1e-12):
                 else:
                     assert np.array_equal(x, y), (name, n)
                 assert sorted(f[n].attrs) == sorted(g[n].attrs), (name, n)
+
+
+def same_but_wide(narrow, wide, bound=0.0):
+    """A cleaned case against the same one written with int64 dof tables:
+    every dataset of every file the same, floats within bound of their largest
+    magnitude, the velocity's `cell_dofs` int32 in the one and int64 in the
+    other with the same numbers, and the text files equal."""
+    h5py = pytest.importorskip("h5py")
+    names = sorted(p.name for p in narrow.iterdir())
+    assert names == sorted(p.name for p in wide.iterdir())
+    for name in names:
+        if not name.endswith(".h5"):
+            assert (narrow / name).read_text() == (wide / name).read_text(), name
+            continue
+        with h5py.File(narrow / name, "r") as f, h5py.File(wide / name, "r") as g:
+            sets = []
+            f.visititems(lambda n, o: sets.append(n) if isinstance(o, h5py.Dataset) else None)
+            for n in sets:
+                x, y = f[n][()], g[n][()]
+                # the pressure and the phase field come through as the input has them
+                if n == "u/cell_dofs":
+                    assert (x.dtype, y.dtype) == (np.int32, np.int64), (name, n)
+                else:
+                    assert x.dtype == y.dtype, (name, n)
+                if x.dtype.kind == "f":
+                    assert np.abs(x - y).max(initial=0.0) \
+                        <= bound * np.abs(x).max(initial=0.0), (name, n)
+                else:
+                    assert np.array_equal(x, y), (name, n)
 
 
 # ------------------------------------------------------------ the apps and MPI
@@ -649,3 +748,80 @@ def interpol_probe(params, mode, npts, int_order=1):
         d = {k: np.array(g[k]) for k in g}
     order = np.lexsort((d["z"], d["y"], d["x"]))
     return {k: v[order] for k, v in d.items()}
+
+
+# ------------------------------------------------- the mesh and the field, read back
+
+
+def read_case_with_mesh(params_path, periodic_tol=D.PERIODIC_TOL):
+    """D.read_case with the mesh: X, cells and cell_indices, and periodic cut
+    to the mesh's dimension."""
+    case = D.read_case(params_path, periodic_tol)
+    X, cells, ci = read_mesh_h5(case["folder"] / case["prm"]["mesh"])
+    case.update(X=X[:, :cells.shape[1] - 1], cells=cells, cell_indices=ci,
+                periodic=case["periodic"][:cells.shape[1] - 1])
+    return case
+
+
+def read_topo(params_path):
+    """(read_case_with_mesh, the whole mesh's `Topo`) of a case."""
+    case = read_case_with_mesh(params_path)
+    return case, D.Topo(case["X"], case["cells"], case["periodic"])
+
+
+def read_mesh_h5(path):
+    """(coordinates, topology, cell_indices) of a dolfin HDF5 mesh."""
+    with D._h5py().File(str(path), "r") as f:
+        topo = np.array(f["mesh/topology"]).astype(np.int32)
+        X = np.array(f["mesh/coordinates"])
+        ci = (np.array(f["mesh/cell_indices"]).astype(np.int64)
+              if "mesh/cell_indices" in f else None)
+    return X, topo, ci
+
+
+def _cell_node_values(topo, U, uint, k):
+    """A dict from the rounded position of every P2 node of macro cell k's split
+    to its value."""
+    V = topo.X[topo.cells[k]]
+    z = V.mean(axis=0)
+    out = {}
+    vb = np.concatenate([U[topo.cells[k]], U[topo.nverts + topo.cell_edge[k]]])
+    for j, p in enumerate(np.vstack([V] + [(V[a] + V[b]) / 2 for a, b in D.LOC_EDGES[topo.nv]])):
+        out[tuple(np.round(p, 10))] = vb[j]
+    for j, p in enumerate(np.vstack([z[None]] + [(V[i] + z) / 2 for i in range(topo.nv)])):
+        out[tuple(np.round(p, 10))] = uint[k][j]
+    return V, z, out
+
+
+def eval_split(topo, U, uint, pts, cell_of, grad=False):
+    """The split field at points, each given the macro cell it lies in; with
+    grad, its pointwise divergence."""
+    d = topo.dim
+    out = np.zeros((len(pts), 1 if grad else d))
+    for q, (p, k) in enumerate(zip(pts, cell_of)):
+        V, z, nodemap = _cell_node_values(topo, U, uint, k)
+        best, bestlam = None, -np.inf
+        for o in range(d + 1):
+            S = np.vstack([np.delete(V, o, axis=0), z])
+            lam, B = D._p2_basis(S, p, grad)
+            if lam.min() > bestlam:
+                bestlam, best = lam.min(), (S, B)
+            if lam.min() > -1e-10:
+                break
+        S, B = best
+        nodes = np.vstack([S] + [(S[a] + S[b]) / 2 for a, b in D.LOC_EDGES[d + 1]])
+        vals = np.array([nodemap[tuple(np.round(n, 10))] for n in nodes])
+        out[q] = np.einsum('nc,nc->', B, vals) if grad else B @ vals
+    return out
+
+
+def p2_eval(topo, U, pts, cell_of, grad=False):
+    """The plain P2 field on the original cells at points."""
+    d = topo.dim
+    out = np.zeros((len(pts), 1 if grad else d))
+    for q, (p, k) in enumerate(zip(pts, cell_of)):
+        S = topo.X[topo.cells[k]]
+        _, B = D._p2_basis(S, p, grad)
+        vals = np.concatenate([U[topo.cells[k]], U[topo.nverts + topo.cell_edge[k]]])
+        out[q] = np.einsum('nc,nc->', B, vals) if grad else B @ vals
+    return out

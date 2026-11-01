@@ -34,6 +34,8 @@ add_library(unittest_objects OBJECT
   test_split_eval.cpp
   test_split_interpol.cpp
   test_wall_edges.cpp
+  test_wall_split.cpp
+  test_wall_facets.cpp
   test_tableau.cpp
   test_regions.cpp
   test_cells.cpp

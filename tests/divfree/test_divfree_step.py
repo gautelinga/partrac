@@ -15,7 +15,8 @@ reconstruction, on arrays built here. What they check:
   throughput drift of a periodic direction and the data's net boundary flux;
 - the solve: a first solve that does not converge is refused as that, where a
   refinement pass that runs out of its own iterations keeps the step it was
-  improving; the matrix handed to PETSc is sorted and within its index range;
+  improving; a block past PETSc's index range is refused; K is the cells'
+  blocks in d x d node blocks and the Schur block C B^-1 C^T through them;
 - the criterion the tool shares with the loader: the same constants, what a
   cell's net flux is measured against, the floor under a numerically dead cell,
   the refusal when a solve misses the fluxes, and a non-finite value refused
@@ -32,10 +33,10 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from divfree_cases import (CASES, D, IDS, PATH_IDS, PATHS, all_held_facets,
-                           blocked2d, blocked_field, channel2d, channel3d, facet_flux,
-                           held_topo, pinch, random_divfree, smooth_noslip, walled,
-                           write_case)
+from divfree_cases import (CASES, D, IDS, PATH_IDS, PATHS, all_held_facets, blocked2d,
+                           blocked_field, channel2d, channel3d, eval_split, facet_flux,
+                           flux_matrix, held_topo, pinch, random_divfree, read_topo, smooth_noslip,
+                           stiffness_matrix, walled, write_case)
 from paths import REPO
 
 
@@ -149,8 +150,8 @@ def test_a_divergence_free_quadratic_survives_both_steps(dim, mesh):
     k = rng.integers(0, t.ncells, 20)
     w = rng.dirichlet(np.ones(dim + 1), 20)
     pts = np.einsum('ni,nij->nj', w, t.X[t.cells[k]])
-    assert np.abs(D.eval_split(t, Uc, uint, pts, k) - f(pts)).max() < 1e-11 * np.abs(U).max()
-    assert np.abs(D.eval_split(t, Uc, uint, pts, k, grad=True)).max() < 1e-10 * np.abs(U).max()
+    assert np.abs(eval_split(t, Uc, uint, pts, k) - f(pts)).max() < 1e-11 * np.abs(U).max()
+    assert np.abs(eval_split(t, Uc, uint, pts, k, grad=True)).max() < 1e-10 * np.abs(U).max()
 
 
 # ---------------------------------------------------------------- the held set
@@ -236,8 +237,7 @@ def test_rest_tol_reaches_the_held_set_from_the_command_line(tmp_path):
     assert tw.held_node.sum() > t.held_node.sum()
     cfg = write_case(tmp_path / "in", t.X, t.cells, [U], [True, False])
     assert D.main([str(cfg), "--out", str(tmp_path / "out"), "--rest-tol", "1e-7"]) == 0
-    case = D.read_case(tmp_path / "out" / "dolfin_params.dat")
-    ct = D.Topo(case["X"], case["cells"], case["periodic"])
+    case, ct = read_topo(tmp_path / "out" / "dolfin_params.dat")
     Uc = D.DofTable(tmp_path / "out" / "u_0000.h5", "u", ct, case["cell_indices"]).values(
         tmp_path / "out" / "u_0000.h5")
     assert np.array_equal(Uc[tw.held_node], U[tw.held_node])
@@ -278,7 +278,7 @@ def test_a_non_positive_boundary_weight_is_refused():
 def smallest_change(t, U):
     """The smallest weighted change with zero net cell fluxes, solved densely:
     the step the penalty weight 0 has to reproduce."""
-    C, free, col = D.flux_matrix(t)
+    C, free, col = flux_matrix(t)
     d = t.dim
     w = np.bincount((t.master[t.nverts + t.cell_edge] - t.nverts).ravel(),
                     weights=np.repeat(t.vol, t.cell_edge.shape[1]), minlength=t.nedges)
@@ -476,7 +476,7 @@ def test_the_schur_preconditioner_is_definite_when_the_rows_are_dependent():
     MINRES breaks down, so the approximation is always shifted."""
     t = dependent_rows()
     eq = D.Equil(t)
-    assert eq.solver.startswith("MINRES + GAMG") and not eq.singular
+    assert eq.solver.startswith("MINRES + Chebyshev") and not eq.singular
     pc = eq.ksp.getPC().getFieldSplitSubKSP()[1].getPC()
     x, y = pc.getOperators()[0].createVecs()
     cols = []
@@ -490,28 +490,83 @@ def test_the_schur_preconditioner_is_definite_when_the_rows_are_dependent():
     assert np.linalg.eigvalsh(0.5 * (P + P.T)).min() > 0.0
 
 
-def test_the_matrix_handed_to_petsc_is_sorted_and_within_its_index_range():
+def test_the_chebyshev_block_is_a_fixed_symmetric_positive_operator():
+    """MINRES needs a fixed symmetric positive preconditioner: the K block, a
+    fixed number of Chebyshev steps with Jacobi, is one -- the same each time it
+    is applied, symmetric and definite."""
+    t = dependent_rows()
+    eq = D.Equil(t)
+    sub = eq.ksp.getPC().getFieldSplitSubKSP()[0]
+    assert sub.getType() == "chebyshev" and sub.getPC().getType() == "jacobi"
+    x, y = sub.getOperators()[0].createVecs()
+    cols = []
+    for i in range(x.getSize()):
+        x.set(0.0)
+        x.setValue(i, 1.0)
+        x.assemble()
+        sub.solve(x, y)
+        cols.append(y.getArray().copy())
+    sub.solve(x, y)
+    assert np.array_equal(y.getArray(), cols[-1])
+    P = np.column_stack(cols)
+    assert np.abs(P - P.T).max() <= 1e-12 * np.abs(P).max()
+    assert np.linalg.eigvalsh(0.5 * (P + P.T)).min() > 0.0
+
+
+def dense(M):
+    """A PETSc matrix of one rank as a numpy array."""
+    from petsc4py import PETSc
+    return M.convert("dense", PETSc.Mat()).getDenseArray().copy()
+
+
+@pytest.mark.parametrize("dim,mesh", CASES, ids=IDS)
+@pytest.mark.parametrize("g", PATHS, ids=PATH_IDS)
+def test_the_stiffness_block_is_the_sum_of_its_cells_in_node_blocks(dim, mesh, g):
+    """K goes to PETSc as d x d blocks, one a pair of midpoints, inserted a
+    chunk of cells at a time: it is the cells' blocks and the weights summed,
+    the same matrix scipy assembles. With gamma = 0 it is the weights alone,
+    one entry a row."""
+    t, _ = walled(*mesh, dim, field=smooth_noslip)
+    eq = D.Equil(t, penalty=g)
+    K = eq.blocks.K
+    if eq.gamma:
+        assert K.getType().endswith("baij") and K.getBlockSize() == dim
+    else:
+        assert K.getType() in ("seqaij", "mpiaij") and K.getInfo()["nz_allocated"] == eq.n
+    want = stiffness_matrix(t, eq.col, len(eq.gcol), eq.gamma, eq.wd).toarray()
+    assert np.abs(dense(K) - want).max() <= 1e-14 * np.abs(want).max()
+    eq.destroy()
+
+
+@pytest.mark.parametrize("dim,mesh", CASES, ids=IDS)
+@pytest.mark.parametrize("g", PATHS, ids=PATH_IDS)
+def test_the_schur_block_is_the_flux_rows_through_the_inverse_node_blocks(dim, mesh, g):
+    """The Schur approximation is C B^-1 C^T, B the d x d blocks of K at the
+    midpoints, shifted by SCHUR_SHIFT of its mean diagonal; C^T is C's
+    transpose as an operator, not a matrix of its own."""
+    t, _ = walled(*mesh, dim, field=smooth_noslip)
+    eq = D.Equil(t, penalty=g)
+    K = stiffness_matrix(t, eq.col, len(eq.gcol), eq.gamma, eq.wd).toarray()
+    C = flux_matrix(t)[0].toarray()
+    Binv = np.zeros_like(K)
+    for i in range(0, len(K), dim):
+        Binv[i:i + dim, i:i + dim] = np.linalg.inv(K[i:i + dim, i:i + dim])
+    S = C @ Binv @ C.T
+    S += D.SCHUR_SHIFT * np.trace(S) / len(S) * np.eye(len(S))
+    assert np.abs(dense(eq.blocks.S) - S).max() <= 1e-14 * np.abs(S).max()
+    assert eq.A.getNestSubMatrix(0, 1).getType() == "transpose"
+    eq.destroy()
+
+
+def test_a_block_past_petscs_index_range_is_refused():
     """PETSc takes its indices in its own integer type, and a cast past its
-    range wraps without a word, so a matrix too large for it is refused and the
-    message names the limit. Its AIJ kernels also assume sorted column indices,
-    which a sparse product does not leave, so the matrix is sorted in place
-    first."""
+    range wraps without a word, so a block too large for it is refused and the
+    message names the limit."""
     import types
-    A = sp.random(20, 20, density=0.8, format="csr", random_state=1)
     small = types.SimpleNamespace(IntType=np.int8)
     with pytest.raises(ValueError, match="past the 127 that this PETSc's 8-bit"):
-        D._petsc_csr(small, A, D.MPI.COMM_SELF)
-    # every row's columns reversed, as a product can leave them
-    order = np.concatenate([np.arange(A.indptr[i + 1] - 1, A.indptr[i] - 1, -1)
-                            for i in range(A.shape[0])])
-    U = sp.csr_matrix((A.data[order], A.indices[order], A.indptr.copy()), shape=A.shape)
-    sorted_rows = lambda M: all(np.all(np.diff(M.indices[M.indptr[i]:M.indptr[i + 1]]) > 0)
-                                for i in range(M.shape[0]))
-    assert not sorted_rows(U)
-    wide = types.SimpleNamespace(IntType=np.int64)
-    indptr, indices, data = D._petsc_csr(wide, U, D.MPI.COMM_SELF)
-    assert sorted_rows(U)
-    assert np.array_equal(indptr, A.indptr) and np.array_equal(indices, A.indices)
+        D._block_fits(small, 128, D.MPI.COMM_SELF)
+    D._block_fits(small, 127, D.MPI.COMM_SELF)
 
 
 def test_a_mesh_with_every_midpoint_held_is_refused_as_that():
@@ -620,8 +675,9 @@ def test_the_constants_are_read_where_they_are_used(monkeypatch):
 
 def test_the_fluxes_are_computed_once_where_they_are_wanted(tmp_path, monkeypatch):
     """cell_flux is the whole cost of a stamp that takes the early exit and of
-    --check, paid on every rank. The step evaluates it on the data, once a
-    refinement test and once on the result, and nowhere else."""
+    --check, paid on every rank. The step evaluates it on the data and once a
+    refinement test, whose last is the result's, and a stamp that takes the
+    early exit on the data alone."""
     pytest.importorskip("h5py")
     t, U = walled(*channel2d(6), 2, field=smooth_noslip)
     calls, real = [0], D.cell_flux
@@ -632,10 +688,13 @@ def test_the_fluxes_are_computed_once_where_they_are_wanted(tmp_path, monkeypatc
 
     monkeypatch.setattr(D, "cell_flux", counted)
     eq = D.Equil(t)
-    _, info = eq.apply(U)
-    eq.destroy()
+    Uc, info = eq.apply(U)
     assert info["stepped"]
-    assert calls[0] == 3 + info["refinements"]
+    assert calls[0] == 2 + info["refinements"]
+    calls[0] = 0
+    _, info = eq.apply(Uc)
+    eq.destroy()
+    assert not info["stepped"] and calls[0] == 1
     cfg = write_case(tmp_path / "in", t.X, t.cells, [U, 0.5 * U], [True, False])
     calls[0] = 0
     D.check_case(cfg, quiet=True)
@@ -676,7 +735,7 @@ def test_the_tool_and_the_loader_share_their_constants():
 @pytest.mark.parametrize("dim,mesh", CASES, ids=IDS)
 def test_a_dead_cell_is_measured_against_the_stamp_and_not_itself(dim, mesh):
     """A cell whose own facet fluxes are the solver's noise -- a dead-end pore
-    of a bead pack -- has a net flux that is round-off over round-off against
+    -- has a net flux that is round-off over round-off against
     its own scale and nothing at all against the stamp's. The criterion the tool
     and the loader share floors a cell's scale at FLUX_FLOOR of the stamp's
     largest facet flux, so such a cell is not refused; the field here is a
@@ -787,26 +846,20 @@ def worst_cell_divergence(t, Uc, uint, ratio, dim):
     worst = np.argsort(-ratio)[:5]
     w = rng.dirichlet(np.ones(dim + 1), len(worst))
     pts = np.einsum('ni,nij->nj', w, t.X[t.cells[worst]])
-    div = float(np.abs(D.eval_split(t, Uc, uint, pts, worst, grad=True)).max())
+    div = float(np.abs(eval_split(t, Uc, uint, pts, worst, grad=True)).max())
     return div / max(float(np.linalg.norm(uint[worst], axis=2).max()), 1e-300)
 
 
 @pytest.mark.parametrize("dim", [2, 3])
 @pytest.mark.parametrize("squash", [20, 100])
 def test_slivers_amplify_the_interior_values_by_the_cell_conditioning(dim, squash):
-    """The local problem is uniquely solvable on any non-degenerate cell, but the
-    constant behind it is the cell's shape: the map J R J^-1 from the boundary
-    values to the interior ones has norm about 1.2 times the condition number of
-    J, so the interior values do *not* stay in proportion on a flattened cell.
-    That is the law this locks in, on a layer of cells of aspect ratio 20 and
-    100. In 3D a smooth no-slip field realises it with the smallest-change step
-    -- the largest interior value is about the aspect ratio times the boundary
-    values -- while in 2D the flattened direction is the one the field is small
-    in, so the realised ratio stays near one. What the interior values
-    are made of is the divergence the global step leaves behind, so the
-    penalised step must not realise more of the bound than that. What survives
-    either way: div u is zero to round-off however flat the cell, the fluxes
-    balance and no wall node moves."""
+    """The map J R J^-1 from a cell's boundary values to its interior ones has
+    norm of the order of the condition number of J, so the interior values do
+    *not* stay in proportion on a flattened cell; pinned on layers of aspect
+    ratio 20 and 100. In 3D the smallest-change step on a smooth no-slip field
+    realises that bound, in 2D the field is small in the flattened direction;
+    the penalised step must realise no more of it. Either way div u is zero to
+    round-off, the fluxes balance and no wall node moves."""
     t, Uc, uint, ratio, info = sliver_case(dim, squash, penalty=0.0)
     cond, nm = cell_conditioning(t)
     assert cond.max() > squash, "the mesh holds no sliver"
@@ -828,9 +881,8 @@ def test_slivers_amplify_the_interior_values_by_the_cell_conditioning(dim, squas
 def test_near_degenerate_cells_keep_the_field_divergence_free(dim):
     """A few vertices slid almost onto a neighbour give cells of condition number
     1e3 to 1e4, far past anything a mesher would produce. The reconstruction
-    still returns a divergence-free field with no slip on the walls; its interior
-    values there run into the thousands, in proportion to the conditioning, which
-    is the number the loader side has to live with."""
+    still returns a divergence-free field with no slip on the walls, its
+    interior values in proportion to the conditioning."""
     t, Uc, uint, ratio, info = sliver_case(dim, 100, do_pinch=True)
     cond, nm = cell_conditioning(t)
     assert cond.max() > 1e3

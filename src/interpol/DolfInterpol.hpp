@@ -4,7 +4,7 @@
 
 // Velocity and pressure stamps as dolfin HDF5 checkpoints, in any of the
 // compiled Lagrange elements (P1-P3, P4 velocity), evaluated by dolfin's own basis: the
-// reference the other loaders are compared with. The only loader left that
+// reference the other loaders are compared with. The only loader that
 // builds its tables from a dolfin mesh and a dofmap; what a step reads once
 // they exist is MeshCore's.
 
@@ -86,7 +86,7 @@ protected:
   std::shared_ptr<dolfin::Function> u_next_;
   std::shared_ptr<dolfin::Function> p_prev_;
   std::shared_ptr<dolfin::Function> p_next_;
-  // Per cell, once: what evaluate used to rebuild on every call
+  // Per cell, once
   std::vector<int> cell_orientations_;   // empty when the mesh carries none
   std::vector<double> coordinate_dofs_;  // ncoords_ of them per cell, flat
   Uint ncoords_ = 0;

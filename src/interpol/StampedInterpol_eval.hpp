@@ -36,7 +36,8 @@ inline void StampedInterpol<Cell, Format>::plain_at(const int id, const std::arr
   }
 }
 
-// The P2 blocks of the stamps whose wall vertices are at rest
+// The edge rule's P2 blocks of the stamps whose wall vertices are at rest: all
+// where the rest is fixed, else each stamp's own
 template<typename Cell, typename Format>
 __attribute__((always_inline))
 inline std::array<bool, 2> StampedInterpol<Cell, Format>::wall_blocks(const int id, const double* prev,
@@ -44,12 +45,21 @@ inline std::array<bool, 2> StampedInterpol<Cell, Format>::wall_blocks(const int 
                                                                       double* next2) const
 {
   const WallEdges& w = wall_cells_[wall_index_[id]];
-  const bool at_rest_prev = near_wall::wall_block<Cell>(prev, prev2, w, rest_tol_prev_);
-  const bool at_rest_next = near_wall::wall_block<Cell>(next, next2, w, rest_tol_next_);
-  return {at_rest_prev, at_rest_next};
+  if constexpr (rest_by_stamp){
+    const unsigned rest_prev = near_wall::rest_vertices<Cell>(prev, Cell::n_verts, w.wall, rest_tol_prev_);
+    const unsigned rest_next = near_wall::rest_vertices<Cell>(next, Cell::n_verts, w.wall, rest_tol_next_);
+    if (rest_prev) near_wall::raise_block<Cell>(prev, prev2, w, rest_prev);
+    if (rest_next) near_wall::raise_block<Cell>(next, next2, w, rest_next);
+    return {rest_prev != 0, rest_next != 0};
+  }
+  else {
+    near_wall::raise_block<Cell>(prev, prev2, w, w.wall);
+    near_wall::raise_block<Cell>(next, next2, w, w.wall);
+    return {true, true};
+  }
 }
 
-// A wall cell: P2 for a stamp whose wall vertices are at rest, else P1
+// A P1 wall cell: P2 for a stamp whose wall vertices are at rest, else P1
 template<typename Cell, typename Format>
 template<bool Velocity>
 __attribute__((always_inline))
@@ -96,16 +106,15 @@ template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::wall_motion(const int id, const CellPos& pos, const double alpha_t,
                                                 PointValues& fields) const
 {
-  std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
-  gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
-                      u_prev_, u_next_, u_prev_block.data(), u_next_block.data());
   if constexpr (!Format::vertex_fields){
     if (upgrade_p2_){
-      upgrade_at(id, pos.bary, alpha_t, u_prev_block.data(), u_next_block.data(),
-                 term_view(std::size_t(wall_index_[id])), fields);
+      upgrade_at(id, pos.bary, alpha_t, nullptr, fields);
       return;
     }
   }
+  std::array<double, Cell::n_dofs_max*3> u_prev_block, u_next_block;
+  gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
+                      u_prev_, u_next_, u_prev_block.data(), u_next_block.data());
   std::array<double, D*Cell::n_dofs_max> u_prev_block_2, u_next_block_2;
   const std::array<bool, 2> at_rest = wall_blocks(id, u_prev_block.data(), u_next_block.data(),
                                                u_prev_block_2.data(), u_next_block_2.data());
@@ -117,13 +126,13 @@ template<typename Cell, typename Format>
 void StampedInterpol<Cell, Format>::hold(const Region& R, Held& h) const
 {
   const int id = R.id;
-  h.wall = wall_upgrade_ && wall_index_[id] >= 0;
+  h.wall = wall_eval_ && wall_index_[id] >= 0;
   gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
                       u_prev_, u_next_, h.prev.data(), h.next.data());
   if (h.wall){
     if constexpr (!Format::vertex_fields){
       if (upgrade_p2_){
-        h.terms = term_view(std::size_t(wall_index_[id]));
+        wall_hold(id, h);
         return;
       }
     }
@@ -144,12 +153,16 @@ inline void StampedInterpol<Cell, Format>::held_at(const int id, const std::arra
   if (h.wall){
     if constexpr (!Format::vertex_fields){
       if (upgrade_p2_){
-        upgrade_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.terms, fields);
+        upgrade_at<Velocity, true>(id, lev, alpha_t, &h, fields);
         return;
       }
     }
-    wall_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data(),
-                      h.at_rest_prev, h.at_rest_next, fields);
+    if constexpr (rest_by_stamp)
+      wall_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data(),
+                        h.at_rest_prev, h.at_rest_next, fields);
+    else
+      wall_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), h.prev2.data(), h.next2.data(), true,
+                        true, fields);
   }
   else
     plain_at<Velocity>(id, lev, alpha_t, h.prev.data(), h.next.data(), fields);
@@ -191,7 +204,7 @@ void StampedInterpol<Cell, Format>::evaluate_impl(const Vector3d &x, const doubl
 
   // Quadratic near walls, else P1
   const int id = pos.id;
-  if (wall_upgrade_ && wall_index_[id] >= 0){
+  if (wall_eval_ && wall_index_[id] >= 0){
     wall_motion(id, pos, alpha_t, fields);
   }
   else {

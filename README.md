@@ -11,7 +11,7 @@
 * `analytic`: Analytic input.
 
 ## Conversion from FELBM output
-`python3 python/parse_xdmf.py FELBM_OUTPUT/output.xdmf` writes `timestamps.dat` next to `output.xdmf`, the input for **partrac**.
+`python3 -m partractools.parse_xdmf FELBM_OUTPUT/output.xdmf` writes `timestamps.dat` next to `output.xdmf`, the input for **partrac**.
 
 ## Compilation
 ```
@@ -73,14 +73,16 @@ cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 
 ## Visualization
 Plotting the position:
-`python3 python/plot_pos.py FOLDER/RandomWalkers/Dm0..../`
+`python3 -m partractools.plot_pos FOLDER/RandomWalkers/Dm0..../`
 
 ## Parameters
 Parameters are given as `key=value` after the input file. `--help` lists an app's parameters, with types and defaults:
 ```
 ./build/bin/partrac --help
 ```
-`wall_upgrade=true` raises the order of the velocity next to walls at rest (P1 to quadratic, P2 by quartic terms); it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`.
+`wall_upgrade=true` raises the order of the velocity next to no-slip walls; it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`. Without `wall_facets`, the walls are where the velocity is at rest (for a time series, in the first stamp with flow, and later stamps must agree; in `openfoam`, in each stamp).
+
+`wall_facets=<file>.xdmf` (not `openfoam`) names the no-slip walls: a facet XDMF as meshio writes it, a marker per facet. `wall_markers=3,5,7:106`, required with it, lists the markers of the no-slip walls; other markers (an inlet, an outlet) are not walls. `femtools-cut-facets in.xdmf out.xdmf --markers 7` cuts a full facet file, such as dolfin's facet MeshFunction, down to the walls.
 
 ### Initialization modes
 Set with `init_mode`. The trailing axes select the direction(s) involved.

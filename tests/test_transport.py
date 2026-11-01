@@ -216,7 +216,7 @@ def test_the_factors_keep_the_compressed_direction(tmp_path):
 
 @needs_partrac
 def test_a_checkpoint_holding_F_whole_resumes(tmp_path):
-    """A text checkpoint from before the factors holds F whole in F.ten: a run
+    """A text checkpoint holding F whole in F.ten: a run
     resumed from one, made here from a new checkpoint's factors, ends where a
     run never stopped does, to round-off (F is factored on load)."""
     from runs import checkpoint_folder, write_text_checkpoint

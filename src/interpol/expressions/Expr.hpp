@@ -20,9 +20,12 @@ public:
   virtual bool has_wall() const { return false; };
   virtual double sdf(const Vector3d &x __attribute__((unused))) const { return 1.; };
   virtual Vector3d sdf_grad(const Vector3d &x __attribute__((unused))) const { return Vector3d::Zero(); };
+  // (U.grad) gradU too, for the second-order step of a carried element
+  virtual void set_convective(const bool b) { convective = b; };
   virtual ~Expr() = default;
 protected:
   partrac::Params expr_params;
+  bool convective = false;
 };
 
 #endif

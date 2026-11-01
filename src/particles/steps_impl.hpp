@@ -94,7 +94,7 @@ inline M carried(PointValues& pv, const int int_order, const double h, const M& 
   M e = n;
   e += J1 * e * h;
   if (int_order >= 2)
-    e += 0.5*(J1*(J1*n) + pv.get_grada()*n) * h * h;
+    e += 0.5*(J1*(J1*n) + (pv.get_grada() + pv.get_convJ())*n) * h * h;
   return e;
 }
 
@@ -357,27 +357,10 @@ std::vector<Uint> ExplicitIntegrator::step(Interp& intp, ParticleSet& ps, const 
             if (x_inside){
                 // Outside: zero velocity
                 evaluate_motion(intp, x, t, pos, ptvals);
-                dx_rw = ptvals.get_u() * dt;
-                if (int_order >= 2){
-                    dx_rw += 0.5 * (ptvals.get_a() + ptvals.get_Ju()) * dt * dt;
-                }
-                // The gradient, for what carries it
-                if constexpr (E != TransportElement::Point){
-                    const Matrix3d J1 = ptvals.get_J();
-                    if constexpr (E == TransportElement::Vector){
-                        el += J1 * el * dt;
-                        if (int_order >= 2)
-                            el += 0.5*(J1*(J1*n0) + ptvals.get_grada()*n0) * dt * dt;
-                    }
-                    if constexpr (E == TransportElement::Tensor){
-                        Fel += J1 * Fel * dt;
-                        if (int_order >= 2)
-                            Fel += 0.5*(J1*(J1*F0) + ptvals.get_grada()*F0) * dt * dt;
-                    }
-                }
+                dx_rw = drift(ptvals, int_order, dt);
+                carry<E>(ptvals, int_order, dt, n0, F0, el, Fel);
             }
             if (Dm > 0.0){
-                // TODO: Consider trying multiple times
                 Vector3d eta = {_rnd_normal(gen),
                                 _rnd_normal(gen),
                                 _rnd_normal(gen)};

@@ -280,3 +280,17 @@ def test_filtering_a_strip_keeps_exactly_filter_target_edges_and_a_consistent_st
     assert e.max() < len(p)
     assert np.array_equal(np.unique(e), np.arange(len(p)))
     assert np.bincount(e.ravel()).max() <= 2
+
+
+@needs_partrac
+@pytest.mark.parametrize("check", [False, True])
+def test_filtering_a_sheet_is_refused_at_startup(tmp_path, check):
+    """filter=true on a sheet is refused once the sheet is made, before the
+    first step and under --check too."""
+    r = run(tmp_path, POISEUILLE,
+            ["init_mode=sheet_xy", "La=0.5", "Lb=0.5", "ds_init=0.05", "x0=0", "y0=0", "z0=0",
+             "Nrw=100", "Nrw_max=200000", "T=0.02", "filter=true", "filter_intv=0.01"]
+            + (["--check"] if check else []))
+    assert r.returncode != 0
+    assert "filter=true filters a strip; a sheet is not supported" in r.stdout + r.stderr
+    assert not all_dumps(tmp_path)

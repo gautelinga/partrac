@@ -17,6 +17,7 @@ public:
     A = {0., 0., 0.};
     gradU << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
     gradA << 0., 0., 0., 0., 0., 0., 0., 0., 0.; 
+    convGradU.setZero();
     P = 0.;
     Rho = 0.;
   };
@@ -24,6 +25,7 @@ public:
   Vector3d A;
   Matrix3d gradU;
   Matrix3d gradA;
+  Matrix3d convGradU;   // (U.grad) gradU, within the cell
   double P = 0.;
   double Rho = 0.;    // density
   double Phi = 0.;    // phase field (XDMF)
@@ -32,6 +34,7 @@ public:
   Vector3d get_Ju() { return U0 * U0 * gradU * U; }; // check
   Vector3d get_a() { return U0 * A; };
   Matrix3d get_grada() { return U0 * gradA; }
+  Matrix3d get_convJ() { return U0 * U0 * convGradU; }
   double get_p() const { return P; };
   double get_rho() const { return Rho; };
   double get_phi() const { return Phi; };

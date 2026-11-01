@@ -7,7 +7,7 @@
   thirteenth of a cell) the fraction at rest and the density next to the
   cylinders, with the rule and without;
 - the walk across periodic faces in a run, in the sphere of the periodic
-  cube, where it was tested only on single moves (test_interpol_core.cpp).
+  cube; test_interpol_core.cpp checks it on single moves only.
 """
 
 import numpy as np

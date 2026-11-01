@@ -107,7 +107,7 @@ def test_rk4_keeps_its_order_across_stamps(stamp_mesh, tmp_path):
     """F and x converge at fourth order in dt with stamps inside steps: each
     halving of dt divides the error by about 16. A step that used the old
     bracket's rate past a stamp would leave a kink in A(t) inside it and fall
-    to second order (a ratio of 4), as before steps were cut."""
+    to second order (a ratio of 4)."""
     errs = [tensor_errors(stamp_mesh, tmp_path, dt) for dt in (0.1, 0.05, 0.025)]
     for (eF0, ex0), (eF1, ex1) in zip(errs[:-1], errs[1:]):
         assert eF0 / eF1 > 12, errs

@@ -359,8 +359,8 @@ def test_remeshing_a_sheet_in_an_unsteady_flow_moves_no_area(tmp_path, abc_remes
 
 def test_an_unsteady_three_dimensional_flow_stretches_the_sheet(abc_remeshed):
     """The counterpart of the parallel-flow case, where dA/dA0 = 1: here faces
-    are both stretched and compressed, with dA/dA0 spread over more than a
-    factor five, and dA, dA0 and tau stay finite throughout."""
+    are both stretched (dA/dA0 above 2) and compressed (below 0.6), and dA,
+    dA0 and tau stay finite throughout."""
     t, dA, dA0 = faces_of(abc_remeshed)[-1]
     assert (dA / dA0).max() > 2                     # stretched
     assert (dA / dA0).min() < 0.6                   # and compressed

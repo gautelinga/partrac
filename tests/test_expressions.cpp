@@ -55,6 +55,24 @@ void check_gradient(Expr& e, const Vector3d& x, const double t){
   }
 }
 
+// convGradU must be (U.grad) gradU: gradU differenced along U
+void check_convective(Expr& e, const Vector3d& x, const double t){
+  const double h = 1e-6;
+  e.set_convective(true);
+  PointValues pv(1.0);
+  e.eval(x, t, pv);
+  const Vector3d u = pv.U;
+  PointValues pp(1.0), pm(1.0);
+  e.eval(x + h*u, t, pp);
+  e.eval(x - h*u, t, pm);
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j){
+      const double fd = (pp.gradU(i, j) - pm.gradU(i, j))/(2*h);
+      INFO("convGradU(" << i << ", " << j << "): " << pv.convGradU(i, j) << " against " << fd);
+      REQUIRE(std::abs(fd - pv.convGradU(i, j)) <= 1e-5*std::max(1.0, std::abs(fd)));
+    }
+}
+
 // Every case below sets rho = 1.2; PointValues starts at 0
 void check_density(Expr& e, const Vector3d& x, const double t){
   PointValues pv(1.0);
@@ -70,19 +88,23 @@ void check_incompressible(Expr& e, const Vector3d& x, const double t){
 
 // The PointValues overload runs inside an omp for, so it must be stateless
 void check_stateless(Expr& e, const Vector3d& x1, const Vector3d& x2, const double t){
+  e.set_convective(true);
   PointValues first(1.0), other(1.0), again(1.0);
   e.eval(x1, t, first);
   e.eval(x2, t, other);
   e.eval(x1, t, again);
   for (int i = 0; i < 3; ++i){
     REQUIRE(again.U[i] == first.U[i]);
-    for (int j = 0; j < 3; ++j)
+    for (int j = 0; j < 3; ++j){
       REQUIRE(again.gradU(i, j) == first.gradU(i, j));
+      REQUIRE(again.convGradU(i, j) == first.convGradU(i, j));
+    }
   }
 }
 
 void check_all(Expr& e, const Vector3d& x, const Vector3d& x2, const double t){
   check_gradient(e, x, t);
+  check_convective(e, x, t);
   check_density(e, x, t);
   check_incompressible(e, x, t);
   check_stateless(e, x, x2, t);
@@ -127,6 +149,7 @@ TEST_CASE("ABCFlow with an oscillating A gives the time derivatives", "[expr]") 
   const double h = 1e-6;
   for (const double t : {0., 0.4, 2.9}){
     check_gradient(e, x, t);
+    check_convective(e, x, t);
     PointValues pv(1.0), pp(1.0), pm(1.0);
     e.eval(x, t, pv);
     e.eval(x, t + h, pp);
@@ -217,8 +240,10 @@ TEST_CASE("BatchelorVortex", "[expr]") {
   Prm p = batchelor_params();
   Expr_BatchelorVortex e(params_for<Expr_BatchelorVortex>(p));
   check_all(e, {0.7, 0.3, 0.2}, {1.9, -0.4, 0.1}, 0.);
-  for (double s : {2.0, 0.5, 1e-2, 1e-4})
+  for (double s : {2.0, 0.5, 0.1, 1e-2, 1e-4}){
     check_gradient(e, {s, s/2, 0.3}, 0.);
+    check_convective(e, {s, s/2, 0.3}, 0.);
+  }
 }
 
 TEST_CASE("BatchelorVortex is regular on the axis", "[expr]") {
@@ -243,16 +268,18 @@ TEST_CASE("BatchelorVortex is regular on the axis", "[expr]") {
 TEST_CASE("BatchelorVortex has no kink at the series thresholds", "[expr]") {
   Prm p = batchelor_params();
   Expr_BatchelorVortex e(params_for<Expr_BatchelorVortex>(p));
-  // phi switches to expm1 at a = 1e-8, dphi at a = 1e-3; R1 = 1 so a = s^2
-  for (double a : {1e-3, 1e-8}){
+  // phi switches to expm1 at a = 1e-8, dphi at a = 1e-3, d2phi at 1e-2; R1 = 1 so a = s^2
+  for (double a : {1e-2, 1e-3, 1e-8}){
     const double sm = std::sqrt(a*(1. - 1e-9)), sp = std::sqrt(a*(1. + 1e-9));
     PointValues lo(1.0), hi(1.0);
+    e.set_convective(true);
     e.eval({sm/std::sqrt(2.), sm/std::sqrt(2.), 0.2}, 0., lo);
     e.eval({sp/std::sqrt(2.), sp/std::sqrt(2.), 0.2}, 0., hi);
     for (int i = 0; i < 3; ++i){
       for (int j = 0; j < 3; ++j){
         INFO("a = " << a << ", gradU(" << i << ", " << j << ")");
         REQUIRE(hi.gradU(i, j) == Approx(lo.gradU(i, j)).margin(1e-7));
+        REQUIRE(hi.convGradU(i, j) == Approx(lo.convGradU(i, j)).margin(1e-7));
       }
     }
   }
@@ -353,6 +380,7 @@ TEST_CASE("TaylorCouette", "[expr]") {
   for (double z : {-1.4, -0.7, 0.0, 0.7, 1.4})
     for (double s : {1.05, 1.5, 2.4}){
       check_gradient(e, {s*0.6, s*0.8, z}, 0.);
+      check_convective(e, {s*0.6, s*0.8, z}, 0.);
       check_incompressible(e, {s*0.6, s*0.8, z}, 0.);
     }
 }
@@ -383,6 +411,7 @@ TEST_CASE("TaylorCouette is finite in the singular corners", "[expr]") {
   // genuinely discontinuous; it must still not produce a NaN
   Prm p = taylor_couette_params();
   Expr_TaylorCouette e(params_for<Expr_TaylorCouette>(p));
+  e.set_convective(true);
   for (double z : {-1.5, 1.5}){
     for (double s : {1.0, 1.0 + 1e-14, 2.5}){
       PointValues pv(1.0);
@@ -390,7 +419,10 @@ TEST_CASE("TaylorCouette is finite in the singular corners", "[expr]") {
       INFO("s = " << s << ", z = " << z);
       for (int i = 0; i < 3; ++i){
         REQUIRE(std::isfinite(pv.U[i]));
-        for (int j = 0; j < 3; ++j) REQUIRE(std::isfinite(pv.gradU(i, j)));
+        for (int j = 0; j < 3; ++j){
+          REQUIRE(std::isfinite(pv.gradU(i, j)));
+          REQUIRE(std::isfinite(pv.convGradU(i, j)));
+        }
       }
     }
   }
@@ -401,7 +433,10 @@ TEST_CASE("TaylorCouette is finite in the singular corners", "[expr]") {
     INFO("s = " << s);
     for (int i = 0; i < 3; ++i){
       REQUIRE(std::isfinite(pv.U[i]));
-      for (int j = 0; j < 3; ++j) REQUIRE(std::isfinite(pv.gradU(i, j)));
+      for (int j = 0; j < 3; ++j){
+        REQUIRE(std::isfinite(pv.gradU(i, j)));
+        REQUIRE(std::isfinite(pv.convGradU(i, j)));
+      }
     }
   }
   REQUIRE(e.inside({1.5, 0., 0.}, 0.));

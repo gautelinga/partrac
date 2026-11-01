@@ -19,6 +19,7 @@ template<typename Cell, typename Format> class StampedInterpol;
 struct DolfinH5Format {
   using Key = std::string;   // the stamp's file
   static constexpr bool vertex_fields = false;
+  static constexpr bool named_walls = true;   // accepts wall_facets
   static partrac::Schema schema(int D);
 
   Timestamps ts;

@@ -48,7 +48,7 @@ inline partrac::Schema partrac_schema(){
   s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("refine", false, "refine the mesh");
   s.opt<bool>("coarsen", false, "coarsen the mesh");
-  s.opt<bool>("filter", false, "filter the mesh");
+  s.opt<bool>("filter", false, "filter a strip's edges");
   s.opt<bool>("inject_edges", true, "inject edges too");
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
   s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");

@@ -60,7 +60,7 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
   const bool phase_gradient = intp->has_phase_gradient();
   if (phase_gradient) ptheader.insert(ptheader.end(), {"dphi_dx", "dphi_dy", "dphi_dz"});
 
-  // The points first, one generator a thread as before, so the set is the same
+  // The points first, one generator a thread
   std::vector<double> xs(3 * std::size_t(num_points));
   #pragma omp parallel
   {
@@ -72,7 +72,7 @@ inline void test_interpolation(Uint num_points, std::shared_ptr<Interpol> intp,
 
     #pragma omp for
     for (Uint i = 0; i < num_points; ++i){
-      // one expression, so the three draws keep the order they had
+      // The three draws in one expression: the point set depends on their order
       Vector3d x(uni_dist_x(gen), uni_dist_y(gen), uni_dist_z(gen));
       xs[3*std::size_t(i)]     = x[0];
       xs[3*std::size_t(i) + 1] = x[1];

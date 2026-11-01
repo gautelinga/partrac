@@ -1,6 +1,6 @@
 // The stamp buffer both mesh loaders blend a field through: which stamps it
-// reads, and which it must not. A stamp is a file read, seconds of it on a
-// large mesh, and a run that steps forward asks for the same bracket over and
+// reads, and which it must not. A stamp is a file read, costly on a large
+// mesh, and a run that steps forward asks for the same bracket over and
 // over and then for one shifted by a stamp, so a buffer that re-reads what it
 // already holds is silent except in the wall clock. What travels with a stamp
 // matters as much: the near-wall tolerance of the XDMF loader is computed from

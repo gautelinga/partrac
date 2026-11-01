@@ -181,8 +181,7 @@ def test_tracers_keep_the_eulerian_mean_velocity_between_obstacles(obstacles):
     In the P1 field each pass of an obstacle moves a tracer a little towards
     its upstream face, where it stops: by t = 100 most tracers are at rest
     and the mean has collapsed. With wall_upgrade=true the mean stays within a few
-    percent (its sampling noise is about 2% with 2000 tracers) and next to
-    nothing stops."""
+    percent, its sampling noise, and next to nothing stops."""
     ratio, stuck = {}, {}
     for mode in ("true", "false"):
         _, u, stuck[mode] = lattice_run(obstacles, mode, 50, T=100.0)

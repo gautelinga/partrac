@@ -44,6 +44,10 @@ public:
   // Gradient needed for int_order > 1 or carried elements
   void set_needs_gradient(const bool b) { needs_gradient_ = b; check_gradient(); };
   bool wants_gradient() const { return int_order > 1 || needs_gradient_; };
+  // (U.grad) gradU for the Taylor step of a carried element; only an analytic
+  // field gives it, a mesh field leaves it zero
+  virtual void set_needs_convective(const bool b) { needs_convective_ = b; };
+  bool wants_convective() const { return needs_convective_; };
   // A field without a gradient refuses a run that wants one
   virtual void check_gradient() const {};
   //
@@ -106,6 +110,7 @@ protected:
   bool verbose = true;
   int int_order = 1;
   bool needs_gradient_ = false;
+  bool needs_convective_ = false;
   Vector3d x_min;
   Vector3d x_max;
   double U0 = 1.0;

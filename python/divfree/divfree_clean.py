@@ -1,45 +1,14 @@
 #!/usr/bin/env python3
 """A pointwise divergence-free velocity from a dolfin HDF5 dataset.
 
-At a no-slip facet the normal derivative of the normal velocity is div u, so a
-P1 or P2 field whose divergence is only weakly zero leaks into the wall and
-traps tracers there. A field that is divergence-free *pointwise* in every cell
-does not, and it needs no wall normal, corner rule or mean-normal compromise:
+Takes the data as P2 (a P1 field's edge midpoints the mean of their ends) and
+moves the free edge midpoints by the weighted least change that zeros every
+cell's net flux, with a divergence penalty gamma = g h^2 (`--penalty`). The
+loaders build the pointwise divergence-free field on each cell's barycentric
+(Alfeld) split from that; `--split` writes it out as P2 on the split mesh.
 
-  * the data as P2 on the mesh, a P1 field's edge midpoints the mean of their
-    ends;
-  * the edge midpoints moved by the weighted change that makes every cell's net
-    flux zero and leaves as little divergence in the cells as it can; a midpoint
-    at rest on an exterior facet the mesh does not pair is held, a free one on
-    such a facet costs BOUNDARY_W times an interior one, and a periodic image
-    and its master are one unknown;
-  * in each cell the unique continuous P2 field on its barycentric (Alfeld)
-    split with that boundary data and div u = 0 pointwise.
-
-The divergence the second step leaves behind is what the third has to cancel,
-and the size of that cancellation is what makes the split field's gradients
-rough, so the second step penalises it: gamma = g h^2 with g = 0.3 in 2D and 10
-in 3D, `--penalty 0` for the smallest change alone. Zero net flux in every cell
-is the only constraint: the volume mean of the final field, and with it the
-throughput of every periodic direction, is reported before and after and never
-held.
-
-This tool does the first two and writes an ordinary P2 checkpoint case on the
-same mesh. The split field is one fixed reference matrix and a Piola map a
-cell, cheap enough for the loader to redo at every load, so the interior values
-are not stored. `--split` writes it out as P2 on the barycentric split instead,
-which the plain mesh loaders read as an ordinary P2 field.
-
-Everything is read and written with h5py alone, so a dataset is cleaned without
-dolfin, and the core functions take arrays and run without files. The tool runs
-on as many ranks as it is given, and every rank holds only its share: the mesh's
-cells are shared out over the ranks, into compact regions by a graph
-partitioner unless told otherwise, each rank builds the tables of its own cells
-(`divfree_dist.DistTopo`), reads the values they name, solves its share of the
-step with PETSc and writes its rows of the output, through parallel HDF5 where
-h5py has it and gathered to the first rank where it does not. The numbering is
-the serial one throughout, so the output is the same at every rank count; one
-rank without `mpirun` is the ordinary tool.
+Reads and writes with h5py alone. Runs on any number of MPI ranks, each holding
+its share of the cells; the output is the same at every rank count.
 
   divfree_clean.py CASE/dolfin_params.dat --out DIR   cleaned P2, the same mesh
   mpirun -n 8 divfree_clean.py ... --out DIR          the same, on 8 ranks
@@ -47,6 +16,8 @@ rank without `mpirun` is the ordinary tool.
 """
 
 import argparse
+import collections
+import itertools
 import os
 import shutil
 import sys
@@ -85,8 +56,10 @@ RESIDUAL_STALL = 1e-16   # a solve asks no less of itself than this of its first
 MAXITER = 20000          # iterations of one MINRES solve
 REFINE_MAXITER = MAXITER // 10   # iterations of one refinement pass
 SCHUR_SHIFT = 1e-8       # diagonal shift of the Schur preconditioner, of its mean diagonal
+K_STEPS = 3              # Chebyshev steps with Jacobi on K a preconditioner application
 DEFAULT_G = {2: 0.3, 3: 10.0}    # gamma = g h^2, the divergence penalty
-READ_CACHE_BYTES = 1 << 31   # stamp values kept from the wall pass for the cleaning pass
+INT32_TOP = 2 ** 31      # int32 indexes fewer entries than this, int64 the rest
+KEY_TOP = 2 ** 63        # a (slot, dof) pair packs into one int64 key below this
 
 
 # ------------------------------------------------------------------ topology
@@ -100,6 +73,8 @@ class Ranks:
     cell-wise function runs on either, and what such a function reports for the
     whole mesh is a reduction over `comm`. The whole mesh is on MPI.COMM_SELF,
     where every reduction is what it is given."""
+
+    _nodes = None            # (the shared nodes, their `shared_reduction`), once built
 
     def allsum(self, x):
         """x added up over the ranks: a number, or an array entry by entry."""
@@ -121,6 +96,19 @@ class Ranks:
         """The nodes this rank counts for the whole mesh: each node is one rank's."""
         return self.node_owner == self.comm.rank
 
+    def shared_reduction(self, n=None):
+        """The `Reduction` of the nodes among the first n that other ranks hold
+        too (`node_shared`), each at its `node_turn`, for an array of their
+        values alone: what `reduce_nodes` does to them. Without n, every node:
+        the topology's own once built."""
+        if n is None:
+            if self._nodes is not None:
+                return self._nodes[1]
+            n = self.nnodes
+        dd = _dist()
+        sel = np.flatnonzero(self.node_shared[:n])
+        return dd.Reduction(dd.Exchange(self.comm, self.node_turn[sel]), self.node_gid[sel])
+
     def class_index(self):
         """Each node's master where this rank holds it, else the node itself:
         where a master class is summed, so that a whole mesh adds its terms in
@@ -129,23 +117,53 @@ class Ranks:
         return np.where(self.node_gid[pos] == self.master, pos, np.arange(len(self.master)))
 
 
+def _run_starts(*keys):
+    """Which rows of keys sorted together differ from the row before in any
+    of them: the first of every run of equal rows."""
+    new = np.empty(len(keys[0]), bool)
+    new[:1] = True
+    np.not_equal(keys[0][1:], keys[0][:-1], out=new[1:])
+    for k in keys[1:]:
+        new[1:] |= k[1:] != k[:-1]
+    return new
+
+
+def cell_facets(cells):
+    """Every facet of every cell by its sorted vertex ids, (n*nv, nv - 1), cell
+    by cell. Facet o of a cell misses its vertex o."""
+    nv = cells.shape[1]
+    return np.stack([np.sort(cells[:, [i for i in range(nv) if i != o]], axis=1)
+                     for o in range(nv)], axis=1).reshape(-1, nv - 1)
+
+
+def facet_keys(F, nverts):
+    """The int64 keys of facets given by their sorted vertex ids, (n, 1) in 2D
+    and (n, 2) in 3D: the first two ids packed in one and the third as it is,
+    so no vertex count wraps a key."""
+    first = F[:, 0].astype(np.int64) * np.int64(nverts) + F[:, 1]
+    if F.shape[1] == 2:
+        return first[:, None]
+    return np.stack([first, F[:, 2].astype(np.int64)], axis=1)
+
+
 def _facet_multiplicity(F, nverts):
     """How many rows of F, facets given by their sorted vertex ids, are the same
-    facet: the cells that hold it. Keyed by two int64 columns, the first two ids
-    packed and the third as it is, so no vertex count wraps the key."""
-    keys = [F[:, 0].astype(np.int64) * np.int64(nverts) + F[:, 1]]
-    if F.shape[1] == 3:
-        keys.append(F[:, 2].astype(np.int64))
-    order = np.lexsort(keys[::-1])
-    new = np.zeros(len(F), bool)
-    new[:1] = True
-    for k in keys:
-        ks = k[order]
-        new[1:] |= ks[1:] != ks[:-1]
-    group = np.cumsum(new) - 1
+    facet: the cells that hold it."""
+    keys = facet_keys(F, nverts)
+    order = np.lexsort(keys.T[::-1])
+    group = np.cumsum(_run_starts(*keys[order].T)) - 1
     out = np.empty(len(F), np.int64)
     out[order] = np.bincount(group)[group]
     return out
+
+
+def _not_periodic(a, count, tol, at):
+    """The refusal of a mesh that is not periodic along axis a: count nodes on
+    its faces with no image within tol on the other face, one of them at `at`."""
+    axis = "xyz"[a]
+    return ValueError("periodic_%s: %d nodes on the %s faces have no image within %.3g on "
+                      "the other face, one at %s: the mesh is not periodic along %s"
+                      % (axis, count, axis, tol, at, axis))
 
 
 def match_tol(X, edges, tol, comm):
@@ -223,9 +241,7 @@ class Topo(Ranks):
 
     # ---- facets: exterior, periodic
     def _facets(self, tol):
-        rows = [np.sort(self.cells[:, [i for i in range(self.nv) if i != o]], axis=1)
-                for o in range(self.nv)]
-        F = np.stack(rows, axis=1).reshape(-1, self.nv - 1)      # (nc*nv, d)
+        F = cell_facets(self.cells)                              # (nc*nv, d)
         self.facet_exterior = (_facet_multiplicity(F, self.nverts) == 1).reshape(
             self.ncells, self.nv)
         self.facet_verts = F.reshape(self.ncells, self.nv, self.nv - 1)
@@ -262,11 +278,7 @@ class Topo(Ranks):
                 else:
                     ok = np.zeros(len(hi), bool)
                 if not ok.all():
-                    axis = "xyz"[a]
-                    raise ValueError("periodic_%s: %d nodes on the %s faces have no image within "
-                                     "%.3g on the other face, one at %s: the mesh is not periodic "
-                                     "along %s" % (axis, int((~ok).sum()), axis, tol,
-                                                   x[hi[~ok][0]].tolist(), axis))
+                    raise _not_periodic(a, int((~ok).sum()), tol, x[hi[~ok][0]].tolist())
                 link[hi[ok]] = lo[j[ok]]
         master = np.arange(n, dtype=np.int32)
         for _ in range(self.dim + 1):
@@ -312,11 +324,10 @@ class Topo(Ranks):
         self.cell_gid = np.arange(self.ncells)
         self.cell_index = None
         self.partition = "blocks"
-        self.vert_gid = np.arange(self.nverts)
-        self.edge_gid = np.arange(self.nedges)
         self.node_gid = np.arange(self.nnodes)
         self.node_owner = np.zeros(self.nnodes, np.int32)
-        self.node_block = (0, self.nnodes)
+        self.node_turn = self.node_owner
+        self.node_shared = np.zeros(self.nnodes, bool)
         self.vol_total = float(self.vol.sum())
         nodes = np.concatenate([self.cells, self.nverts + self.cell_edge], axis=1)
         first = np.full(self.nnodes, self.ncells, np.int64)
@@ -449,38 +460,31 @@ def free_unknowns(topo):
                                  first=(fstart, fstart + len(own)))
 
 
-def flux_matrix(topo, cells=None, unknowns=None):
-    """(C, the columns' master edges, edge -> column) with C the net flux of the
-    cells in `cells` -- all the rank holds by default -- in the change of the
-    free edge midpoints; its rows are those cells in order and its columns the
-    `free_unknowns` the rank's cells reach, d a master; on a whole mesh, every
-    unknown in order."""
-    if unknowns is None:
-        u = free_unknowns(topo)
-        unknowns = (u.master, u.col)
-    free_master, col = unknowns
-    c0, c1 = (0, topo.ncells) if cells is None else cells
-    sl = slice(c0, c1)
-    d = topo.dim
-    rows, cols, vals = [], [], []
-    for o in range(topo.nv):
-        n = topo.facet_n[sl, o]
-        if topo.dim == 2:
-            locs, w = [o], 4.0 / 6.0
-        else:
-            locs = [j for j, (a, b) in enumerate(LOC_EDGES[4]) if a != o and b != o]
-            w = 1.0 / 3.0
-        for j in locs:
-            c = col[topo.cell_edge[sl, j]]
-            k = np.nonzero(c >= 0)[0]
-            for q in range(d):
-                rows.append(k)
-                cols.append(d * c[k] + q)
-                vals.append(w * n[k, q])
-    C = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
-                      shape=(c1 - c0, d * len(free_master)))
-    C.sum_duplicates()
-    return C, free_master, col
+def _dof_cols(topo, col, sl):
+    """The unknowns' dof columns of the local edge midpoints of a slice of the
+    cells, (j, c) a cell, -1 for a fixed midpoint."""
+    d, ne = topo.dim, topo.cell_edge.shape[1]
+    c = col[topo.cell_edge[sl]][:, :, None]
+    return np.where(c >= 0, c * d + np.arange(d), -1).reshape(len(c), ne * d)
+
+
+def _facet_edges(d):
+    """(nv, ne) weight of local edge midpoint j in the flux through facet o: 4/6
+    of the edge facing vertex o in 2D, 1/3 of each of the three edges of facet
+    o in 3D."""
+    if d == 2:
+        return 4.0 / 6.0 * np.eye(3)
+    return np.array([[1.0 / 3.0 if o not in e else 0.0 for e in LOC_EDGES[4]]
+                     for o in range(4)])
+
+
+def flux_cell_blocks(topo, col, sl):
+    """(V, gcol) for a slice of the cells: V[k, (j, c)] the net flux of cell k in
+    the change of its local edge midpoint j, component c -- the cell's row of
+    the flux constraint, its facets merged -- and gcol its column (-1 for a
+    fixed one)."""
+    V = np.einsum('koc,oj->kjc', topo.facet_n[sl], _facet_edges(topo.dim))
+    return V.reshape(len(V), V.shape[1] * topo.dim), _dof_cols(topo, col, sl)
 
 
 def _row_counts(A, r0, r1, c0, c1):
@@ -512,23 +516,16 @@ class NotConverged(RuntimeError):
     """A KKT solve that stopped short of its tolerance."""
 
 
-def _petsc_csr(PETSc, A, comm):
-    """A's CSR arrays with the indices in PETSc's integer type, which the cast
-    would wrap silently past its range: refused there. Each rank hands PETSc its
-    own block, so the largest block of any rank decides, and every rank refuses
-    together rather than leave the others in the assembly. PETSc's AIJ kernels
-    assume sorted columns, so the matrix is sorted first."""
+def _block_fits(PETSc, count, comm):
+    """Refused, on every rank together, where any rank's block of count entries
+    is past PETSc's integer type, which a cast would wrap silently."""
     top = int(np.iinfo(PETSc.IntType).max)
-    big = comm.allreduce(max(A.nnz, A.shape[0], A.shape[1]), op=MPI.MAX)
+    big = comm.allreduce(count, op=MPI.MAX)
     if not big <= top:
         raise ValueError(
             "a rank's block of %d nonzeros is past the %d that this PETSc's %d-bit indices "
             "hold; more ranks, or a PETSc built with 64-bit indices, reach it"
             % (big, top, 8 * np.dtype(PETSc.IntType).itemsize))
-    if not A.has_sorted_indices:
-        A.sort_indices()
-    return (A.indptr.astype(PETSc.IntType, copy=False),
-            A.indices.astype(PETSc.IntType, copy=False), A.data)
 
 
 def mesh_h(topo):
@@ -563,20 +560,25 @@ def mass_p1(d):
 
 def cell_div(topo, U):
     """div u at the d+1 vertices of every cell, (ncells, d+1); div of a P2 field
-    is P1 in a cell, so these values are the whole of it."""
-    g = np.concatenate([U[topo.cells], U[topo.nverts + topo.cell_edge]], axis=1)
-    return np.einsum('anb,kbc,knc->ka', p2_vertex_grads(topo.dim), topo.Jinv, g,
-                     optimize=True)
+    is P1 in a cell, so these values are the whole of it. Taken in
+    `penalty_rhs`' chunks of cells, so the two agree to the bit."""
+    G = p2_vertex_grads(topo.dim)
+    out = np.empty((topo.ncells, topo.nv))
+    for sl in _cell_chunks(topo, topo.nv * topo.cell_edge.shape[1] * topo.dim):
+        g = np.concatenate([U[topo.cells[sl]], U[topo.nverts + topo.cell_edge[sl]]], axis=1)
+        out[sl] = np.einsum('anb,kbc,knc->ka', G, topo.Jinv[sl], g, optimize=True)
+    return out
 
 
-def div_norms(topo, U):
-    """||div u||_{L2(K)} for every cell."""
-    dv = cell_div(topo, U)
+def div_norms(topo, U, dv=None):
+    """||div u||_{L2(K)} for every cell; `dv` is `cell_div`'s answer for this
+    field where the caller already has it."""
+    dv = cell_div(topo, U) if dv is None else dv
     return np.sqrt(np.maximum(np.einsum('ka,ab,kb->k', dv, mass_p1(topo.dim), dv), 0.0)
                    * topo.vol)
 
 
-def div_edge_blocks(topo, col, sl=slice(None)):
+def div_edge_blocks(topo, col, sl):
     """(Be, gcol) for a slice of the cells: Be[k, a, (j, c)] is the coefficient
     of the change of local edge midpoint j, component c, in div u at vertex a of
     cell k, and gcol its column in the unknowns (-1 for a fixed midpoint). They
@@ -587,17 +589,14 @@ def div_edge_blocks(topo, col, sl=slice(None)):
     Jinv = topo.Jinv[sl]
     nk = len(Jinv)
     Be = np.einsum('anb,kbc->kanc', Gref, Jinv).reshape(nk, d + 1, ne * d)
-    c = col[topo.cell_edge[sl]]
-    gcol = np.where(c[:, :, None] >= 0, c[:, :, None] * d + np.arange(d)[None, None, :], -1)
-    return Be, gcol.reshape(nk, ne * d)
+    return Be, _dof_cols(topo, col, sl)
 
 
-def _cell_chunks(topo, nb, chunk=1 << 22, cells=None):
-    """Slices of a range of the cells small enough that a chunk's dense blocks
-    fit."""
-    c0, c1 = (0, topo.ncells) if cells is None else cells
-    per = max(1, chunk // max(nb * nb, 1))
-    return [slice(k0, min(k0 + per, c1)) for k0 in range(c0, c1, per)]
+def _cell_chunks(topo, size, chunk=1 << 22):
+    """Slices of the cells small enough that a chunk's arrays of `size`
+    entries a cell fit."""
+    per = max(1, chunk // max(size, 1))
+    return [slice(k0, min(k0 + per, topo.ncells)) for k0 in range(0, topo.ncells, per)]
 
 
 def _merge_part(parts, P):
@@ -609,46 +608,66 @@ def _merge_part(parts, P):
     parts.append(P)
 
 
-def stiffness_matrix(topo, col, n, gamma, wd, cells=None):
-    """W + gamma Q over a range of the cells, with s^T Q s = sum_K
-    ||div s||^2_{L2(K)}: the cell blocks with the cell's P1 mass matrix, plus the
-    diagonal weights, which are wd where the caller carries them and zero
-    elsewhere. The cells are taken in chunks and each chunk merged as it is
-    built, so neither the whole entry list nor the chunks themselves are ever
-    alive together."""
-    if not gamma:
-        return sp.diags(wd).tocsr()
-    M = mass_p1(topo.dim)
-    nb = topo.cell_edge.shape[1] * topo.dim
-    parts = [sp.diags(wd).tocsr()]
-    for sl in _cell_chunks(topo, nb, cells=cells):
-        Be, gc = div_edge_blocks(topo, col, sl)
+def stiffness_chunks(topo, col, n, gamma):
+    """gamma Q over the cells, a chunk of cells at a time, with s^T Q s =
+    sum_K ||div s||^2_{L2(K)}: the cell blocks with the cell's P1 mass matrix.
+    A chunk is (block rows, their pointer, block columns, d x d blocks) of the
+    n / d midpoints, each pair once, built when asked for and dropped after."""
+    d = topo.dim
+    M = mass_p1(d)
+    ne = topo.cell_edge.shape[1]
+    nb, nm = ne * d, n // d
+    for sl in _cell_chunks(topo, nb * nb):
+        Be, _ = div_edge_blocks(topo, col, sl)
         K = gamma * np.einsum('k,kan,ab,kbm->knm', topo.vol[sl], Be, M, Be, optimize=True)
         del Be
-        rows = np.repeat(gc[:, :, None], nb, axis=2)
-        cols = np.repeat(gc[:, None, :], nb, axis=1)
+        # (cell, row midpoint, column midpoint) a block
+        K = K.reshape(-1, ne, d, ne, d).transpose(0, 1, 3, 2, 4).reshape(-1, d, d)
+        c = col[topo.cell_edge[sl]]
+        key = (c[:, :, None] * nm + c[:, None, :]).ravel()
+        ok = np.flatnonzero(((c[:, :, None] >= 0) & (c[:, None, :] >= 0)).ravel())
+        del c
+        o = ok[np.argsort(key[ok], kind="stable")]
+        key = key[o]
+        first = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+        blocks = np.add.reduceat(K[o], first, axis=0) if len(o) else K[:0]
+        del K, o, ok
+        key = key[first]
+        rows = key // nm
+        new = np.flatnonzero(np.r_[True, rows[1:] != rows[:-1]]) if len(rows) else first[:0]
+        yield rows[new], np.append(new, len(rows)), key - rows * nm, blocks
+
+
+def unknown_pattern(topo, col, nm):
+    """Which of the nm free midpoints the rank's cells reach share a cell, as a
+    boolean CSR: the sparsity of K by midpoint rather than by component, which
+    is d^2 times smaller and holds no values."""
+    parts = []
+    ne = topo.cell_edge.shape[1]
+    for sl in _cell_chunks(topo, ne * ne):
+        c = col[topo.cell_edge[sl]]
+        rows = np.repeat(c[:, :, None], ne, axis=2)
+        cols = np.repeat(c[:, None, :], ne, axis=1)
         ok = (rows >= 0) & (cols >= 0)
-        part = sp.coo_matrix((K[ok], (rows[ok], cols[ok])), shape=(n, n)).tocsr()
-        del K, rows, cols, ok, gc
+        part = sp.csr_matrix((np.ones(int(ok.sum()), bool), (rows[ok], cols[ok])), shape=(nm, nm))
+        del rows, cols, ok, c
         _merge_part(parts, part)
     while len(parts) > 1:
         parts.append(parts.pop() + parts.pop())
-    K = parts[0]
-    K.sum_duplicates()
-    return K
+    return parts[0] if parts else sp.csr_matrix((nm, nm), dtype=bool)
 
 
-def penalty_rhs(topo, U, col, n, cells=None):
-    """q of the cross term 2 gamma q^T s over a range of the cells:
-    q = sum_K B_K^T (vol_K Mhat) div u_K."""
+def penalty_rhs(topo, U, col, n, dv=None):
+    """q of the cross term 2 gamma q^T s: q = sum_K B_K^T (vol_K Mhat) div u_K.
+    `dv` is `cell_div`'s answer for this field where the caller already has
+    it."""
     M = mass_p1(topo.dim)
-    Gref = p2_vertex_grads(topo.dim)
+    dv = cell_div(topo, U) if dv is None else dv
     out = np.zeros(n)
-    for sl in _cell_chunks(topo, topo.cell_edge.shape[1] * topo.dim, cells=cells):
+    # chunks the size of Be
+    for sl in _cell_chunks(topo, topo.nv * topo.cell_edge.shape[1] * topo.dim):
         Be, gc = div_edge_blocks(topo, col, sl)
-        g = np.concatenate([U[topo.cells[sl]], U[topo.nverts + topo.cell_edge[sl]]], axis=1)
-        dv = np.einsum('anb,kbc,knc->ka', Gref, topo.Jinv[sl], g, optimize=True)
-        v = np.einsum('k,kan,ab,kb->kn', topo.vol[sl], Be, M, dv, optimize=True)
+        v = np.einsum('k,kan,ab,kb->kn', topo.vol[sl], Be, M, dv[sl], optimize=True)
         ok = gc >= 0
         out += np.bincount(gc[ok], weights=v[ok], minlength=n)
     return out
@@ -671,22 +690,29 @@ def volume_mean(topo, U):
     return topo.allsum(topo.vol @ s) / topo.allsum(float(topo.vol.sum()))
 
 
-def div_moment(topo, U):
+def div_moment(topo, U, dv=None):
     """int x_c div u over the domain, per component. The split field is
     divergence-free in every cell and takes the macro field's trace on the
     boundary, so its volume mean is the macro field's plus this over the volume:
     the moment is what the final field's mean gains over the data's, and it
     vanishes for data that satisfies the discrete continuity equation against the
-    P1 pressures."""
+    P1 pressures. `dv` is `cell_div`'s answer for this field where the caller
+    already has it."""
     M = mass_p1(topo.dim)
-    return topo.allsum(np.einsum('k,ab,kac,kb->c', topo.vol, M, topo.X[topo.cells],
-                                 cell_div(topo, U), optimize=True))
+    dv = cell_div(topo, U) if dv is None else dv
+    return topo.allsum(np.einsum('k,ab,kac,kb->c', topo.vol, M, topo.X[topo.cells], dv,
+                                 optimize=True))
 
 
-def split_volume_mean(topo, U):
+def split_volume_mean(topo, U, dv=None):
     """The volume mean of the final split field of macro data with zero net cell
-    fluxes."""
-    return volume_mean(topo, U) + div_moment(topo, U) / topo.allsum(float(topo.vol.sum()))
+    fluxes; `dv` as in `div_moment`."""
+    return volume_mean(topo, U) + div_moment(topo, U, dv) / topo.allsum(float(topo.vol.sum()))
+
+
+# the KKT system [[K, Ct], [C, 0]], Ct C's transpose as an operator, and the
+# Schur approximation S
+Blocks = collections.namedtuple("Blocks", "K C Ct S")
 
 
 class Equil:
@@ -697,53 +723,24 @@ class Equil:
 
         s^T W s + gamma sum_K ||div(u + s)||^2_{L2(K)},   gamma = g h^2,
 
-    subject to zero net flux through every cell, and nothing else. A midpoint at
-    rest on an exterior facet the mesh does not pair is held and has no unknown;
-    a free midpoint on such a facet costs boundary_weight times an interior one
-    in W, which is what keeps a moving wall's values and an open facet's flux
-    near the data's. The penalty term buys a smoother field: what the per-cell
-    reconstruction has to cancel is what makes its correction, and so the split
-    field's gradients, rough.
+    subject to zero net flux through every cell. A midpoint at rest on an
+    exterior facet the mesh does not pair is held; a free one on such a facet
+    costs boundary_weight times an interior one in W. The KKT system
 
-    Whatever gamma is, the step is the one KKT system
+        [[W + gamma Q, C^T], [C, 0]] [s; lambda] = [-gamma q; rhs]
 
-        [[W + gamma Q, C^T], [C, 0]] [s; lambda] = [-gamma q; rhs],
+    is solved by MINRES with an additive field split: K_STEPS Chebyshev steps
+    with Jacobi on K = W + gamma Q, and a GAMG V-cycle on the shifted Schur
+    approximation C B^-1 C^T, B the d x d blocks of K's midpoints. Both are
+    fixed symmetric positive operators, as MINRES requires.
 
-    solved by PETSc's MINRES with an additive field split: a GAMG V-cycle on the
-    SPD block K = W + gamma Q, and one on the Schur approximation
-    C diag(K)^-1 C^T, shifted so that it is definite whatever the rank of the
-    constraint rows. With gamma = 0 the block is diagonal and Jacobi is exact on
-    it, and that approximation is then the Schur complement itself. Both blocks
-    are fixed symmetric positive operators -- a V-cycle with the same pre- and
-    post-smoothing is its own adjoint -- so MINRES stays valid.
-
-    The topology is the whole mesh or a rank's share of it, and the system is
-    assembled from each rank's cells straight into PETSc. A constraint row is a
-    cell, the rank's own. Under a graph partitioner an unknown is the row of
-    the rank that holds the smallest cell any image of it lies in
-    (`free_unknowns`), so the rows of both blocks a rank owns are its cells and
-    nearly every unknown they reach, and what it assembles into another rank's
-    rows is the few unknowns on the partition's boundary. Contiguous blocks of
-    a mesh numbered without locality would give the first ranks most of the
-    unknowns by that rule, so under `blocks` the unknowns, in the same order,
-    are shared out evenly by count, and a rank assembles much of its cells'
-    part into other ranks' rows. On one rank the unknowns are in the order of
-    their first cells, and on several the system is that one up to a
-    permutation. A rank may hold no cell or own no unknown, and then takes its
-    part in every collective with empty blocks. The step comes back to each
-    rank for the unknowns its cells reach, and everything measured by cell --
-    the fluxes, the refinement's criterion -- each rank computes from the field
-    it holds and reduces.
-
-    Where every boundary midpoint is held the constant over the cells is in the
-    null space of the flux rows: the right-hand side is projected onto its
-    complement, and what the data's own net flux leaves is spread beforehand.
-
-    The step is refined against the true residual, since an iterative solver
-    stops on its own estimate of it, until every cell's balance is FLUX_REFINE
-    of what a loader accepts or a pass stops paying. The first solve is refused
-    if it does not converge, naming the stamp; a refinement pass that does not
-    is a pass that does not pay, and the step before it stands.
+    The topology is the whole mesh or a rank's share; a constraint row is a
+    cell, its rank's own, and the unknowns are numbered by `free_unknowns`. A
+    rank with no cell or no unknown joins every collective with empty blocks.
+    Where every boundary midpoint is held, the right-hand side is projected off
+    the constant over the cells. The step is refined against the true residual
+    until every cell's balance is FLUX_REFINE of what a loader accepts or a pass
+    stops paying; a first solve that does not converge is refused.
     """
 
     def __init__(self, topo, weights="volume", penalty=None, minres_rtol=None,
@@ -812,14 +809,15 @@ class Equil:
         self.refinements = 0
         t0 = time.time()
         self._layout()
-        Cl = flux_matrix(topo, unknowns=(u.master, u.col))[0]
-        one = np.ones(self.mloc)
-        colsum = self._add_up(Cl.T @ one, self._w)
-        size_ = self._add_up(np.abs(Cl).T @ one, self._w)
+        C, colsum, size_ = self._flux()
+        colsum = self._add_up(colsum, self._w)
+        size_ = self._add_up(size_, self._w)
         self.singular = (topo.allmax(np.abs(colsum))
                          < 1e-10 * max(topo.allmax(size_), 1e-300))
-        del colsum, size_, one
-        self._setup(Cl)
+        del colsum, size_
+        K, S = self._schur(C)
+        self.blocks = Blocks(K, C, PETSc.Mat().createTranspose(C), S)
+        self._ksp()
         self.setup_time = time.time() - t0
 
     # ---- the rank's share of the KKT vectors
@@ -867,84 +865,161 @@ class Equil:
         return (np.minimum(inside, cloc).astype(PETSc.IntType),
                 np.minimum(rest, M - cloc).astype(PETSc.IntType))
 
-    def _stiffness(self, Kl):
-        """K as an MPIAIJ from every rank's rows of the columns its cells reach.
-        A row is counted by every rank that assembles into it, in its owner's
-        diagonal block and elsewhere, and the counts added up at the owner: exact
-        but for a row two ranks both touch, preallocated a little wide."""
-        n, size = self.n, self.mpi.size
-        per_row = np.diff(Kl.indptr)
-        cnt = np.zeros((len(self.gcol), 2), np.int64)
+    def _stiffness(self):
+        """K = W + gamma Q, gamma > 0, as an MPIBAIJ of a midpoint's d x d
+        blocks, assembled into PETSc a chunk of cells at a time. A block row is
+        preallocated from the midpoints its own shares a cell with, counted by
+        every rank that assembles into it, in its owner's diagonal block and
+        elsewhere, and the counts added up at the owner: exact but for a row two
+        ranks both touch, a little wide."""
+        topo, d, size, u = self.topo, self.topo.dim, self.mpi.size, self.unknowns
+        nm = len(u.gid)
+        pat = unknown_pattern(topo, self.col, nm)
+        per = np.diff(pat.indptr)
+        _block_fits(PETSc, max(int(per.sum()) * d * d, self.n), self.mpi)
+        cnt = np.zeros((nm, 2), np.int64)
         # the rows of an owner are a run of the local ones, and so are its columns
-        lb = np.searchsorted(self.gcol, np.append(self.starts, n))
+        lb = np.searchsorted(u.gid, np.append(self.starts // d, self.nfree))
         for r in range(size):
             a, b = int(lb[r]), int(lb[r + 1])
             if b > a:
-                inside = _row_counts(Kl, a, b, a, b)
+                inside = _row_counts(pat, a, b, a, b)
                 cnt[a:b, 0] = inside
-                cnt[a:b, 1] = per_row[a:b] - inside
-        cnt = _dist().reduce_keyed(self.gcol, cnt, "sum", self.mpi, n)
-        o0, o1 = self.own
-        indptr, indices, data = _petsc_csr(PETSc, Kl, self.mpi)
-        P = PETSc.Mat().createAIJ(
-            size=((self.nloc, n), (self.nloc, n)),
-            nnz=self._prealloc(cnt[o0:o1, 0], cnt[o0:o1, 1], self.nloc, n), comm=self.comm)
-        gcol = self.gcol.astype(PETSc.IntType)
-        P.setValuesIJV(indptr, gcol[indices], data, addv=PETSc.InsertMode.ADD_VALUES,
-                       rowmap=gcol)
+                cnt[a:b, 1] = per[a:b] - inside
+        del pat, per
+        cnt = _dist().reduce_keyed(u.gid, cnt, "sum", self.mpi, self.nfree)
+        o0, o1 = np.searchsorted(u.gid, [u.start, u.start + u.count])
+        P = PETSc.Mat().createBAIJ(
+            size=((self.nloc, self.n), (self.nloc, self.n)), bsize=d,
+            nnz=self._prealloc(cnt[o0:o1, 0], cnt[o0:o1, 1], u.count, self.nfree),
+            comm=self.comm)
+        del cnt
+        # blocks read column by column, so each goes in transposed
+        P.setOption(PETSc.Mat.Option.ROW_ORIENTED, False)
+        gid = u.gid.astype(PETSc.IntType)
+        # the weights, a diagonal block a midpoint that carries them
+        w = self.wd.reshape(-1, d)
+        r = np.flatnonzero(w.any(axis=1))
+        diag = np.zeros((len(r), d, d))
+        diag[:, np.arange(d), np.arange(d)] = w[r]
+        del w
+        parts = itertools.chain([(r, np.arange(len(r) + 1), r, diag)],
+                                stiffness_chunks(topo, self.col, len(self.gcol), self.gamma))
+        for rows, ptr, cols, blocks in parts:
+            P.setValuesBlockedIJV(ptr.astype(PETSc.IntType), gid[cols],
+                                  blocks.transpose(0, 2, 1).ravel(),
+                                  addv=PETSc.InsertMode.ADD_VALUES, rowmap=gid[rows])
         P.assemble()
+        P.setOption(PETSc.Mat.Option.ROW_ORIENTED, True)
         return P
 
-    def _flux(self, Cl):
-        """C as an MPIAIJ from the rank's own cells, which are its rows alone, so
-        the count is exact and no entry leaves the rank."""
+    def _flux(self):
+        """(C, C^T 1, |C|^T 1): C as an MPIAIJ from the rank's own cells, which are
+        its rows alone, assembled a chunk of cells at a time and preallocated
+        exactly, d columns a free midpoint of the cell; the sums at the columns
+        the rank's cells reach."""
+        topo, d = self.topo, self.topo.dim
         o0, o1 = self.own
-        inside = _row_counts(Cl, 0, self.mloc, o0, o1)
-        indptr, indices, data = _petsc_csr(PETSc, Cl, self.mpi)
+        c = self.col[topo.cell_edge]
+        free = c >= 0
+        inside = d * (free & (d * c >= o0) & (d * c < o1)).sum(axis=1)
+        nnz = d * free.sum(axis=1)
+        del c, free
+        _block_fits(PETSc, max(int(nnz.sum()), self.n, self.mloc), self.mpi)
         P = PETSc.Mat().createAIJ(
             size=((self.mloc, self.m), (self.nloc, self.n)),
-            nnz=self._prealloc(inside, np.diff(Cl.indptr) - inside, self.nloc, self.n),
-            comm=self.comm)
-        P.setValuesCSR(indptr, self.gcol.astype(PETSc.IntType)[indices], data,
-                       addv=PETSc.InsertMode.ADD_VALUES)
+            nnz=self._prealloc(inside, nnz - inside, self.nloc, self.n), comm=self.comm)
+        del inside, nnz
+        r0 = P.getOwnershipRange()[0]
+        gcol = self.gcol.astype(PETSc.IntType)
+        colsum = np.zeros(len(self.gcol))
+        size = np.zeros(len(self.gcol))
+        for sl in _cell_chunks(topo, topo.cell_edge.shape[1] * d):
+            V, gc = flux_cell_blocks(topo, self.col, sl)
+            ok = gc >= 0
+            indptr = np.concatenate([[0], np.cumsum(ok.sum(axis=1))]).astype(PETSc.IntType)
+            v, cols = V[ok], gc[ok]
+            P.setValuesIJV(indptr, gcol[cols], v, addv=PETSc.InsertMode.INSERT_VALUES,
+                           rowmap=np.arange(r0 + sl.start, r0 + sl.stop, dtype=PETSc.IntType))
+            colsum += np.bincount(cols, weights=v, minlength=len(colsum))
+            size += np.bincount(cols, weights=np.abs(v), minlength=len(size))
         P.assemble()
-        return P
+        return P, colsum, size
 
-    def _setup(self, Cl):
-        m, d = self.m, self.topo.dim
-        Kl = stiffness_matrix(self.topo, self.col, len(self.gcol), self.gamma, self.wd)
-        K = self._stiffness(Kl)
-        del Kl
+    def _schur(self, C):
+        """(K, S): the SPD block K = W + gamma Q, and the Schur approximation
+        S = C B^-1 C^T, B the d x d blocks of K's midpoints, shifted so that it
+        is definite whatever the rank of the constraint rows; both symmetric.
+        With gamma = 0, K = W and S the Schur complement itself."""
+        d = self.topo.dim
+        i0 = d * self.unknowns.start
+        opts = PETSc.Options()
+        # the products' intermediates dropped once built
+        opts["mat_product_clear"] = True
+        try:
+            if self.gamma:
+                K = self._stiffness()
+                # K's d x d node blocks inverted, PETSc's column by column, as an MPIAIJ
+                inv = K.invertBlockDiagonal().reshape(-1, d, d).transpose(0, 2, 1).reshape(-1, d)
+                cols = (i0 + d * (np.arange(self.nloc) // d))[:, None] + np.arange(d)
+                Dinv = PETSc.Mat().createAIJ(
+                    size=((self.nloc, self.n), (self.nloc, self.n)),
+                    csr=(np.arange(0, d * self.nloc + 1, d, dtype=PETSc.IntType),
+                         cols.astype(PETSc.IntType).ravel(), inv.ravel()), comm=self.comm)
+                B = C.matMult(Dinv)
+                Dinv.destroy()
+                Ct = C.transpose(PETSc.Mat())
+                S = B.matMult(Ct)
+                B.destroy()
+            else:
+                # K = W, an MPIAIJ of one entry a row, and W^-1 C^T by its rows
+                k = self._add_up(self.wd, self._w)
+                K = PETSc.Mat().createAIJ(
+                    size=((self.nloc, self.n), (self.nloc, self.n)),
+                    csr=(np.arange(self.nloc + 1, dtype=PETSc.IntType),
+                         np.arange(i0, i0 + self.nloc, dtype=PETSc.IntType), k), comm=self.comm)
+                Ct = C.transpose(PETSc.Mat())
+                r = Ct.createVecLeft()
+                with r as a:
+                    a[:] = 1.0 / k
+                Ct.diagonalScale(L=r)
+                r.destroy()
+                S = C.matMult(Ct)
+            Ct.destroy()
+        finally:
+            opts.delValue("mat_product_clear")
         K.setOption(PETSc.Mat.Option.SYMMETRIC, True)
-        # a node's d components are one unknown to the aggregation
-        K.setBlockSize(d)
-        C = self._flux(Cl)
-        del Cl
-        Ct = C.transpose(PETSc.Mat())
-        dg = K.getDiagonal()
-        dg.abs()
-        dg.reciprocal()
-        B = Ct.copy()
-        B.diagonalScale(L=dg)
-        S = C.matMult(B)
-        B.destroy()
         # definite whatever the rank of the constraint rows
-        S.shift(SCHUR_SHIFT * S.getDiagonal().sum() / max(m, 1))
+        S.shift(SCHUR_SHIFT * S.getDiagonal().sum() / max(self.m, 1))
         S.setOption(PETSc.Mat.Option.SYMMETRIC, True)
+        return K, S
+
+    def _ksp(self):
+        """The KKT operator A and its preconditioner P from the blocks, and
+        MINRES on them with the additive field split: Chebyshev with Jacobi on
+        K, or Jacobi alone where K = W, and a GAMG V-cycle on S. Its options
+        under a prefix of this instance's own."""
+        K, C, Ct, S = self.blocks
         self.A = PETSc.Mat().createNest([[K, Ct], [C, None]], comm=self.comm)
         self.A.assemble()
         self.P = PETSc.Mat().createNest([[K, None], [None, S]], comm=self.comm)
         self.P.assemble()
-        self.blocks = (K, C, Ct, S)
         _KSP_TAG[0] += 1
         self.prefix = prefix = "divfree%d_" % _KSP_TAG[0]
-        opts = PETSc.Options()
-        for name, kind in (("u", "gamg" if self.gamma else "jacobi"), ("s", "gamg")):
-            opts[prefix + "fieldsplit_%s_ksp_type" % name] = "preonly"
-            opts[prefix + "fieldsplit_%s_pc_type" % name] = kind
-            if kind == "gamg":
-                # plain aggregation, not smoothed: smoothing fills the coarse operators
-                opts[prefix + "fieldsplit_%s_pc_gamg_agg_nsmooths" % name] = 0
+        opts = PETSc.Options(prefix + "fieldsplit_")
+        if self.gamma:
+            # a fixed number of steps, unmeasured: a fixed operator
+            opts["u_ksp_type"] = "chebyshev"
+            opts["u_ksp_max_it"] = K_STEPS
+            opts["u_ksp_norm_type"] = "none"
+            opts["u_ksp_convergence_test"] = "skip"
+        else:
+            opts["u_ksp_type"] = "preonly"
+        opts["u_pc_type"] = "jacobi"
+        opts["s_ksp_type"] = "preonly"
+        opts["s_pc_type"] = "gamg"
+        # plain aggregation, not smoothed: smoothing fills the coarse operators
+        opts["s_pc_gamg_agg_nsmooths"] = 0
         self.ksp = PETSc.KSP().create(comm=self.comm)
         self.ksp.setOptionsPrefix(prefix)
         self.ksp.setOperators(self.A, self.P)
@@ -956,7 +1031,7 @@ class Equil:
         pc.setFieldSplitType(PETSc.PC.CompositeType.ADDITIVE)
         self.ksp.setFromOptions()
         self.ksp.setUp()
-        self.solver = ("MINRES + GAMG blocks" if self.gamma
+        self.solver = ("MINRES + Chebyshev on K, GAMG on the flux block" if self.gamma
                        else "MINRES + GAMG on the flux block") \
             + (", %d ranks" % self.mpi.size if self.mpi.size > 1 else "")
 
@@ -1026,23 +1101,20 @@ class Equil:
             return np.zeros(self.topo.ncells)
         return net * scale / self.topo.allsum(float(scale.sum()))
 
-    def _step(self, U, rhs_c, who, facet):
+    def _step(self, U, dv, rhs_c, who, facet):
         """(the step at the rank's columns, the refinement passes it took, why
-        they stopped). Passes on the true residual until every cell's balance is
-        FLUX_REFINE below what a loader accepts, or a pass stops paying: it gains
-        less than REFINE_GAIN, the residual is at round-off, or the pass runs out
-        of its own iterations.
+        they stopped, `cell_flux` of U plus the step where the last pass
+        measured it and None where it did not); dv is `cell_div` of U. Passes
+        on the true residual until every cell's balance is FLUX_REFINE below
+        what a loader accepts, or a pass stops paying: it gains less than
+        REFINE_GAIN, the residual is at round-off, or the pass runs out of its
+        own iterations.
 
-        The absolute tolerance every solve carries is the criterion's own: the
-        smallest net flux it asks of any cell, FLUX_REFINE * FLUX_TOL of the
-        smallest scale a cell is measured against, which is FLUX_FLOOR of the
-        stamp's largest facet flux. Taken from the first right-hand side
-        instead, it would pin every later correction -- whose own right-hand
-        side is minres_rtol of the first -- a couple of decades below where it
-        started. Nothing below RESIDUAL_STALL of the first right-hand side is
-        asked for, since MINRES stops making progress there."""
+        Every solve's absolute tolerance is the criterion's: FLUX_REFINE *
+        FLUX_TOL * FLUX_FLOOR of the stamp's largest facet flux, and never below
+        RESIDUAL_STALL of the first right-hand side."""
         if self.gamma:
-            self._add_up(penalty_rhs(self.topo, U, self.col, len(self.gcol)), self._b)
+            self._add_up(penalty_rhs(self.topo, U, self.col, len(self.gcol), dv), self._b)
             with self._b as a:
                 a[:self.nloc] *= -self.gamma
                 a[self.nloc:] = rhs_c
@@ -1059,8 +1131,10 @@ class Equil:
         npass = 0
         worse = np.inf
         why = "%d passes, the limit" % REFINE_MAX
+        parts = None
         while npass < REFINE_MAX:
-            ratio, _ = flux_ratios(self.topo, U + self._spread(s))
+            parts = cell_flux(self.topo, U + self._spread(s))
+            ratio, _ = flux_ratios(self.topo, None, parts)
             now = self.topo.allmax(ratio) / (FLUX_REFINE * FLUX_TOL)
             if now <= 1.0:
                 why = "the target was reached"
@@ -1086,8 +1160,9 @@ class Equil:
                 break
             self._x.axpy(-1.0, self._dx)
             s = self._local(self._x)
+            parts = None
             npass += 1
-        return s, npass, why
+        return s, npass, why, parts
 
     # ---- the step itself
     def _spread(self, s):
@@ -1120,7 +1195,8 @@ class Equil:
         # the boundary: reported, never refused
         imbalance = abs(net) / max(facet, 1e-300)
         target = self._spread_net(net, np.maximum(big, FLUX_FLOOR * max(facet, 1e-300)))
-        mean_in = split_volume_mean(topo, U)
+        dv = cell_div(topo, U)
+        mean_in = split_volume_mean(topo, U, dv)
         balance = topo.allmax(ratio)
         npass = 0
         stepped = True
@@ -1130,13 +1206,14 @@ class Equil:
             s = np.zeros(len(self.gcol))
             stepped = False
             why = "the data was balanced already, so no step was taken"
+            parts = (r, big)
         else:
-            s, npass, why = self._step(U, target - r, who, facet)
+            s, npass, why, parts = self._step(U, dv, target - r, who, facet)
         self.iterations = max(self.iterations, self._its)
         self.refinements = max(self.refinements, npass)
         ds = self._spread(s)
         out = U + ds
-        r2, big2 = cell_flux(topo, out)
+        r2, big2 = cell_flux(topo, out) if parts is None else parts
         ratio2, _ = flux_ratios(topo, out, (r2, big2))
         ratio2 = np.where(np.isnan(ratio2), np.inf, ratio2)
         after = topo.allmax(ratio2)
@@ -1145,9 +1222,10 @@ class Equil:
                                "than the %.0e a loader accepts"
                                % (who, int(topo.allmin(topo.cell_gid[ratio2 == after])),
                                   after, FLUX_TOL))
-        mean_out = split_volume_mean(topo, out)
+        dv = cell_div(topo, out) if stepped else dv
+        mean_out = split_volume_mean(topo, out, dv)
         change = ds[topo.nverts:]
-        div2 = topo.allsum(float(np.sum(div_norms(topo, out) ** 2)))
+        div2 = topo.allsum(float(np.sum(div_norms(topo, out, dv) ** 2)))
         return out, dict(flux_before_max=topo.allmax(np.abs(r)),
                          facet_flux_max=facet, imbalance=imbalance,
                          flux_after_max=topo.allmax(np.abs(r2)),
@@ -1174,21 +1252,28 @@ def throughput_drift(topo, drift):
     return drift[topo.periodic] if topo.periodic.any() else np.zeros(0)
 
 
-def change_report(topo, change, umax):
-    """The size of the midpoint change relative to |u|max, in the cells with an
-    exterior facet the mesh does not pair and in the rest: (rms, max, edges)
-    each, over the whole mesh's edges, each counted by the rank that owns it."""
+def change_masks(topo):
+    """The rank's owned edges in the cells with an exterior facet the mesh does
+    not pair, and in the rest: (boundary, bulk), what `change_report` sorts by."""
     lv = topo.nverts
-    mag = np.linalg.norm(change, axis=1)
     wall = np.zeros(topo.nnodes, bool)
     k = np.nonzero(topo.cell_boundary)[0]
     if len(k):
         wall[lv + topo.cell_edge[k].ravel()] = True
     wall = topo.reduce_nodes(wall, "or")[lv:]
     own = topo.owned()[lv:]
+    return wall & own, ~wall & own
+
+
+def change_report(topo, change, umax, masks):
+    """The size of the midpoint change relative to |u|max, in the cells with an
+    exterior facet the mesh does not pair and in the rest: (rms, max, edges)
+    each, over the whole mesh's edges, each counted by the rank that owns it.
+    masks is `change_masks`'."""
+    mag = np.linalg.norm(change, axis=1)
     out = {}
-    for name, m in (("boundary", wall), ("bulk", ~wall)):
-        v = mag[m & own] / max(umax, 1e-300)
+    for name, m in zip(("boundary", "bulk"), masks):
+        v = mag[m] / max(umax, 1e-300)
         n = int(topo.allsum(len(v)))
         out[name] = (float(np.sqrt(topo.allsum(float(np.sum(v ** 2))) / n)) if n else 0.0,
                      topo.allmax(v) if n else 0.0, n)
@@ -1319,54 +1404,6 @@ def _p2_basis(S, p, grad=False):
     return lam, np.array(g)
 
 
-def _cell_node_values(topo, U, uint, k):
-    """A dict from the rounded position of every P2 node of macro cell k's split
-    to its value."""
-    V = topo.X[topo.cells[k]]
-    z = V.mean(axis=0)
-    out = {}
-    vb = np.concatenate([U[topo.cells[k]], U[topo.nverts + topo.cell_edge[k]]])
-    for j, p in enumerate(np.vstack([V] + [(V[a] + V[b]) / 2 for a, b in LOC_EDGES[topo.nv]])):
-        out[tuple(np.round(p, 10))] = vb[j]
-    for j, p in enumerate(np.vstack([z[None]] + [(V[i] + z) / 2 for i in range(topo.nv)])):
-        out[tuple(np.round(p, 10))] = uint[k][j]
-    return V, z, out
-
-
-def eval_split(topo, U, uint, pts, cell_of, grad=False):
-    """The split field at points, each given the macro cell it lies in; with
-    grad, its pointwise divergence."""
-    d = topo.dim
-    out = np.zeros((len(pts), 1 if grad else d))
-    for q, (p, k) in enumerate(zip(pts, cell_of)):
-        V, z, nodemap = _cell_node_values(topo, U, uint, k)
-        best, bestlam = None, -np.inf
-        for o in range(d + 1):
-            S = np.vstack([np.delete(V, o, axis=0), z])
-            lam, B = _p2_basis(S, p, grad)
-            if lam.min() > bestlam:
-                bestlam, best = lam.min(), (S, B)
-            if lam.min() > -1e-10:
-                break
-        S, B = best
-        nodes = np.vstack([S] + [(S[a] + S[b]) / 2 for a, b in LOC_EDGES[d + 1]])
-        vals = np.array([nodemap[tuple(np.round(n, 10))] for n in nodes])
-        out[q] = np.einsum('nc,nc->', B, vals) if grad else B @ vals
-    return out
-
-
-def p2_eval(topo, U, pts, cell_of, grad=False):
-    """The plain P2 field on the original cells at points."""
-    d = topo.dim
-    out = np.zeros((len(pts), 1 if grad else d))
-    for q, (p, k) in enumerate(zip(pts, cell_of)):
-        S = topo.X[topo.cells[k]]
-        _, B = _p2_basis(S, p, grad)
-        vals = np.concatenate([U[topo.cells[k]], U[topo.nverts + topo.cell_edge[k]]])
-        out[q] = np.einsum('nc,nc->', B, vals) if grad else B @ vals
-    return out
-
-
 def p1_to_p2(topo, U1):
     """A P1 vertex field as P2 nodes: the edge midpoints the mean of their ends."""
     return np.vstack([U1, 0.5 * (U1[topo.edges[:, 0]] + U1[topo.edges[:, 1]])])
@@ -1383,16 +1420,6 @@ def _root():
 def _h5py():
     import h5py
     return h5py
-
-
-def read_mesh_h5(path):
-    """(coordinates, topology, cell_indices) of a dolfin HDF5 mesh."""
-    with _h5py().File(str(path), "r") as f:
-        topo = np.array(f["mesh/topology"]).astype(np.int32)
-        X = np.array(f["mesh/coordinates"])
-        ci = (np.array(f["mesh/cell_indices"]).astype(np.int64)
-              if "mesh/cell_indices" in f else None)
-    return X, topo, ci
 
 
 def read_element(path, field):
@@ -1414,22 +1441,20 @@ def read_element(path, field):
     return deg, ncomp
 
 
+def _index_type(n):
+    """The smaller integer type that indexes n entries."""
+    return np.int32 if n < INT32_TOP else np.int64
+
+
 class DofTable:
     """The per-cell dof table of a dataset's first file, and any file's values by
     node through it, for the cells and nodes the topology holds.
 
     Only the first file of a dataset carries the table; a later one holds just
-    `<field>/vector_0`, which is all the loaders open for it.
-
-    Every rank reads a contiguous block of the table's rows and of each file's
-    values. A row reaches the rank that holds its cell by the cell's label --
-    `<field>/cells` against the mesh's `cell_indices`, or the row's own index
-    where the mesh has none -- and a dof's value comes from the rank whose block
-    holds it; both exchanges are built once and serve every file. The cells of
-    a rank agree on a node or not by themselves, and the ranks that share a
-    node by its owner, which receives every rank's value of it. A `DistTopo`
-    carries its cells' labels; `cell_indices`, the mesh's, is for a `Topo`,
-    which does not.
+    `<field>/vector_0`. Every rank reads a contiguous block of rows and values;
+    a row reaches its cell's rank by the cell's label (`<field>/cells` against
+    the mesh's `cell_indices`, or the row index where the mesh has none). A
+    `DistTopo` carries its cells' labels; `cell_indices` is for a `Topo`.
     """
 
     def __init__(self, first, field, topo, cell_indices=None):
@@ -1475,29 +1500,54 @@ class DofTable:
         if comm.allreduce(bool((rows < 0).any()), op=MPI.LOR):
             raise ValueError("%s: '%s/cells' leaves a cell of the mesh without a row"
                              % (first, field))
-        # a vector element's cell dofs come component by component, nloc each
-        rows = rows.reshape(topo.ncells, nc, nloc).transpose(0, 2, 1)
         nodes = (np.concatenate([topo.cells, topo.nverts + topo.cell_edge], axis=1)
-                 if self.degree == 2 else topo.cells)
+                 if self.degree == 2 else topo.cells).astype(np.int64)
         self.n_total = topo.nverts + (topo.nedges if self.degree == 2 else 0)
-        # every (node component, dof) the table pairs, once
-        slot = (nodes[:, :, None] * nc + np.arange(nc)).ravel()
-        dof = rows.ravel()
-        del rows
-        order = np.lexsort((dof, slot))
-        slot, dof = slot[order], dof[order]
-        keep = np.ones(len(slot), bool)
-        keep[1:] = (slot[1:] != slot[:-1]) | (dof[1:] != dof[:-1])
-        self._slot = slot[keep]
-        self._dof, self._pick = np.unique(dof[keep], return_inverse=True)
-        del slot, dof, order, keep
+        whole = topo.nverts_global + (topo.nedges_global if self.degree == 2 else 0)
+        # every (node component, dof) the table pairs, once, sorted: slot*ndof + dof
+        # in one key, the rank's slots, or as two keys past what one holds
+        ndof = max(comm.allreduce(int(rows.max(initial=-1)), op=MPI.MAX) + 1, 1)
+        if self.n_total * nc * ndof < KEY_TOP:
+            # a vector element's cell dofs come component by component, nloc each
+            key = rows.reshape(topo.ncells, nc, nloc)
+            nodes *= nc * ndof
+            for c in range(nc):
+                key[:, c] += nodes
+                key[:, c] += c * ndof
+            del nodes
+            key = rows.reshape(-1)
+            del rows
+            key.sort()
+            key = key[_run_starts(key)]
+            slot = key // ndof
+            key -= slot * ndof
+        else:
+            slot = np.empty((topo.ncells, nc, nloc), np.int64)
+            nodes *= nc
+            for c in range(nc):
+                np.add(nodes, c, out=slot[:, c])
+            del nodes
+            slot = slot.reshape(-1)
+            key = rows.reshape(-1)
+            del rows
+            o = np.lexsort((key, slot))
+            slot, key = slot[o], key[o]
+            del o
+            keep = _run_starts(key, slot)
+            slot, key = slot[keep], key[keep]
+            del keep
+        # one dof a slot: the rank's cells cannot disagree among themselves
+        self._distinct = bool(np.all(slot[1:] != slot[:-1]))
+        self._slot = slot.astype(_index_type(self.n_total * nc))
+        del slot
+        self._dof, pick = np.unique(key, return_inverse=True)
+        self._pick = pick.astype(_index_type(len(self._dof)))
+        del key, pick
         # a vertex in no cell is a node the table gives no value
         own = int(np.sum(topo.owned()[:self.n_total]))
-        whole = topo.nverts_global + (topo.nedges_global if self.degree == 2 else 0)
         self._orphans = topo.allsum(own) < whole
-        copies = topo.reduce_nodes(np.ones(topo.nnodes, np.int64), "sum")[:self.n_total]
-        self._shared = np.nonzero(copies > 1)[0]
-        self._shared_ex = dd.Exchange(comm, topo.node_owner[self._shared])
+        self._shared = np.nonzero(topo.node_shared[:self.n_total])[0]
+        self._shared_red = topo.shared_reduction(None if self.degree == 2 else self.n_total)
         self._fetch = None
 
     @staticmethod
@@ -1534,8 +1584,8 @@ class DofTable:
                 raise ValueError("%s: '%s' holds %d values, fewer than its dof table names"
                                  % (path, self.field, length))
             ex = dd.Exchange(comm, dd.block_owner(self._dof, length, comm.size))
-            self._fetch = (length, ex, ex.forward(self._dof) - _split(length, comm.size,
-                                                                       comm.rank)[0])
+            v0, v1 = _split(length, comm.size, comm.rank)
+            self._fetch = (length, ex, (ex.forward(self._dof) - v0).astype(_index_type(v1 - v0)))
         return self._fetch[1:]
 
     def values(self, path):
@@ -1561,18 +1611,22 @@ class DofTable:
         del got
         values = np.empty(self.n_total * nc)
         values[self._slot] = pv
-        disagree = not np.array_equal(values[self._slot], pv)
+        disagree = not (self._distinct or np.array_equal(values[self._slot], pv))
         del pv
         values = values.reshape(self.n_total, nc)
-        # a node other ranks hold too: its owner sees every rank's value
+        # a node other ranks hold too: its node_turn sees every rank's value
         mine = values[self._shared]
-        both = _dist()._reduce_exchange(self._shared_ex, topo.node_gid[self._shared],
-                                        np.hstack([mine, -mine]), "max")
+        both = self._shared_red(np.hstack([mine, -mine]), "max")
         disagree |= not (np.array_equal(both[:, :nc], mine)
                          and np.array_equal(-both[:, nc:], mine))
         if comm.allreduce(disagree, op=MPI.LOR):
             raise ValueError("%s: cells disagree on a node of '%s'" % (path, self.field))
         return values
+
+    def p2_values(self, path):
+        """`values` by the rank's P2 nodes: a P1 field with its edge midpoints."""
+        U = self.values(path)
+        return p1_to_p2(self.topo, U) if self.degree == 1 else U
 
 
 def read_params(path):
@@ -1601,22 +1655,15 @@ def read_stamps(folder, prm):
     return kind, name, entries
 
 
-def read_case(params_path, periodic_tol=PERIODIC_TOL, mesh=True):
-    """The mesh, the stamp list and the field names of a dolfin HDF5 case; with
-    mesh=False the mesh is left in its file, X, cells and cell_indices are None
-    and periodic has a flag for each of x, y and z."""
+def read_case(params_path, periodic_tol=PERIODIC_TOL):
+    """The stamp list and the field names of a dolfin HDF5 case, the mesh left in
+    its file; periodic has a flag for each of x, y and z."""
     folder = Path(params_path).parent
     prm, lines = read_params(params_path)
-    X = cells = ci = None
-    if mesh:
-        X, cells, ci = read_mesh_h5(folder / prm["mesh"])
-        X = X[:, :cells.shape[1] - 1]
     kind, stampfile, stamps = read_stamps(folder, prm)
     periodic = [prm.get("periodic_%s" % a, "false") == "true" for a in "xyz"]
-    return dict(folder=folder, prm=prm, lines=lines, X=X, cells=cells, cell_indices=ci,
-                kind=kind, stampfile=stampfile, stamps=stamps,
-                periodic=periodic[:X.shape[1]] if mesh else periodic,
-                periodic_tol=periodic_tol)
+    return dict(folder=folder, prm=prm, lines=lines, kind=kind, stampfile=stampfile,
+                stamps=stamps, periodic=periodic, periodic_tol=periodic_tol)
 
 
 
@@ -1646,48 +1693,17 @@ def write_mesh_h5(path, X, cells):
 def _cell_dofs(topo, degree, ncomp):
     """The per-cell dof table of our own numbering, a row for each cell the
     topology holds: dof = serial node*ncomp + component, the components blocked
-    as dolfin blocks them."""
+    as dolfin blocks them. int32, as dolfin writes it, where every dof fits
+    below INT32_TOP, and int64, as a dolfin of 64-bit indices writes it,
+    otherwise."""
+    n = (topo.nnodes_global if degree == 2 else topo.nverts_global) * ncomp
     node = topo.node_gid[np.concatenate([topo.cells, topo.nverts + topo.cell_edge], axis=1)
-                         if degree == 2 else topo.cells]
-    rows = [node * ncomp + c for c in range(ncomp)]
-    return np.concatenate(rows, axis=1).astype(np.int32)
-
-
-def write_checkpoint(path, field, values, topo, degree, mode="w", cell_indices=None):
-    """One field as a dolfin checkpoint: the dof table, the cell list and the
-    values, in the numbering `write_vector` then reuses.
-
-    The rows are the mesh's own, and `cells` labels them by global cell id, as
-    dolfin does: `cell_indices` is the map the mesh beside them carries, which a
-    reader composes through to find the row it wants. Without it the labels are
-    `0..n-1`, which is the map a serially written mesh carries."""
-    h5py = _h5py()
-    values = np.ascontiguousarray(values, dtype=float)
-    ncomp = values.shape[1]
-    cd = _cell_dofs(topo, degree, ncomp)
-    gid = (np.arange(topo.ncells) if cell_indices is None
-           else np.asarray(cell_indices)).astype(np.uint64)
-    if len(gid) != topo.ncells:
-        raise ValueError("%s: %d cell indices for %d cells" % (path, len(gid), topo.ncells))
-    with h5py.File(str(path), mode) as f:
-        g = f.create_group(field)
-        g.attrs["signature"] = np.bytes_(_signature(degree, ncomp, topo.dim))
-        g.create_dataset("cell_dofs", data=cd.ravel())
-        g.create_dataset("x_cell_dofs",
-                         data=np.arange(topo.ncells + 1, dtype=np.uint64) * cd.shape[1])
-        g.create_dataset("cells", data=gid)
-        v = g.create_dataset("vector_0", data=values.ravel())
-        v.attrs["partition"] = np.array([0], dtype=np.uint64)
-
-
-def write_vector(path, field, values, degree, ncomp, dim, mode="w"):
-    """A later stamp or component: `<field>/vector_0`, which is all `read_vector`
-    opens, and the signature, which the frequency loader checks on every
-    component against the first."""
-    with _h5py().File(str(path), mode) as f:
-        g = f.create_group(field)
-        g.attrs["signature"] = np.bytes_(_signature(degree, ncomp, dim))
-        g.create_dataset("vector_0", data=np.ascontiguousarray(values, dtype=float).ravel())
+                         if degree == 2 else topo.cells].astype(np.int64, copy=False)
+    node *= ncomp
+    out = np.empty((topo.ncells, ncomp, node.shape[1]), _index_type(n))
+    for c in range(ncomp):
+        np.add(node, c, out=out[:, c], casting="unsafe")
+    return out.reshape(topo.ncells, ncomp * node.shape[1])
 
 
 def copy_group(src, dst, name):
@@ -1761,8 +1777,9 @@ def taylor_hood_moments(topo, U):
     return topo.allmax(rel), float(np.sqrt(topo.allsum(float(np.sum(rel ** 2))) / count))
 
 
-def _read_topology(case, comm, partition):
+def read_topology(case, comm=None, partition=None):
     """A case's mesh as this rank's share of it; a rank may hold no cell."""
+    comm = comm or MPI.COMM_WORLD
     mesh = case["folder"] / case["prm"]["mesh"]
     if partition is None:
         # nothing to share out on one rank
@@ -1777,8 +1794,8 @@ def check_case(params_path, periodic_tol=PERIODIC_TOL, field=None, quiet=False,
     applies, with the net flux through the boundary, the volume mean and the
     data's Taylor-Hood compatibility. Collective: every rank checks its share."""
     comm = MPI.COMM_WORLD
-    case = read_case(params_path, periodic_tol, mesh=False)
-    topo = _read_topology(case, comm, partition)
+    case = read_case(params_path, periodic_tol)
+    topo = read_topology(case, comm, partition)
     field = field or case["prm"].get("velocity_field", "u")
     first = case["folder"] / case["stamps"][0][1]
     dof = DofTable(first, field, topo)
@@ -1786,9 +1803,7 @@ def check_case(params_path, periodic_tol=PERIODIC_TOL, field=None, quiet=False,
     worst_th = 0.0
     loud = not quiet and comm.rank == 0
     for cols, name in case["stamps"]:
-        U = dof.values(case["folder"] / name)
-        if dof.degree == 1:
-            U = p1_to_p2(topo, U)
+        U = dof.p2_values(case["folder"] / name)
         r, big = cell_flux(topo, U)
         ratio, facet = flux_ratios(topo, U, (r, big))
         rel = topo.allmax(ratio)
@@ -1868,26 +1883,42 @@ class _Rows:
     """The output's rows from the rank's share: each cell's row to the rank whose
     block of the serial cells holds it, each node's value from the node's owner
     to the rank whose block of the serial nodes holds it. Both exchanges are
-    built once and serve every file."""
+    built once and serve every file; where every rank already holds its block,
+    in order, neither is (None)."""
 
     def __init__(self, topo):
         dd, comm = _dist(), topo.comm
         self.topo = topo
-        self._cells = dd.Exchange(comm, dd.block_owner(topo.cell_gid, topo.ncells_global,
-                                                       comm.size))
-        self._corder = np.argsort(self._cells.forward(topo.cell_gid))
-        self._own = np.flatnonzero(topo.owned())
-        gid = topo.node_gid[self._own]
-        self._nodes = dd.Exchange(comm, dd.block_owner(gid, topo.nnodes_global, comm.size))
-        self._norder = np.argsort(self._nodes.forward(gid))
+        self._cells = self._corder = self._nodes = self._norder = self._own = None
+        if not self._block(topo.cell_gid, topo.ncells_global, comm):
+            self._cells = dd.Exchange(comm, dd.block_owner(topo.cell_gid, topo.ncells_global,
+                                                           comm.size))
+            self._corder = np.argsort(self._cells.forward(topo.cell_gid))
+        own = topo.owned()
+        if not self._block(topo.node_gid, topo.nnodes_global, comm, own.all()):
+            self._own = np.flatnonzero(own)
+            gid = topo.node_gid[self._own]
+            self._nodes = dd.Exchange(comm, dd.block_owner(gid, topo.nnodes_global, comm.size))
+            self._norder = np.argsort(self._nodes.forward(gid))
+
+    @staticmethod
+    def _block(gid, total, comm, ok=True):
+        """Whether every rank holds exactly its `_split` block of the ids, in order."""
+        a, b = _split(total, comm.size, comm.rank)
+        mine = ok and len(gid) == b - a and bool(np.all(gid == np.arange(a, b)))
+        return bool(comm.allreduce(mine, op=MPI.LAND))
 
     def cells(self, degree, ncomp, labels):
         """(the dof rows, the cell labels) of the rank's block of cells."""
-        return (self._cells.forward(_cell_dofs(self.topo, degree, ncomp))[self._corder],
-                self._cells.forward(labels)[self._corder])
+        cd = _cell_dofs(self.topo, degree, ncomp)
+        if self._cells is None:
+            return cd, labels
+        return self._cells.forward(cd)[self._corder], self._cells.forward(labels)[self._corder]
 
     def nodes(self, values):
         """The values of the rank's block of nodes."""
+        if self._nodes is None:
+            return values
         return self._nodes.forward(values[self._own])[self._norder]
 
 
@@ -1915,7 +1946,7 @@ def clean_case(params_path, out, split=False, weights="volume", write_key=True,
     if split and comm.size > 1:
         raise ValueError("--split writes the split mesh and its field from one rank, and "
                          "this job has %d: run it without mpirun" % comm.size)
-    case = read_case(params_path, periodic_tol, mesh=False)
+    case = read_case(params_path, periodic_tol)
     folder, prm = case["folder"], case["prm"]
     table = case["stamps"][0][1]      # the file that carries the dof table
     if field_file is not None:
@@ -1932,7 +1963,7 @@ def clean_case(params_path, out, split=False, weights="volume", write_key=True,
     have_p = prm.get("ignore_pressure", "false") != "true"
 
     t0 = time.time()
-    topo = _read_topology(case, comm, partition)
+    topo = read_topology(case, comm, partition)
     files = []
     for _, name in case["stamps"]:
         if name not in files:
@@ -1941,22 +1972,17 @@ def clean_case(params_path, out, split=False, weights="volume", write_key=True,
     if dof.ncomp != topo.dim:
         raise ValueError("'%s' has %d components, not %d" % (u_name, dof.ncomp, topo.dim))
     # the held set is the dataset's: a node at rest in every stamp or component,
-    # so every stamp is read before the first is cleaned. What fits the budget
-    # is kept, so a short series is read once.
+    # so every stamp is read before the first is cleaned; the first is kept
     nmax = np.zeros(topo.nnodes)
     scale = 0.0
-    cached = {}
-    # the budget is the compute node's, shared by its ranks; a stamp kept is kept by all
-    budget = READ_CACHE_BYTES // comm.size
+    kept = None
     for name in files:
-        U = dof.values(folder / name)
-        if dof.degree == 1:
-            U = p1_to_p2(topo, U)
+        U = dof.p2_values(folder / name)
         nmax = np.maximum(nmax, np.linalg.norm(U, axis=1))
         scale = max(scale, float(np.abs(U).max(initial=0.0)))
-        if comm.allreduce(U.nbytes <= budget, op=MPI.LAND):
-            cached[name] = U
-            budget -= U.nbytes
+        if kept is None:
+            kept = U
+    del U
     topo.set_held(at_rest_nodes(topo.reduce_nodes(nmax, "max"), topo.allmax(scale), rest_tol))
     read_time = time.time() - t0
 
@@ -2018,33 +2044,29 @@ def clean_case(params_path, out, split=False, weights="volume", write_key=True,
                mean_before=None, mean_after=None, mean_shift=0.0, imbalance=0.0,
                throughput_drift=0.0, balance_after=0.0, div_rms=0.0, stepped=False,
                refine_stop="")
+    masks = change_masks(topo)
     t1 = time.time()
     for i, name in enumerate(files):
-        U = cached.pop(name, None)
-        if U is None:
-            U = dof.values(folder / name)
-            if dof.degree == 1:
-                U = p1_to_p2(topo, U)
+        U = kept if i == 0 else dof.p2_values(folder / name)
+        kept = None
         Uc, info = eq.apply(U, name)
+        del U
         umax = topo.allmax(np.linalg.norm(Uc, axis=1))
-        ch = change_report(topo, info["change"], umax)
-        rep["before"] = max(rep["before"], info["flux_before_max"])
-        rep["after"] = max(rep["after"], info["flux_after_max"])
-        rep["facet"] = max(rep["facet"], info["facet_flux_max"])
-        rep["div_rms"] = max(rep["div_rms"], info["div_rms"])
+        ch = change_report(topo, info["change"], umax, masks)
+        tp = throughput_drift(topo, info["drift"])
         # the stamp that came out worst is the one whose stop reason explains the run
         if info["balance_after"] >= rep["balance_after"]:
             rep["refine_stop"] = info["refine_stop"]
-        rep["balance_after"] = max(rep["balance_after"], info["balance_after"])
-        rep["imbalance"] = max(rep["imbalance"], info["imbalance"])
+        for k, v in (("before", info["flux_before_max"]), ("after", info["flux_after_max"]),
+                     ("facet", info["facet_flux_max"]), ("div_rms", info["div_rms"]),
+                     ("balance_after", info["balance_after"]), ("imbalance", info["imbalance"]),
+                     ("throughput_drift", float(np.abs(tp).max()) if len(tp) else 0.0),
+                     ("mean_shift", float(np.abs(info["drift"]).max()))):
+            rep[k] = max(rep[k], v)
         rep["stepped"] = rep["stepped"] or info["stepped"]
         if rep["mean_before"] is None:
             rep["mean_before"] = info["mean_before"]
             rep["mean_after"] = info["mean_after"]
-        tp = throughput_drift(topo, info["drift"])
-        rep["throughput_drift"] = max(rep["throughput_drift"],
-                                      float(np.abs(tp).max()) if len(tp) else 0.0)
-        rep["mean_shift"] = max(rep["mean_shift"], float(np.abs(info["drift"]).max()))
         for k in ("boundary", "bulk"):
             rep[k] = (max(rep[k][0], ch[k][0]), max(rep[k][1], ch[k][1]), ch[k][2])
         if verbose:
@@ -2156,6 +2178,33 @@ def _link_or_copy(src, dst):
 # ----------------------------------------------------------------------- CLI
 
 
+def _one_blas_thread():
+    """BLAS and OpenMP at one thread in this process, unless the user set a count."""
+    if os.environ.get("OMP_NUM_THREADS") or os.environ.get("OPENBLAS_NUM_THREADS"):
+        return
+    import ctypes
+    try:
+        with open("/proc/self/maps") as f:
+            libs = sorted({l.split()[-1] for l in f
+                           if any(k in l for k in ("openblas", "libblas", "libgomp"))})
+    except OSError:
+        return
+    # an OpenMP OpenBLAS takes OpenMP's count again at every call, so both; wheels
+    # carry their own OpenBLAS under suffixed names
+    names = ("openblas_set_num_threads", "openblas_set_num_threads64_",
+             "scipy_openblas_set_num_threads", "scipy_openblas_set_num_threads64_",
+             "omp_set_num_threads")
+    for lib in libs:
+        try:
+            handle = ctypes.CDLL(lib)
+        except OSError:
+            continue
+        for name in names:
+            fn = getattr(handle, name, None)
+            if fn is not None:
+                fn(1)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(
         prog="divfree_clean.py",
@@ -2203,6 +2252,7 @@ def main(argv=None):
                         "(the default on several ranks) or ParMETIS on their dual graph, or "
                         "the contiguous blocks they are stored in")
     a = p.parse_args(argv)
+    _one_blas_thread()
     if not (a.check or a.out):
         p.error("--out is required unless --check is given")
     # every rank refuses alike, before any collective

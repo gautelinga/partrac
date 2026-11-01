@@ -1,8 +1,8 @@
 // wall_upgrade in the frequency loaders (mode=trianglefreq and tetfreq), P1
 // and P2, on dolfin's unit square and cube with every side a wall.
 //
-// A wall vertex is at rest only if every component is at rest there, within
-// one tolerance for the sum, so the near-wall rule raises the summed field the
+// A wall vertex (P1) or wall entity (P2) is at rest only if every component is
+// at rest there, within one tolerance for the sum, so the near-wall rule raises the summed field the
 // way the stamped loader raises a stamp. That gives the references here: the
 // stamped loader (mode=triangle and tet) reading the same files as two
 // stamps, or reading one field that is the components' sum. Lines of
@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "Error.hpp"
 #include "SimplexInterpol.hpp"
 #include "interpolators.hpp"
 #include "case_dir.hpp"
@@ -151,8 +152,8 @@ void same_as_stamps(const std::size_t n, const std::string& u_el){
 }
 
 // Components that differ on a wall: the frequency loader is the stamped one
-// on their sum, with the components in either order, and not the stamped one
-// on the components
+// on their sum, with the components in either order; the stamped loader
+// refuses stamps whose walls move after the first
 template<typename Cell>
 void same_as_sum(const std::size_t n, const std::string& u_el, const Comp f0, const Comp f1){
   constexpr int D = Cell::n_verts - 1;
@@ -167,7 +168,7 @@ void same_as_sum(const std::size_t n, const std::string& u_el, const Comp f0, co
     const auto a = sample(freq, D, T0);
     CHECK(gap(a, ref, U) < 1e-12);
     CHECK(gap(a, ref, gradU) < 1e-12);
-    if (!swapped) CHECK(gap(a, sample(stamps, D, T0), gradU) > 1e-9);
+    if (!swapped) CHECK_THROWS_AS(sample(stamps, D, T0), partrac::Error);
   }
 }
 

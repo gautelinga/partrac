@@ -66,7 +66,7 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   TimeScheme scheme(prm, run.gens);
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
-  scheme.prepare(*run.intp);
+  scheme.prepare(*run.intp, E);
   record_tracer_fields<E>(run, ps, E == TransportElement::Vector);
   Topology mesh(ps, cloud_options(prm));
   start_tracers<E>(run, ps, mesh);
@@ -119,6 +119,7 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
                                prm.get<double>("dx_max"), prm.get<double>("T"));
 
   ParticleSet ps(run.intp, prm.get<Uint>("Nrw_max"));
+  integrator.prepare(*run.intp, E);
   record_tracer_fields<E>(run, ps, false);
   ps.dump_as("t_loc", "tau");
   Topology mesh(ps, cloud_options(prm));

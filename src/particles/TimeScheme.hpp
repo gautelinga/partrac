@@ -31,10 +31,13 @@ public:
     else
       explicit_.emplace(prm.get<double>("Dm"), prm.get<int>("int_order"), gens);
   }
-  // RK4cells in cells: the gradient for its prediction; a field it cannot take refused
-  void prepare(Interpol& intp) const {
+  // The fields the step reads, for elements E: RK4cells in cells the gradient
+  // for its prediction (a field it cannot take refused), the explicit step its own
+  void prepare(Interpol& intp, const TransportElement E = TransportElement::Point) const {
     if (rk4cells && steps_in_cells(intp))
       intp.set_needs_gradient(true);
+    if (explicit_)
+      explicit_->prepare(intp, E);
   }
   // Accept/decline tally
   Integrator& counters(){

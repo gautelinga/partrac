@@ -59,8 +59,8 @@ def test_a_resumed_strip_is_identical_to_one_never_stopped(tmp_path, fmt):
     """A refining and coarsening strip with tau integration resumes bit for bit.
     If any edge state (dl0, tau, rho_prev) were missing from the checkpoint, a
     restarted diffusive-strip run would silently continue from a wrong, e.g.
-    unmixed, strip. A text checkpoint, as older runs wrote them, resumes the
-    same way."""
+    unmixed, strip. A checkpoint in the old text format resumes the same
+    way."""
     a, b = continuous_and_resumed_at_end(
         tmp_path, ["init_mode=strip_x", "La=0.5", "ds_max=0.01", "ds_min=0.002",
                    "refine=true", "refine_intv=%g" % DT,

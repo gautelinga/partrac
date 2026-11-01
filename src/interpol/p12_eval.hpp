@@ -76,7 +76,7 @@ __attribute__((always_inline))
 inline Matrix3d block_gradient(const double* dNx, const double* dNy, const double* dNz,
                                const double* block, const Uint ncoeffs){
   const double* dN[3] = {dNx, dNy, dNz};
-  const auto d = [&](const int j, const int i){
+  const auto d = [&](const int j, const int i) __attribute__((always_inline)){
     return std::inner_product(dN[j], dN[j] + ncoeffs, block + i*ncoeffs, 0.0);
   };
   Matrix3d gradU;

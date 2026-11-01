@@ -32,6 +32,7 @@ public:
   bool has_wall() const { return e->has_wall(); }
   double sdf(const Vector3d &x) const { return e->sdf(x); }
   Vector3d sdf_grad(const Vector3d &x) const { return e->sdf_grad(x); }
+  void set_convective(const bool b) { e->set_convective(b); }
 private:
   std::shared_ptr<Expr> e;
   double t;
@@ -84,6 +85,11 @@ public:
     return false;
   };
   void enable_reflection() { can_reflect = expr->has_wall(); };
+  // The expression's (U.grad) gradU only where a step reads it
+  void set_needs_convective(const bool b) override {
+    Interpol::set_needs_convective(b);
+    expr->set_convective(b);
+  };
   double get_t_min() const override { return expr_params.get<double>("t_min"); };
   double get_t_max() const override { return expr_params.get<double>("t_max"); };
   using Interpol::locate;

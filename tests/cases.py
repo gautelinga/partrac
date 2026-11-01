@@ -1,5 +1,5 @@
-"""The smoke-run table shared by the tests and the harness scripts, the
-synthetic FELBM writer, the stamped fields on the P1 square, and the cache
+"""The smoke-run table, the synthetic FELBM writer, the stamped fields on the
+P1 square, and the cache
 that builds each generated input once per test session.
 
 One table says what each app takes (APPS) and one what each input kind needs

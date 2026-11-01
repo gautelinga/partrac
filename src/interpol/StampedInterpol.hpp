@@ -13,7 +13,8 @@
 // names a stamp), vertex_fields (every field on the velocity's vertex table),
 // schema(D), the timestamps ts, load (the mesh, its tables and any first stamp),
 // read (one stamp into a buffer), key and name (a timestamp's Key and its name
-// in the log). Its schema declares include_phi and wall_upgrade, which are read here.
+// in the log). Its schema declares include_phi, wall_upgrade, wall_facets and
+// wall_markers, which are read here; named_walls: accepts wall_facets.
 
 #include <array>
 #include <cstdint>
@@ -22,6 +23,7 @@
 
 #include "MeshCore.hpp"
 #include "near_wall.hpp"
+#include "wall_split.hpp"
 #include "stamp_buffer.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
@@ -51,7 +53,7 @@ public:
   struct Held {
     std::array<double, Cell::n_dofs_max*3> prev, next;
     std::array<double, (Cell::n_verts - 1)*Cell::n_dofs_max> prev2, next2;   // a wall cell's P2 blocks
-    near_wall::TermView terms;   // a P2 wall cell's
+    wall_split::Ready<Cell> ready;   // a P2 wall cell's, of both stamps
     bool wall, at_rest_prev, at_rest_next;
   };
   void hold(const Region& R, Held& h) const;
@@ -78,12 +80,10 @@ protected:
   using Base::verbose;
   using Base::read_mesh_params; using Base::set_period; using Base::tree_;
 
-  // A stamp's fields by node, and the near-wall rule's tolerance computed from its velocity
+  // A stamp's fields by node, and the tolerance its walls are found at rest by
   struct Stamp {
     std::vector<double> u, p, phi;   // phi: nverts_ values, then with phase_gradient_ D a vertex
     double rest_tol = 0.;   // |u| at rest on a wall
-    // P2 walls: the upgrade terms' coefficients, zero in a cell with no wall vertex at rest
-    std::vector<double> coef;
   };
 
   // The node tables of the scalar fields; a format that reads every field by
@@ -112,26 +112,38 @@ protected:
 
   std::vector<int> cell_type_;
 
-  // Near walls: P1 to P2 by the edge rule, or P2 plus the quartic terms
+  // Near walls: P1 to P2 by the edge rule, or P2 plus the wall correction
   bool wall_upgrade_ = false;
   bool upgrade_p2_ = false;   // never read where every field is by vertex
+  bool wall_eval_ = false;    // the wall cells read as such: once their rest is fixed
+  bool walls_given_ = false;  // wall_facets: its walls, all at rest
+  bool walls_checked_ = false;   // against the first stamp with flow
 
   using WallEdges = near_wall::WallEdges<Cell>;
-  std::vector<std::int32_t> wall_index_;   // -1: no wall vertex
+  std::vector<std::int32_t> wall_index_;   // -1: no wall vertex or entity at rest
+  // P1: the edge ends; wall: the wall vertices, then those at rest
   std::vector<WallEdges> wall_cells_;
-  near_wall::UpgradeTable<Cell> upgrade_;
-  // The stamps in play's coefficients
-  const double* coef_prev_ = nullptr;
-  const double* coef_next_ = nullptr;
-  // What a stamp read needs computed: the rest tolerance and the terms
+  // P2: the wall patterns at rest and their tables
+  wall_split::Tables<Cell::n_verts> split_;
+  bool rest_fixed_ = false;   // by wall_facets or the first stamp with flow
+  // Without wall_facets to name the walls (OpenFOAM, whose patches may start
+  // moving): a P1 stamp's wall vertices at rest are its own
+  static constexpr bool rest_by_stamp = !Format::named_walls;
+  double rest_tol_prev_ = 0.;   // rest_by_stamp: the tolerance of the stamps in play
+  double rest_tol_next_ = 0.;
+  // A thread's last located P2 wall cell, ready while the stamps in play stay
+  using WallMemo = wall_split::Memo<Cell, std::uint64_t>;
+  static WallMemo& wall_memo(){ static thread_local WallMemo m; return m; }
+  std::uint64_t stamps_in_play_ = 0;   // new with every point
+  // What a stamp read needs computed: the rest tolerance, without wall_facets
   void prepare(Stamp& s) const;
+  // Without wall_facets: the wall vertices (P1) or entities (P2) at rest in the
+  // first stamp with flow, which every later one must keep
+  void keep_rest(const Stamp& s, const std::string& name);
+  // With wall_facets: warns once of its walls' velocity in the first stamp with flow
+  void check_walls(const Stamp& s);
   // The stamps in play
   void point(const Stamp& prev, const Stamp& next);
-  // A P2 wall cell's terms at the stamps in play
-  near_wall::TermView term_view(const std::size_t w) const {
-    const near_wall::TermSpan sp = upgrade_.spans[w];
-    return {coef_prev_ + sp.offset, coef_next_ + sp.offset, sp.mask};
-  }
 
   // A wall cell, out of line: gathers, then wall_at
   __attribute__((noinline))
@@ -140,24 +152,25 @@ protected:
   template<bool Velocity = false>
   void plain_at(const int id, const std::array<double, 4>& bary, const double alpha_t,
                 const double* prev, const double* next, PointValues& fields) const;
-  // A wall cell's P2 blocks, for the stamps whose wall vertices are at rest
+  // A P1 wall cell's P2 blocks, for the stamps whose wall vertices are at rest
   std::array<bool, 2> wall_blocks(const int id, const double* prev, const double* next, double* prev2,
                                   double* next2) const;
   template<bool Velocity = false>
   void wall_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const double* prev,
                const double* next, const double* prev2, const double* next2, const bool at_rest_prev,
                const bool at_rest_next, PointValues& fields) const;
-  // A P2 wall cell, out of line: the P2 field plus the terms
-  template<bool Velocity = false>
+  // A P2 wall cell, out of line: the P2 field plus the wall correction at each
+  // stamp; Hold: from what h holds, else from a thread's last cell made ready
+  template<bool Velocity = false, bool Hold = false>
   __attribute__((noinline))
-  void upgrade_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const double* prev,
-                  const double* next, const near_wall::TermView& c, PointValues& fields) const;
+  void upgrade_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const Held* h,
+                  PointValues& fields) const;
+  // What a P2 wall cell's held evaluation reads, from h's blocks, out of line
+  __attribute__((noinline))
+  void wall_hold(const int id, Held& h) const;
   template<bool Velocity = false>
   void held_at(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
                PointValues& fields) const;
-
-  double rest_tol_prev_ = 0.;   // the tolerance of the stamps in play
-  double rest_tol_next_ = 0.;
 
   // The arrays the tree addresses; the cells hold the geometry
   std::vector<std::uint32_t> topo_;
