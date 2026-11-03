@@ -1,5 +1,9 @@
 import dolfin as df
 import argparse
+import shutil
+
+from femtools.boundaries import BoundaryMarkers
+from partractools.case import set_walls
 
 parser = argparse.ArgumentParser(description="Make plane Poiseuille flow")
 parser.add_argument("-dim", default=0, type=int, help="Dimension of flow")
@@ -50,3 +54,12 @@ rho=1.0"""
 
 with open("dolfin_params.dat", "w") as ofile:
     ofile.write(dfprms)
+
+# The no-slip walls, marked 1: the faces across the flow
+walls = BoundaryMarkers(mesh)
+df.CompiledSubDomain(f"on_boundary && (near(x[{tdim}], 0) || near(x[{tdim}], 1))").mark(walls, 1)
+walls.write("boundaries.xdmf")
+
+# The same case with partrac's near-wall correction on those walls
+shutil.copy("dolfin_params.dat", "dolfin_params_walls.dat")
+set_walls("dolfin_params_walls.dat", "boundaries.xdmf", "1")

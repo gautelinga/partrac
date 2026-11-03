@@ -21,7 +21,8 @@ summed with their weights, against the reference summed with the same
 weights. A meshio facet file (wall_facets) naming the walls reads as the
 walls found at rest; naming the sides off x of a box alone, with an inlet
 and an outlet on them and the first stamp at rest, it matches the reference
-whose walls are those sides.
+whose walls are those sides. Plane Poiseuille flow, which P2 holds exactly,
+is carried exactly by the upgrade, periodic or through an inlet and an outlet.
 """
 import os
 import shutil
@@ -833,6 +834,52 @@ def box3_inlet(tmp_path_factory):
                 "tet", (0.5, 0.5, 0.5), wall=off_x)
 
 
+POISEUILLE = "6*x[1]*(1 - x[1])"
+
+
+def on_y(P, tol=1e-12):
+    """A facet on the sides y = 0 and 1."""
+    return bool(np.all(np.abs(P[:, 1]) < tol) or np.all(np.abs(P[:, 1] - 1) < tol))
+
+
+@pytest.fixture(scope="module")
+def poiseuille2(tmp_path_factory):
+    """Plane Poiseuille flow along x in box_mesh's unit square, 8 a side, periodic along x."""
+    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
+    X, cells = box_mesh(2, 8)
+    return Case(df, tmp_path_factory.mktemp("poiseuille2"), X, cells, (True, False),
+                [[POISEUILLE, "0"]] * 2, "triangle", (0.5, 0.5))
+
+
+@pytest.fixture(scope="module")
+def poiseuille3(tmp_path_factory):
+    """Plane Poiseuille flow along x in box_mesh's unit cube, 4 a side, periodic along x and z."""
+    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
+    X, cells = box_mesh(3, 4)
+    return Case(df, tmp_path_factory.mktemp("poiseuille3"), X, cells, (True, False, True),
+                [[POISEUILLE, "0", "0"]] * 2, "tet", (0.5, 0.5, 0.5))
+
+
+@pytest.fixture(scope="module")
+def poiseuille2_open(tmp_path_factory):
+    """Plane Poiseuille flow in through x = 0 and out through x = 1 of box_mesh's unit square, 8 a
+    side, walled on y = 0 and 1 alone."""
+    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
+    X, cells = box_mesh(2, 8)
+    return Case(df, tmp_path_factory.mktemp("poiseuille2_open"), X, cells, (False, False),
+                [[POISEUILLE, "0"]] * 2, "triangle", (0.5, 0.5), wall=on_y)
+
+
+@pytest.fixture(scope="module")
+def poiseuille3_open(tmp_path_factory):
+    """Plane Poiseuille flow in through x = 0 and out through x = 1 of box_mesh's unit cube, 4 a
+    side, walled on y = 0 and 1 alone; the sides z = 0 and 1 carry the flow along them."""
+    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
+    X, cells = box_mesh(3, 4)
+    return Case(df, tmp_path_factory.mktemp("poiseuille3_open"), X, cells, (False, False, False),
+                [[POISEUILLE, "0", "0"]] * 2, "tet", (0.5, 0.5, 0.5), wall=on_y)
+
+
 CASES = ["channel", "sphere", "box2", "box3"]
 
 
@@ -1118,3 +1165,45 @@ def test_frozen_fields_between_stamps_carry_the_correction(channel):
         frozen = ends(channel, mode, points, args + ["frozen_fields=true", "t_frozen=%r" % t0], "RK4", dt)
         gap[mode] = np.abs(live - frozen).max()
     assert gap["false"] > 0 and 0.5 < gap["true"] / gap["false"] < 2, gap
+
+
+def poiseuille_errors(folder, mode, dim, n):
+    """The largest error of u and grad u against plane Poiseuille flow at interpol's points,
+    relative to their scales, and how many points are within a cell of a wall."""
+    x, u, J = probed(interpolate(folder, mode, 5000), dim)
+    y = x[:, 1]
+    ue = np.zeros_like(u)
+    ue[:, 0] = 6 * y * (1 - y)
+    Je = np.zeros_like(J)
+    Je[:, 0, 1] = 6 * (1 - 2 * y)
+    near = int(((y < 1 / n) | (y > 1 - 1 / n)).sum())
+    return np.abs(u - ue).max() / 1.5, np.abs(J - Je).max() / 6, near
+
+
+@pytest.mark.parametrize("name,n", [("poiseuille2", 8), ("poiseuille3", 4)])
+@pytest.mark.parametrize("walls", ["at rest", "wall_facets"])
+def test_poiseuille_flow_is_carried_exactly(request, name, n, walls):
+    """Plane Poiseuille flow is quadratic, divergence-free and zero on the walls, so P2 holds
+    it exactly; the wall terms and the correction must then vanish, and the upgraded field
+    and its gradient are the flow's to round-off, in the cells at the walls as everywhere,
+    whether the walls are found at rest or named by wall_facets."""
+    case = request.getfixturevalue(name)
+    if walls == "at rest":
+        d = case("true")
+    else:
+        d = case.variant("facets", "wall_upgrade=true\nwall_facets=facets.xdmf\nwall_markers=3:4\n")
+    err_u, err_J, near = poiseuille_errors(d, case.mode, case.X.shape[1], n)
+    assert near > 500, near
+    assert err_u < 1e-12 and err_J < 1e-12, (err_u, err_J)
+
+
+@pytest.mark.parametrize("name,n", [("poiseuille2_open", 8), ("poiseuille3_open", 4)])
+def test_poiseuille_flow_through_an_inlet_is_carried_exactly(request, name, n):
+    """The same flow entering and leaving through faces that are no walls, wall_facets naming
+    y = 0 and 1 alone: the cells where a wall meets the inlet or the outlet, and in 3D the
+    open sides along the flow, carry it exactly too."""
+    case = request.getfixturevalue(name)
+    d = case.variant("facets", "wall_upgrade=true\nwall_facets=facets.xdmf\nwall_markers=3:4\n")
+    err_u, err_J, near = poiseuille_errors(d, case.mode, case.X.shape[1], n)
+    assert near > 500, near
+    assert err_u < 1e-12 and err_J < 1e-12, (err_u, err_J)

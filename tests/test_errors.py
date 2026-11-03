@@ -127,6 +127,19 @@ def mesh_case(src, tmp_path, edit):
 
 
 @needs_partrac
+def test_the_example_names_its_walls(mesh_dir, tmp_path):
+    """The plane Poiseuille example's `dolfin_params_walls.dat` loads with its walls named by
+    `boundaries.xdmf`: the 20 facets of the two faces across the flow, and no warning that
+    the walls were taken from the velocity."""
+    d = copy_case(mesh_dir("triangle"), tmp_path / "case")
+    r = run_app(PARTRAC, d / "dolfin_params_walls.dat", ARGS,
+                ["mode=triangle", "init_mode=points_xyz", "init_weight=uniform",
+                 "x0=0.5", "y0=0.5", "z0=0", "verbose=true"], timeout=120)
+    assert "Wall facets: 20 of 20" in r.stdout, r.stdout[-2000:]
+    assert "from the velocity" not in r.stderr, r.stderr
+
+
+@needs_partrac
 def test_an_element_the_loader_does_not_know_is_reported(mesh_dir, tmp_path):
     f = mesh_case(mesh_dir("tet"), tmp_path,
                   lambda t: "".join("velocity_space=P7\n" if l.startswith("velocity_space") else l

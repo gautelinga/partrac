@@ -1,5 +1,5 @@
 # partrac
-**partrac** is a **par**ticle **trac**ker that can advect passive (possibly diffusive) particles in time-dependent velocity fields. On top of this, stretching of lines and sheets with automatic refinement/coarsening is possible, which implements the diffusive strip/sheet method (post-processing in the sibling repository `partractools`). It is written in C++.
+**partrac** is a **par**ticle **trac**ker that can advect passive (possibly diffusive) particles in time-dependent velocity fields. On top of this, stretching of lines and sheets with automatic refinement/coarsening is possible, which implements the diffusive strip/sheet method (post-processing in the sibling repository `partractools`). It is written in C++. The Python tools for preparing input and plotting output are in [partractools](https://github.com/gautelinga/partractools).
 
 ## Input modes
 * `structured/lbm/felbm`: Trilinear interpolation of cubically ordered velocity data, typically the output of the Lattice Boltzmann code [FELBM](https://bitbucket.org/ulbm/felbm/).
@@ -28,6 +28,7 @@ The executables end up in `build/bin/`. Options:
 Tests:
 ```
 ctest --test-dir build --output-on-failure
+python3 -m pytest -q -n 8 -m "not slow" tests/   # the quick tier
 ```
 `python3 -m pytest tests --mpi` (or `PARTRAC_MPI=1`) adds the multi-rank divfree tests.
 
@@ -70,6 +71,7 @@ The mesh examples in `data_example` ship a `generate_up.py` (needs dolfin) rathe
 ```
 cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 ```
+The generators also need [femtools](https://github.com/gautelinga/femtools) and partractools. `ppf_triangle_p2` writes its walls to `boundaries.xdmf`; run it with `dolfin_params_walls.dat` instead of `dolfin_params.dat` to have `wall_upgrade` use them.
 
 ## Visualization
 Plotting the position:
@@ -80,9 +82,14 @@ Parameters are given as `key=value` after the input file. `--help` lists an app'
 ```
 ./build/bin/partrac --help
 ```
-`wall_upgrade=true` raises the order of the velocity next to no-slip walls; it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`. Without `wall_facets`, the walls are where the velocity is at rest (for a time series, in the first stamp with flow, and later stamps must agree; in `openfoam`, in each stamp).
+A dolfin case's `dolfin_params.dat` names its elements with `velocity_space`, `pressure_space` and, for a phase field (`include_phi=true`), `phase_field_space`; partrac checks them against the field files.
 
-`wall_facets=<file>.xdmf` (not `openfoam`) names the no-slip walls: a facet XDMF as meshio writes it, a marker per facet. `wall_markers=3,5,7:106`, required with it, lists the markers of the no-slip walls; other markers (an inlet, an outlet) are not walls. `femtools-cut-facets in.xdmf out.xdmf --markers 7` cuts a full facet file, such as dolfin's facet MeshFunction, down to the walls.
+### Near no-slip walls
+`wall_upgrade=true` raises the order of the velocity next to no-slip walls; it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`.
+
+`wall_facets=<file>.xdmf` (not `openfoam`) names the walls: a facet XDMF as meshio writes it, a marker per facet. `wall_markers=3,5,7:106`, required with it, lists the markers of the no-slip walls; other markers (an inlet, an outlet) are not walls. `femtools-cut-facets in.xdmf out.xdmf --markers 7` cuts a full facet file, such as dolfin's facet MeshFunction, down to the walls.
+
+Without `wall_facets`, the walls are where the velocity is at rest: for a time series, in the first stamp with flow, and a later stamp that moves them stops the run; in `openfoam`, in each stamp.
 
 ### Initialization modes
 Set with `init_mode`. The trailing axes select the direction(s) involved.

@@ -160,6 +160,12 @@ jobs:
         run: |
           apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa libx11-6 libxext6 libxfixes3 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
           python3 -m pip install --no-cache-dir h5py scipy pytest-xdist==3.8.0 gmsh==4.15.2 "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+      - name: femtools and partractools, for the mesh examples' generators
+        # their releases as tarballs (no git in the image), without their dependencies
+        run: |
+          python3 -m pip install --no-cache-dir --no-deps \
+            https://github.com/gautelinga/femtools/archive/refs/tags/2026.2.0.tar.gz \
+            https://github.com/gautelinga/partractools/archive/refs/tags/2026.2.1.tar.gz
       - name: Configure
         # Ninja, not make: the image installs ninja-build and no make.
         # HDF5_ROOT because the image has only the mpich build, under a prefix
