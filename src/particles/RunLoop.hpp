@@ -30,6 +30,7 @@
 #include "Topology.hpp"
 #include "Integrator.hpp"
 #include "stats_columns.hpp"
+#include "xdmf_index.hpp"
 
 // Run setup
 struct Run {
@@ -365,9 +366,13 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // S is computed in the refresh
   const bool refresh_S = ps.carries() == TransportElement::Vector;
 
-  std::string h5fname = newfolder + "/data_from_t" + time_name(t, dt) + ".h5";
+  std::string h5name = "data_from_t" + time_name(t, dt) + ".h5";
+  std::string h5fname = newfolder + "/" + h5name;
+  // The start file takes the first dump, a restart's on a chunk boundary too
+  const int it_first = it;
   // No dump file when dumping is off
   H5::H5File h5f;
+  XdmfIndex index(newfolder);
   if (dump_intv > 0.){
     try {
       { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
@@ -375,6 +380,10 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     } catch (const H5::Exception&){
       partrac::fail("cannot create the dump file ", h5fname);
     }
+    if (restarting)
+      index.resume(time_name(t, dt), h5name);
+    else
+      index.start();
   }
 
   std::ofstream statfile;
@@ -440,19 +449,26 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     // Dump detailed data
     if (at_interval(it, dump_intv, dt)){
       const std::string groupname = time_name(t, dt);
+      std::vector<WrittenDataset> written;
       try {
         // A new file at each chunk, the first made at the start
-        if (chunk_steps > 0 && it % chunk_steps == 0 && it > 0){
-          h5fname = newfolder + "/data_from_t" + groupname + ".h5";
+        if (chunk_steps > 0 && it % chunk_steps == 0 && it > it_first){
+          h5name = "data_from_t" + groupname + ".h5";
+          h5fname = newfolder + "/" + h5name;
           { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
         }
         h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
         h5f.createGroup(groupname + "/");
-        mesh.dump_hdf5(h5f, groupname, output_fields);
+        {
+          const RecordDatasets record(written);
+          mesh.dump_hdf5(h5f, groupname, output_fields);
+        }
         h5f.close();
       } catch (const H5::Exception&){
         partrac::fail("cannot write the dump at t = ", t, " to ", h5fname);
       }
+      // Indexed once closed
+      index.append(written, h5name, groupname);
     }
 
     // Pieces between stamps

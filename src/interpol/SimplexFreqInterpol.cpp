@@ -177,8 +177,17 @@ void SimplexFreqInterpol<Cell>::rest_masks(const std::vector<std::uint8_t>& wall
     }
   }
   if (upgrade_p2_)
-    near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, walls, vclass_,
+    near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
                                       wall_index_, split_, verbose);
+  else if (walls.empty()){
+    // The wall vertices those at rest, on the facets at rest
+    for (std::size_t i = 0; i < ncells_; ++i)
+      if (wall_index_[i] >= 0) wall_cells_[std::size_t(wall_index_[i])].wall = rest_[std::size_t(wall_index_[i])];
+    near_wall::rebuild_wall_edges_at_rest<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
+                                                wall_index_, wall_cells_);
+    rest_.resize(wall_cells_.size());
+    for (std::size_t w = 0; w < wall_cells_.size(); ++w) rest_[w] = wall_cells_[w].wall;
+  }
 }
 
 template class SimplexFreqInterpol<Triangle>;

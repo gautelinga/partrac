@@ -33,6 +33,33 @@ void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_r
 void load_vector_field(const std::string& input_file, std::vector<Vector3d>& a_rw, const Uint Nrw);
 void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<double>& c_rw,
                  const Uint Nrw);
+// A dataset as the writers above made it: kind 'f', 'i' or 'u' of size bytes,
+// centre 'n' per node, 'f' per face, 'e' per edge
+struct WrittenDataset {
+  std::string path;
+  Uint rows, cols;
+  char kind;
+  unsigned size;
+  char centre;
+};
+// The writers above add to log in its scope
+class RecordDatasets {
+public:
+  explicit RecordDatasets(std::vector<WrittenDataset>& log);
+  ~RecordDatasets();
+  RecordDatasets(const RecordDatasets&) = delete;
+  RecordDatasets& operator=(const RecordDatasets&) = delete;
+};
+// What the writers above write in its scope is per face ('f') or edge ('e'), else per node
+class DatasetCentre {
+public:
+  explicit DatasetCentre(const char centre);
+  ~DatasetCentre();
+  DatasetCentre(const DatasetCentre&) = delete;
+  DatasetCentre& operator=(const DatasetCentre&) = delete;
+private:
+  char prev_;
+};
 Uint hdf5_rows(const H5::H5File& h5f, const std::string& dsetname);
 // Read back as rows x cols
 void hdf52doubles(const H5::H5File& h5f, const std::string& dsetname, const Uint rows, const Uint cols,

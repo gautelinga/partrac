@@ -22,7 +22,12 @@ weights. A meshio facet file (wall_facets) naming the walls reads as the
 walls found at rest; naming the sides off x of a box alone, with an inlet
 and an outlet on them and the first stamp at rest, it matches the reference
 whose walls are those sides. Plane Poiseuille flow, which P2 holds exactly,
-is carried exactly by the upgrade, periodic or through an inlet and an outlet.
+is carried exactly by the upgrade, periodic along the walls, found at rest or
+named. So is the 3D flow towards a no-slip stagnation point on a flat wall
+(Linga, Le Borgne & Heyman, arXiv:2610.00790, Eq. 1), whose one wall meets
+open sides: there the walls found at rest read as wall_facets naming them, on
+P2 and P1. On P1 in 2D the edge rule turns the exponential approach of a
+tracer on its separatrix algebraic.
 """
 import os
 import shutil
@@ -333,7 +338,8 @@ class Upgrade:
     + f_b lambda_b), f_a = -(2 p_a + p_b) n, f_b = -(p_a + 2 p_b) n, p = n.(4 u_m - u_v) along a -> v and b ->
     v, n the facets' at ab with apex v, else all of them there (2D: the cell over its wall edge). In 3D, per
     cell with wall facets, the bubble D lambda_0 lambda_1 lambda_2 lambda_3, D the least-norm
-    solution of n_k.D = -2 n_k.(sum of the slopes towards k) over its facets k. Every wall entity at rest."""
+    solution of n_k.D = -2 n_k.(sum of the slopes towards k) over its facets k. Every wall entity at rest; the
+    normals summed over the wall facets (slots) alone, never an open exterior facet."""
 
     def __init__(self, X, cells, slots, vclass):
         self.X, self.cells, self.K = X, cells, vclass
@@ -661,9 +667,11 @@ class Case:
     wall_upgrade=mode; case.U2[k] are stamp k's P2 values per cell in dolfin's
     local order. Its walls are the exterior facets off the periodic sides that
     wall(points) holds for, all by default; facets.xdmf lists every exterior
-    facet off the periodic sides, marked by side_marker."""
+    facet off the periodic sides, marked by side_marker. With degree=1 the
+    velocity is P1, and there is no reference; with 2, the reference's rule is
+    built when first asked for."""
 
-    def __init__(self, df, base, X, cells, periodic, exprs, mode, seed_point, wall=None):
+    def __init__(self, df, base, X, cells, periodic, exprs, mode, seed_point, wall=None, degree=2):
         dim = X.shape[1]
         # ascending vertices, so dolfin's local entities are the reference's
         cells = np.sort(cells, axis=1)
@@ -680,11 +688,12 @@ class Case:
                 for k in range(dim):
                     y[k] = x[k] - 1 if periodic[k] and df.near(x[k], 1) else x[k]
 
-        V = df.VectorFunctionSpace(mesh, "CG", 2, constrained_domain=Periodic())
+        V = df.VectorFunctionSpace(mesh, "CG", degree, constrained_domain=Periodic())
         Q = df.FunctionSpace(mesh, "CG", 1, constrained_domain=Periodic())
         dofs = np.array([[V.sub(k).dofmap().cell_dofs(c) for k in range(dim)] for c in range(len(cells))])
         coords = V.tabulate_dof_coordinates().reshape(-1, dim)
-        nodes = np.einsum("nl,cld->cnd", bary2_nodes(dim), X[cells])
+        bary = bary2_nodes(dim) if degree == 2 else np.eye(dim + 1)
+        nodes = np.einsum("nl,cld->cnd", bary, X[cells])
         # dolfin's local order is the reference's, up to the periodic images
         d = np.abs(coords[dofs[:, 0]] - nodes)
         d = np.where(np.array(periodic)[None, None, :], np.minimum(d, np.abs(d - 1)), d)
@@ -694,7 +703,7 @@ class Case:
         faces = [[cells[c][j] for j in range(nv) if j != k] for c, k in self.slots]
         if wall is not None:
             self.slots = np.array([s for s, f in zip(self.slots, faces) if wall(X[f])], np.int64)
-        on_facet = [(c, n) for c, k in self.slots for n, b in enumerate(bary2_nodes(dim)) if b[k] == 0]
+        on_facet = [(c, n) for c, k in self.slots for n, b in enumerate(bary) if b[k] == 0]
         os.makedirs(base, exist_ok=True)
         with df.HDF5File(mesh.mpi_comm(), str(base / "mesh.h5"), "w") as f:
             f.write(mesh, "mesh")
@@ -711,15 +720,24 @@ class Case:
                 f.write(u, "u")
                 f.write(p, "p")
             self.U2.append(vec[dofs].transpose(0, 2, 1))
-        assert len(self.U2[0][0]) == nv + len(LOCAL_EDGES[dim])
+        assert len(self.U2[0][0]) == len(bary)
         write_facets(base, X, faces, [side_marker(X[f]) for f in faces])
         (base / "timestamps.dat").write_text("0.0 up_0.h5\n1.0 up_1.h5\n")
-        self.mesh_params = ("velocity_space=P2\npressure_space=P1\nmesh=mesh.h5\n"
+        self.mesh_params = ("velocity_space=P%d\npressure_space=P1\nmesh=mesh.h5\n" % degree
                             + "".join("periodic_%s=%s\n" % (a, "true" if p else "false")
                                       for a, p in zip("xyz", list(periodic) + [False] * (3 - dim))))
         self.params = "timestamps=timestamps.dat\n" + self.mesh_params
         self.coef = {}
-        self.rule = Rule(X, cells, self.slots, periodic)
+        self.degree = degree
+        self._rule = None
+
+    @property
+    def rule(self):
+        """The reference's rule on the case's walls, built when first asked for."""
+        assert self.degree == 2
+        if self._rule is None:
+            self._rule = Rule(self.X, self.cells, self.slots, self.periodic)
+        return self._rule
 
     def variant(self, name, extra, series="timestamps=timestamps.dat"):
         """A folder of the case's files, its parameter file naming the time
@@ -837,11 +855,6 @@ def box3_inlet(tmp_path_factory):
 POISEUILLE = "6*x[1]*(1 - x[1])"
 
 
-def on_y(P, tol=1e-12):
-    """A facet on the sides y = 0 and 1."""
-    return bool(np.all(np.abs(P[:, 1]) < tol) or np.all(np.abs(P[:, 1] - 1) < tol))
-
-
 @pytest.fixture(scope="module")
 def poiseuille2(tmp_path_factory):
     """Plane Poiseuille flow along x in box_mesh's unit square, 8 a side, periodic along x."""
@@ -858,26 +871,6 @@ def poiseuille3(tmp_path_factory):
     X, cells = box_mesh(3, 4)
     return Case(df, tmp_path_factory.mktemp("poiseuille3"), X, cells, (True, False, True),
                 [[POISEUILLE, "0", "0"]] * 2, "tet", (0.5, 0.5, 0.5))
-
-
-@pytest.fixture(scope="module")
-def poiseuille2_open(tmp_path_factory):
-    """Plane Poiseuille flow in through x = 0 and out through x = 1 of box_mesh's unit square, 8 a
-    side, walled on y = 0 and 1 alone."""
-    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
-    X, cells = box_mesh(2, 8)
-    return Case(df, tmp_path_factory.mktemp("poiseuille2_open"), X, cells, (False, False),
-                [[POISEUILLE, "0"]] * 2, "triangle", (0.5, 0.5), wall=on_y)
-
-
-@pytest.fixture(scope="module")
-def poiseuille3_open(tmp_path_factory):
-    """Plane Poiseuille flow in through x = 0 and out through x = 1 of box_mesh's unit cube, 4 a
-    side, walled on y = 0 and 1 alone; the sides z = 0 and 1 carry the flow along them."""
-    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
-    X, cells = box_mesh(3, 4)
-    return Case(df, tmp_path_factory.mktemp("poiseuille3_open"), X, cells, (False, False, False),
-                [[POISEUILLE, "0", "0"]] * 2, "tet", (0.5, 0.5, 0.5), wall=on_y)
 
 
 CASES = ["channel", "sphere", "box2", "box3"]
@@ -1197,13 +1190,131 @@ def test_poiseuille_flow_is_carried_exactly(request, name, n, walls):
     assert err_u < 1e-12 and err_J < 1e-12, (err_u, err_J)
 
 
-@pytest.mark.parametrize("name,n", [("poiseuille2_open", 8), ("poiseuille3_open", 4)])
-def test_poiseuille_flow_through_an_inlet_is_carried_exactly(request, name, n):
-    """The same flow entering and leaving through faces that are no walls, wall_facets naming
-    y = 0 and 1 alone: the cells where a wall meets the inlet or the outlet, and in 3D the
-    open sides along the flow, carry it exactly too."""
-    case = request.getfixturevalue(name)
-    d = case.variant("facets", "wall_upgrade=true\nwall_facets=facets.xdmf\nwall_markers=3:4\n")
-    err_u, err_J, near = poiseuille_errors(d, case.mode, case.X.shape[1], n)
-    assert near > 500, near
+# ------------------------------------------------------------------ stagnation point
+
+ALPHA = 1.0
+BETA = {2: 1.0, 3: 0.5}   # 2D; a sphere's front stagnation point
+
+
+def stagnation_exprs(dim, beta):
+    """The flow towards a no-slip stagnation point on the wall x = 1 at (1, 1/2(, 1/2)), xi = x - 1 <= 0:
+    u = alpha (xi^2, -2 beta xi (y - 1/2), -2 (1 - beta) xi (z - 1/2)), as dolfin expressions, both stamps."""
+    u = ["%r*(x[0] - 1)*(x[0] - 1)" % ALPHA, "%r*(x[0] - 1)*(x[1] - 0.5)" % (-2 * ALPHA * beta),
+         "%r*(x[0] - 1)*(x[2] - 0.5)" % (-2 * ALPHA * (1 - beta))]
+    return [u[:dim]] * 2
+
+
+def stagnation_flow(x, beta):
+    """The flow of stagnation_exprs and its gradient at points x."""
+    dim = x.shape[1]
+    xi = x[:, 0] - 1
+    b = [1.0, beta, 1 - beta]
+    u = np.zeros_like(x)
+    J = np.zeros((len(x), dim, dim))
+    u[:, 0], J[:, 0, 0] = ALPHA * xi ** 2, 2 * ALPHA * xi
+    for k in range(1, dim):
+        u[:, k] = -2 * ALPHA * b[k] * xi * (x[:, k] - 0.5)
+        J[:, k, 0] = -2 * ALPHA * b[k] * (x[:, k] - 0.5)
+        J[:, k, k] = -2 * ALPHA * b[k] * xi
+    return u, J
+
+
+def on_x1(P, tol=1e-12):
+    """A facet on the side x = 1."""
+    return bool(np.all(np.abs(P[:, 0] - 1) < tol))
+
+
+def stagnation_case(tmp_path_factory, dim, degree):
+    """The stagnation flow (BETA) in box_mesh's unit square (8 a side, triangle) or cube (4, tet), the side
+    x = 1 its one wall, the other sides open, the flow through them; P1 on the grid unmoved, so that the
+    separatrix runs along edges and P1 holds it."""
+    df = pytest.importorskip("dolfin", reason="writing the checkpoint needs dolfin")
+    n = 8 if dim == 2 else 4
+    X, cells = box_mesh(dim, n)
+    if degree == 1:
+        X = np.round(X * n) / n
+    return Case(df, tmp_path_factory.mktemp("stagnation%d_p%d" % (dim, degree)), X, cells, (False,) * dim,
+                stagnation_exprs(dim, BETA[dim]), "triangle" if dim == 2 else "tet", (0.5,) * dim,
+                wall=on_x1, degree=degree)
+
+
+@pytest.fixture(scope="module")
+def stagnation3(tmp_path_factory):
+    return stagnation_case(tmp_path_factory, 3, 2)
+
+
+@pytest.fixture(scope="module")
+def stagnation3_p1(tmp_path_factory):
+    return stagnation_case(tmp_path_factory, 3, 1)
+
+
+@pytest.fixture(scope="module")
+def stagnation2_p1(tmp_path_factory):
+    return stagnation_case(tmp_path_factory, 2, 1)
+
+
+WALLS = {"at rest": "wall_upgrade=true\n",
+         "wall_facets": "wall_upgrade=true\nwall_facets=facets.xdmf\nwall_markers=2\n",
+         "none": "wall_upgrade=false\n"}
+
+
+@pytest.mark.parametrize("walls", ["at rest", "wall_facets"])
+def test_stagnation_point_flow_is_carried_exactly(stagnation3, walls):
+    """The flow towards a no-slip stagnation point on a flat wall (Linga, Le Borgne & Heyman,
+    arXiv:2610.00790, Eq. 1), u = alpha (xi^2, -2 beta xi y, -2 (1 - beta) xi z) with xi <= 0 the wall
+    distance, here in 3D with beta = 1/2, is quadratic, divergence-free and zero on the wall, so P2 holds it
+    exactly and the wall terms and the correction must vanish: u and grad u are the flow's to 1e-12 of
+    their scales at interpol's points, many of them in the cells at the wall. The open sides carry flow
+    through them and meet the wall along the cube's edges, where the walls found at rest must take their
+    normals from the facets at rest alone, as wall_facets does."""
+    case = stagnation3
+    x, u, J = probed(interpolate(case.variant(walls, WALLS[walls]), case.mode, 1000), 3)
+    ue, Je = stagnation_flow(x, BETA[3])
+    near = int((x[:, 0] > 1 - 1 / 4).sum())
+    assert near > 80, near
+    err_u, err_J = np.abs(u - ue).max() / np.abs(ue).max(), np.abs(J - Je).max() / np.abs(Je).max()
     assert err_u < 1e-12 and err_J < 1e-12, (err_u, err_J)
+
+
+@pytest.mark.parametrize("name", ["stagnation3", "stagnation3_p1"])
+def test_walls_at_rest_next_to_open_sides_read_as_wall_facets(request, name):
+    """With the stagnation point flow's one wall meeting open sides, the walls found at rest are the facets
+    at rest, and the wall terms (P2) or the edge rule's ends (P1) take their normals from those alone, never
+    from an open facet at a wall vertex or edge: interpol reads the same points to the last bit as with
+    wall_facets naming the wall."""
+    case = request.getfixturevalue(name)
+    a = interpolate(case.variant("at rest", WALLS["at rest"]), case.mode, 1000)
+    b = interpolate(case.variant("wall_facets", WALLS["wall_facets"]), case.mode, 1000)
+    for k in a:
+        assert (a[k] == b[k]).all(), k
+
+
+def separatrix_end(case, walls, x0, dt, T):
+    """The wall distance after T of a tracer released at wall distance x0 on the separatrix y = 1/2 of case
+    read with walls: tracers stepped by RK4 at dt, the field steady beyond its stamps."""
+    d = case.variant("steady_" + walls.replace(" ", "_"), WALLS[walls], series="timestamps=steady.dat")
+    (d / "steady.dat").write_text("0.0 up_0.h5\n1e4 up_1.h5\n")
+    point = np.array([[1 + x0, 0.5]])
+    ck, _ = from_points(TRACERS, d / "dolfin_params.dat", point, dt, ["mode=" + case.mode, "Dm=0", "scheme=RK4"],
+                        ["T=%r" % (2 * dt + T), "dump_intv=%r" % (2 * dt + T), "stat_intv=1e9"],
+                        seed_point=case.seed_point)
+    end = dump_at(ck, 2 * dt + T)["points"][0]
+    assert abs(end[1] - 0.5) < 1e-12
+    return end[0] - 1
+
+
+def test_on_p1_the_edge_rule_makes_the_approach_algebraic(stagnation2_p1):
+    """On the separatrix dx/dt = alpha x^2, so a tracer released at x0 < 0 is at x0 / (1 + t/t0), t0 =
+    1/(-alpha x0), and alpha x t tends to -1, never reaching the wall. P1 holds the flow linear in x next to
+    the wall, so without the upgrade the tracer approaches it exponentially; the edge rule makes u.n
+    quadratic there and the approach algebraic. From x0 = -0.2 (t0 = 5), RK4 at dt = 0.25 for t = 120: with
+    the rule within 1% of x0 / (1 + t/t0) and alpha x t within 5% of -1 (the closed form's 4%), without it
+    over three orders of magnitude nearer the wall."""
+    x0, dt, T = -0.2, 0.25, 120.0
+    rule = separatrix_end(stagnation2_p1, "at rest", x0, dt, T)
+    plain = separatrix_end(stagnation2_p1, "none", x0, dt, T)
+    exact = x0 / (1 - ALPHA * x0 * T)
+    assert rule < 0 and plain < 0
+    assert abs(rule / exact - 1) < 1e-2, (rule, exact)
+    assert abs(ALPHA * rule * T + 1) < 0.05, rule * T
+    assert abs(plain) < 1e-3 * abs(exact), (plain, exact)

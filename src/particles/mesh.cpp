@@ -32,6 +32,7 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const std::vector<Uint>* doublings
              ){
   const bool output_doublings = doublings != nullptr;
+  const DatasetCentre centre(faces.size() > 0 ? 'f' : 'e');
   // This function is here because it contains ps. Consider stripping that.
   // Faces
   if (faces.size() > 0){

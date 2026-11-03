@@ -160,13 +160,14 @@ void build_wall_patterns(const std::vector<std::uint32_t>& topo, const std::size
 
 // Once the P2 wall cells' rest bits are fixed: those with none leave (wall
 // index -1), the others are renumbered in cell order and get their wall terms
-// and normals, and the tables of their patterns are built
+// and normals, from the wall facets at rest, and the tables of their patterns
+// are built
 template<typename Cell>
 void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
                       const std::size_t ncells, const std::size_t nverts, const Uint gdim,
-                      const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint8_t>& wall_facets,
-                      const std::vector<std::uint32_t>& vclass, std::vector<std::int32_t>& wall_index,
-                      wall_split::Tables<Cell::n_verts>& t, const bool verbose);
+                      const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint32_t>& vclass,
+                      std::vector<std::int32_t>& wall_index, wall_split::Tables<Cell::n_verts>& t,
+                      const bool verbose);
 
 // The wall cells and their edge ends, from the mesh arrays and the wall
 // facets. A wall facet's normal is the outward one the
@@ -182,6 +183,14 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
                       const std::vector<std::uint32_t>& vclass,
                       std::vector<std::int32_t>& wall_index,
                       std::vector<WallEdges<Cell>>& wall_cells, const bool verbose);
+
+// Once the P1 wall cells' wall bits are those at rest: the wall cells and
+// their edge ends again, on the exterior facets with every vertex at rest
+template<typename Cell>
+void rebuild_wall_edges_at_rest(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
+                                const std::size_t ncells, const std::size_t nverts, const Uint gdim,
+                                const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint32_t>& vclass,
+                                std::vector<std::int32_t>& wall_index, std::vector<WallEdges<Cell>>& wall_cells);
 
 // The wall tables: vclass where the format left it empty (P2: only with a
 // periodic axis); for a P2 velocity the wall cells and their rest candidates, else

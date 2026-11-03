@@ -17,7 +17,6 @@
 #include <atomic>
 #include <cassert>
 #include <iostream>
-#include <type_traits>
 
 template<typename Cell, typename Format>
 StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
@@ -63,14 +62,14 @@ StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
     // wall_facets' walls are at rest
     if (walls_given_){
       if (upgrade_p2_)
-        near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, walls, vclass_,
+        near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
                                           wall_index_, split_, verbose);
       rest_fixed_ = true;
     }
     wall_eval_ = rest_fixed_ || rest_by_stamp;
     if (!stamps_.a().u.empty()){
       prepare(stamps_.a());
-      keep_rest(stamps_.a(), "the first stamp");
+      keep_rest(stamps_.a(), nullptr);
       check_walls(stamps_.a());
     }
     partrac::phase("wall edges");
@@ -93,8 +92,7 @@ void StampedInterpol<Cell, Format>::update(const double t)
                           [&](const typename Format::Key& key, Stamp& s){
                             fmt_.read(*this, key, s);
                             prepare(s);
-                            if constexpr (std::is_convertible_v<typename Format::Key, std::string>) keep_rest(s, key);
-                            else keep_rest(s, fmt_.name(key));
+                            keep_rest(s, &key);
                             check_walls(s);
                           },
                           [&](const Stamp& prev, const Stamp& next){ point(prev, next); });
@@ -133,7 +131,7 @@ void StampedInterpol<Cell, Format>::prepare(Stamp& s) const
 }
 
 template<typename Cell, typename Format>
-void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const std::string& name)
+void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const typename Format::Key* key)
 {
   using S = wall_split::Shape<Cell::n_verts>;
   constexpr unsigned facets = (1u << Cell::n_verts) - 1;
@@ -161,7 +159,7 @@ void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const std::string&
         }
       }
       if (first)
-        near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, {}, vclass_,
+        near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
                                           wall_index_, split_, verbose);
     }
   }
@@ -181,6 +179,9 @@ void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const std::string&
       }
       else if (rest != held) ++moved_vertices;
     }
+    if (first)
+      near_wall::rebuild_wall_edges_at_rest<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
+                                                  wall_index_, wall_cells_);
   }
   rest_fixed_ = true;
   wall_eval_ = true;
@@ -195,7 +196,8 @@ void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const std::string&
     add(moved_facets, "wall facets");
     add(moved_others, others_name);
     add(moved_vertices, "wall vertices");
-    partrac::fail(name, ": ", what, "; wall_upgrade = true needs the walls at rest in the first stamp with flow "
+    partrac::fail(key ? fmt_.name(*key) : std::string("the first stamp"), ": ", what,
+                  "; wall_upgrade = true needs the walls at rest in the first stamp with flow "
                   "at rest in every stamp, or wall_facets naming the no-slip walls");
   }
 }

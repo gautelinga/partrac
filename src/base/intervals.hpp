@@ -14,7 +14,9 @@ inline Uint steps_per(const double intv, const double dt){
   if (!(n > 1.)) return 1;  // shorter than a timestep, or NaN
   if (n >= double(std::numeric_limits<Uint>::max()))
     return std::numeric_limits<Uint>::max();
-  return Uint(n);
+  // A whole number of steps up to round-off is that number (0.3/0.1)
+  const double r = std::round(n);
+  return Uint(std::abs(n - r) <= 1e-9*r ? r : std::floor(n));
 }
 
 // Whether step it is on the interval; off if intv <= 0

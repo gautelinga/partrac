@@ -74,6 +74,8 @@ cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 The generators also need [femtools](https://github.com/gautelinga/femtools) and partractools. `ppf_triangle_p2` writes its walls to `boundaries.xdmf`; run it with `dolfin_params_walls.dat` instead of `dolfin_params.dat` to have `wall_upgrade` use them.
 
 ## Visualization
+A run that dumps (`dump_intv > 0`) keeps `mesh.xdmf` in its folder, indexing every dump so far; open it in ParaView. For runs from older versions, `python3 -m partractools.make_xdmf FOLDER` writes it.
+
 Plotting the position:
 `python3 -m partractools.plot_pos FOLDER/RandomWalkers/Dm0..../`
 

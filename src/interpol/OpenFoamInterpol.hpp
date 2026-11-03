@@ -45,7 +45,8 @@ struct OpenFoamFormat {
   // One time directory's fields by vertex
   template<typename I> void read(I& intp, const Key& time, typename I::Stamp& s);
   template<typename I> Key key(const I&, const Stamp& st) const { return st.filename; }
-  std::string name(const Stamp& st) const { return layout.dir + "/" + st.filename; }
+  std::string name(const Stamp& st) const { return name(st.filename); }
+  std::string name(const Key& time) const { return layout.dir + "/" + time; }
 };
 
 #include "StampedInterpol.hpp"

@@ -248,6 +248,7 @@ add_library(${PROJECT_NAME}_particles_units OBJECT
   particles/ParticleSet.cpp
   particles/mesh.cpp
   particles/Topology.cpp
+  particles/xdmf_index.cpp
   particles/Initializer.cpp
   particles/stepping.cpp
   )

@@ -396,6 +396,27 @@ void build_wall_edges(const std::vector<std::uint32_t>& topo, const std::vector<
 }
 
 template<typename Cell>
+void rebuild_wall_edges_at_rest(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
+                                const std::size_t ncells, const std::size_t nverts, const Uint gdim,
+                                const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint32_t>& vclass,
+                                std::vector<std::int32_t>& wall_index, std::vector<WallEdges<Cell>>& wall_cells)
+{
+  constexpr int nv = Cell::n_verts;
+  constexpr unsigned all = (1u << nv) - 1;
+  std::vector<std::uint8_t> walls(ncells, 0);
+#pragma omp parallel for schedule(static)
+  for (std::size_t i = 0; i < ncells; ++i){
+    if (wall_index[i] < 0) continue;
+    const unsigned rest = wall_cells[std::size_t(wall_index[i])].wall;
+    for (int k = 0; k < nv; ++k)
+      if (facet_neigh[i*nv + std::size_t(k)] == facet_wall && (rest | 1u << k) == all)
+        walls[i] = std::uint8_t(walls[i] | 1u << k);
+  }
+  build_wall_edges<Cell>(topo, coords, ncells, nverts, gdim, facet_neigh, walls, vclass, wall_index, wall_cells,
+                         false);
+}
+
+template<typename Cell>
 void build_tables(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
                   const std::size_t ncells, const std::size_t nverts, const Uint gdim,
                   const std::vector<bool>& periodic, const Vector3d& x_min, const Vector3d& x_max,
@@ -492,9 +513,9 @@ void build_wall_patterns(const std::vector<std::uint32_t>& topo, const std::size
 template<typename Cell>
 void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<double>& coords,
                       const std::size_t ncells, const std::size_t nverts, const Uint gdim,
-                      const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint8_t>& wall_facets,
-                      const std::vector<std::uint32_t>& vclass, std::vector<std::int32_t>& wall_index,
-                      wall_split::Tables<Cell::n_verts>& t, const bool verbose)
+                      const std::vector<std::int32_t>& facet_neigh, const std::vector<std::uint32_t>& vclass,
+                      std::vector<std::int32_t>& wall_index, wall_split::Tables<Cell::n_verts>& t,
+                      const bool verbose)
 {
   constexpr int nv = Cell::n_verts, D = nv - 1;
   using S = wall_split::Shape<nv>;
@@ -511,7 +532,12 @@ void build_wall_terms(const std::vector<std::uint32_t>& topo, const std::vector<
     wall_index[i] = std::int32_t(live++);
   }
   t.cell.resize(live);
-  const Geometry<nv> g = wall_geometry<nv>(topo, coords, ncells, nverts, gdim, facet_neigh, wall_facets, vclass, true);
+  // The wall facets at rest
+  std::vector<std::uint8_t> walls(ncells, 0);
+#pragma omp parallel for schedule(static)
+  for (std::size_t i = 0; i < ncells; ++i)
+    if (wall_index[i] >= 0) walls[i] = std::uint8_t(t.cell[std::size_t(wall_index[i])].rest & ((1u << nv) - 1));
+  const Geometry<nv> g = wall_geometry<nv>(topo, coords, ncells, nverts, gdim, facet_neigh, walls, vclass, true);
 
   // The facets' normals summed by wall edge, and by wall edge and apex, in the facet order
   TermSources<nv> src{g, {}, {}, facet_neigh, vclass, coords, gdim};
@@ -719,9 +745,16 @@ template void build_wall_patterns<Tet>(const std::vector<std::uint32_t>&, const 
 
 template void build_wall_terms<Triangle>(const std::vector<std::uint32_t>&, const std::vector<double>&,
                                          const std::size_t, const std::size_t, const Uint,
-                                         const std::vector<std::int32_t>&, const std::vector<std::uint8_t>&,
-                                         const std::vector<std::uint32_t>&,
+                                         const std::vector<std::int32_t>&, const std::vector<std::uint32_t>&,
                                          std::vector<std::int32_t>&, wall_split::Tables<3>&, const bool);
+template void rebuild_wall_edges_at_rest<Triangle>(const std::vector<std::uint32_t>&, const std::vector<double>&,
+                                                   const std::size_t, const std::size_t, const Uint,
+                                                   const std::vector<std::int32_t>&, const std::vector<std::uint32_t>&,
+                                                   std::vector<std::int32_t>&, std::vector<WallEdges<Triangle>>&);
+template void rebuild_wall_edges_at_rest<Tet>(const std::vector<std::uint32_t>&, const std::vector<double>&,
+                                              const std::size_t, const std::size_t, const Uint,
+                                              const std::vector<std::int32_t>&, const std::vector<std::uint32_t>&,
+                                              std::vector<std::int32_t>&, std::vector<WallEdges<Tet>>&);
 template bool check_moving_walls<Triangle>(const CellDofs&, const std::vector<std::int32_t>&, const bool,
                                            const std::vector<wall_split::WallCell>&,
                                            const std::vector<WallEdges<Triangle>>&,
@@ -735,8 +768,7 @@ template bool check_moving_walls<Tet>(const CellDofs&, const std::vector<std::in
                                       const std::vector<double>&);
 template void build_wall_terms<Tet>(const std::vector<std::uint32_t>&, const std::vector<double>&,
                                     const std::size_t, const std::size_t, const Uint,
-                                    const std::vector<std::int32_t>&, const std::vector<std::uint8_t>&,
-                                    const std::vector<std::uint32_t>&,
+                                    const std::vector<std::int32_t>&, const std::vector<std::uint32_t>&,
                                     std::vector<std::int32_t>&, wall_split::Tables<4>&, const bool);
 
 }  // namespace near_wall

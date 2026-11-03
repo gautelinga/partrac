@@ -138,8 +138,9 @@ protected:
   // What a stamp read needs computed: the rest tolerance, without wall_facets
   void prepare(Stamp& s) const;
   // Without wall_facets: the wall vertices (P1) or entities (P2) at rest in the
-  // first stamp with flow, which every later one must keep
-  void keep_rest(const Stamp& s, const std::string& name);
+  // first stamp with flow, which every later one must keep; key: the stamp's,
+  // none for the first
+  void keep_rest(const Stamp& s, const typename Format::Key* key);
   // With wall_facets: warns once of its walls' velocity in the first stamp with flow
   void check_walls(const Stamp& s);
   // The stamps in play

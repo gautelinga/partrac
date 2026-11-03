@@ -85,6 +85,31 @@ void load_scalar_field(const std::string& input_file,
   infile.close();
 }
 
+static std::vector<WrittenDataset>* written = nullptr;
+static char centre = 'n';
+
+RecordDatasets::RecordDatasets(std::vector<WrittenDataset>& log){
+  written = &log;
+}
+
+RecordDatasets::~RecordDatasets(){
+  written = nullptr;
+}
+
+DatasetCentre::DatasetCentre(const char c) : prev_(centre){
+  centre = c;
+}
+
+DatasetCentre::~DatasetCentre(){
+  centre = prev_;
+}
+
+static void record(const std::string& dsetname, const Uint rows, const Uint cols, const char kind,
+                   const unsigned size){
+  if (written)
+    written->push_back({dsetname, rows, cols, kind, size, centre});
+}
+
 // Write storage directly
 void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                  const std::vector<Vector3d>& a_rw, const Uint Nrw){
@@ -97,6 +122,7 @@ void vector2hdf5(H5::H5File& h5f, const std::string& dsetname,
                                     H5::PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(Nrw > 0 ? a_rw[0].data() : nullptr, H5::PredType::NATIVE_DOUBLE);
+  record(dsetname, Nrw, 3, 'f', sizeof(double));
 }
 
 void hdf52vectors(const H5::H5File& h5f, const std::string& dsetname, const Uint rows,
@@ -125,6 +151,7 @@ void tensor2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector
   }
   H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_DOUBLE, dspace);
   dset.write(data.data(), H5::PredType::NATIVE_DOUBLE);
+  record(dsetname, Nrw, 9, 'f', sizeof(double));
 }
 
 // Row-major
@@ -149,6 +176,7 @@ void ulong2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<
                                       H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT), H5Dclose);
   if (!dset.valid() || H5Dwrite(dset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, a.data()) < 0)
     throw H5::DataSetIException("ulong2hdf5", "cannot write '" + dsetname + "'");
+  record(dsetname, rows, cols, 'u', sizeof(Uint));
 }
 
 void ulong2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<Uint>& a, const Uint Nrw){
@@ -162,6 +190,7 @@ void int2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector<in
   H5::DataSpace dspace(2, dims);
   H5::DataSet dset = h5f.createDataSet(dsetname, H5::PredType::NATIVE_INT, dspace);
   dset.write(a.data(), H5::PredType::NATIVE_INT);
+  record(dsetname, Nrw, 1, 'i', sizeof(int));
 }
 
 void load_tensor_field(const std::string& input_file, std::vector<Matrix3d>& M_rw, const Uint Nrw){
@@ -195,6 +224,7 @@ void scalar2hdf5(H5::H5File& h5f, const std::string& dsetname, const std::vector
                                     H5::PredType::NATIVE_DOUBLE,
                                     dspace);
   dset.write(c_rw.data(), H5::PredType::NATIVE_DOUBLE);
+  record(dsetname, Nrw, 1, 'f', sizeof(double));
 }
 
 

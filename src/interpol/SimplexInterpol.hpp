@@ -35,6 +35,7 @@ struct DolfinH5Format {
     return intp.get_folder() + "/" + st.filename;
   }
   std::string name(const Stamp& st) const { return st.filename; }
+  std::string name(const Key& file) const { return file; }
 };
 
 #include "StampedInterpol.hpp"

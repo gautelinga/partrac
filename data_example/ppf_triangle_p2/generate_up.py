@@ -1,6 +1,8 @@
-import dolfin as df
 import argparse
 import shutil
+
+import h5py  # noqa: F401  -- before dolfin: a pip h5py may bundle another HDF5 than dolfin's
+import dolfin as df
 
 from femtools.boundaries import BoundaryMarkers
 from partractools.case import set_walls
