@@ -12,7 +12,7 @@ inline partrac::Schema partrac_schema(){
   partrac::Schema s("partrac");
   add_initializer_params(s);
   s.require<std::string>("mode", "interpolator type");
-  s.opt<std::string>("outside", "ignore", "a particle that cannot take its step: ignore (it stays), reinject at a random offset, or mark (c = 2)");
+  s.opt<std::string>("outside", "ignore", "a particle that cannot take its step: ignore (it stays), or mark (c = 2)");
   s.opt<int>("sort_every", 5, "reorder particles by cell every this many steps, 0 = never");
   s.opt<bool>("output_phi", false, "dump the phase field at each particle, and split the vector statistics on it");
   s.require<double>("Dm", "molecular diffusivity");
@@ -55,14 +55,29 @@ inline partrac::Schema partrac_schema(){
   s.opt<bool>("integrate_tau", false, "integrate the eigentime");
   s.opt<bool>("output_all_props", true, "dump all properties");
   add_scheme(s, "explicit");
-  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond");
+  s.opt<std::string>("exit_plane", "none", "plane to remove particles beyond, x.n > Ln: n along x, y, z, or cross_n (n)");
+  s.opt<std::string>("cross_n", "", "plane normal: x, y, z or nx,ny,nz");
+  s.opt<double>("cross_dn", 0.0, "record first crossings of the planes x.n = k cross_dn, 0: none");
+  s.opt<std::string>("cross_file", "crossings.bin", "crossing records, in the run folder");
   s.choices("mode", interpol_modes());
-  s.choices("outside", {"ignore", "reinject", "mark"});
-  s.choices("exit_plane", {"none", "x", "y", "z"});
+  s.choices("outside", {"ignore", "mark"});
+  s.choices("exit_plane", {"none", "x", "y", "z", "n"});
   s.check([](const partrac::Params& p){
             return !(p.get<bool>("inject") && p.get<bool>("filter"));
           },
           "cannot inject and filter at the same time");
+  // One normal: exit_plane=x|y|z, or cross_n
+  s.check([](const partrac::Params& p){
+            const std::string e = p.get<std::string>("exit_plane");
+            return e == "none" || e == "n" || p.get<std::string>("cross_n").empty();
+          },
+          "exit_plane=x|y|z names the normal; cross_n goes with exit_plane=n");
+  s.check([](const partrac::Params& p){
+            const std::string e = p.get<std::string>("exit_plane");
+            const bool needs = e == "n" || (e == "none" && p.get<double>("cross_dn") > 0.);
+            return !needs || !p.get<std::string>("cross_n").empty();
+          },
+          "exit_plane=n, or cross_dn without exit_plane=x|y|z, needs cross_n");
   return s;
 }
 

@@ -43,7 +43,7 @@ public:
   Uint refine();
   Uint coarsen(const bool full);
   bool filter();
-  Uint remove_beyond(const int, const double);
+  Uint remove_beyond(const Vector3d& n, const double Ln);   // x.n > Ln
   Uint inject();
   void compute_interior();
   // Whether compute_interior fills H and n

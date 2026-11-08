@@ -32,15 +32,6 @@ int axis_of(const std::string& dir){
   return -1;
 }
 
-// Unit vector along x, y or z; zero for anything else
-Vector3d unit_vector(const std::string& dir){
-  Vector3d n(0., 0., 0.);
-  const int axis = axis_of(dir);
-  if (axis >= 0)
-    n[axis] = 1.;
-  return n;
-}
-
 // Which of x, y and z the directions name
 std::array<bool, 3> axis_mask(const std::string& dirs){
   return {contains(dirs, "x"), contains(dirs, "y"), contains(dirs, "z")};
@@ -192,6 +183,15 @@ WeightedGrid weighted_grid(const std::array<bool, 3>& sampled, std::shared_ptr<I
 }
 
 }  // namespace
+
+// Unit vector along x, y or z; zero for anything else
+Vector3d unit_vector(const std::string& dir){
+  Vector3d n(0., 0., 0.);
+  const int axis = axis_of(dir);
+  if (axis >= 0)
+    n[axis] = 1.;
+  return n;
+}
 
 InitialState init_point(const std::vector<std::string>& key, std::shared_ptr<Interpol> intp, const partrac::Params& prm, std::mt19937& gen){
   const Vector3d x0 = initial_position(prm);

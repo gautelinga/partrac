@@ -2,7 +2,7 @@
 
 These apps create and move particles outside the step: refinement puts a
 node between two, injection adds the inlet's nodes, coarsening merges two,
-resizing pulls a pair's node in, outside=reinject moves a stuck node or edge.
+resizing pulls a pair's node in, outside=reinject moves a stuck pair's edge.
 Each operation leaves the particle in the cell it located, or in none (-1),
 and RK4cells starts it there or locates it afresh. A cell left over from
 before the move would hold the particle no longer, and RK4cells would relocate
@@ -121,28 +121,19 @@ def test_remeshing_and_resizing_under_rk4cells_as_under_rk4(mesh_dir, tmp_path, 
 
 
 @needs_apps
-@pytest.mark.parametrize("app_name", ["partrac", "filaments"])
-def test_reinjection_under_rk4cells_as_under_rk4(stamp_mesh, tmp_path, app_name):
-    """u = (x, -y) on P1 triangles carries a strip (refined as it stretches)
-    or pairs (halved back) out of the square; outside=reinject moves the
-    stuck node, or the whole edge, back in at a random offset. Under RK4cells
-    the same nodes get stuck, are moved by the same draws, and are not
-    relocated: each takes the cell its position was located in."""
-    if app_name == "partrac":
-        binary = PARTRAC
-        args = ("mode=triangle init_mode=strip_x La=2 x0=0 y0=0.3 z0=0 Nrw=21 Nrw_max=20000 "
-                "refine=true refine_intv=0.1 ds_max=0.2 coarsen=false ds_min=1e-9")
-        stuck = "nodes could not move"
-    else:
-        binary = FILAMENTS
-        args = ("mode=triangle init_mode=pairs_xy_xy x0=0 y0=0 z0=0 Nrw=200 Nrw_max=200 ds_init=0.02 "
-                "resize=doublings resize_target=ds_init resize_intv=0.05")
-        stuck = "nodes could not move"
+def test_reinjection_under_rk4cells_as_under_rk4(stamp_mesh, tmp_path):
+    """u = (x, -y) on P1 triangles carries pairs (halved back) out of the
+    square; outside=reinject moves the whole edge back in at a random offset.
+    Under RK4cells the same nodes get stuck, are moved by the same draws, and
+    are not relocated: each takes the cell its position was located in."""
+    args = ("mode=triangle init_mode=pairs_xy_xy x0=0 y0=0 z0=0 Nrw=200 Nrw_max=200 ds_init=0.02 "
+            "resize=doublings resize_target=ds_init resize_intv=0.05")
+    stuck = "nodes could not move"
     out = {}
     for s in ("RK4cells", "RK4"):
         d = copy_case(stamp_mesh, tmp_path / s)
         (d / "timestamps.dat").write_text("0.0 out.h5\n3.0 out.h5\n")
-        r = run_app(binary, d / "dolfin_params.dat", COMMON, args, "outside=reinject dt=0.05 T=1.0 dump_intv=0.5",
+        r = run_app(FILAMENTS, d / "dolfin_params.dat", COMMON, args, "outside=reinject dt=0.05 T=1.0 dump_intv=0.5",
                     "scheme=" + s)
         out[s] = (d, r.stdout)
     (dc, sc), (d4, s4) = out["RK4cells"], out["RK4"]

@@ -58,32 +58,6 @@ def test_a_file_with_no_point_in_the_fluid_is_refused(tmp_path):
 
 
 @needs_partrac
-def test_a_node_reinjected_from_a_file_start_moves_along_every_axis(tmp_path):
-    """outside=reinject moves a declined node by a random offset along
-    init_mode's directions, and a file start has none: all three, whatever
-    the path holds (its second '_' piece here, 'file', names no axis). Five
-    nodes on a line below the sphere; one is put into it through the
-    checkpoint, so its step is declined; reinjected, it ends in the fluid and
-    off the plane y = 0, which the flow never leaves (u_y = 0 there). The
-    timeout catches a node that can never be moved."""
-    from runs import checkpoint_folder, read_checkpoint, write_checkpoint
-    f = nodes_file(tmp_path / "line.h5", [[x, 0., -2.] for x in (-1., -0.5, 0., 0.5, 1.)])
-    params = copy_example(SPHERE, tmp_path / "c")
-    args = BASE + ["init_mode=file:%s" % f, "outside=reinject"]
-    run_app(PARTRAC, params, args)
-    ck = checkpoint_folder(tmp_path / "c")
-    pos = read_checkpoint(ck)["points"]
-    pos[2] = [0., 0., 1.]                     # the sphere's centre
-    write_checkpoint(ck, points=pos)
-    run_app(PARTRAC, params, args, "T=0.03", "restart_folder=%s" % ck, timeout=60)
-    p = dump_at(tmp_path / "c", 0.03)["points"]
-    assert len(p) == 5
-    assert np.all(np.linalg.norm(p - [0., 0., 1.], axis=1) >= 1.)
-    moved = np.abs(p[:, 1]) > 0
-    assert moved.sum() == 1, p
-
-
-@needs_partrac
 @pytest.mark.parametrize("nodes,message", [
     (np.zeros((3, 4)), "columns, not one to three coordinates"),
     (np.zeros(6), "not a two-dimensional array"),

@@ -218,10 +218,9 @@ inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std:
   if (nodes.empty())
     return;
   if (outside == "reinject"){
-    // Along init_mode's directions; positions from a file have none: all three
-    const std::string init_mode = run.prm.get<std::string>("init_mode");
-    const auto key = split_string(init_mode, "_");
-    const std::string dirs = init_mode_is_file(init_mode) || key.size() < 2 ? "xyz" : key[1];
+    // Along init_mode's directions; none named: all three
+    const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
+    const std::string dirs = key.size() < 2 ? "xyz" : key[1];
     const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
     std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
     const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");

@@ -20,6 +20,9 @@ struct InitialState {
   FacesType faces;
 };
 
+// Unit vector along x, y or z; zero for anything else
+Vector3d unit_vector(const std::string& dir);
+
 // Initial states, one per init_mode; key is init_mode split at '_'
 
 // Nrw copies of (x0, y0, z0)

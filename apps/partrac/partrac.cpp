@@ -1,5 +1,6 @@
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
@@ -11,6 +12,7 @@
 #include "TimeScheme.hpp"
 
 #include "partrac_schema.hpp"
+#include "crossings.hpp"
 
 static int run(int argc, char* argv[])
 {
@@ -36,6 +38,8 @@ static int run(int argc, char* argv[])
   const bool filter = prm.get<bool>("filter");
   if (filter && !mesh.faces.empty())
     partrac::fail("filter=true filters a strip; a sheet is not supported");
+  if (prm.get<double>("cross_dn") > 0. && !mesh.faces.empty())
+    partrac::fail("cross_dn records strips and particles; a sheet is not supported");
 
   if (check_only(run, ps, mesh))
     return 0;
@@ -70,7 +74,13 @@ static int run(int argc, char* argv[])
 
   const std::string exit_plane = prm.get<std::string>("exit_plane");
   const bool any_exit_plane = exit_plane != "none";
-  const int exit_dim = exit_plane == "x" ? 0 : (exit_plane == "y" ? 1 : 2);
+  // One normal for the exit plane and the crossing planes: an axis, or cross_n
+  const std::string cross_n = prm.get<std::string>("cross_n");
+  const Vector3d plane_n = parse_normal(cross_n.empty() ? exit_plane : cross_n);
+  std::unique_ptr<Crossings> crossings;
+  if (prm.get<double>("cross_dn") > 0.)
+    crossings = std::make_unique<Crossings>(ps, !mesh.edges.empty(), plane_n, prm.get<double>("cross_dn"),
+                                            run.out.run + "/" + prm.get<std::string>("cross_file"), restarting);
 
   RunHooks hooks;
 
@@ -83,13 +93,16 @@ static int run(int argc, char* argv[])
     remesher.reshape(it);
     // Filtering
     if (filter && at_interval(it, filter_intv, dt)){
+      const Uint before = mesh.edges.size();
       bool filtered = mesh.filter();
+      if (crossings)
+        crossings->filtered(t, before, mesh.edges.size());
       if (verbose && filtered)
         std::cout << "Filtered edges." << std::endl;
     }
     // Removal
     if (any_exit_plane && at_interval(it, filter_intv, dt)){
-      Uint n_rem = mesh.remove_beyond(exit_dim, Ln);
+      Uint n_rem = mesh.remove_beyond(plane_n, Ln);
       if (verbose && n_rem > 0)
         std::cout << "Removed " << n_rem << " nodes that were beyond." << std::endl;
     }
@@ -100,10 +113,12 @@ static int run(int argc, char* argv[])
     handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
   };
   // Tau integration
-  hooks.after_step = [&](const int it, const double){
+  hooks.after_step = [&](const int it, const double t){
     if (integrate_tau && at_interval(it + 1, tau_intv, dt)){
       mesh.integrate_tau(dt * steps_per(tau_intv, dt), tau_max);
     }
+    if (crossings)
+      crossings->record(ps, mesh.edges, mesh.node2edges, t, dt);
   };
 
   OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};

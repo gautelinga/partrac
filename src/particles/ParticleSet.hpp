@@ -41,6 +41,7 @@ public:
     double t_loc(const Uint i) const { return t_loc_rw[i]; };
     void set_t_loc(const Uint i, const double val) { t_loc_rw[i] = val; };
     Vector3d u(const Uint i) const { return u_rw[i]; };
+    double c(const Uint i) const { return c_rw[i]; };
     void set_c(const Uint i, const double val) { c_rw[i] = val; };
     Vector3d facet_normal(const Uint iface,
                           const FacesType &faces,

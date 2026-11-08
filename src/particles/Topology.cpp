@@ -228,12 +228,11 @@ bool Topology::filter(){
   return changed;
 }
 
-Uint Topology::remove_beyond(const int exit_dim, const double Ln){
+Uint Topology::remove_beyond(const Vector3d& n, const double Ln){
   std::vector<bool> node_isactive(ps.N(), true);
   Uint count = 0;
   for (Uint i=0; i<ps.N(); ++i){
-    Vector3d xi = ps.x(i);
-    if (xi[exit_dim] > Ln){
+    if (ps.x(i).dot(n) > Ln){
       node_isactive[i] = false;
       ++count;
     }
