@@ -110,7 +110,7 @@ static int run(int argc, char* argv[])
 
   // Outside nodes
   hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
-    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
+    handle_outside(mesh, ps, outside, outside_nodes, t, verbose);
   };
   // Tau integration
   hooks.after_step = [&](const int it, const double t){

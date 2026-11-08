@@ -1,7 +1,4 @@
-#include <cmath>
 #include <iostream>
-#include <random>
-#include <set>
 #include <string>
 
 #include "Error.hpp"
@@ -10,42 +7,6 @@
 #include "TimeScheme.hpp"
 
 #include "filaments_schema.hpp"
-
-// Reinject whole edges that have a stuck node
-inline void reinject_edges(Run& run, Topology& mesh, ParticleSet& ps, const std::vector<Uint>& nodes){
-  std::vector<Uint> edge_ids;
-  for (const Uint i : nodes)
-    edge_ids.insert(edge_ids.end(), mesh.node2edges[i].begin(), mesh.node2edges[i].end());
-  std::sort(edge_ids.begin(), edge_ids.end());
-  edge_ids.erase(std::unique(edge_ids.begin(), edge_ids.end()), edge_ids.end());
-  const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
-  const std::string dirs = key.size() > 2 ? key[2] : key[1];
-  const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
-  const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
-  std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
-  const Uint max_draws = 1000000;
-  for (const Uint e : edge_ids){
-    const Uint a = mesh.edges[e].first[0];
-    const Uint b = mesh.edges[e].first[1];
-    const Vector3d x0 = 0.5*(ps.x(a) + ps.x(b));
-    const Vector3d dx = ps.x(a) - ps.x(b);
-    Vector3d Dx = {0., 0., 0.};
-    bool outside = true;
-    Uint draws = 0;
-    while (outside){
-      if (++draws > max_draws)
-        partrac::fail("outside=reinject: no position inside the domain along ", dirs, " in ", max_draws, " draws");
-      if (rx) Dx[0] = ux(run.gens[0]);
-      if (ry) Dx[1] = uy(run.gens[0]);
-      if (rz) Dx[2] = uz(run.gens[0]);
-      const bool inside_a = run.intp->locate(x0 + Dx + 0.5*dx);
-      const bool inside_b = run.intp->locate(x0 + Dx - 0.5*dx);
-      outside = !(inside_a && inside_b);
-    }
-    ps.move(a, ps.x(a) + Dx);
-    ps.move(b, ps.x(b) + Dx);
-  }
-}
 
 static int run(int argc, char* argv[])
 {
@@ -95,12 +56,7 @@ static int run(int argc, char* argv[])
     };
 
   hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
-    if (outside_nodes.size() == 0)
-      return;
-    if (verbose)
-      report_stuck(ps, outside_nodes, t);
-    if (outside == "reinject")
-      reinject_edges(run, mesh, ps, outside_nodes);
+    handle_outside(mesh, ps, outside, outside_nodes, t, verbose);
   };
   OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};
   totals.attach(hooks, verbose);

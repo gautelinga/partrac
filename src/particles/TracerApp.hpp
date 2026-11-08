@@ -100,7 +100,7 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
     return cols;
   };
   hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
-    handle_outside(run, mesh, ps, outside, outside_nodes, t, verbose);
+    handle_outside(mesh, ps, outside, outside_nodes, t, verbose);
   };
   OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};
   totals.attach(hooks, verbose);
@@ -153,7 +153,7 @@ int run_spatial_tracers(partrac::Params& prm, const std::string& folder){
     return cols;
   };
   hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
-    handle_outside(run, mesh, ps, outside, nodes, xn, verbose);
+    handle_outside(mesh, ps, outside, nodes, xn, verbose);
   };
   // Only steps that left the fluid: done or at rest are not counted
   OutsideTotals totals{outside, *run.intp, [&]{ return integrator.get_left(); }};

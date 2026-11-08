@@ -385,7 +385,7 @@ PARALLELISED = [
     # app, input kind, the parallel loop it exercises, arguments beyond the smoke run's
     ("tracers", "triangle", "RK4Integrator::step<Point>", ""),
     ("filaments", "triangle", "RK4Integrator::step<Point>",
-     "scheme=RK4 resize=doublings resize_target=ds_init outside=reinject"),
+     "scheme=RK4 resize=doublings resize_target=ds_init"),
     ("tracertensors", "tet", "RK4Integrator::step<Tensor>", ""),
     ("tracervectors", "analytic", "RK4Integrator::step<Vector>", ""),
     ("static_space_stepper", "analytic", "SpatialIntegrator::step<Point>", ""),

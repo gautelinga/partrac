@@ -54,7 +54,7 @@ def test_uz_advances_with_the_timestamp(tmp_path):
     d.mkdir()
     three_stamp_felbm(d)
     run_app(FILAMENTS, d / "felbm_params.dat",
-            "mode=felbm scheme=RK4 resize=doublings resize_target=ds_init outside=reinject "
+            "mode=felbm scheme=RK4 resize=doublings resize_target=ds_init "
             "Dm=0 dt=0.01 T=2.0 Nrw=2 Nrw_max=100 dump_intv=0.5 stat_intv=1e9 "
             "checkpoint_intv=1e9 init_mode=pairs_xy int_order=1 ds_init=0.5 "
             "x0=8 y0=8 z0=8 random=false seed=1", timeout=600)

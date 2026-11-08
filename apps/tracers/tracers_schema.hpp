@@ -6,7 +6,7 @@
 // Parameters accepted by this app
 inline partrac::Schema tracers_schema(){
   partrac::Schema s("tracers");
-  add_tracer_params(s, {"reinject", 0, false, false, false});
+  add_tracer_params(s, {"mark", 0, false, false, false});
   return s;
 }
 

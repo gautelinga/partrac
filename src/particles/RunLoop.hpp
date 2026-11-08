@@ -212,32 +212,11 @@ inline void report_stuck(const ParticleSet& ps, const std::vector<Uint>& nodes, 
             << x_stuck[2] << ")" << std::endl;
 }
 
-// Particles that could not step: ignore, reinject, mark or remove
-inline void handle_outside(Run& run, Topology& mesh, ParticleSet& ps, const std::string& outside,
+// Particles that could not step: ignore, mark or remove
+inline void handle_outside(Topology& mesh, ParticleSet& ps, const std::string& outside,
                            const std::vector<Uint>& nodes, const double t, const bool verbose){
   if (nodes.empty())
     return;
-  if (outside == "reinject"){
-    // Along init_mode's directions; none named: all three
-    const auto key = split_string(run.prm.get<std::string>("init_mode"), "_");
-    const std::string dirs = key.size() < 2 ? "xyz" : key[1];
-    const Vector3d Dx_max = 0.5*(run.intp->get_x_max() - run.intp->get_x_min());
-    std::uniform_real_distribution<> ux(-Dx_max[0], Dx_max[0]), uy(-Dx_max[1], Dx_max[1]), uz(-Dx_max[2], Dx_max[2]);
-    const bool rx = contains(dirs, "x"), ry = contains(dirs, "y"), rz = contains(dirs, "z");
-    const Uint max_draws = 1000000;
-    for (const Uint i : nodes){
-      Vector3d Dx = {0., 0., 0.};
-      Uint draws = 0;
-      do {
-        if (++draws > max_draws)
-          partrac::fail("outside=reinject: no position inside the domain along ", dirs, " in ", max_draws, " draws");
-        if (rx) Dx[0] = ux(run.gens[0]);
-        if (ry) Dx[1] = uy(run.gens[0]);
-        if (rz) Dx[2] = uz(run.gens[0]);
-      } while (!run.intp->locate(ps.x(i) + Dx));
-      ps.move(i, ps.x(i) + Dx);
-    }
-  }
   if (outside == "mark")
     for (const Uint i : nodes) ps.set_c(i, 2.0);
   if (verbose)
@@ -302,7 +281,6 @@ struct OutsideTotals {
   std::function<Uint()> declined;   // steps that left the fluid
   bool warned = false;
   static const char* verb(const std::string& outside){
-    if (outside == "reinject") return "reinjected";
     if (outside == "remove") return "removed";
     if (outside == "mark") return "marked";
     return "left in place";

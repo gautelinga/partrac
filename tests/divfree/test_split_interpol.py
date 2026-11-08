@@ -123,13 +123,13 @@ def test_the_loader_gives_the_field_the_cleaner_writes_on_the_split_mesh(tmp_pat
 
 
 def walled_run(params, dim, mode, scheme):
-    """tracers on the cleaned channel, 2000 particles from a grid, outside=reinject: the process."""
+    """tracers on the cleaned channel, 2000 particles from a grid, outside=ignore: the process."""
     folder = params.parent
     return subprocess.run([app("tracers"), str(params), "mode=" + mode,
                            "init_mode=points_" + "xyz"[:dim], "x0=0.5", "y0=0.5", "z0=0.5",
                            "random=false", "seed=1", "Nrw=2000", "Nrw_max=2000", "int_order=1",
                            "Dm=0", "dt=0.01", "scheme=" + scheme, "T=1", "dump_intv=1e9",
-                           "stat_intv=0.5", "checkpoint_intv=1e9", "outside=reinject"],
+                           "stat_intv=0.5", "checkpoint_intv=1e9", "outside=ignore"],
                           capture_output=True, text=True, timeout=600, cwd=folder)
 
 
@@ -142,10 +142,10 @@ SEALED_WARNING = "steps declined on a divfree = true field with no open boundary
 def test_a_cleaned_closed_channel_declines_no_step(tmp_path, dim, mode, scheme):
     """On a cleaned channel whose every exterior facet is a wall at rest, the
     split field has no velocity into a wall, so nothing leaves: the run
-    reports zero declined and reinjected steps and no warning."""
+    reports zero declined steps and no warning."""
     r = walled_run(cleaned_channel(tmp_path, dim), dim, mode, scheme)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "Steps declined: 0 (outside=reinject: reinjected)" in r.stdout, r.stdout[-2000:]
+    assert "Steps declined: 0 (outside=ignore: left in place)" in r.stdout, r.stdout[-2000:]
     assert SEALED_WARNING not in r.stderr
 
 
@@ -174,7 +174,7 @@ def test_a_closed_channel_cleaned_with_open_walls_warns_of_its_declined_steps(tm
     wall vertices stay at rest: the cleaner holds only nodes at rest, so it
     keeps those midpoints near their values and cleans a field that leaks
     through walls the mesh's vertices say are closed. The run declines steps
-    and reinjects them, says how many, and warns that a closed divfree = true
+    and says how many, and warns that a closed divfree = true
     domain should decline none, naming the cleaner's wall set."""
     X, cells = channel2d(6) if dim == 2 else channel3d(3)
     per = PER[3 - dim:]
@@ -189,7 +189,7 @@ def test_a_closed_channel_cleaned_with_open_walls_warns_of_its_declined_steps(tm
     assert "divfree=true" in params.read_text()
     r = walled_run(params, dim, mode, "RK4")
     assert r.returncode == 0, r.stdout + r.stderr
-    m = re.search(r"Steps declined: (\d+) \(outside=reinject: reinjected\)", r.stdout)
+    m = re.search(r"Steps declined: (\d+) \(outside=ignore: left in place\)", r.stdout)
     assert m, r.stdout[-2000:]
     assert int(m.group(1)) > 0
     assert SEALED_WARNING in r.stderr and "cleaned with walls that do not match" in r.stderr, r.stderr

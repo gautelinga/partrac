@@ -36,7 +36,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<double>("resize_intv", 0.0, "resize interval");
   s.opt<std::string>("resize", "rescale", "rescale an edge to the target, reference with it (ds/ds0 kept); or doublings: halve it until it fits, reference kept, halvings counted and dumped");
   s.opt<std::string>("resize_target", "ds_max", "the length a resize brings an edge back to: ds_max or ds_init");
-  s.opt<std::string>("outside", "ignore", "an edge with a node that cannot take its step: ignore, or reinject the whole edge at a random offset");
+  s.opt<std::string>("outside", "ignore", "a node that cannot take its step: ignore (it stays), or mark (c = 2)");
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
@@ -53,7 +53,7 @@ inline partrac::Schema filaments_schema(){
   s.choices("mode", interpol_modes());
   s.choices("resize", {"rescale", "doublings"});
   s.choices("resize_target", {"ds_max", "ds_init"});
-  s.choices("outside", {"ignore", "reinject"});
+  s.choices("outside", {"ignore", "mark"});
   // Pairs only
   s.check([](const partrac::Params& p){
             const auto key = split_string(p.get<std::string>("init_mode"), "_");
@@ -68,13 +68,6 @@ inline partrac::Schema filaments_schema(){
             return split_string(p.get<std::string>("init_mode"), "_").size() >= 2;
           },
           "init_mode is missing a direction, as in pairs_xyz");
-  // No reinjection with diffusion
-  s.check([](const partrac::Params& p){
-            return !(p.get<std::string>("outside") == "reinject"
-                     && p.get<std::string>("scheme") == "explicit"
-                     && p.get<double>("Dm") > 0.);
-          },
-          "outside=reinject is for edges stuck in an underresolved field, not for diffusion: it cannot be combined with scheme=explicit and Dm > 0");
   return s;
 }
 

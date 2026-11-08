@@ -248,17 +248,13 @@ def outside_run(stamp_mesh, root, outside):
 def test_a_particle_declined_in_a_piece_is_handled_before_the_next(stamp_mesh, tmp_path):
     """Particles near x = +-2 leave the square in the first piece of the step
     [0, 0.1], cut at 0.05. The outside rule runs after that piece: marked
-    particles are declined again in the second piece (reported at t = 0.05),
-    reinjected ones move on in it, so fewer steps are declined."""
+    particles are declined again in the second piece (reported at t = 0.05)."""
     out_mark, declined_mark = outside_run(stamp_mesh, tmp_path, "mark")
-    out_reinject, declined_reinject = outside_run(stamp_mesh, tmp_path, "reinject")
     first = re.findall(r"(\d+) nodes could not move at t = 0,", out_mark)
     second = re.findall(r"(\d+) nodes could not move at t = 0.05,", out_mark)
     assert first and second, out_mark
     assert int(second[0]) >= int(first[0]) > 0
     assert declined_mark == int(first[0]) + int(second[0])
-    assert re.search(r"nodes could not move at t = 0,", out_reinject), out_reinject
-    assert declined_reinject < declined_mark
 
 
 @needs_apps

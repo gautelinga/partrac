@@ -73,7 +73,7 @@ static int run(int argc, char* argv[])
       }
       std::cout << std::endl;
     }
-    handle_outside(run, mesh, ps, outside, nodes, xn, false);
+    handle_outside(mesh, ps, outside, nodes, xn, false);
   };
 
   // Stop when no node is left

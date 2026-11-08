@@ -2,7 +2,7 @@
 
 These apps create and move particles outside the step: refinement puts a
 node between two, injection adds the inlet's nodes, coarsening merges two,
-resizing pulls a pair's node in, outside=reinject moves a stuck pair's edge.
+and resizing pulls a pair's node in.
 Each operation leaves the particle in the cell it located, or in none (-1),
 and RK4cells starts it there or locates it afresh. A cell left over from
 before the move would hold the particle no longer, and RK4cells would relocate
@@ -118,33 +118,6 @@ def test_remeshing_and_resizing_under_rk4cells_as_under_rk4(mesh_dir, tmp_path, 
             check_mesh(raw[t], longest)
         if "doublings" in a[t]:
             assert np.array_equal(a[t]["doublings"], b[t]["doublings"]), t
-
-
-@needs_apps
-def test_reinjection_under_rk4cells_as_under_rk4(stamp_mesh, tmp_path):
-    """u = (x, -y) on P1 triangles carries pairs (halved back) out of the
-    square; outside=reinject moves the whole edge back in at a random offset.
-    Under RK4cells the same nodes get stuck, are moved by the same draws, and
-    are not relocated: each takes the cell its position was located in."""
-    args = ("mode=triangle init_mode=pairs_xy_xy x0=0 y0=0 z0=0 Nrw=200 Nrw_max=200 ds_init=0.02 "
-            "resize=doublings resize_target=ds_init resize_intv=0.05")
-    stuck = "nodes could not move"
-    out = {}
-    for s in ("RK4cells", "RK4"):
-        d = copy_case(stamp_mesh, tmp_path / s)
-        (d / "timestamps.dat").write_text("0.0 out.h5\n3.0 out.h5\n")
-        r = run_app(FILAMENTS, d / "dolfin_params.dat", COMMON, args, "outside=reinject dt=0.05 T=1.0 dump_intv=0.5",
-                    "scheme=" + s)
-        out[s] = (d, r.stdout)
-    (dc, sc), (d4, s4) = out["RK4cells"], out["RK4"]
-    assert sc.count(stuck) >= 5 and sc.count(stuck) == s4.count(stuck)
-    assert cells_counts(sc).get("relocations") == 0.0, sc
-    a, b = all_dumps(dc), all_dumps(d4)
-    assert set(a) == set(b)
-    for t in a:
-        assert len(a[t]["points"]) == len(b[t]["points"])
-        assert np.abs(a[t]["points"] - b[t]["points"]).max() < 1e-5, t
-        assert (np.abs(a[t]["points"][:, :2]) <= 2).all()
 
 
 def next_id(d, drop=False):

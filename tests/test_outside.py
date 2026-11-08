@@ -9,7 +9,7 @@ same floating-point operations. Upstream of the sphere the flow runs into it;
 with a long step, an RK4 stage point lands inside the sphere, where the formula
 still returns a velocity that is not the flow's.
 
-Three things are pinned:
+Two things are pinned:
 
 - an RK4 step with a stage point or its end outside is taken again in
   halves, a half that fails halved again down to dt/64, every stage of every
@@ -20,10 +20,7 @@ Three things are pinned:
   else a particle carries;
 - a particle placed outside the fluid (by editing a checkpoint) reports zero
   velocity, pressure and density in the dumps and does not move, under both
-  schemes;
-- with outside=reinject, a particle that no offset along init_mode's
-  directions can bring back into the fluid is refused after a bounded number
-  of draws, rather than drawing for ever.
+  schemes.
 """
 
 import math
@@ -38,7 +35,6 @@ from pieces import in_pieces
 from runs import checkpoint_folder, copy_example, put_points, read_checkpoint, run_app
 
 SPHERE = os.path.join(REPO, "data_example", "stokes_sphere", "expr_params.dat")
-POISEUILLE = os.path.join(REPO, "data_example", "plane_poiseuille", "expr_params.dat")
 APPS = ["tracers", "tracervectors", "tracertensors"]
 DT = 8.0
 
@@ -167,23 +163,3 @@ def test_a_particle_outside_the_fluid_has_zero_fields_and_stays(tmp_path, scheme
         assert np.array_equal(g["points"][moved], [0., 0., zc - 0.5]), t
         assert np.all(g["u"][moved] == 0), t
         assert np.all(g["p"][moved] == 0) and np.all(g["rho"][moved] == 0), t
-
-
-@needs_apps
-def test_a_particle_reinjection_cannot_reach_is_refused(tmp_path):
-    """Plane Poiseuille flow, fluid where |x| <= 1: a particle moved to
-    x = 1.5, in the wall, with init_mode=points_z. Reinjection offsets it
-    along z only, so no draw is inside; the resumed run stops with a message
-    naming the directions instead of drawing for ever. The timeout catches
-    the hang."""
-    d = copy_example(POISEUILLE, tmp_path / "reinject").parent
-    run("tracers", d, ["scheme=RK4", "dt=0.1", "T=0.1", "dump_intv=0.1", "checkpoint_intv=0.1"])
-    x = read_checkpoint(d)["points"]
-    x[0] = [1.5, 0., 0.]
-    put_points(d, x)
-    r = run_app(app("tracers"), d / "expr_params.dat", BASE,
-                ["scheme=RK4", "dt=0.1", "T=0.3", "dump_intv=0.1", "checkpoint_intv=1e9",
-                 "outside=reinject", "restart_folder=" + str(checkpoint_folder(d))],
-                check=False, timeout=120)
-    assert r.returncode == 2, r.stdout[-1000:] + r.stderr[-1000:]
-    assert "outside=reinject: no position inside the domain along z in 1000000 draws" in r.stderr, r.stderr
