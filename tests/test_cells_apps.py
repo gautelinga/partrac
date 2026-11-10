@@ -35,10 +35,10 @@ COMMON = "Dm=0 int_order=1 dt=0.00390625 stat_intv=0.125 checkpoint_intv=1e9 ran
 
 # On the periodic P2 tet case, u = (sin 2 pi y, sin 2 pi z, sin 2 pi x)
 TET_CASES = {
-    # an inlet sweeping a sheet, refined and coarsened
+    # an inlet sweeping a sheet, refined and coarsened; ds_min such that the newest node is gone by the stop
     "sheet": (PARTRAC, "mode=tet init_mode=strip_x La=0.5 x0=0.5 y0=0.53 z0=0.47 Nrw=11 Nrw_max=20000 "
               "inject=true inject_edges=true inject_intv=0.0625 refine=true refine_intv=0.0625 ds_max=0.05 "
-              "coarsen=true coarsen_intv=0.0625 ds_min=0.01 T=0.5 dump_intv=0.125"),
+              "coarsen=true coarsen_intv=0.0625 ds_min=0.012 T=0.5 dump_intv=0.125"),
     # a strip refined, coarsened, filtered and cut at an exit plane
     "strip": (PARTRAC, "mode=tet init_mode=strip_y La=0.6 x0=0.5 y0=0.5 z0=0.47 Nrw=31 Nrw_max=20000 "
               "refine=true refine_intv=0.0625 ds_max=0.04 coarsen=true coarsen_intv=0.0625 ds_min=0.0199 "

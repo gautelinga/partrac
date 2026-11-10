@@ -63,6 +63,9 @@ BAD_CASES = [
     (["init_mode=uniform_x", "int_order=0"], "int_order must be 1 or 2"),
     (["init_mode=uniform_x", "int_order=3"], "int_order must be 1 or 2"),
     (["init_mode=uniform_x", "filter_target=-1"], "filter_target"),
+    (["init_mode=strip_x", "La=0.5", "curv_refine_factor=-1"], "curv_refine_factor cannot be negative"),
+    (["init_mode=strip_x", "La=0.5", "curv_refine_cap=0.5"], "curv_refine_cap must be at least 1"),
+    (["init_mode=ellipsoid_xy", "La=0.5", "Lb=0.5", "curv_refine_factor=0.4"], "for strips only"),  # not on sheets yet
 ]
 
 

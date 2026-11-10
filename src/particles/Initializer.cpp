@@ -75,8 +75,10 @@ std::vector<Vector3d> sample_inside(const std::function<Vector3d()>& draw, std::
 
 // Triangulated surface being remeshed; no inlet
 struct Surface : Connectivity {
+  // On the chord: the shapes put their nodes in place themselves
   Surface(std::shared_ptr<Interpol> intp, const std::vector<Vector3d>& nodes, const Uint Nrw_max) : ps(intp, Nrw_max) {
     ps.add(nodes, 0);
+    on_surface = false;
   }
   ParticleSet ps;
 };
@@ -88,12 +90,12 @@ void compute_maps(Surface& s){
 
 // Split edges longer than ds_max
 Uint refine_surface(Surface& s, const double ds_max, const bool check_if_inside){
-  return sheet_refinement(s, s.ps, ds_max, 0.0, StuckEdge::Keep, check_if_inside);
+  return sheet_refinement(s, s.ps, ds_max, StuckEdge::Keep, check_if_inside);
 }
 
 // Collapse edges shorter than ds_min, none lengthened past ds_max
 Uint coarsen_surface(Surface& s, const double ds_min, const double ds_max){
-  return sheet_coarsening(s, s.ps, ds_min, ds_max, 0.0);
+  return sheet_coarsening(s, s.ps, ds_min, ds_max);
 }
 
 // Edge lengths and face areas from the positions

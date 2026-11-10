@@ -8,6 +8,7 @@
 #include <vector>
 #include "typedefs.hpp"
 #include "Params.hpp"
+#include "mesh.hpp"
 
 // Every app: field scale, seed, threads and folder naming
 inline void add_app_params(partrac::Schema& s){
@@ -41,6 +42,16 @@ inline void add_run_params(partrac::Schema& s, const std::string& t_doc){
   s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
+}
+
+// The curvature limit on a strip's edge lengths (CurvLimit); no limit with factor 0
+inline void add_curv_limit(partrac::Schema& s){
+  s.opt<double>("curv_refine_factor", CurvLimit{}.factor, "curvature refinement factor, strips only");
+  s.opt<double>("curv_refine_cap", CurvLimit{}.cap, "largest factor the curvature shortens an edge by");
+  s.check([](const partrac::Params& p){ return p.get<double>("curv_refine_factor") >= 0.; },
+          "curv_refine_factor cannot be negative");
+  s.check([](const partrac::Params& p){ return p.get<double>("curv_refine_cap") >= 1.; },
+          "curv_refine_cap must be at least 1: below, it lengthens edges");
 }
 
 // dump_intv, stat_intv and checkpoint_intv. These and the keys in more: 0 is off,

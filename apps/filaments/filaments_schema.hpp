@@ -39,7 +39,7 @@ inline partrac::Schema filaments_schema(){
   s.opt<std::string>("outside", "ignore", "a node that cannot take its step: ignore (it stays), or mark (c = 2)");
   s.opt<int>("sort_every", 0, "reorder particles by cell every this many steps, 0 = never");
   s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
-  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
+  add_curv_limit(s);
   s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("filter", false, "filter the filament");
   s.opt<bool>("inject", false, "inject new particles");

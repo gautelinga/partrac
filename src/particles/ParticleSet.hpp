@@ -25,7 +25,8 @@ public:
     ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max);
     void add(const std::vector<Vector3d> &pos_init, const Uint irw0);
     void add(const std::vector<Vector3d> &pos_init, const std::vector<Uint> &which, const Uint irw0);
-    bool insert_node_between(const Uint, const Uint, const bool check_if_inside=true);
+    // At `at` if given and inside, else at the chord midpoint
+    bool insert_node_between(const Uint, const Uint, const bool check_if_inside=true, const Vector3d* at=nullptr);
     double dist(const Uint inode, const Uint jnode) const { Vector3d dx = x_rw[inode]-x_rw[jnode]; return dx.norm(); };
     // Keep the given slots, in order, from slot `from` on
     void compact(const std::vector<Uint>& kept, const Uint from);
@@ -33,7 +34,8 @@ public:
     double triangle_area(const Uint iedge, const Uint jedge, const EdgesType& edges) const { return cross_product(iedge, jedge, edges).norm()/2; };
     Vector3d cross_product(const Uint iedge, const Uint jedge, const EdgesType& edges) const;
     void replace_nodes(Vector3d& x, const Uint inode, const Uint jnode);
-    void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges);
+    // At `at` if given and inside, else at the chord midpoint (at the node with two edges if only one has)
+    void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges, const Vector3d* at=nullptr);
     Vector3d x(const Uint i) const { return x_rw[i]; };
     void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
     // Moved: its cell unknown

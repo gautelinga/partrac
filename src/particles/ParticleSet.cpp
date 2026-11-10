@@ -68,11 +68,16 @@ void ParticleSet::add(const std::vector<Vector3d> &pos_init,
   Nrw += which.size();
 }
 
-bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside){
+bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const bool check_if_inside,
+                                      const Vector3d* at){
   Vector3d x_rw_new = 0.5*(x_rw[inode]+x_rw[jnode]);
   int cell_id = cell_id_rw[inode];
-  
-  if (check_if_inside){
+  int at_cell = cell_id;
+  if (at && (!check_if_inside || intp->locate(*at, at_cell))){
+    x_rw_new = *at;
+    cell_id = at_cell;
+  }
+  else if (check_if_inside){
     bool inside = intp->locate(x_rw_new, cell_id);
     if (!inside){
       std::cout << "Insertion failed! Need something more refined here." << std::endl;
@@ -161,7 +166,8 @@ void ParticleSet::replace_nodes(Vector3d& x, const Uint inode, const Uint jnode)
   interpolate_carried(jnode, inode, jnode);
 }
 
-void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges){
+void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges,
+                                 const Vector3d* at){
     bool inode_is_border = node2edges[inode].size() > 1;
     bool jnode_is_border = node2edges[jnode].size() > 1;
 
@@ -179,8 +185,17 @@ void ParticleSet::collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesT
     else {
         pos_new = x_rw[jnode];
     }
+    int cell_id = cell_id_rw[new_inode];
+    const bool at_ok = at && intp->locate(*at, cell_id);
+    if (at_ok){
+        pos_new = *at;
+    }
     move(inode, pos_new);
     move(jnode, pos_new);
+    // The cell located, else unknown
+    if (at_ok){
+        cell_id_rw[new_inode] = cell_id;
+    }
 
     c_rw[new_inode] = 0.5*(c_rw[inode]+c_rw[jnode]);
     t_loc_rw[new_inode] = 0.5*(t_loc_rw[inode]+t_loc_rw[jnode]);

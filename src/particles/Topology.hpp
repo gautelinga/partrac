@@ -9,6 +9,7 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "ParticleSet.hpp"
+#include "mesh.hpp"
 #include "stats.hpp"
 
 struct InitialState;
@@ -17,7 +18,7 @@ struct InitialState;
 struct TopologyOptions {
   double ds_min = 0.;
   double ds_max = 0.;
-  double curv_refine_factor = 0.;
+  CurvLimit curv;
   double Dm = 0.;
   bool cut_if_stuck = true;
   bool injecting = false;
@@ -47,7 +48,7 @@ public:
   Uint inject();
   void compute_interior();
   // Whether compute_interior fills H and n
-  bool computes_curvature() const { return opts.curv_refine_factor > 0.; };
+  bool computes_curvature() const { return opts.curv.factor > 0.; };
   void remove_nodes_safe(std::vector<bool>&);
   bool resize(const double);
   bool resize_doublings(const double);

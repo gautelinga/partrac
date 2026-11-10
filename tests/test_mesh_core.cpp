@@ -1,8 +1,10 @@
 #include <catch2/catch.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -114,6 +116,34 @@ double total_length(const EdgesType& edges, const ParticleSet& ps){
   return s;
 }
 
+// A sheet from its triangles, at the lengths and areas it has now
+void make_sheet(Connectivity& m, const ParticleSet& ps, const std::vector<std::array<Uint, 3>>& tris){
+  std::map<std::pair<Uint, Uint>, Uint> index;
+  auto edge = [&](const Uint a, const Uint b){
+    const std::pair<Uint, Uint> key(std::min(a, b), std::max(a, b));
+    const auto it = index.find(key);
+    if (it != index.end()) return it->second;
+    m.edges.push_back({{key.first, key.second}, ps.dist(a, b)});
+    return index[key] = m.edges.size() - 1;
+  };
+  for (const auto& t : tris){
+    m.faces.push_back({{edge(t[0], t[1]), edge(t[1], t[2]), edge(t[2], t[0])}, 0.});
+    m.faces.back().second = ps.triangle_area(m.faces.size() - 1, m.faces, m.edges);
+  }
+  compute_edge2faces(m.edge2faces, m.faces, m.edges);
+  compute_node2edges(m.node2edges, m.edges, ps.N());
+}
+
+// A strip's edge lengths, shortest and longest
+std::pair<double, double> edge_range(const EdgesType& edges, const ParticleSet& ps){
+  double lo = 1e300, hi = 0.;
+  for (const auto& e : edges){
+    lo = std::min(lo, ps.dist(e.first[0], e.first[1]));
+    hi = std::max(hi, ps.dist(e.first[0], e.first[1]));
+  }
+  return {lo, hi};
+}
+
 }  // namespace
 
 TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint", "[mesh]") {
@@ -128,7 +158,7 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
 
-  const Uint n_add = refinement(m, ps, 0.6, 0., StuckEdge::Stop);
+  const Uint n_add = refinement(m, ps, 0.6, {}, StuckEdge::Stop);
   REQUIRE( n_add == 2 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( edges.size() == 4 );
@@ -143,10 +173,10 @@ TEST_CASE("refining a strip splits every edge longer than ds_max at its midpoint
   }
   REQUIRE( ends == 2 );
   // Short enough already: nothing to do
-  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 0 );
+  REQUIRE( refinement(m, ps, 0.6, {}, StuckEdge::Stop) == 0 );
 
   SECTION("and coarsening a straight strip keeps its length"){
-    const Uint n_rem = coarsening(m, ps, 0.75, 0., 0.);
+    const Uint n_rem = coarsening(m, ps, 0.75, 0., {});
     REQUIRE( n_rem > 0 );
     REQUIRE( total_length(edges, ps) == Approx(2.0) );
   }
@@ -180,10 +210,10 @@ TEST_CASE("coarsening a strip collapses a short edge only if no neighbour grows 
   Connectivity a, b;
   strip(guarded, a);
   strip(free, b);
-  REQUIRE( coarsening(a, guarded, 0.05, 0.1, 0.) == 0 );
+  REQUIRE( coarsening(a, guarded, 0.05, 0.1, {}) == 0 );
   REQUIRE( a.edges.size() == 3 );
   // Without a ds_max it collapses, and the edges left are longer than 0.1
-  REQUIRE( coarsening(b, free, 0.05, 0., 0.) == 1 );
+  REQUIRE( coarsening(b, free, 0.05, 0., {}) == 1 );
   REQUIRE( b.edges.size() == 2 );
   for (const auto& e : b.edges)
     REQUIRE( free.dist(e.first[0], e.first[1]) == Approx(0.103) );
@@ -198,7 +228,7 @@ TEST_CASE("coarsening collapses next to an edge already past ds_max if it does n
   compute_edge2faces(m.edge2faces, m.faces, m.edges);
   compute_node2edges(m.node2edges, m.edges, ps.N());
   REQUIRE( ps.dist(0, 1) > 0.15 );
-  REQUIRE( coarsening(m, ps, 0.05, 0.1, 0.) == 1 );
+  REQUIRE( coarsening(m, ps, 0.05, 0.1, {}) == 1 );
   REQUIRE( m.edges.size() == 2 );
   for (const auto& e : m.edges)
     REQUIRE( ps.dist(e.first[0], e.first[1]) <= 0.15 + 1e-12 );
@@ -221,7 +251,7 @@ TEST_CASE("a refined midpoint outside the fluid is pushed inward, across the edg
   compute_edge2faces(edge2faces, faces, edges);
   compute_node2edges(node2edges, edges, ps.N());
 
-  REQUIRE( refinement(m, ps, 0.6, 0., StuckEdge::Stop) == 1 );
+  REQUIRE( refinement(m, ps, 0.6, {}, StuckEdge::Stop) == 1 );
   REQUIRE( ps.N() == 3 );
   // Along the normals' mean, square to the edge, by the first multiple of 1% of the edge inside
   const Vector3d tau = (x0 - x1).normalized(), mid = 0.5*(x0 + x1);
@@ -258,7 +288,7 @@ TEST_CASE("refining a sheet keeps its area and stays a disk", "[mesh]") {
   compute_node2edges(node2edges, edges, ps.N());
 
   // Only the diagonal is longer than 1.2
-  const Uint n_add = sheet_refinement(m, ps, 1.2, 0., StuckEdge::Keep, false);
+  const Uint n_add = sheet_refinement(m, ps, 1.2, StuckEdge::Keep, false);
   REQUIRE( n_add == 1 );
   REQUIRE( ps.N() == 5 );
   REQUIRE( faces.size() == 4 );
@@ -295,16 +325,111 @@ TEST_CASE("remeshing a flat sheet keeps every face at its reference area", "[mes
     for (const auto& row : m.node2edges)
       REQUIRE( std::is_sorted(row.begin(), row.end()) );
   };
-  while (sheet_refinement(m, ps, 0.02, 0., StuckEdge::Keep, false) > 0);
+  while (sheet_refinement(m, ps, 0.02, StuckEdge::Keep, false) > 0);
   at_reference("refining");
   const Uint n_faces = m.faces.size();
-  REQUIRE( sheet_coarsening(m, ps, 0.05, 0.06, 0.) > 0 );
+  REQUIRE( sheet_coarsening(m, ps, 0.05, 0.06) > 0 );
   REQUIRE( m.faces.size() < n_faces/2 );
   at_reference("coarsening");
-  REQUIRE( sheet_refinement(m, ps, 0.04, 0., StuckEdge::Keep, false) > 0 );
+  REQUIRE( sheet_refinement(m, ps, 0.04, StuckEdge::Keep, false) > 0 );
   at_reference("refining the coarsened sheet");
-  REQUIRE( sheet_coarsening(m, ps, 0.03, 0.04, 0.) > 0 );
+  REQUIRE( sheet_coarsening(m, ps, 0.03, 0.04) > 0 );
   at_reference("coarsening it again");
+}
+
+TEST_CASE("a strip splits and merges at its material midpoint, exactly on a cubic in the material length", "[mesh]") {
+  // Nodes at material coordinates s on x(s), a cubic; dl0 the material lengths
+  const auto x = [](const double s){ return Vector3d(s, 0.2*s*s, 0.05*s*s*s); };
+  {
+    ParticleSet ps(std::make_shared<EverywhereInterpol>(), 8);
+    ps.add({x(0.), x(0.6), x(2.), x(2.6)}, 0);
+    Connectivity m;
+    m.edges = {{{0, 1}, 0.6}, {{1, 2}, 1.4}, {{2, 3}, 0.6}};
+    compute_edge2faces(m.edge2faces, m.faces, m.edges);
+    compute_node2edges(m.node2edges, m.edges, ps.N());
+    // Only the middle edge is longer than 1
+    REQUIRE( refinement(m, ps, 1., {}, StuckEdge::Stop) == 1 );
+    REQUIRE( (ps.x(4) - x(1.3)).norm() < 1e-12 );
+    // 0.14 from the chord's midpoint
+    REQUIRE( (ps.x(4) - 0.5*(x(0.6) + x(2.))).norm() > 0.1 );
+  }
+  ParticleSet ps(std::make_shared<EverywhereInterpol>(), 8);
+  ps.add({x(0.), x(0.5), x(1.), x(1.3), x(1.8), x(2.3)}, 0);
+  Connectivity m;
+  m.edges = {{{0, 1}, 0.5}, {{1, 2}, 0.5}, {{2, 3}, 0.3}, {{3, 4}, 0.5}, {{4, 5}, 0.5}};
+  compute_edge2faces(m.edge2faces, m.faces, m.edges);
+  compute_node2edges(m.node2edges, m.edges, ps.N());
+  // Only edge 2-3 is shorter than 0.4
+  REQUIRE( coarsening(m, ps, 0.4, 0., {}) == 1 );
+  REQUIRE( (ps.x(2) - x(1.15)).norm() < 1e-12 );
+}
+
+TEST_CASE("the curvature limit refines a bent strip to ds_max/(1 + factor kappa), and no further than the cap", "[mesh]") {
+  // Three quarters of a circle of radius 1/2, kappa = 2, in 12 edges of 0.2; refined to ds_max = 0.5
+  const auto refined = [](const CurvLimit& curv){
+    ParticleSet ps(std::make_shared<EverywhereInterpol>(), 4096);
+    std::vector<Vector3d> x;
+    for (Uint k = 0; k <= 12; ++k)
+      x.push_back(0.5*Vector3d(std::cos(0.125*M_PI*k), std::sin(0.125*M_PI*k), 0.));
+    ps.add(x, 0);
+    Connectivity m;
+    for (Uint k = 0; k < 12; ++k)
+      m.edges.push_back({{k, k + 1}, ps.dist(k, k + 1)});
+    compute_edge2faces(m.edge2faces, m.faces, m.edges);
+    compute_node2edges(m.node2edges, m.edges, ps.N());
+    while (refinement(m, ps, 0.5, curv, StuckEdge::Stop) > 0);
+    return edge_range(m.edges, ps);
+  };
+  // No limit: nothing to split
+  REQUIRE( refined({}).second == Approx(0.5*2*std::sin(0.0625*M_PI)) );
+  // Factor 1: 0.5/3, to the accuracy of the curvature the new nodes give
+  const auto [lo, hi] = refined({1., 16.});
+  REQUIRE( hi <= 0.5/3*1.01 );
+  REQUIRE( lo > 0.5/6*0.99 );
+  // Factor 100 asks for 0.5/201; the cap holds it at 0.5/4
+  const auto [lo_cap, hi_cap] = refined({100., 4.});
+  REQUIRE( hi_cap <= 0.125 );
+  REQUIRE( lo_cap > 0.0625*0.99 );
+}
+
+TEST_CASE("a sheet's new node lands on the surface its neighbours fit, unless that is over ds/16 from the chord", "[mesh]") {
+  // Edge 0-1, of length 1, inside a fan on z = kappa (x^2 + y^2)/2: symmetric under (x, y) -> (-x, -y), so the plane
+  // of best fit is z = const and the quadratic fit exact, kappa/8 below the chord's midpoint
+  const auto split = [](const double kappa){
+    const auto z = [&](const double x, const double y){ return Vector3d(x, y, 0.5*kappa*(x*x + y*y)); };
+    // Four pairs of nodes: three would leave the six terms of the fit undetermined
+    ParticleSet ps(nullptr, 16);
+    ps.add({z(-0.5, 0.), z(0.5, 0.), z(0.1, 0.3), z(-0.1, -0.3), z(-0.8, 0.), z(0.8, 0.), z(-0.4, 0.5), z(0.4, -0.5)}, 0);
+    Connectivity m;
+    make_sheet(m, ps, {{0, 1, 2}, {1, 0, 3}, {0, 2, 6}, {0, 6, 4}, {0, 4, 3}, {1, 5, 2}, {1, 3, 7}, {1, 7, 5}});
+    // Only edge 0-1 is longer than 0.98
+    REQUIRE( sheet_refinement(m, ps, 0.98, StuckEdge::Keep, false) == 1 );
+    return ps.x(8);
+  };
+  // 0.05 below the chord, within ds/16 = 0.0625: on the surface, at its apex
+  REQUIRE( split(0.4).norm() < 1e-12 );
+  // 0.075 below: the chord's midpoint
+  REQUIRE( (split(0.6) - Vector3d(0., 0., 0.075)).norm() < 1e-12 );
+}
+
+TEST_CASE("a sheet merges at the chord's midpoint where the fitted one would flip a face", "[mesh]") {
+  // A neighbourhood from a coarsened sine sphere (ds_max 0.01), shifted to node 7 and scaled by 1000. Merging edge
+  // 3-7 at the fitted point, 0.04 off the chord's midpoint, turns the sliver 0-3-10 past a right angle; at the
+  // chord's midpoint it turns 89 degrees
+  ParticleSet ps(std::make_shared<EverywhereInterpol>(), 16);
+  ps.add({{2.5437, -8.8667, 3.5893}, {-3.5719, -7.5775, 3.3100}, {3.6641, -3.7515, 1.6458}, {-2.5209, -2.5675, 1.0049},
+          {-3.5430, 3.3364, -2.5660}, {1.2231, 1.7154, -0.4558}, {-6.9250, -3.1783, 0.4577}, {0., 0., 0.},
+          {-5.2528, 1.1867, -1.5916}, {-7.0894, -0.9638, -0.6819}, {0.8622, -5.8900, 2.7452}}, 0);
+  const Vector3d chord = 0.5*(ps.x(3) + ps.x(7));
+  Connectivity m;
+  make_sheet(m, ps, {{3, 9, 6}, {3, 0, 1}, {4, 7, 5}, {6, 1, 3}, {7, 2, 5}, {8, 3, 4}, {3, 9, 8}, {10, 3, 0},
+                     {10, 3, 2}, {4, 7, 3}, {7, 2, 3}});
+  // Only edge 3-7 may collapse: the ring is held, as an inlet is
+  for (Uint n = 0; n < ps.N(); ++n)
+    if (n != 3 && n != 7)
+      m.nodes_inlet.push_back(n);
+  REQUIRE( sheet_coarsening(m, ps, 4., 0.) == 1 );
+  REQUIRE( (ps.x(3) - chord).norm() < 1e-12 );
 }
 
 TEST_CASE("a broken mesh invariant throws an internal error", "[mesh][errors]") {

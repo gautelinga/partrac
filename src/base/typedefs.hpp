@@ -55,6 +55,8 @@ struct Connectivity {
   EdgesType edges_inj;
   EdgesListType edges_inlet;
   NodesListType nodes_inlet;
+  // A sheet's new and merged nodes on its fitted surface, else on the chord
+  bool on_surface = true;
 };
 
 #endif

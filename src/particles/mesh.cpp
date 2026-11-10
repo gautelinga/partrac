@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <iterator>
@@ -159,11 +160,61 @@ inline std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge
   return {knode, mnedges[0], mnedges[1]};
 }
 
+// Where a sheet's edge (i, j) splits or merges: its chord midpoint, lifted onto a quadratic least-squares fit of the
+// sheet's height over the plane of best fit through i, j and their neighbours. Not lifted with under 6 or over 32
+// nodes, or by more than ds/16, the sagitta of a turn of half a radian across the edge: the sheet is unresolved there
+inline Vector3d sheet_point(const ParticleSet& ps, const EdgesType& edges, const Node2EdgesType& node2edges,
+                            const Uint i, const Uint j){
+  constexpr int NMAX = 32;
+  const Vector3d m = 0.5*(ps.x(i) + ps.x(j));
+  const double ds = ps.dist(i, j);
+  std::array<Uint, NMAX> nodes{i, j};
+  Uint np = 2;
+  for (const Uint n : {i, j})
+    for (const Uint e : node2edges[n]){
+      const Uint k = get_other(edges[e].first[0], edges[e].first[1], n);
+      if (std::find(nodes.begin(), nodes.begin() + np, k) != nodes.begin() + np)
+        continue;
+      if (np == NMAX)
+        return m;
+      nodes[np++] = k;
+    }
+  if (np < 6 || ds <= 0.)
+    return m;
+  // The normal: the least spread of the nodes about their mean
+  Vector3d mean = Vector3d::Zero();
+  for (Uint r = 0; r < np; ++r)
+    mean += ps.x(nodes[r]);
+  mean /= double(np);
+  Matrix3d C = Matrix3d::Zero();
+  for (Uint r = 0; r < np; ++r)
+    C += (ps.x(nodes[r]) - mean)*(ps.x(nodes[r]) - mean).transpose();
+  const Vector3d n = Eigen::SelfAdjointEigenSolver<Matrix3d>(C).eigenvectors().col(0);
+  const Vector3d d = ps.x(j) - ps.x(i);
+  const Vector3d t = d - d.dot(n)*n;
+  if (t.norm() < 1e-6*ds)
+    return m;
+  const Vector3d e1 = t.normalized(), e2 = n.cross(e1);
+  // On the stack
+  Eigen::Matrix<double, Eigen::Dynamic, 6, 0, NMAX, 6> A(np, 6);
+  Eigen::Matrix<double, Eigen::Dynamic, 1, 0, NMAX, 1> w(np);
+  for (Uint r = 0; r < np; ++r){
+    const Vector3d dx = ps.x(nodes[r]) - m;
+    const double p = dx.dot(e1)/ds, q = dx.dot(e2)/ds;
+    A(r, 0) = 1.; A(r, 1) = p; A(r, 2) = q; A(r, 3) = p*p; A(r, 4) = p*q; A(r, 5) = q*q;
+    w(r) = dx.dot(n);
+  }
+  Eigen::ColPivHouseholderQR<decltype(A)> qr(A);
+  if (qr.rank() < 6)
+    return m;
+  const double h = qr.solve(w)(0);
+  return std::abs(h) <= ds/16 ? Vector3d(m + h*n) : m;
+}
+
 // Inlet edges are split along with their template
 Uint sheet_refinement(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_max,
-                      const double curv_refine_factor,
                       const StuckEdge stuck,
                       const bool check_if_inside){
   FacesType& faces = m.faces;
@@ -190,10 +241,7 @@ Uint sheet_refinement(Connectivity& m,
 
   // Not ds/2: the node may be moved
   auto ds_ratio_of = [&](const Uint inode, const Uint jnode){
-    //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
-    //double ds_max_loc = ds_max/(1.0 + curv_refine_factor*kappa);
-    const double ds_max_loc = ds_max;
-    return ps.dist(inode, jnode)/ds_max_loc;
+    return ps.dist(inode, jnode)/ds_max;
   };
 
   // Edge ratios in parallel; the sweep stays serial
@@ -234,8 +282,14 @@ Uint sheet_refinement(Connectivity& m,
       double ds0 = edges[iedge].second;
 
       Uint new_inode = ps.N();
-      // Add point
-      bool added = ps.insert_node_between(inode, jnode, check_if_inside);
+      // On the surface
+      bool added;
+      if (m.on_surface){
+        const Vector3d at = sheet_point(ps, edges, node2edges, inode, jnode);
+        added = ps.insert_node_between(inode, jnode, check_if_inside, &at);
+      }
+      else
+        added = ps.insert_node_between(inode, jnode, check_if_inside);
       if (added){
         changed = true;
         ++n_add;
@@ -339,10 +393,59 @@ Uint sheet_refinement(Connectivity& m,
   return n_add;
 }
 
+// The node beyond n along a strip, away from edge e, and that edge's dl0; -1 at an end
+inline long strip_neighbour(const Connectivity& m, const Uint n, const Uint e, double& dl0){
+  const auto& row = m.node2edges[n];
+  if (row.size() != 2)
+    return -1;
+  const Uint f = row[0] == e ? row[1] : row[0];
+  dl0 = m.edges[f].second;
+  return get_other(m.edges[f].first[0], m.edges[f].first[1], n);
+}
+
+// Curvature at node n, of the circle through it and its two neighbours; 0 at an end
+inline double strip_curvature(const Connectivity& m, const ParticleSet& ps, const Uint n){
+  const auto& row = m.node2edges[n];
+  if (row.size() != 2)
+    return 0.;
+  auto other = [&](const Uint e){ return get_other(m.edges[e].first[0], m.edges[e].first[1], n); };
+  const Vector3d a = ps.x(other(row[0])) - ps.x(n), b = ps.x(other(row[1])) - ps.x(n);
+  const double d = a.norm() * b.norm() * (a - b).norm();
+  return d > 0. ? 2. * a.cross(b).norm() / d : 0.;
+}
+
+// The curvature limit's scale for edge (i, j): the sharper bend of its two ends
+inline double strip_scale(const Connectivity& m, const ParticleSet& ps, const CurvLimit& curv, const Uint i, const Uint j){
+  if (curv.factor <= 0.) return 1.;
+  return curv.scale(std::max(strip_curvature(m, ps, i), strip_curvature(m, ps, j)));
+}
+
+// Edge e = (i, j) split at its material midpoint: Lagrange in the material length (dl0) through i, j and the nodes
+// beyond them whose edges are within a factor 4 of e's: cubic, quadratic or the chord
+inline Vector3d strip_midpoint(const Connectivity& m, const ParticleSet& ps, const Uint e, const Uint i, const Uint j){
+  const double h = m.edges[e].second;
+  std::vector<std::pair<double, Vector3d>> p{{0., ps.x(i)}, {h, ps.x(j)}};
+  double ha = 0., hb = 0.;
+  const long a = strip_neighbour(m, i, e, ha), b = strip_neighbour(m, j, e, hb);
+  if (a >= 0 && ha <= 4 * h && h <= 4 * ha)
+    p.push_back({-ha, ps.x(a)});
+  if (b >= 0 && hb <= 4 * h && h <= 4 * hb)
+    p.push_back({h + hb, ps.x(b)});
+  Vector3d x = Vector3d::Zero();
+  for (Uint k = 0; k < p.size(); ++k){
+    double w = 1.;
+    for (Uint l = 0; l < p.size(); ++l)
+      if (l != k)
+        w *= (h / 2 - p[l].first) / (p[k].first - p[l].first);
+    x += w * p[k].second;
+  }
+  return x;
+}
+
 inline Uint strip_refinement(Connectivity& m,
                              ParticleSet& ps,
                              const double ds_max,
-                             const double curv_refine_factor,
+                             const CurvLimit& curv,
                              const StuckEdge stuck){
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
@@ -368,12 +471,12 @@ inline Uint strip_refinement(Connectivity& m,
     double ds = ps.dist(inode, jnode);
     double tau = edges[iedge].tau;
     double rho_prev = edges[iedge].rho_prev;
-    //double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
-    //double kappa = 0.5*(abs(H_rw[inode]) + abs(H_rw[jnode]));
-    double ds_max_loc = ds_max/(1.0);  // + curv_refine_factor*kappa);
+    // Shorter where the strip bends
+    const double ds_max_loc = ds_max*strip_scale(m, ps, curv, inode, jnode);
     if (ds > ds_max_loc && ps.has_space()){
       Uint new_inode = ps.N();
-      bool added = ps.insert_node_between(inode, jnode);
+      const Vector3d at = strip_midpoint(m, ps, iedge, inode, jnode);
+      bool added = ps.insert_node_between(inode, jnode, true, &at);
       if (added){
         edges[iedge].first[1] = new_inode;
         edges[iedge].second = ds0/2;
@@ -417,14 +520,14 @@ inline Uint strip_refinement(Connectivity& m,
 Uint refinement(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_max,
-                const double curv_refine_factor,
+                const CurvLimit& curv,
                 const StuckEdge stuck){
   Uint n_add = 0;
   if (m.faces.size() > 0){
-    n_add = sheet_refinement(m, ps, ds_max, curv_refine_factor, stuck);
+    n_add = sheet_refinement(m, ps, ds_max, stuck);
   }
   else {
-    n_add = strip_refinement(m, ps, ds_max, curv_refine_factor, stuck);
+    n_add = strip_refinement(m, ps, ds_max, curv, stuck);
   }
   return n_add;
 }
@@ -546,7 +649,10 @@ inline double rim_turn(const Uint inode,
   return acos(std::max(-1., std::min(1., a.dot(b)/(a.norm()*b.norm()))));
 }
 
+// A midpoint on the surface if on_surface, x_plain on the chord
 inline bool get_new_pos(Vector3d &x,
+                        Vector3d &x_plain,
+                        const bool on_surface,
                         const ParticleSet& ps,
                         const Uint iedge,
                         const EdgesType &edges,
@@ -558,6 +664,13 @@ inline bool get_new_pos(Vector3d &x,
   bool inode_is_border = is_border_node(inode, node2edges, edge2faces);
   bool jnode_is_border = is_border_node(jnode, node2edges, edge2faces);
 
+  auto mid = [&](){
+    x_plain = 0.5*(ps.x(inode) + ps.x(jnode));
+    x = on_surface ? sheet_point(ps, edges, node2edges, inode, jnode) : x_plain;
+  };
+  auto at_node = [&](const Uint n){
+    x_plain = x = ps.x(n);
+  };
   bool both_are_border = inode_is_border && jnode_is_border;
   bool none_are_border = !inode_is_border && !jnode_is_border;
 
@@ -565,7 +678,7 @@ inline bool get_new_pos(Vector3d &x,
     return false;
   }
   else if (none_are_border){
-    x = 0.5*(ps.x(inode) + ps.x(jnode));
+    mid();
   }
   else if (both_are_border){
     // Merge at midpoint, unless one is a corner
@@ -573,16 +686,16 @@ inline bool get_new_pos(Vector3d &x,
     const double turn_i = rim_turn(inode, ps, edges, edge2faces, node2edges);
     const double turn_j = rim_turn(jnode, ps, edges, edge2faces, node2edges);
     if (std::max(turn_i, turn_j) < sharp)
-      x = 0.5*(ps.x(inode) + ps.x(jnode));
+      mid();
     else
-      x = turn_i >= turn_j ? ps.x(inode) : ps.x(jnode);
+      at_node(turn_i >= turn_j ? inode : jnode);
   }
   else if (inode_is_border) {
-    x = ps.x(inode);
+    at_node(inode);
   }
   else {
     assert(jnode_is_border);
-    x = ps.x(jnode);
+    at_node(jnode);
   }
   return true;
 }
@@ -659,7 +772,8 @@ inline bool collapse_edge(const Uint iedge,
                           std::vector<bool> &node_isactive,
                           ParticleSet& ps,
                           CollapseBuffers &buf,
-                          const double ds_max){
+                          const double ds_max,
+                          const bool on_surface){
 
   // This function will collapse the edge 'iedge' and thus remove it.
   // The 1-2 facets next to it will be removed.
@@ -695,8 +809,8 @@ inline bool collapse_edge(const Uint iedge,
     return false;
   }
 
-  Vector3d x;
-  bool new_node_is_good = get_new_pos(x, ps, iedge, edges, edge2faces, node2edges);
+  Vector3d x, x_plain;
+  bool new_node_is_good = get_new_pos(x, x_plain, on_surface, ps, iedge, edges, edge2faces, node2edges);
   if (!new_node_is_good){
     // Corner edge
     return false;
@@ -758,9 +872,12 @@ inline bool collapse_edge(const Uint iedge,
 
   // No flipped normals; also computes new areas
   auto &dAs_new = buf.dAs_new;
-  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new))
-    return false;
-
+  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new)){
+    // The chord's position, where the surface's flips a face (a fold, or nodes welded together)
+    if (x_plain == x || !normals_are_ok(iedge, x_plain, ps, kfaces, faces, edges, cross_old, dAs_new))
+      return false;
+    x = x_plain;
+  }
 
   ps.replace_nodes(x, inode, jnode);
 
@@ -1068,8 +1185,7 @@ void remove_inactive(Connectivity& m,
 Uint sheet_coarsening(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_min,
-                      const double ds_max,
-                      const double curv_refine_factor){
+                      const double ds_max){
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
   Edge2FacesType& edge2faces = m.edge2faces;
@@ -1101,17 +1217,14 @@ Uint sheet_coarsening(Connectivity& m,
       Uint inode = edges[iedge].first[0];
       Uint jnode = edges[iedge].first[1];
       double ds = ps.dist(inode, jnode);
-      //double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
-      //double ds_min_loc = ds_min/(1.0 + curv_refine_factor*kappa);
-      double ds_min_loc = ds_min;
-      if (ds < ds_min_loc){
+      if (ds < ds_min){
         bool coll = collapse_edge(iedge, faces, edges,
                            edge2faces,
                            node2edges,
                            face_isactive,
                            edge_isactive,
                            node_isactive,
-                           ps, buf, ds_max);
+                           ps, buf, ds_max, m.on_surface);
 
         if (coll){
           changed = true;
@@ -1137,7 +1250,7 @@ inline Uint strip_coarsening(Connectivity& m,
                              ParticleSet& ps,
                              const double ds_min,
                              const double ds_max,
-                             const double curv_refine_factor){
+                             const CurvLimit& curv){
   FacesType& faces = m.faces;
   EdgesType& edges = m.edges;
   Node2EdgesType& node2edges = m.node2edges;
@@ -1167,9 +1280,9 @@ inline Uint strip_coarsening(Connectivity& m,
         Uint jnode = edges[iedge].first[1];
         double ds0 = edges[iedge].second;
         double ds = ps.dist(inode, jnode);
-        // double kappa = sqrt(abs(H_rw[inode]*H_rw[jnode]));
-        // double ds_min_loc = ds_min/(1.0 + curv_refine_factor*kappa);
-        double ds_min_loc = ds_min;
+        // Shorter where the strip bends, by the scale refinement uses
+        const double scale = strip_scale(m, ps, curv, inode, jnode);
+        const double ds_min_loc = ds_min*scale;
         Uint new_inode = std::min(inode, jnode);
         Uint old_inode = std::max(inode, jnode);
         // Collapse interior edges only
@@ -1190,13 +1303,14 @@ inline Uint strip_coarsening(Connectivity& m,
             ++iedge;
             continue;
           }
-          // Merge at the midpoint; lengthen no neighbour past ds_max
+          // Merge at the material midpoint, as refinement inserts; lengthen no neighbour past its ds_max
+          const Vector3d mid = strip_midpoint(m, ps, iedge, inode, jnode);
           if (ds_max > 0.){
-            const Vector3d mid = 0.5*(ps.x(inode) + ps.x(jnode));
+            const double ds_max_loc = ds_max*scale;
             const Uint jfar = get_other(edges[jedge].first[0], edges[jedge].first[1], old_inode);
             const Uint kfar = get_other(edges[kedge].first[0], edges[kedge].first[1], new_inode);
-            if ((mid - ps.x(jfar)).norm() > std::max(ds_max, ps.dist(old_inode, jfar))
-                || (mid - ps.x(kfar)).norm() > std::max(ds_max, ps.dist(new_inode, kfar))){
+            if ((mid - ps.x(jfar)).norm() > std::max(ds_max_loc, ps.dist(old_inode, jfar))
+                || (mid - ps.x(kfar)).norm() > std::max(ds_max_loc, ps.dist(new_inode, kfar))){
               ++iedge;
               continue;
             }
@@ -1220,7 +1334,7 @@ inline Uint strip_coarsening(Connectivity& m,
           edges[jedge].second += ds0/2;
           edges[kedge].second += ds0/2;
 
-          ps.collapse_nodes(inode, jnode, node2edges);
+          ps.collapse_nodes(inode, jnode, node2edges, &mid);
 
           // Recompute elongation
           for (const Uint nedge : {jedge, kedge})
@@ -1249,12 +1363,12 @@ Uint coarsening(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_min,
                 const double ds_max,
-                const double curv_refine_factor){
+                const CurvLimit& curv){
   if (m.faces.size() > 0){ // TODO: better requirement for injection?
-    return sheet_coarsening(m, ps, ds_min, ds_max, curv_refine_factor);
+    return sheet_coarsening(m, ps, ds_min, ds_max);
   }
   else if (m.edges_inlet.size() == 0){ // Omits first steps of injection which might have no faces
-    return strip_coarsening(m, ps, ds_min, ds_max, curv_refine_factor);
+    return strip_coarsening(m, ps, ds_min, ds_max, curv);
   }
   return 0;
 }

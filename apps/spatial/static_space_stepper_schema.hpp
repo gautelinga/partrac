@@ -27,7 +27,7 @@ inline partrac::Schema spatial_schema(){
   add_intervals(s, "dxn", {"coarsen_intv", "refine_intv"});
   s.opt<double>("refine_intv", 100.0, "refinement interval");
   s.opt<double>("coarsen_intv", 1000.0, "coarsening interval");
-  s.opt<double>("curv_refine_factor", 0.0, "curvature refinement factor");
+  add_curv_limit(s);
   s.opt<Uint>("filter_target", 0, "filter target");
   s.opt<bool>("refine", false, "refine the mesh");
   s.opt<bool>("coarsen", false, "coarsen the mesh");

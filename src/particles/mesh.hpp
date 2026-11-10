@@ -1,6 +1,7 @@
 #ifndef __MESH_HPP
 #define __MESH_HPP
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "H5Cpp.h"
@@ -18,6 +19,14 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 Uint get_common_entry(Uint kedge, Uint ledge,
                       EdgesType &edges);
 
+// Edge lengths shrink where a strip bends: by 1/min(1 + factor kappa, cap); no limit with factor 0. Not on sheets
+// (Topology::check_dim refuses): splits alone cannot grade a sheet that steeply
+struct CurvLimit {
+  double factor = 0.;
+  double cap = 16.;
+  double scale(const double kappa) const { return 1./std::min(1. + factor*kappa, cap); }
+};
+
 // An edge whose midpoint cannot be placed: kept as it is, cut, or the run stops
 enum class StuckEdge { Keep, Cut, Stop };
 
@@ -25,14 +34,13 @@ enum class StuckEdge { Keep, Cut, Stop };
 Uint sheet_refinement(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_max,
-                      const double curv_refine_factor,
                       const StuckEdge stuck,
                       const bool check_if_inside=true);
 
 Uint refinement(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_max,
-                const double curv_refine_factor,
+                const CurvLimit& curv,
                 const StuckEdge stuck);
 
 void compute_edge2faces(Edge2FacesType &edge2faces,
@@ -54,14 +62,13 @@ void remove_inactive(Connectivity& m,
 Uint sheet_coarsening(Connectivity& m,
                       ParticleSet& ps,
                       const double ds_min,
-                      const double ds_max,
-                      const double curv_refine_factor);
+                      const double ds_max);
 
 Uint coarsening(Connectivity& m,
                 ParticleSet& ps,
                 const double ds_min,
                 const double ds_max,
-                const double curv_refine_factor);
+                const CurvLimit& curv);
 
 // Thin a strip to filter_target edges
 bool strip_filtering(Connectivity& m,

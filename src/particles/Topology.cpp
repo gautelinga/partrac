@@ -23,7 +23,8 @@ TopologyOptions cloud_options(const partrac::Params& prm){
 
 TopologyOptions mesh_options(const partrac::Params& prm){
   TopologyOptions o = cloud_options(prm);
-  o.curv_refine_factor = prm.get<double>("curv_refine_factor");
+  o.curv.factor = prm.get<double>("curv_refine_factor");
+  o.curv.cap = prm.get<double>("curv_refine_cap");
   o.cut_if_stuck = prm.get<bool>("cut_if_stuck");
   o.inject_edges = prm.get<bool>("inject_edges");
   o.filter_target = prm.get<Uint>("filter_target");
@@ -43,6 +44,9 @@ void Topology::check_topology(){
 void Topology::check_dim(){
   if (ps.N() == 0) return;
   const int d = dim();
+  // Not on sheets yet: splits alone cannot grade a sheet that steeply, and it fills with slivers until a step stalls
+  if (d > 1 && opts.curv.factor > 0.)
+    partrac::fail("curv_refine_factor = ", opts.curv.factor, " > 0 is for strips only, not sheets");
   if (dim0 < 0){
     if (d > 0){
       dim0 = d;
@@ -152,7 +156,7 @@ void Topology::integrate_tau(const double dt, const double tau_max){
 }
 
 Uint Topology::refine(){
-  Uint n = refinement(*this, ps, opts.ds_max, opts.curv_refine_factor,
+  Uint n = refinement(*this, ps, opts.ds_max, opts.curv,
                       opts.cut_if_stuck ? StuckEdge::Cut : StuckEdge::Stop);
   check_topology();
   return n;
@@ -175,7 +179,7 @@ Uint Topology::coarsen(const bool full){
   // Skip if no edge is below the cut
   Uint n = 0;
   if (ds_shortest <= ds_cut * (1. + 1e-9))
-    n = coarsening(*this, ps, ds_cut, full ? opts.ds_max : 0., opts.curv_refine_factor);
+    n = coarsening(*this, ps, ds_cut, full ? opts.ds_max : 0., opts.curv);
   check_topology();
   return n;
 }
