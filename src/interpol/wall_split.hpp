@@ -331,6 +331,8 @@ struct Tables {
     return {W.data() + at[c.table], rank[c.table], idx.data() + std::size_t(c.table)*NV*idx_stride<NV>};
   }
   const double* normals_of(const WallCell& c) const { return normals.data() + std::size_t(c.normals)*(NV - 1); }
+  // Wall cell w (-1: none) with a table: its correction per sub-cell
+  bool per_sub(const std::int32_t w) const { return w >= 0 && cell[std::size_t(w)].table != no_table; }
   // The tables of the nonzero patterns at rest, ascending, each cell's set
   void build(const bool verbose);
 };
@@ -893,8 +895,7 @@ inline void add(const Frame<Cell>& f, const Table t, const std::array<double, 4>
                 const double* dv, const Terms<Cell::n_verts>& terms, Vector3d& u, Vector3d& v, Matrix3d& gu,
                 Matrix3d& gv)
 {
-  double mu[Cell::n_verts];
-  const int j = split_eval::sub_cell<Cell::n_verts>(l, mu);
+  const int j = split_eval::least<Cell::n_verts>(l);
   add_in<Cell, Grad>(f, t, j, l, du, dv, terms, u, v, gu, gv);
 }
 
@@ -968,13 +969,14 @@ inline void add_ready_in(const Tables<Cell::n_verts>& t, const WallCell& c, cons
   else add_values<Cell>(r.frame, l, j, r.p.data(), r.terms, y, u, v);
 }
 
-// The same in the sub-cell of the least barycentric, any without a table
+// The same in sub-cell sub, else (sub < 0) in the sub-cell of the least
+// barycentric, any without a table
 template<typename Cell, bool Grad>
 inline void add_ready(const Tables<Cell::n_verts>& t, const WallCell& c, const Ready<Cell>& r,
-                      const std::array<double, 4>& l, Vector3d& u, Vector3d& v, Matrix3d& gu, Matrix3d& gv)
+                      const std::array<double, 4>& l, Vector3d& u, Vector3d& v, Matrix3d& gu, Matrix3d& gv,
+                      const int sub = -1)
 {
-  double mu[Cell::n_verts];
-  const int j = c.table != no_table ? split_eval::sub_cell<Cell::n_verts>(l, mu) : 0;
+  const int j = c.table == no_table ? 0 : sub >= 0 ? sub : split_eval::least<Cell::n_verts>(l);
   add_ready_in<Cell, Grad>(t, c, r, j, l, u, v, gu, gv);
 }
 

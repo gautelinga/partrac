@@ -18,6 +18,7 @@
 #include "MeshCore.hpp"
 #include "FreqStamps.hpp"
 #include "near_wall.hpp"
+#include "SubCellRegions.hpp"
 #include "wall_split.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
@@ -33,7 +34,7 @@ struct FreqWeights {
 
 template<typename Cell>
 class SimplexFreqInterpol final
-  : public MeshCore<Cell>
+  : public SubCellRegions<Cell, SimplexFreqInterpol<Cell>>
 {
 public:
   SimplexFreqInterpol(const std::string& infilename);
@@ -45,13 +46,16 @@ public:
   void evaluate_motion(const Vector3d &x, const double t, const CellPos& pos, PointValues& fields);
   double get_t_min() const override { return dolfin_params.template get<double>("t_min"); };
   double get_t_max() const override { return dolfin_params.template get<double>("t_max"); };
+  // Regions: the cells, an upgraded P2 wall cell with a table split into its sub-cells
+  using Regions = SubCellRegions<Cell, SimplexFreqInterpol<Cell>>;
   // A cell's velocity nodes in every component, gathered once for the evaluations in it
   struct Held {
     std::vector<double> blocks;   // a component's block every n_dofs_max*3
     bool wall = false;
+    int sub = -1;                 // the region's sub-cell; -1 the whole cell, its levels the barycentrics
   };
-  void hold(const Region& R, Held& h) const;
-  // evaluate_motion at the barycentrics of cell id from its held nodes
+  void hold(const SubRegion& R, Held& h) const;
+  // evaluate_motion at the levels lev of the held region of cell id from its held nodes
   void held_motion(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
                    PointValues& fields);
 protected:
@@ -100,20 +104,25 @@ protected:
   std::vector<std::uint8_t> rest_;
   // P2: the wall cells, their entities at rest in every component, and their tables
   wall_split::Tables<Cell::n_verts> split_;
+  // Split into regions: an upgraded P2 wall cell (upgrade_p2_) with a table,
+  // its correction per sub-cell
+  friend Regions;
+  bool split_cell(const int id) const { return upgrade_p2_ && split_.per_sub(wall_index_[std::size_t(id)]); }
   // The wall vertices or wall entities at rest: all those of wall_facets'
   // walls (walls, by cell), else those at rest in every component
   void rest_masks(const std::vector<std::uint8_t>& walls);
   // A wall cell at bary, out of line: the components summed with their weights,
   // then raised; component k's block at blocks + k*stride, gathered here if
-  // blocks is null
+  // blocks is null; the correction of sub-cell sub, else (sub < 0) of the
+  // least barycentric's
   __attribute__((noinline))
   void wall_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf, const double* blocks,
-               const std::size_t stride, PointValues& fields) const;
+               const std::size_t stride, PointValues& fields, const int sub = -1) const;
   // A P2 wall cell, out of line: P2 of the summed blocks (the velocity's and
   // its rate's) plus their wall correction
   __attribute__((noinline))
   void upgrade_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf, const double* blocks,
-                  const std::size_t stride, PointValues& fields) const;
+                  const std::size_t stride, PointValues& fields, const int sub) const;
   // Without gradients: the velocity and its rate at bary in cell id, out of line
   __attribute__((noinline))
   void velocity_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,

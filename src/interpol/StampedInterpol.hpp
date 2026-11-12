@@ -23,6 +23,7 @@
 
 #include "MeshCore.hpp"
 #include "near_wall.hpp"
+#include "SubCellRegions.hpp"
 #include "wall_split.hpp"
 #include "stamp_buffer.hpp"
 #include "Triangle.hpp"
@@ -31,7 +32,7 @@
 
 template<typename Cell, typename Format>
 class StampedInterpol final
-  : public MeshCore<Cell>
+  : public SubCellRegions<Cell, StampedInterpol<Cell, Format>>
 {
 public:
   StampedInterpol(const std::string& infilename);
@@ -49,15 +50,18 @@ public:
   bool has_phase_field() const override { return include_phi; }
   bool has_phase_gradient() const override { return phase_gradient_; }
   void evaluate_phase_gradient(const Vector3d &x, const double t, const CellPos& pos, Vector3d& g) override;
+  // Regions: the cells, an upgraded P2 wall cell with a table split into its sub-cells
+  using Regions = SubCellRegions<Cell, StampedInterpol<Cell, Format>>;
   // A cell's velocity nodes at both stamps, gathered once for the evaluations in it
   struct Held {
     std::array<double, Cell::n_dofs_max*3> prev, next;
     std::array<double, (Cell::n_verts - 1)*Cell::n_dofs_max> prev2, next2;   // a wall cell's P2 blocks
     wall_split::Ready<Cell> ready;   // a P2 wall cell's, of both stamps
     bool wall, at_rest_prev, at_rest_next;
+    int sub = -1;   // the region's sub-cell; -1 the whole cell, its levels the barycentrics
   };
-  void hold(const Region& R, Held& h) const;
-  // evaluate_motion at the barycentrics of cell id from its held nodes
+  void hold(const SubRegion& R, Held& h) const;
+  // evaluate_motion at the levels lev of the held region of cell id from its held nodes
   void held_motion(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
                    PointValues& fields);
   // The same without the gradients
@@ -125,6 +129,15 @@ protected:
   std::vector<WallEdges> wall_cells_;
   // P2: the wall patterns at rest and their tables
   wall_split::Tables<Cell::n_verts> split_;
+  // Split into regions: an upgraded P2 wall cell (upgrade_p2_, read as such:
+  // wall_eval_) with a table, its correction per sub-cell
+  friend Regions;
+  bool split_cell(const int id) const {
+    if constexpr (Format::vertex_fields)
+      return false;
+    else
+      return upgrade_p2_ && wall_eval_ && split_.per_sub(wall_index_[std::size_t(id)]);
+  }
   bool rest_fixed_ = false;   // by wall_facets or the first stamp with flow
   // Without wall_facets to name the walls (OpenFOAM, whose patches may start
   // moving): a P1 stamp's wall vertices at rest are its own
@@ -161,7 +174,8 @@ protected:
                const double* next, const double* prev2, const double* next2, const bool at_rest_prev,
                const bool at_rest_next, PointValues& fields) const;
   // A P2 wall cell, out of line: the P2 field plus the wall correction at each
-  // stamp; Hold: from what h holds, else from a thread's last cell made ready
+  // stamp; Hold: from what h holds, its sub-cell's correction if it holds one,
+  // else from a thread's last cell made ready, the least barycentric's
   template<bool Velocity = false, bool Hold = false>
   __attribute__((noinline))
   void upgrade_at(const int id, const std::array<double, 4>& bary, const double alpha_t, const Held* h,

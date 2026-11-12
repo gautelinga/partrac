@@ -225,7 +225,6 @@ void check_across(const std::size_t n, const std::vector<bool>& periodic, const 
   if (expect_twice) REQUIRE(twice > 0);
 }
 
-bool same_region(const Region& a, const Region& b){ return a.id == b.id; }
 bool same_region(const SubRegion& a, const SubRegion& b){ return a.id == b.id && a.sub == b.sub; }
 
 // The held evaluator against the loader's evaluation in the located cell, at
@@ -257,6 +256,15 @@ std::size_t check_held_is_located(I& intp, const std::vector<Vector3d>& pts, con
           typename I::region_type Ry;
           REQUIRE(intp.region_of(pos.id, y, 0., Ry, lev));
           if (!same_region(Ry, R)) continue;
+          // A split wall cell's held evaluation (the cell's nodes held) is at
+          // the barycentrics it rebuilds from its sub-cell's levels, a
+          // rounding off the located ones
+          if constexpr (I::held_by_cell)
+            if (Ry.sub >= 0){
+              const std::array<double, 4> bary = I::cell_levels(Ry.sub, lev);
+              for (int k = 0; k < I::n_levels; ++k) REQUIRE(std::abs(bary[k] - p2.bary[k]) <= 1e-15);
+              p2.bary = bary;
+            }
           PointValues a(1.);
           intp.evaluate_motion(y, t, p2, a);
           REQUIRE(ev(y, t));
@@ -377,8 +385,9 @@ void check_freq_walls(const std::string& tag, const std::size_t n, const std::st
 }
 
 // The split's levels at located points: the sub-cell of the smallest
-// barycentric, its barycentrics mu as the evaluation computes them, and their
-// rates along v the gradients' (the levels are affine in x)
+// barycentric, its barycentrics mu as the evaluation computes them (the macro
+// facet's level times nv), and their rates along v the gradients' (the levels
+// are affine in x)
 template<typename Cell>
 void check_split_levels(SplitInterpol<Cell>& intp, const std::vector<Vector3d>& pts){
   constexpr int nv = Cell::n_verts;
@@ -393,12 +402,14 @@ void check_split_levels(SplitInterpol<Cell>& intp, const std::vector<Vector3d>& 
     REQUIRE(intp.region_of(pos.id, x, 0., R, lev));
     REQUIRE(R.id == pos.id);
     REQUIRE(R.sub == split_eval::sub_cell<nv>(pos.bary, mu.data()));
-    for (int k = 0; k < nv; ++k) REQUIRE(lev[k] == mu[k]);
+    std::array<double, 4> m2;
+    SplitInterpol<Cell>::sub_bary(lev, m2.data());
+    for (int k = 0; k < nv; ++k) REQUIRE(m2[k] == mu[k]);
     REQUIRE(min_level<nv>(lev) >= 0.);
     const SubRegion S = intp.region_in(pos.id, x);
     REQUIRE((S.id == R.id && S.sub == R.sub && S.offset == R.offset));
     REQUIRE(intp.region_point(R, x, l2) == x + R.offset);
-    for (int k = 0; k < nv; ++k) REQUIRE(l2[k] == mu[k]);
+    for (int k = 0; k < nv; ++k) REQUIRE(l2[k] == lev[k]);
     const Vector3d v(uni(rng), uni(rng), dim_of<Cell> == 3 ? uni(rng) : 0.);
     std::array<double, 4> rate, l3;
     intp.level_rates(R, v, rate);

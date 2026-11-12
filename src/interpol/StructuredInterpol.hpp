@@ -365,6 +365,12 @@ public:
   static constexpr bool half_open = true;
   bool region_of(const int id, const Vector3d& x, const double band, LatticeRegion& R, levels_type& lev) const;
   LatticeRegion region_in(const int id, const Vector3d& x) const;
+  // The same and the levels at x
+  LatticeRegion region_in(const int id, const Vector3d& x, levels_type& lev) const {
+    const LatticeRegion R = region_in(id, x);
+    region_point(R, x, lev);
+    return R;
+  }
   Vector3d region_point(const LatticeRegion& R, const Vector3d& x, levels_type& lev) const;
   int across(const LatticeRegion& R, const int k, const Vector3d& x, LatticeRegion& next) const;
   void level_rates(const LatticeRegion& R, const Vector3d& v, levels_type& rate) const;
@@ -372,6 +378,10 @@ public:
   bool is_wall(const LatticeRegion& R, const int k) const;
   // The sub-cubes'
   double region_size(const int) const { return 0.5*hmin(); }
+  // The whole cells as regions (project_end): these
+  const StructuredInterpol& whole_cells() const { return *this; }
+  // The nodes held of a region, not of its cell (held_eval.hpp)
+  static constexpr bool held_by_cell = false;
   // Ids a region takes: its node's
   Uint cell_count() const { return n[0]*n[1]*n[2]; }
   using Held = LatticeNodes;

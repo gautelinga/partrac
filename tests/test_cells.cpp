@@ -14,14 +14,17 @@
 // makes a particle cross before it steps: one resting within the band of a
 // wall steps held and ends inside; one leaving through it falls back. The
 // same on the divergence-free split, whose regions are sub-cells (planes
-// inside a cell as well as its facets), and on the felbm lattice, whose
-// regions are floor cells and, next to solids, sub-cubes, with walls at the
-// sub-cubes' mid-planes before a solid node. And the rare paths: a landing
-// that ends the major step, or would land past it; a crossing into a narrower
-// cell from within the band; the cap on steps a major step; an end below two
-// walls at an acute angle, the joint projection onto walls and its failures;
-// the lattice's cells through a checkpoint. Fourth order where steps land on
-// predicted facets: split triangles, and line elements and frames on XDMF triangles.
+// inside a cell as well as its facets), on upgraded P2's wall cells, split
+// alike next to whole cells, and on the felbm lattice, whose regions are
+// floor cells and, next to solids, sub-cubes, with walls at the sub-cubes'
+// mid-planes before a solid node. And the rare paths: a landing that ends the
+// major step, or would land past it; a crossing into a narrower cell from
+// within the band; the cap on steps a major step (paths circling a vertex),
+// kept from narrow cells into a wide one; an end below two walls at
+// an acute angle, the joint projection onto walls and its failures, and below
+// two walls of a split wall cell; the lattice's cells through a checkpoint.
+// Fourth order where steps land on predicted facets: split triangles, line
+// elements and frames on XDMF triangles and through upgraded P2's wall cells.
 #ifdef USE_DOLFIN
 #include <catch2/catch.hpp>
 
@@ -31,6 +34,7 @@
 #include <limits>
 #include <memory>
 #include <random>
+#include <type_traits>
 #include <vector>
 
 #include "ParticleSet.hpp"
@@ -45,8 +49,9 @@
 
 namespace {
 
-// Points well inside regions of the loader (every level above lo), some a few
-// periods off along the periodic axes
+// Points well inside regions of the loader (every level above lo; a
+// sub-cell's barycentrics, SubCellRegions.hpp), some a few periods off along
+// the periodic axes
 template<typename I>
 std::vector<Vector3d> inner_points(I& intp, const int D, const std::vector<bool>& per, const double t,
                                    const std::size_t n, const double lo){
@@ -57,6 +62,8 @@ std::vector<Vector3d> inner_points(I& intp, const int D, const std::vector<bool>
     typename I::region_type R;
     typename I::levels_type lev;
     if (!intp.region_of(pos.id, x, 0., R, lev)) continue;
+    if constexpr (std::is_same_v<typename I::region_type, SubRegion>)
+      if (R.sub >= 0) I::sub_bary(typename I::levels_type(lev), lev.data());
     bool inner = true;
     for (int k = 0; k < I::n_levels; ++k) inner = inner && lev[k] > lo;
     if (!inner) continue;
@@ -438,6 +445,136 @@ void check_split_planes(std::shared_ptr<SplitInterpol<Cell>> intp, const int D, 
   }
 }
 
+// Upgraded P2, read by the stamped or the frequency loader: the wall
+// correction is a polynomial per sub-cell of a wall cell's split, its gradient
+// jumping on the planes between them (test_wall_split.cpp), so those
+// sub-cells are regions.
+// Particles on such a plane, moving through it and stored in its cell, cross
+// it first or step in the sub-cell beyond, then step as RK4 does, to round-off
+// (the positions: RK4's first stage takes either side's gradient)
+template<typename I>
+void check_wall_planes(std::shared_ptr<I> intp, const int D, const double t){
+  constexpr int nv = I::n_levels;
+  using Levels = typename I::levels_type;
+  intp->set_needs_gradient(true);
+  intp->update(t);
+  std::vector<Vector3d> pts;
+  std::vector<int> cells;
+  std::size_t n = 0, split = 0;
+  for (const Vector3d& x : inner_points(*intp, D, {false, false, false}, t, 900, 0.05)){
+    CellPos pos;
+    REQUIRE(intp->locate(x, t, pos));
+    const SubRegion R = intp->region_in(pos.id, x);
+    if (R.sub < 0) continue;
+    ++split;
+    Levels lev, rate, l2;
+    const Vector3d xe = intp->region_point(R, x, lev);
+    PointValues pv(1.);
+    intp->evaluate_motion(x, t, pos, pv);
+    intp->level_rates(R, pv.U, rate);
+    // An internal plane
+    const int k = int(n++ % std::size_t(nv - 1));
+    const Vector3d g = intp->level_grad(R, k);
+    const Vector3d xf = xe - R.offset - lev[k]/g.squaredNorm()*g;
+    intp->region_point(R, xf, l2);
+    bool clear = true;
+    for (int j = 0; j < nv; ++j) if (j != k && l2[j] < 1e-3) clear = false;
+    SubRegion next;
+    if (!clear || std::abs(rate[k]) < 0.2*g.norm()*pv.U.norm() || intp->across(R, k, xf, next) < 0) continue;
+    REQUIRE(next.id == R.id);
+    REQUIRE(next.sub != R.sub);
+    // Rebound across it, the cell's nodes kept: a fresh bind's values, bit for bit
+    PointValues p1(1.), p2(1.);
+    HeldEval<I> e1(*intp, p1), e2(*intp, p2);
+    e1.bind(R);
+    e1.rebind(next);
+    e2.bind(next);
+    e1.at(xf, t);
+    e2.at(xf, t);
+    REQUIRE((same_bits(p1.U, p2.U) && same_bits(p1.A, p2.A)));
+    REQUIRE((same_bits(p1.gradU, p2.gradU) && same_bits(p1.gradA, p2.gradA)));
+    pts.push_back(xf);
+    cells.push_back(R.id);
+  }
+  static_assert(I::held_by_cell);
+  REQUIRE(split > 100);
+  REQUIRE(pts.size() > 50);
+  auto a = particles<TransportElement::Point>(intp, pts, cells);
+  auto b = particles<TransportElement::Point>(intp, pts, cells);
+  const CellsCounts c = step_both<TransportElement::Point>(intp, *a, *b, t, 1e-3);
+  INFO("on internal planes of wall cells: " << pts.size() << " particles, immediate " << c.immediate
+       << ", crossings " << c.crossings << ", rejects " << c.rejects);
+  REQUIRE(c.fallbacks == 0);
+  REQUIRE(c.immediate > 0);
+  bool same = false;
+  REQUIRE(largest_difference<TransportElement::Point>(*a, *b, same) < 1e-12);
+}
+
+// Upgraded P2: particles on a facet between a split wall cell and an unsplit
+// cell, stored in the cell they leave, cross it first: from a sub-cell by its
+// macro facet into the neighbour's whole cell, entering by its own facet; from
+// a whole cell into the neighbour's sub-cell on the facet, by its macro facet;
+// across back from the entered facet comes back. Then RK4's step, to round-off
+template<typename I>
+void check_wall_facets(std::shared_ptr<I> intp, const int D, const double t){
+  constexpr int nv = I::n_levels;
+  using Levels = typename I::levels_type;
+  intp->set_needs_gradient(true);
+  intp->update(t);
+  std::array<std::vector<Vector3d>, 2> pts;   // out of a split cell, into one
+  std::array<std::vector<int>, 2> cells;
+  for (const Vector3d& x : inner_points(*intp, D, {false, false, false}, t, 2000, 0.05)){
+    CellPos pos;
+    REQUIRE(intp->locate(x, t, pos));
+    const SubRegion R = intp->region_in(pos.id, x);
+    Levels lev, rate, l2, b;
+    const Vector3d xe = intp->region_point(R, x, lev);
+    PointValues pv(1.);
+    intp->evaluate_motion(x, t, pos, pv);
+    intp->level_rates(R, pv.U, rate);
+    for (int k = R.sub < 0 ? 0 : nv - 1; k < nv; ++k){
+      // Out through the facet, not along it
+      const Vector3d g = intp->level_grad(R, k);
+      if (!(rate[k] < -0.2*g.norm()*pv.U.norm())) continue;
+      const Vector3d xf = xe - R.offset - lev[k]/g.squaredNorm()*g;
+      intp->region_point(R, xf, l2);
+      bool clear = true;
+      for (int j = 0; j < nv; ++j) if (j != k && l2[j] < 1e-3) clear = false;
+      SubRegion next;
+      const int e = clear ? intp->across(R, k, xf, next) : -1;
+      if (e < 0 || (R.sub < 0) == (next.sub < 0)) continue;
+      REQUIRE(next.id != R.id);
+      intp->region_point(next, xf, l2);
+      REQUIRE(std::abs(l2[e]) < 1e-12);
+      if (R.sub >= 0)
+        REQUIRE(e < nv);
+      else {
+        REQUIRE(e == nv - 1);
+        intp->whole_cells().region_point(next, xf, b);
+        REQUIRE(std::abs(b[next.sub]) < 1e-12);
+      }
+      SubRegion back;
+      REQUIRE(intp->across(next, e, xf, back) == k);
+      REQUIRE((back.id == R.id && back.sub == R.sub && back.offset == R.offset));
+      pts[R.sub < 0].push_back(xf);
+      cells[R.sub < 0].push_back(R.id);
+    }
+  }
+  for (const int into : {0, 1}){
+    const std::vector<Vector3d>& p = pts[std::size_t(into)];
+    REQUIRE(p.size() > 20);
+    auto a = particles<TransportElement::Point>(intp, p, cells[std::size_t(into)]);
+    auto b = particles<TransportElement::Point>(intp, p, cells[std::size_t(into)]);
+    const CellsCounts c = step_both<TransportElement::Point>(intp, *a, *b, t, 1e-3);
+    INFO((into ? "into" : "out of") << " split cells: " << p.size() << " particles, immediate " << c.immediate
+         << ", crossings " << c.crossings << ", rejects " << c.rejects);
+    REQUIRE(c.fallbacks == 0);
+    REQUIRE(c.immediate >= p.size()*9/10);
+    bool same = false;
+    REQUIRE(largest_difference<TransportElement::Point>(*a, *b, same) < 1e-12);
+  }
+}
+
 // The lattice: particles on every kind of face (between floor cells, a floor
 // cell and a sub-cube, two sub-cubes, a sub-cube's mid-plane), moving through
 // it, cross it first or step in the region beyond as RK4 does, to round-off
@@ -701,11 +838,58 @@ void check_into_narrower(std::shared_ptr<I> intp, const int D, const double t){
   REQUIRE(largest_difference<TransportElement::Point>(*a, *b, same) < 1e-13);
 }
 
-// Past the cap on steps a major step: the fallback, RK4's pieces from the
-// start. A path through many narrow cells into a wide one passes the wide
-// cell's cap
+// Past the cap: the fallback, RK4's pieces from the start. Paths circling a
+// vertex, two and a half turns a step, cross its cells over and over while
+// moving little; close enough to it that RK4's unstable pieces stay inside
 template<typename I>
-void check_cap(std::shared_ptr<I> intp, const double t, const double dt){
+void check_cap(std::shared_ptr<I> intp, const Vector3d& centre, const double t, const double dt){
+  intp->set_needs_gradient(true);
+  intp->update(t);
+  std::mt19937 rng(5);
+  std::uniform_real_distribution<double> ur(1e-6, 3e-6), ua(0., 2.*M_PI);
+  std::vector<Vector3d> pts;
+  while (pts.size() < 30){
+    const double r = ur(rng), a = ua(rng);
+    pts.push_back(centre + r*Vector3d(std::cos(a), std::sin(a), 0.));
+  }
+  auto a = particles<TransportElement::Point>(intp, pts);
+  auto b = particles<TransportElement::Point>(intp, pts);
+  RK4CellsIntegrator cs;
+  REQUIRE(cells_step<TransportElement::Point>(cs, *intp, *b, t, dt).empty());
+  for (Uint i = 0; i < a->N(); ++i)
+    REQUIRE(rk4_pieces<TransportElement::Point>(*intp, *a, i, t, dt));
+  INFO("crossings " << cs.counts().crossings << ", fallbacks " << cs.counts().fallbacks);
+  REQUIRE(cs.counts().fallbacks == pts.size());
+  REQUIRE(cs.counts().crossings >= 5*pts.size());
+  bool same = false;
+  largest_difference<TransportElement::Point>(*a, *b, same);
+  REQUIRE(same);
+}
+
+// Regions of two sizes for the cap, as region_size gives them: region 0's, then the others'
+struct CapSizes {
+  using region_type = Region;
+  using levels_type = std::array<double, 4>;
+  double first, then;
+  double region_size(const int id) const { return id == 0 ? first : then; }
+};
+
+// The count the cap stops a major step at, u = 1 and dt = 0.01: in region 0
+// when first checked, then circling regions 1 and 2; 0 if not by 10^5
+int cap_count(const double first, const double then){
+  CapSizes sizes{first, then};
+  cells::State<TransportElement::Point, CapSizes> s;
+  s.umax2 = 1.;
+  for (s.count = cells::cap_free; s.count < 100000; ++s.count){
+    s.R.id = s.count == cells::cap_free ? 0 : 1 + s.count % 2;
+    if (cells::over_cap(sizes, s, 0.01)) return s.count;
+  }
+  return 0;
+}
+
+// A path through many narrow cells into a wide one keeps the narrow cells' cap: no fallback
+template<typename I>
+void check_cap_kept(std::shared_ptr<I> intp, const double t, const double dt){
   intp->set_needs_gradient(true);
   intp->update(t);
   std::mt19937 rng(5);
@@ -716,17 +900,12 @@ void check_cap(std::shared_ptr<I> intp, const double t, const double dt){
     CellPos pos;
     if (intp->locate(x, t, pos)) pts.push_back(x);
   }
-  auto a = particles<TransportElement::Point>(intp, pts);
   auto b = particles<TransportElement::Point>(intp, pts);
   RK4CellsIntegrator cs;
   REQUIRE(cells_step<TransportElement::Point>(cs, *intp, *b, t, dt).empty());
-  for (Uint i = 0; i < a->N(); ++i)
-    REQUIRE(rk4_pieces<TransportElement::Point>(*intp, *a, i, t, dt));
   INFO("crossings " << cs.counts().crossings << ", fallbacks " << cs.counts().fallbacks);
-  REQUIRE(cs.counts().fallbacks == pts.size());
-  bool same = false;
-  largest_difference<TransportElement::Point>(*a, *b, same);
-  REQUIRE(same);
+  REQUIRE(cs.counts().crossings >= 39*pts.size());
+  REQUIRE(cs.counts().fallbacks == 0);
 }
 
 // Two walls of one cell at an acute angle (the unit square sheared): ends
@@ -950,16 +1129,13 @@ Vector3d at_levels(I& intp, const int id, const Vector3d& x, const int a, const 
   return x + G.transpose()*(G*G.transpose()).inverse()*Eigen::Vector2d(la - lev[a], lb - lev[b]);
 }
 
-// onto_walls on a state at y in cell id; its result, the state's point and levels after
+// onto_walls from y in cell id; its result, the point and levels after
 template<typename I>
 bool onto(I& intp, const int id, const Vector3d& y, const int mask, Vector3d& x, typename I::levels_type& lev){
-  cells::State<TransportElement::Point, I> s;
-  s.R = intp.region_in(id, y);
-  s.x = y;
-  intp.region_point(s.R, s.x, lev);
-  const bool ok = cells::onto_walls(intp, s, mask, lev);
-  x = s.x;
-  return ok;
+  const typename I::region_type R = intp.region_in(id, y);
+  x = y;
+  intp.region_point(R, x, lev);
+  return cells::onto_walls(intp, R, x, mask, lev);
 }
 
 // Points just below two walls at an acute angle are moved onto both (an edge
@@ -1088,6 +1264,62 @@ void check_projection_fallback(std::shared_ptr<I> intp, const std::vector<Vector
   REQUIRE(same);
 }
 
+// Upgraded P2: ends below both walls of a split wall cell near their shared
+// edge or corner, in the sub-cell of one, whose only wall it is, are moved
+// onto both and inside in the whole cell
+template<typename I>
+void check_split_corner(std::shared_ptr<I> intp, const int D, const double t){
+  constexpr int nv = I::n_levels;
+  intp->update(t);
+  const auto& whole = intp->whole_cells();
+  std::size_t n = 0;
+  std::vector<int> seen;
+  for (const Vector3d& x : inner_points(*intp, D, {false, false, false}, t, 4000, 0.)){
+    CellPos pos;
+    REQUIRE(intp->locate(x, t, pos));
+    if (std::find(seen.begin(), seen.end(), pos.id) != seen.end()) continue;
+    const SubRegion C = intp->region_in(pos.id, x);
+    if (C.sub < 0) continue;
+    std::vector<int> w;
+    for (int k = 0; k < nv; ++k) if (whole.is_wall(C, k)) w.push_back(k);
+    if (w.size() != 2) continue;
+    seen.push_back(pos.id);
+    // The walls' levels and, in a tet, those of the other two alike
+    std::vector<int> rows = w;
+    for (int k = 0; k < nv && int(rows.size()) < D; ++k) if (k != w[0] && k != w[1]) rows.push_back(k);
+    Eigen::MatrixXd G(D, D);
+    typename I::levels_type l0;
+    whole.region_point(C, x, l0);
+    for (int i = 0; i < D; ++i)
+      for (int d = 0; d < D; ++d) G(i, d) = whole.level_grad(C, rows[std::size_t(i)])[d];
+    for (const auto& lv : std::vector<std::array<double, 2>>{{-5e-10, -4e-10}, {-4e-10, -5e-10}, {-9e-10, -1e-10}}){
+      Eigen::VectorXd r(D);
+      for (int i = 0; i < D; ++i)
+        r[i] = (i < 2 ? lv[std::size_t(i)] : 0.5*(1. - lv[0] - lv[1])) - l0[rows[std::size_t(i)]];
+      const Eigen::VectorXd d = G.partialPivLu().solve(r);
+      cells::State<TransportElement::Point, I> s;
+      s.x = x;
+      for (int i = 0; i < D; ++i) s.x[i] += d[i];
+      s.R = intp->region_in(pos.id, s.x);
+      const Vector3d y = s.x;
+      int walls = 0;
+      for (int k = 0; k < nv; ++k) walls += intp->is_wall(s.R, k);
+      REQUIRE(s.R.sub == w[lv[0] < lv[1] ? 0 : 1]);
+      REQUIRE(walls == 1);
+      REQUIRE(cells::project_end(*intp, s));
+      typename I::levels_type lev;
+      whole.region_point(s.R, s.x, lev);
+      INFO("cell " << pos.id << ": wall levels " << lev[w[0]] << ", " << lev[w[1]]);
+      REQUIRE(lev[w[0]] >= 0.);
+      REQUIRE(lev[w[1]] >= 0.);
+      REQUIRE(min_level<nv>(lev) >= 0.);
+      REQUIRE((s.x - y).norm() < 1e-8);
+      ++n;
+    }
+  }
+  REQUIRE(n >= 6);
+}
+
 }  // namespace
 
 TEST_CASE("At a wall: resting particles step held and end inside, leaving ones fall back", "[cells]"){
@@ -1177,6 +1409,74 @@ TEST_CASE("The split: a step in one sub-cell is RK4's, planes are crossed, stale
   }
 }
 
+// The upgraded P2 cases: two stamps at rest on the walls of the unit box,
+// read by the stamped loader or as frequency components
+template<typename Cell>
+std::shared_ptr<SimplexInterpol<Cell>> upgraded_stamps(const CaseDir& c, const std::size_t n){
+  write_stamped<Cell>(c, n, "P2", {false, false, false}, true);
+  std::ofstream(c.file("h5_params.dat"), std::ios::app) << "wall_upgrade=true\n";
+  return std::make_shared<SimplexInterpol<Cell>>(c.file("h5_params.dat"));
+}
+
+template<typename Cell>
+std::shared_ptr<SimplexFreqInterpol<Cell>> upgraded_freq(const CaseDir& c, const std::size_t n){
+  write_stamped<Cell>(c, n, "P2", {false, false, false}, true);
+  write_freq_of_stamps(c, "P2", {false, false, false}, "0 0 0.7 up_0.h5\n2 0.3 -1.3 up_1.h5\n",
+                       "wall_upgrade=true\n");
+  return std::make_shared<SimplexFreqInterpol<Cell>>(c.file("freq_params.dat"));
+}
+
+TEST_CASE("Upgraded P2: a step in one region is RK4's, the wall cells' sub-cells are regions, their planes "
+          "crossed", "[cells]"){
+  SECTION("frequency tets"){
+    CaseDir c("cells_freq_up_tet");
+    auto intp = upgraded_freq<Tet>(c, 3);
+    check_no_crossing_all(intp, 3, {false, false, false}, 0.3);
+    check_wall_planes(intp, 3, 0.3);
+    check_wall_facets(intp, 3, 0.3);
+  }
+  SECTION("frequency triangles"){
+    CaseDir c("cells_freq_up_tri");
+    auto intp = upgraded_freq<Triangle>(c, 6);
+    check_no_crossing_all(intp, 2, {false, false, false}, 0.3);
+    check_wall_planes(intp, 2, 0.3);
+    check_wall_facets(intp, 2, 0.3);
+  }
+  SECTION("stamped tets"){
+    CaseDir c("cells_stamped_up_tet");
+    auto intp = upgraded_stamps<Tet>(c, 3);
+    check_no_crossing_all(intp, 3, {false, false, false}, 0.3);
+    check_wall_planes(intp, 3, 0.3);
+    check_wall_facets(intp, 3, 0.3);
+  }
+  SECTION("stamped triangles"){
+    CaseDir c("cells_stamped_up_tri");
+    auto intp = upgraded_stamps<Triangle>(c, 6);
+    check_no_crossing_all(intp, 2, {false, false, false}, 0.3);
+    check_wall_planes(intp, 2, 0.3);
+    check_wall_facets(intp, 2, 0.3);
+  }
+}
+
+TEST_CASE("Upgraded P2: an end below two walls of a split wall cell, onto both in the whole cell", "[cells]"){
+  SECTION("frequency tets"){
+    CaseDir c("cells_freq_up_corner_tet");
+    check_split_corner(upgraded_freq<Tet>(c, 3), 3, 0.3);
+  }
+  SECTION("frequency triangles"){
+    CaseDir c("cells_freq_up_corner_tri");
+    check_split_corner(upgraded_freq<Triangle>(c, 6), 2, 0.3);
+  }
+  SECTION("stamped tets"){
+    CaseDir c("cells_stamped_up_corner_tet");
+    check_split_corner(upgraded_stamps<Tet>(c, 3), 3, 0.3);
+  }
+  SECTION("stamped triangles"){
+    CaseDir c("cells_stamped_up_corner_tri");
+    check_split_corner(upgraded_stamps<Triangle>(c, 6), 2, 0.3);
+  }
+}
+
 TEST_CASE("The lattice: a step in one region is RK4's, faces are crossed, walls are not", "[cells][lattice]"){
   const int n = 12;
   CaseDir c("cells_lattice");
@@ -1225,7 +1525,7 @@ TEST_CASE("Moved particles lose their cell, inserted ones take the cell located,
   REQUIRE(ps.N() == 6);
   const int id = ps.get_cell_id(4);
   REQUIRE(id >= 0);
-  std::array<double, 4> lev;
+  SimplexInterpol<Triangle>::levels_type lev;
   intp->region_point(intp->region_in(id, ps.x(4)), ps.x(4), lev);
   REQUIRE(min_level<3>(lev) >= 0.);
   REQUIRE(ps.get_cell_id(5) == -1);
@@ -1252,14 +1552,66 @@ TEST_CASE("Into a narrower cell from within the band: crossed once, not back and
 }
 
 TEST_CASE("Past the cap on steps a major step: RK4's pieces from the start", "[cells]"){
-  CaseDir c("cells_cap_tri");
-  // 39 columns over x < 0.3, one beyond
-  write_stamped<Triangle>(c, 40, "P2", {false, false, false}, false,
-                          [](const Vector3d& x){
-                            const double i = std::round(40.*x[0]);
-                            return Vector3d(i < 40. ? 0.3*i/39. : 1., x[1], 0.); },
-                          [](const Vector3d&, const int){ return Vector3d(1., 0.05, 0.); });
-  check_cap(std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat")), 0.3, 0.34);
+  SECTION("circling a vertex"){
+    CaseDir c("cells_cap_tri");
+    // A rotation about the vertex at the centre, two and a half turns a step
+    write_stamped<Triangle>(c, 4, "P2", {false, false, false}, false, {},
+                            [](const Vector3d& x, const int){ return Vector3d(-32.*(x[1] - 0.5), 32.*(x[0] - 0.5), 0.); });
+    check_cap(std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat")), Vector3d(0.5, 0.5, 0.), 0.3,
+              0.5);
+  }
+  SECTION("not through narrow cells into a wide one"){
+    CaseDir c("cells_cap_kept_tri");
+    // 39 columns over x < 0.3, one beyond
+    write_stamped<Triangle>(c, 40, "P2", {false, false, false}, false,
+                            [](const Vector3d& x){
+                              const double i = std::round(40.*x[0]);
+                              return Vector3d(i < 40. ? 0.3*i/39. : 1., x[1], 0.); },
+                            [](const Vector3d&, const int){ return Vector3d(1., 0.05, 0.); });
+    check_cap_kept(std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat")), 0.3, 0.34);
+  }
+  SECTION("circling after narrow regions"){
+    // Their own cap 10.5; a sub-cell's (a quarter) 12, a region ten times narrower's 15, kept
+    REQUIRE(cap_count(0.1, 0.1) == 11);
+    REQUIRE(cap_count(0.025, 0.1) == 12);
+    REQUIRE(cap_count(0.01, 0.1) == 15);
+  }
+  SECTION("circling after a sliver"){
+    CaseDir c("cells_cap_sliver_tri");
+    // 38 columns over x < 0.3, slivers 1e-9 wide, one beyond
+    write_stamped<Triangle>(c, 40, "P2", {false, false, false}, false,
+                            [](const Vector3d& x){
+                              const double i = std::round(40.*x[0]);
+                              return Vector3d(i < 39. ? 0.3*i/38. : i < 40. ? 0.3 + 1e-9 : 1., x[1], 0.); });
+    auto intp = std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat"));
+    // The slivers' regions size_floor of their longest edge, 1/40; every other cell its own size
+    std::size_t slivers = 0;
+    int id = -1;
+    for (int i = 0; i < int(intp->cell_count()); ++i){
+      const double s = intp->region_size(i);
+      if (s == intp->cell_size(i)) continue;
+      REQUIRE(intp->cell_size(i) < 1e-5);
+      REQUIRE(s == Approx(MeshCore<Triangle>::size_floor/40.).epsilon(1e-6));
+      ++slivers;
+      id = i;
+    }
+    REQUIRE(slivers == 80);
+    // Circling after one, the cap the sliver's floor sets: 5 dt u/(size_floor L) + cap_free, about 50
+    const double floor = intp->region_size(id);
+    REQUIRE(cap_count(floor, 0.1) == int(std::ceil(5.*0.01/floor + cells::cap_free)));
+    REQUIRE(cap_count(floor, 0.1) <= 51);
+  }
+  SECTION("no region floored in a mesh of the unit cube, sub-cells of the upgraded wall cells included"){
+    CaseDir c("cells_cap_floor_tet");
+    auto intp = upgraded_freq<Tet>(c, 3);
+    std::size_t split = 0;
+    for (int i = 0; i < int(intp->cell_count()); ++i){
+      const double s = intp->region_size(i), cs = intp->cell_size(i);
+      REQUIRE((s == cs || s == cs/4.));
+      split += s != cs;
+    }
+    REQUIRE(split > 0);
+  }
 }
 
 TEST_CASE("An end below two walls at an acute angle: onto both and inside", "[cells]"){
@@ -1277,6 +1629,37 @@ TEST_CASE("Split triangles: steps landing on predicted planes converge at fourth
   const std::vector<Vector3d> pts = central_points(*intp, 2, 0.3, 100, 0.35, 0.65);
   REQUIRE(pts.size() == 100);
   check_order<TransportElement::Tensor>(intp, pts, 0.3, 0.1, 0.005);
+}
+
+// Through the wall cells, the paths cross the planes of their sub-cells; the
+// fields frozen, as the runs on bead packs read them
+template<typename I>
+void check_wall_order(std::shared_ptr<I> intp, const int D, const double T, const double dt){
+  intp->update(0.3);
+  intp->freeze(0.3);
+  const std::vector<Vector3d> pts = central_points(*intp, D, 0.3, 100, 0.1, 0.9);
+  REQUIRE(pts.size() == 100);
+  check_order<TransportElement::Vector>(intp, pts, 0.3, T, dt);
+  check_order<TransportElement::Tensor>(intp, pts, 0.3, T, dt);
+}
+
+TEST_CASE("Upgraded P2: line elements and frames through the wall cells converge at fourth order", "[cells]"){
+  SECTION("frequency tets"){
+    CaseDir c("cells_freq_up_order_tet");
+    check_wall_order(upgraded_freq<Tet>(c, 3), 3, 3., 0.1);
+  }
+  SECTION("frequency triangles"){
+    CaseDir c("cells_freq_up_order_tri");
+    check_wall_order(upgraded_freq<Triangle>(c, 6), 2, 1., 0.025);
+  }
+  SECTION("stamped tets"){
+    CaseDir c("cells_stamped_up_order_tet");
+    check_wall_order(upgraded_stamps<Tet>(c, 3), 3, 3., 0.1);
+  }
+  SECTION("stamped triangles"){
+    CaseDir c("cells_stamped_up_order_tri");
+    check_wall_order(upgraded_stamps<Triangle>(c, 6), 2, 1., 0.025);
+  }
 }
 
 TEST_CASE("XDMF triangles: line elements and frames across facets converge at fourth order", "[cells]"){

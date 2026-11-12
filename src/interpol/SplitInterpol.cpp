@@ -74,7 +74,7 @@ double cond_J(const double* J){
 
 template<typename Cell>
 SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
-  : MeshCore<Cell>(infilename)
+  : SubCellRegions<Cell, SplitInterpol<Cell>, true>(infilename)
 {
   constexpr int nv = Cell::n_verts;
   partrac::phase_begin("load");
@@ -141,6 +141,7 @@ SplitInterpol<Cell>::SplitInterpol(const std::string& infilename)
 
   // The per-cell geometry and the tree, from the topology
   mesh_tables::build_cells_and_tree<Cell>(topo_, coords_, ncells_, nverts_, dim, cells_, tree_);
+  this->measure_cells();
 
   int rank = 0;
   R_ = split_eval::reference_matrix<Cell>(rank);

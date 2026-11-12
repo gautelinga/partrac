@@ -24,7 +24,7 @@ void same_element(const simplex_load::Element& a, const simplex_load::Element& b
 
 template<typename Cell>
 SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
-  : MeshCore<Cell>(infilename)
+  : Regions(infilename)
 {
   constexpr int nv = Cell::n_verts;
   new_id();
@@ -130,6 +130,8 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   }
 
   mesh_tables::build_cells_and_tree<Cell>(topo_, coords_, ncells_, nverts_, dim, cells_, tree_);
+  this->measure_cells();
+  this->mark_split(ncells_);
   partrac::phase_total();
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;

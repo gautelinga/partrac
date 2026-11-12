@@ -64,7 +64,7 @@ The older names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still r
 Set with `scheme`.
 * `explicit`: Euler, or second order with `int_order=2`. Diffusive when `Dm > 0`.
 * `RK4`: Fourth-order Runge-Kutta. Ignores `Dm`.
-* `RK4cells`: RK4 with the steps cut at cell facets, `Dm=0`.
+* `RK4cells`: RK4 with the steps cut at cell facets and sub-cell planes (`divfree=true`, upgraded P2 wall cells), `Dm=0`.
 
 ## Mesh examples
 The mesh examples in `data_example` ship a `generate_up.py` (needs dolfin) rather than the mesh:

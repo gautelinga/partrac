@@ -37,9 +37,24 @@ public:
     R_ = R;
     intp_.hold(R, held_);
   }
+  // To another region of the cell bound: its nodes kept where they are the
+  // cell's (held_by_cell)
+  void rebind(const region_type& R){
+    if constexpr (Interp::held_by_cell){
+      R_ = R;
+      intp_.hold_sub(R, held_);
+    }
+    else bind(R);
+  }
   // The values at (x, t), inside or not
   bool at(const Vector3d& x, const double t){
     intp_.region_point(R_, x, lev_);
+    intp_.held_motion(R_.id, lev_, t, held_, pv_);
+    return inside();
+  }
+  // The same at the point of levels lev, known
+  bool at_levels(const levels_type& lev, const double t){
+    lev_ = lev;
     intp_.held_motion(R_.id, lev_, t, held_, pv_);
     return inside();
   }

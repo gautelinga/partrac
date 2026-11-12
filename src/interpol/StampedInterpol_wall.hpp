@@ -40,16 +40,17 @@ void StampedInterpol<Cell, Format>::upgrade_at(const int id, const std::array<do
     }
     r = &m.ready;
   }
+  const int sub = Hold ? h->sub : -1;
   Vector3d U_prev = Vector3d::Zero(), U_next = Vector3d::Zero();
   if (!Velocity && wants_gradient()){
     Matrix3d gradU_prev = Matrix3d::Zero(), gradU_next = Matrix3d::Zero();
-    wall_split::add_ready<Cell, true>(split_, c, *r, bary, U_prev, U_next, gradU_prev, gradU_next);
+    wall_split::add_ready<Cell, true>(split_, c, *r, bary, U_prev, U_next, gradU_prev, gradU_next, sub);
     fields.gradU = alpha_t * gradU_next + (1-alpha_t) * gradU_prev;
     fields.gradA = stamp_rate(gradU_next, gradU_prev, t_prev, t_next);
   }
   else {
     Matrix3d unused;
-    wall_split::add_ready<Cell, false>(split_, c, *r, bary, U_prev, U_next, unused, unused);
+    wall_split::add_ready<Cell, false>(split_, c, *r, bary, U_prev, U_next, unused, unused, sub);
   }
   fields.U = alpha_t * U_next + (1-alpha_t) * U_prev;
   fields.A = stamp_rate(U_next, U_prev, t_prev, t_next);

@@ -20,6 +20,12 @@ struct Region {
   Vector3d offset = Vector3d::Zero();
 };
 
+// A sub-cell of a barycentric split: the macro cell's region and the macro
+// vertex it leaves out (split_eval.hpp); -1 the whole cell
+struct SubRegion : Region {
+  int sub = -1;
+};
+
 // The evaluation point of x in R, its levels in lev: the wrapped point where
 // the cell holds it, as locate finds it, else x + offset
 template<typename Cell, typename Wrap>

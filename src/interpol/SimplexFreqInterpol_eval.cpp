@@ -202,13 +202,14 @@ inline double SimplexFreqInterpol<Cell>::pressure_at(const int id, const std::ar
 }
 
 template<typename Cell>
-void SimplexFreqInterpol<Cell>::hold(const Region& R, Held& h) const
+void SimplexFreqInterpol<Cell>::hold(const SubRegion& R, Held& h) const
 {
   const int id = R.id;
   constexpr std::size_t bs = Cell::n_dofs_max*3;
   const std::size_t nfreq = u_nodes_.size();
   h.blocks.resize(nfreq*bs);
   h.wall = wall_upgrade_ && wall_index_[id] >= 0;
+  h.sub = R.sub;
   for (std::size_t iFreq = 0; iFreq < nfreq; ++iFreq)
     gather_cell_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
                       u_nodes_[iFreq].data(), h.blocks.data() + iFreq*bs);
@@ -221,7 +222,8 @@ void SimplexFreqInterpol<Cell>::held_motion(const int id, const std::array<doubl
   constexpr std::size_t bs = Cell::n_dofs_max*3;
   const FreqWeights& wf = weights(t);
   if (h.wall){
-    wall_at(id, lev, wf, h.blocks.data(), bs, fields);
+    // At the cell's barycentrics, a sub-cell's own polynomial
+    wall_at(id, Regions::cell_levels(h.sub, lev), wf, h.blocks.data(), bs, fields, h.sub);
     return;
   }
   const std::size_t nfreq = u_nodes_.size();
@@ -251,7 +253,7 @@ void SimplexFreqInterpol<Cell>::held_motion(const int id, const std::array<doubl
   template const FreqWeights& SimplexFreqInterpol<Cell>::fill_weights(const double); \
   template void SimplexFreqInterpol<Cell>::evaluate(const Vector3d&, const double, const CellPos&, PointValues&); \
   template void SimplexFreqInterpol<Cell>::evaluate_motion(const Vector3d&, const double, const CellPos&, PointValues&); \
-  template void SimplexFreqInterpol<Cell>::hold(const Region&, Held&) const; \
+  template void SimplexFreqInterpol<Cell>::hold(const SubRegion&, Held&) const; \
   template void SimplexFreqInterpol<Cell>::held_motion(const int, const std::array<double, 4>&, const double, \
                                                        const Held&, PointValues&);
 

@@ -71,6 +71,7 @@ void DolfInterpol<Cell>::build_cells(const dolfin::GenericDofMap& dofmap){
     cells_[l] = Cell(dolfin_cell);
     dolfin_cells_[l] = dolfin_cell;
   }
+  this->measure_cells();
   partrac::phase("build cells");
   build_facet_table();
   partrac::phase("facet table");

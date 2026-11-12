@@ -110,10 +110,11 @@ inline double first_crossing(const Interp& intp, const typename Interp::region_t
 }
 
 // The first stage at the state's start, its levels and their rates; false if
-// the start is below the band
+// the start is below the band. lev: the start's levels, if known
 template<TransportElement E, typename Interp>
-inline bool first_stage(Interp& intp, HeldEval<Interp>& ev, PointValues& pv, State<E, Interp>& s){
-  if (!ev.at(s.x, s.t))
+inline bool first_stage(Interp& intp, HeldEval<Interp>& ev, PointValues& pv, State<E, Interp>& s,
+                        const typename Interp::levels_type* lev = nullptr){
+  if (!(lev ? ev.at_levels(*lev, s.t) : ev.at(s.x, s.t)))
     return false;
   s.u1 = ev.u();
   s.J1 = ev.J();
@@ -140,12 +141,14 @@ bool relocate(Interp& intp, HeldEval<Interp>& ev, PointValues& pv, State<E, Inte
   return first_stage(intp, ev, pv, s);
 }
 
-// Rare: past the cap on steps a major step, from the fastest first stage and the region's size
+// Rare: past the cap on steps a major step, from the fastest first stage and
+// the region's size; the largest met
 template<TransportElement E, typename Interp>
 __attribute__((noinline))
 bool over_cap(Interp& intp, State<E, Interp>& s, const double dt){
   if (s.count == cap_free || s.R.id != s.cap_id || s.umax2 != s.cap_u2){
-    s.cap = 5.*dt*std::sqrt(s.umax2)/intp.region_size(s.R.id) + cap_free;
+    const double cap = 5.*dt*std::sqrt(s.umax2)/intp.region_size(s.R.id) + cap_free;
+    s.cap = s.count == cap_free ? cap : std::max(s.cap, cap);
     s.cap_id = s.R.id;
     s.cap_u2 = s.umax2;
   }
@@ -160,10 +163,12 @@ inline bool enter(Interp& intp, HeldEval<Interp>& ev, State<E, Interp>& s, const
   const int entered = intp.across(s.R, k, x, next);
   if (entered < 0)
     return false;
+  const bool same = next.id == s.R.id;
   s.R = next;
   s.ent = entered;
   s.hc = inf;
-  ev.bind(next);
+  if (same) ev.rebind(next);
+  else ev.bind(next);
   ++c.crossings;
   return true;
 }
@@ -306,11 +311,12 @@ inline bool major_step(Interp& intp, HeldEval<Interp>& ev, PointValues& pv, Stat
 template<typename Interp>
 inline bool below(const double l){ return l < 0. || (Interp::half_open && l == 0.); }
 
-// Onto the walls of mask at once and inside; false if they do not meet, the
-// point leaves the region or a level moves more than proj_max
-template<TransportElement E, typename Interp>
-bool onto_walls(Interp& intp, State<E, Interp>& s, const int mask, typename Interp::levels_type& lev){
-  constexpr int n_levels = Interp::n_levels;
+// Onto the walls of mask at once and inside, in the regions of v; false if
+// they do not meet, the point leaves the region or a level moves more than proj_max
+template<typename V>
+bool onto_walls(V& v, const typename V::region_type& R, Vector3d& x, const int mask,
+                typename V::levels_type& lev){
+  constexpr int n_levels = V::n_levels;
   using Mat = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 0, n_levels, n_levels>;
   using Vec = Eigen::Matrix<double, Eigen::Dynamic, 1, 0, n_levels, 1>;
   std::array<int, n_levels> idx;
@@ -319,7 +325,7 @@ bool onto_walls(Interp& intp, State<E, Interp>& s, const int mask, typename Inte
   for (int m = 0; m < n_levels; ++m)
     if ((mask >> m) & 1){
       idx[w] = m;
-      g[w] = intp.level_grad(s.R, m);
+      g[w] = v.level_grad(R, m);
       ++w;
     }
   Mat M(w, w);
@@ -328,15 +334,15 @@ bool onto_walls(Interp& intp, State<E, Interp>& s, const int mask, typename Inte
   const Eigen::FullPivLU<Mat> lu(M);
   if (!lu.isInvertible())
     return false;
-  const typename Interp::levels_type lev0 = lev;
+  const typename V::levels_type lev0 = lev;
   for (double eps = 0.;; eps = eps > 0. ? 4.*eps : 1e-16){
     Vec rhs(w);
     for (int i = 0; i < w; ++i) rhs[i] = eps - lev[idx[i]];
     const Vec lam = lu.solve(rhs);
-    for (int i = 0; i < w; ++i) s.x += g[i]*lam[i];
-    intp.region_point(s.R, s.x, lev);
+    for (int i = 0; i < w; ++i) x += g[i]*lam[i];
+    v.region_point(R, x, lev);
     bool in = true;
-    for (int i = 0; i < w; ++i) in = in && !below<Interp>(lev[idx[i]]);
+    for (int i = 0; i < w; ++i) in = in && !below<V>(lev[idx[i]]);
     if (in) break;
     if (eps > band) return false;
   }
@@ -345,39 +351,46 @@ bool onto_walls(Interp& intp, State<E, Interp>& s, const int mask, typename Inte
   return true;
 }
 
-// Rare: an end below a wall, onto it and inside until contains takes it; then
-// onto every wall met at once while one is below (walls at an acute angle).
-// False if that fails: the fallback
-template<TransportElement E, typename Interp>
-__attribute__((noinline))
-bool project_end(Interp& intp, State<E, Interp>& s){
-  constexpr int n_levels = Interp::n_levels;
-  typename Interp::levels_type lev;
-  intp.region_point(s.R, s.x, lev);
+// An end below a wall, onto it and inside until contains takes it; then onto
+// every wall met at once while one is below (walls at an acute angle); in the
+// regions of v
+template<typename V>
+bool project_onto(V& v, const typename V::region_type& R, Vector3d& x){
+  constexpr int n_levels = V::n_levels;
+  typename V::levels_type lev;
+  v.region_point(R, x, lev);
   int met = 0;
   for (int m = 0; m < n_levels; ++m){
-    if (!below<Interp>(lev[m]) || !intp.is_wall(s.R, m)) continue;
+    if (!below<V>(lev[m]) || !v.is_wall(R, m)) continue;
     met |= 1 << m;
-    const Vector3d g = intp.level_grad(s.R, m);
+    const Vector3d g = v.level_grad(R, m);
     const double g2 = g.squaredNorm();
-    s.x -= g*(lev[m]/g2);
-    intp.region_point(s.R, s.x, lev);
-    for (double eps = 1e-16; below<Interp>(lev[m]); eps *= 4.){
-      s.x += g*((eps - lev[m])/g2);
-      intp.region_point(s.R, s.x, lev);
+    x -= g*(lev[m]/g2);
+    v.region_point(R, x, lev);
+    for (double eps = 1e-16; below<V>(lev[m]); eps *= 4.){
+      x += g*((eps - lev[m])/g2);
+      v.region_point(R, x, lev);
     }
   }
   for (int pass = 0; pass < n_levels; ++pass){
     int now = 0;
     for (int m = 0; m < n_levels; ++m)
-      if (below<Interp>(lev[m]) && intp.is_wall(s.R, m)) now |= 1 << m;
+      if (below<V>(lev[m]) && v.is_wall(R, m)) now |= 1 << m;
     if (!now)
       return true;
     met |= now;
-    if (!onto_walls(intp, s, met, lev))
+    if (!onto_walls(v, R, x, met, lev))
       return false;
   }
   return false;
+}
+
+// Rare: the end below a wall, onto it; in the whole cell, its walls at once
+// (a sub-cell's only wall is its macro facet). False if that fails: the fallback
+template<TransportElement E, typename Interp>
+__attribute__((noinline))
+bool project_end(Interp& intp, State<E, Interp>& s){
+  return project_onto(intp.whole_cells(), s.R, s.x);
 }
 
 }  // namespace cells
@@ -410,9 +423,10 @@ std::vector<Uint> RK4CellsIntegrator::step(Interp& intp, ParticleSet& ps, const 
       const int id = ps.get_cell_id(i);
       bool ok = false;
       if (id >= 0){
-        s.R = intp.region_in(id, s.x);
+        typename Interp::levels_type lev;
+        s.R = intp.region_in(id, s.x, lev);
         ev.bind(s.R);
-        ok = cells::first_stage(intp, ev, pv, s);
+        ok = cells::first_stage(intp, ev, pv, s, &lev);
       }
       // A start below the band: located
       ok = ok || cells::relocate(intp, ev, pv, s, id, c);

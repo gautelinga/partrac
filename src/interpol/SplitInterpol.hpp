@@ -17,18 +17,14 @@
 #include "mesh_tables.hpp"
 #include "split_eval.hpp"
 #include "stamp_buffer.hpp"
+#include "SubCellRegions.hpp"
 #include "Timestamps.hpp"
 #include "Triangle.hpp"
 #include "Tet.hpp"
 
-// A sub-cell of the split: the macro cell's region and the macro vertex it leaves out
-struct SubRegion : Region {
-  int sub = 0;
-};
-
 template<typename Cell>
 class SplitInterpol final
-  : public MeshCore<Cell>
+  : public SubCellRegions<Cell, SplitInterpol<Cell>, true>
 {
 public:
   SplitInterpol(const std::string& infilename);
@@ -44,71 +40,13 @@ public:
   // The two stamps are the same values, not a copy of them
   bool stamps_aliased() const { return stamps_.aliased(); }
   bool has_phase_field() const override { return include_phi; }
-  // Regions are sub-cells; levels the sub-cell's barycentrics, the last one the macro facet's
-  using region_type = SubRegion;
-  using typename MeshCore<Cell>::levels_type;
-  bool region_of(const int id, const Vector3d& x, const double band, SubRegion& R, levels_type& lev){
-    levels_type b;
-    if (!Base::region_of(id, x, band, R, b))
-      return false;
-    R.sub = split_eval::sub_cell<Cell::n_verts>(b, lev.data());
-    return true;
-  }
-  // The sub-cell of the smallest barycentric
-  SubRegion region_in(const int id, const Vector3d& x) const {
-    SubRegion R;
-    static_cast<Region&>(R) = Base::region_in(id, x);
-    levels_type b, mu;
-    Base::region_point(R, x, b);
-    R.sub = split_eval::sub_cell<Cell::n_verts>(b, mu.data());
-    return R;
-  }
-  Vector3d region_point(const SubRegion& R, const Vector3d& x, levels_type& lev) const {
-    levels_type b;
-    const Vector3d xe = Base::region_point(R, x, b);
-    split_eval::sub_levels<Cell::n_verts>(R.sub, b, lev.data());
-    return xe;
-  }
-  // An internal plane to the sub-cell of the same cell, the macro facet to the neighbour's sub-cell on it
-  int across(const SubRegion& R, const int k, const Vector3d& x, SubRegion& next) const {
-    constexpr int nv = Cell::n_verts;
-    if (k < nv - 1){
-      next = R;
-      next.sub = split_eval::sub_beyond(R.sub, k);
-      return split_eval::sub_plane(next.sub, R.sub);
-    }
-    Region macro;
-    const int e = Base::across(R, R.sub, x, macro);
-    if (e < 0)
-      return -1;
-    static_cast<Region&>(next) = macro;
-    next.sub = e;
-    return nv - 1;
-  }
-  void level_rates(const SubRegion& R, const Vector3d& v, levels_type& rate) const {
-    constexpr int nv = Cell::n_verts;
-    levels_type d;
-    Base::level_rates(R, v, d);
-    for (int m = 0; m < nv - 1; ++m) rate[m] = d[split_eval::sub_beyond(R.sub, m)] - d[R.sub];
-    rate[nv - 1] = double(nv)*d[R.sub];
-  }
-  Vector3d level_grad(const SubRegion& R, const int k) const {
-    constexpr int nv = Cell::n_verts;
-    const Vector3d gi = Base::level_grad(R, R.sub);
-    return k < nv - 1 ? Vector3d(Base::level_grad(R, split_eval::sub_beyond(R.sub, k)) - gi) : Vector3d(double(nv)*gi);
-  }
-  bool is_wall(const SubRegion& R, const int k) const {
-    return k == Cell::n_verts - 1 && Base::is_wall(R, R.sub);
-  }
-  // A third of the cell's: a path crosses its sub-cells' planes too
-  double region_size(const int id) const { return Base::cell_size(id)/3.; }
   // A sub-cell's velocity nodes at both stamps, gathered once for the evaluations in it
   struct Held {
     std::array<double, split_eval::Split<Cell>::n_sub*3> prev, next;
     int sub;
   };
   void hold(const SubRegion& R, Held& h) const;
-  // evaluate_motion at the barycentrics lev of the held sub-cell of cell id
+  // evaluate_motion at the levels lev of the held sub-cell of cell id
   void held_motion(const int id, const std::array<double, 4>& lev, const double t, const Held& h,
                    PointValues& fields);
   // The same without the gradients

@@ -708,7 +708,7 @@ void write_upgraded(const CaseDir& c, const std::size_t n, const Field& f, const
 }
 
 template<typename I>
-PointValues held_at(I& intp, const Region& R, const Vector3d& x, const double t){
+PointValues held_at(I& intp, const typename I::region_type& R, const Vector3d& x, const double t){
   PointValues v(1.);
   HeldEval<I> ev(intp, v);
   ev.bind(R);
@@ -718,8 +718,9 @@ PointValues held_at(I& intp, const Region& R, const Vector3d& x, const double t)
 
 // The point of cell R at barycentrics lam, from a point x0 in it
 template<typename I>
-Vector3d point_at(I& intp, const Region& R, const Vector3d& x0, const std::array<double, 4>& lam, const int D){
-  std::array<double, 4> l0;
+Vector3d point_at(I& intp, const typename I::region_type& R, const Vector3d& x0, const std::array<double, 4>& lam,
+                  const int D){
+  typename I::levels_type l0;
   intp.region_point(R, x0, l0);
   Matrix3d M = Matrix3d::Identity();
   Vector3d r = Vector3d::Zero();
@@ -731,14 +732,17 @@ Vector3d point_at(I& intp, const Region& R, const Vector3d& x0, const std::array
   return x0 + M.partialPivLu().solve(r);
 }
 
-// Points located in cells with a vertex on the box's sides, and their regions
+// Points located in cells with a vertex on the box's sides, and their cells
+// as whole regions (sub -1: the cell's levels, evaluated as located, the
+// sub-cell of the least barycentric)
 template<typename I>
-std::vector<std::pair<Region, Vector3d>> wall_cells(I& intp, const int D, const std::size_t count){
-  std::vector<std::pair<Region, Vector3d>> out;
+std::vector<std::pair<typename I::region_type, Vector3d>> wall_cells(I& intp, const int D, const std::size_t count){
+  std::vector<std::pair<typename I::region_type, Vector3d>> out;
   for (const Vector3d& x : box_points(intp, D, walls, 20*count)){
     CellPos pos;
     if (!intp.locate(x, T0, pos)) continue;
-    const Region R = intp.region_in(pos.id, x);
+    typename I::region_type R = intp.region_in(pos.id, x);
+    R.sub = -1;
     bool wall = false;
     for (int k = 0; k <= D; ++k){
       std::array<double, 4> e{};
@@ -775,7 +779,7 @@ void continuous(const std::size_t n){
       const double s = 1. - lam[std::size_t(k)];
       for (int i = 0; i <= D; ++i) lam[std::size_t(i)] = i == k ? 0. : lam[std::size_t(i)]/s;
       const Vector3d y = point_at(intp, R, x, lam, D);
-      Region S;
+      typename SimplexInterpol<Cell>::region_type S;
       REQUIRE(intp.across(R, k, y, S) >= 0);
       const PointValues a = held_at(intp, R, y, T0), b = held_at(intp, S, y, T0);
       scale = std::max(scale, largest(a.U));

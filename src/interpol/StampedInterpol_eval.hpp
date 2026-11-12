@@ -123,10 +123,11 @@ void StampedInterpol<Cell, Format>::wall_motion(const int id, const CellPos& pos
 }
 
 template<typename Cell, typename Format>
-void StampedInterpol<Cell, Format>::hold(const Region& R, Held& h) const
+void StampedInterpol<Cell, Format>::hold(const SubRegion& R, Held& h) const
 {
   const int id = R.id;
   h.wall = wall_eval_ && wall_index_[id] >= 0;
+  h.sub = R.sub;
   gather_stamps_nodes<Cell::n_verts, Cell::n_dofs_max, D>(u_dofs_[id], u_dofs_.stride(),
                       u_prev_, u_next_, h.prev.data(), h.next.data());
   if (h.wall){
@@ -153,7 +154,8 @@ inline void StampedInterpol<Cell, Format>::held_at(const int id, const std::arra
   if (h.wall){
     if constexpr (!Format::vertex_fields){
       if (upgrade_p2_){
-        upgrade_at<Velocity, true>(id, lev, alpha_t, &h, fields);
+        // At the cell's barycentrics, a sub-cell's own polynomial
+        upgrade_at<Velocity, true>(id, Regions::cell_levels(h.sub, lev), alpha_t, &h, fields);
         return;
       }
     }
@@ -280,8 +282,8 @@ void StampedInterpol<Cell, Format>::evaluate_phase_gradient(const Vector3d&, con
 // The held evaluation of one format's two cells, in a unit of its own: apart
 // from the located evaluation, whose inlining it would change
 #define STAMPED_HELD_INSTANCES(Format) \
-  template void StampedInterpol<Triangle, Format>::hold(const Region&, Held&) const; \
-  template void StampedInterpol<Tet, Format>::hold(const Region&, Held&) const; \
+  template void StampedInterpol<Triangle, Format>::hold(const SubRegion&, Held&) const; \
+  template void StampedInterpol<Tet, Format>::hold(const SubRegion&, Held&) const; \
   template void StampedInterpol<Triangle, Format>::held_motion(int, const std::array<double, 4>&, double, const Held&, PointValues&); \
   template void StampedInterpol<Tet, Format>::held_motion(int, const std::array<double, 4>&, double, const Held&, PointValues&); \
   template void StampedInterpol<Triangle, Format>::held_velocity(int, const std::array<double, 4>&, double, const Held&, PointValues&); \

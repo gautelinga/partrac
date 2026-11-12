@@ -123,7 +123,10 @@ inline void SplitInterpol<Cell>::held_at(const int id, const std::array<double, 
 {
   assert(in_bracket(t, t_prev, t_next, this->stamp_snap));
   const double alpha_t = stamp_weight(t, t_prev, t_next);
-  sub_at<Velocity>(id, h.sub, lev.data(), alpha_t, h.prev.data(), h.next.data(), fields);
+  // The sub-cell's barycentrics at its levels
+  double mu[Cell::n_verts];
+  this->sub_bary(lev, mu);
+  sub_at<Velocity>(id, h.sub, mu, alpha_t, h.prev.data(), h.next.data(), fields);
 }
 
 template<typename Cell>

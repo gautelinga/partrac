@@ -250,14 +250,18 @@ inline void flux_parts(const Cell& cell, const double* g, const double measure,
   }
 }
 
+// The sub-cell beyond plane m of sub-cell i
+constexpr int sub_beyond(const int i, const int m){ return m < i ? m : m + 1; }
+// The plane of sub-cell j facing sub-cell i
+constexpr int sub_plane(const int j, const int i){ return i < j ? i : i - 1; }
+
 // The macro vertex each sub-local vertex of sub-cell i is; the last is the
 // barycenter, which takes i's own slot here
 template<int NV>
 constexpr std::array<std::array<int, NV>, NV> sub_verts(){
   std::array<std::array<int, NV>, NV> t{};
   for (int i = 0; i < NV; ++i){
-    int m = 0;
-    for (int j = 0; j < NV; ++j) if (j != i) t[i][m++] = j;
+    for (int m = 0; m < NV - 1; ++m) t[i][m] = sub_beyond(i, m);
     t[i][NV - 1] = i;
   }
   return t;
@@ -265,18 +269,17 @@ constexpr std::array<std::array<int, NV>, NV> sub_verts(){
 
 // The barycentrics mu of a point in sub-cell i: mu_z = NV lambda_i, mu_j =
 // lambda_j - lambda_i; mu_z's facet is the macro one, the others the planes
-// to the sub-cells of the other vertices
-template<int NV>
+// to the sub-cells of the other vertices. Z: mu_z's factor, 1 for a region's levels
+template<int NV, int Z = NV>
 inline void sub_levels(const int i, const std::array<double, 4>& bary, double* mu){
   static constexpr auto sv = sub_verts<NV>();
   for (int m = 0; m < NV - 1; ++m) mu[m] = bary[sv[i][m]] - bary[i];
-  mu[NV - 1] = double(NV)*bary[i];
+  mu[NV - 1] = double(Z)*bary[i];
 }
 
-// The sub-cell of the smallest barycentric coordinate, and the barycentrics mu
-// of the point in it
+// The smallest barycentric coordinate's index
 template<int NV>
-inline int sub_cell(const std::array<double, 4>& bary, double* mu){
+inline int least(const std::array<double, 4>& bary){
   // A running minimum in a register, the index by a mask
   double lo = bary[0];
   int i = 0;
@@ -286,14 +289,17 @@ inline int sub_cell(const std::array<double, 4>& bary, double* mu){
     i = (k & m) | (i & ~m);
     lo = b < lo ? b : lo;
   }
-  sub_levels<NV>(i, bary, mu);
   return i;
 }
 
-// The sub-cell beyond plane m of sub-cell i
-constexpr int sub_beyond(const int i, const int m){ return m < i ? m : m + 1; }
-// The plane of sub-cell j facing sub-cell i
-constexpr int sub_plane(const int j, const int i){ return i < j ? i : i - 1; }
+// The sub-cell of the smallest barycentric coordinate, and the barycentrics mu
+// of the point in it
+template<int NV>
+inline int sub_cell(const std::array<double, 4>& bary, double* mu){
+  const int i = least<NV>(bary);
+  sub_levels<NV>(i, bary, mu);
+  return i;
+}
 
 // The sub-cell's P2 basis in mu, in the cell class's own slot order
 template<typename Cell>

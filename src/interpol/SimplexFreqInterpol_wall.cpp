@@ -39,7 +39,7 @@ Memo<Cell>& memo(){ static thread_local Memo<Cell> m; return m; }
 template<typename Cell>
 void SimplexFreqInterpol<Cell>::wall_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,
                                         const double* blocks, const std::size_t stride,
-                                        PointValues& fields) const
+                                        PointValues& fields, const int sub) const
 {
   constexpr int nv = Cell::n_verts;
   constexpr std::size_t n2 = Cell::n_dofs_max;
@@ -65,13 +65,13 @@ void SimplexFreqInterpol<Cell>::wall_at(const int id, const std::array<double, 4
     return;
   }
 
-  upgrade_at(id, bary, wf, blocks, stride, fields);
+  upgrade_at(id, bary, wf, blocks, stride, fields, sub);
 }
 
 template<typename Cell>
 void SimplexFreqInterpol<Cell>::upgrade_at(const int id, const std::array<double, 4>& bary, const FreqWeights& wf,
                                            const double* blocks, const std::size_t stride,
-                                           PointValues& fields) const
+                                           PointValues& fields, const int sub) const
 {
   constexpr std::size_t n2 = Cell::n_dofs_max;
   const wall_split::WallCell& c = split_.cell[std::size_t(wall_index_[id])];
@@ -87,23 +87,23 @@ void SimplexFreqInterpol<Cell>::upgrade_at(const int id, const std::array<double
   Vector3d U = Vector3d::Zero(), A = Vector3d::Zero();
   if (wants_gradient()){
     Matrix3d gradU = Matrix3d::Zero(), gradA = Matrix3d::Zero();
-    wall_split::add_ready<Cell, true>(split_, c, m.ready, bary, U, A, gradU, gradA);
+    wall_split::add_ready<Cell, true>(split_, c, m.ready, bary, U, A, gradU, gradA, sub);
     fields.gradU = gradU;
     fields.gradA = gradA;
   }
   else {
     Matrix3d unused;
-    wall_split::add_ready<Cell, false>(split_, c, m.ready, bary, U, A, unused, unused);
+    wall_split::add_ready<Cell, false>(split_, c, m.ready, bary, U, A, unused, unused, sub);
   }
   fields.U = U;
   fields.A = A;
 }
 
 template void SimplexFreqInterpol<Triangle>::wall_at(const int, const std::array<double, 4>&, const FreqWeights&,
-                                                     const double*, const std::size_t, PointValues&) const;
+                                                     const double*, const std::size_t, PointValues&, const int) const;
 template void SimplexFreqInterpol<Tet>::wall_at(const int, const std::array<double, 4>&, const FreqWeights&,
-                                                const double*, const std::size_t, PointValues&) const;
+                                                const double*, const std::size_t, PointValues&, const int) const;
 template void SimplexFreqInterpol<Triangle>::upgrade_at(const int, const std::array<double, 4>&, const FreqWeights&,
-                                                        const double*, const std::size_t, PointValues&) const;
+                                                        const double*, const std::size_t, PointValues&, const int) const;
 template void SimplexFreqInterpol<Tet>::upgrade_at(const int, const std::array<double, 4>&, const FreqWeights&,
-                                                   const double*, const std::size_t, PointValues&) const;
+                                                   const double*, const std::size_t, PointValues&, const int) const;
