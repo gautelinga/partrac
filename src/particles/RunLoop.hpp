@@ -16,9 +16,11 @@
 #include "H5Cpp.h"
 
 #include "typedefs.hpp"
+#include "Error.hpp"
 #include "Params.hpp"
 #include "strings.hpp"
 #include "intervals.hpp"
+#include "schedule.hpp"
 #include "perf_window.hpp"
 #include "io.hpp"
 #include "rng.hpp"
@@ -116,6 +118,29 @@ inline Run start_run(partrac::Params& prm, const std::string& name,
   return Run{prm, intp, out, std::move(gens), t0, T, frozen_fields, false, t0};
 }
 
+// The steps' times: from the step count since the run's start, else since the
+// restart, when the step changed
+inline StepGrid step_grid(const Run& run, const double dt){
+  const partrac::Params& prm = run.prm;
+  StepGrid g{run.t0, 0, dt};
+  if (prm.get<std::string>("restart_folder") != ""){
+    const int it = static_cast<int>(prm.get<Uint>("it"));
+    if (run.t0 + it*dt != prm.get<double>("t")){
+      g.t_start = prm.get<double>("t");
+      g.it_start = it;
+    }
+  }
+  return g;
+}
+
+// The steps the schedule of key (dump_intv, stat_intv, checkpoint_intv) has
+// events at; the parameters checked it
+inline EventClock event_clock(const Run& run, const std::string& key, const StepGrid& grid){
+  Schedule s;
+  parse_schedule(run.prm.get<std::string>(key), s);
+  return EventClock(s, grid, run.t0);
+}
+
 // Load checkpoint or initial state (init if given)
 inline bool load_or_initialize(Run& run, Topology& mesh,
                                const std::function<InitialState()>& init = nullptr){
@@ -156,14 +181,15 @@ inline OutputFields mesh_output_fields(const partrac::Params& prm, Topology& mes
 struct Remesher {
   Topology& mesh;
   const bool refine, coarsen, verbose;
-  const double refine_intv, coarsen_intv, dump_intv, step;
+  const double refine_intv, coarsen_intv, step;
+  EventClock dumps;
 
-  Remesher(Topology& mesh, const partrac::Params& prm, const double step)
-    : mesh(mesh), refine(prm.get<bool>("refine")), coarsen(prm.get<bool>("coarsen")),
-      verbose(prm.get<bool>("verbose")), refine_intv(prm.get<double>("refine_intv")),
+  Remesher(Topology& mesh, const Run& run, const double step)
+    : mesh(mesh), refine(run.prm.get<bool>("refine")), coarsen(run.prm.get<bool>("coarsen")),
+      verbose(run.prm.get<bool>("verbose")), refine_intv(run.prm.get<double>("refine_intv")),
       // Coarsen at refine_intv when coarsening is off
-      coarsen_intv(coarsen ? prm.get<double>("coarsen_intv") : refine_intv),
-      dump_intv(prm.get<double>("dump_intv")), step(step) {}
+      coarsen_intv(coarsen ? run.prm.get<double>("coarsen_intv") : refine_intv),
+      step(step), dumps(event_clock(run, "dump_intv", step_grid(run, step))) {}
 
   // Initial refinement and coarsening
   void initial(const bool restarting, const bool inject){
@@ -185,7 +211,7 @@ struct Remesher {
   // Curvature, refinement, coarsening
   void reshape(const int it){
     if ((refine && at_interval(it, refine_intv, step)) || at_interval(it, coarsen_intv, step)
-        || at_interval(it, dump_intv, step)){
+        || dumps.at(it)){
       mesh.compute_interior();
     }
     if (refine && at_interval(it, refine_intv, step) && it > 0){
@@ -319,25 +345,21 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // Resume step count
   int it = restarting ? static_cast<int>(prm.get<Uint>("it")) : 0;
   // Time from the step count since the run's start, else since the restart
-  double t_start = run.t0;
-  int it_start = 0;
-  if (restarting && t_start + it*dt != prm.get<double>("t")){
-    t_start = prm.get<double>("t");
-    it_start = it;
-  }
-  const auto time_at = [&](const int k){ return t_start + (k - it_start)*dt; };
+  const StepGrid grid = step_grid(run, dt);
+  const auto time_at = [&](const int k){ return grid.time(k); };
   double t = time_at(it);
 
   const std::string& newfolder = run.out.run;
   prm.dump(newfolder, time_name(t, dt));
 
-  // Loop constants
-  const double dump_intv = prm.get<double>("dump_intv");
-  const double stat_intv = prm.get<double>("stat_intv");
-  const double checkpoint_intv = prm.get<double>("checkpoint_intv");
-  // A new dump file every dump_chunk_size dumps
+  // Loop constants: the steps with a dump, a statistics row, a checkpoint
+  EventClock dumps = event_clock(run, "dump_intv", grid);
+  EventClock stats = event_clock(run, "stat_intv", grid);
+  EventClock checkpoints = event_clock(run, "checkpoint_intv", grid);
+  // A new dump file every dump_chunk_size dumps, counted from the run's first
   const int chunk_size = prm.get<int>("dump_chunk_size");
-  const Uint chunk_steps = dump_intv > 0. && chunk_size > 0 ? steps_per(dump_intv, dt)*Uint(chunk_size) : 0;
+  long long dumps_before = dumps.on() && chunk_size > 0 ? dumps.count_before(it) : 0;
+  Uint dumps_in_file = 0;
   const double ds_max = prm.get<double>("ds_max");
   const int sort_every = prm.has("sort_every") ? prm.get<int>("sort_every") : 0;
   // S is computed in the refresh
@@ -350,7 +372,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   // No dump file when dumping is off
   H5::H5File h5f;
   XdmfIndex index(newfolder);
-  if (dump_intv > 0.){
+  if (dumps.on()){
     try {
       { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
       h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
@@ -364,7 +386,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   }
 
   std::ofstream statfile;
-  if (stat_intv > 0.){
+  if (stats.on()){
     statfile.open(newfolder + "/tdata_from_t" + time_name(t, dt) + ".dat");
     write_stats_header(statfile, hooks.statistics ? hooks.statistics(0., stepper.counters())
                                                   : mesh.stats_header_columns(ds_max));
@@ -395,8 +417,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     hooks.reshape(it, t);
 
     // Update fields
-    if (at_interval(it, dump_intv, dt) || at_interval(it, stat_intv, dt)
-        || (refresh_S && at_interval(it, checkpoint_intv, dt))){
+    if (dumps.at(it) || stats.at(it) || (refresh_S && checkpoints.at(it))){
       const double t_fields = run.marches ? run.t_fields : t;
       update_fields(ps, *run.intp, t_fields, output_fields);
       if (!step_noted){
@@ -406,7 +427,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     }
 
     // Statistics
-    if (at_interval(it, stat_intv, dt)){
+    if (stats.at(it)){
       std::cout << "Time = " << t;
       hooks.progress(std::cout);
       std::cout << std::endl;
@@ -418,21 +439,26 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     }
 
     // Checkpoint
-    if (at_interval(it, checkpoint_intv, dt)){
+    if (checkpoints.at(it)){
       prm.set<Uint>("it", it);
       mesh.write_checkpoint(run.out.checkpoints, t, prm);
     }
 
     // Dump detailed data
-    if (at_interval(it, dump_intv, dt)){
+    if (dumps.at(it)){
       const std::string groupname = time_name(t, dt);
       std::vector<WrittenDataset> written;
       try {
-        // A new file at each chunk, the first made at the start
-        if (chunk_steps > 0 && it % chunk_steps == 0 && it > it_first){
+        // A new file at each chunk, the first made at the start. A bare
+        // number's layout as it was: a restart's first dump on a chunk
+        // boundary starts a new file even with the restart's file empty; a
+        // schedule's goes into that file instead of leaving it empty
+        if (chunk_size > 0 && dumps_before % chunk_size == 0 && it > it_first
+            && (dumps.plain() || dumps_in_file > 0)){
           h5name = "data_from_t" + groupname + ".h5";
           h5fname = newfolder + "/" + h5name;
           { H5::H5File create(h5fname.c_str(), H5F_ACC_TRUNC); }
+          dumps_in_file = 0;
         }
         h5f.openFile(h5fname.c_str(), H5F_ACC_RDWR);
         h5f.createGroup(groupname + "/");
@@ -446,6 +472,8 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
       }
       // Indexed once closed
       index.append(written, h5name, groupname);
+      ++dumps_before;
+      ++dumps_in_file;
     }
 
     // Pieces between stamps

@@ -48,7 +48,7 @@ static int run(int argc, char* argv[])
   const bool verbose = prm.get<bool>("verbose");
 
   const double dt = prm.get<double>("dt");
-  Remesher remesher(mesh, prm, dt);
+  Remesher remesher(mesh, run, dt);
   remesher.initial(restarting, inject);
 
   if (verbose){

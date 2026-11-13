@@ -32,7 +32,7 @@ static int run(int argc, char* argv[])
 
   const bool verbose = prm.get<bool>("verbose");
   const double dxn = prm.get<double>("dxn");
-  Remesher remesher(mesh, prm, dxn);
+  Remesher remesher(mesh, run, dxn);
   remesher.initial(restarting, prm.get<bool>("inject"));
 
   OutputFields output_fields = mesh_output_fields(prm, mesh);

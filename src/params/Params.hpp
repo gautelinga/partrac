@@ -50,6 +50,8 @@ class Params;
 class Schema;
 
 using Pred = std::function<bool(const Params&)>;
+// A check that says what is wrong: the problem, empty if none
+using Problem = std::function<std::string(const Params&)>;
 
 namespace detail {
 
@@ -97,6 +99,7 @@ struct SchemaImpl {
   std::vector<Entry> entries;              // registration order, drives dump/print
   std::map<std::string, std::size_t> index;
   std::vector<Constraint> checks;
+  std::vector<Problem> problems;
   std::vector<Constraint> warns;
   std::vector<std::function<void(Params&)>> finalizers;
   bool strict_file = true;
@@ -197,6 +200,8 @@ public:
   Schema& token_choices(const std::string& key, const std::string& sep,
                         std::vector<std::string> allowed);
   Schema& check(Pred ok, std::string message);
+  // A message made from the values, such as which part of a value is wrong
+  Schema& check(Problem problem);
   Schema& warn(Pred trigger, std::string message);
   Schema& finalize(std::function<void(Params&)> f);
 

@@ -21,8 +21,8 @@ inline void check_schema(partrac::Schema& s){
                                       "dump_intv=0.1", "stat_intv=0.1"};
   try {
     partrac::Params p = s.parse(args);
-    if (p.has("dump_intv")) REQUIRE(p.get<double>("dump_intv") >= 0.4);
-    if (p.has("stat_intv")) REQUIRE(p.get<double>("stat_intv") >= 0.4);
+    if (p.has("dump_intv")) REQUIRE(std::stod(p.get<std::string>("dump_intv")) >= 0.4);
+    if (p.has("stat_intv")) REQUIRE(std::stod(p.get<std::string>("stat_intv")) >= 0.4);
   } catch (const partrac::ParamError&) {
     // needs more required parameters than this probe supplies
   }

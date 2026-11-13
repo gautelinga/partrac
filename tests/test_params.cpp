@@ -405,6 +405,22 @@ TEST_CASE("value checks and choices are enforced", "[params]") {
       s.parse(cli({"Nrw=1", "exit_plane=x", "Ln=1.0", "filter_intv=0.1"})));
 }
 
+TEST_CASE("a check can say what is wrong in its message", "[params]") {
+  Schema s = basic();
+  s.check([](const Params& p) {
+    const std::string m = p.get<std::string>("init_mode");
+    return m.find(' ') == std::string::npos ? "" : "init_mode: '" + m + "' has a space";
+  });
+  REQUIRE_NOTHROW(s.validate_self());
+  REQUIRE_NOTHROW(s.parse(cli({"Nrw=1"})));
+  try {
+    s.parse(cli({"Nrw=1", "init_mode=a b"}));
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(e.problems() == std::vector<std::string>{"init_mode: 'a b' has a space"});
+  }
+}
+
 // Runtime (program-computed) parameters
 
 TEST_CASE("runtime parameters are rejected on the command line", "[params]") {

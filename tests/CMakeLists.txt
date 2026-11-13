@@ -41,6 +41,7 @@ add_library(unittest_objects OBJECT
   test_cells.cpp
   test_explicit_pieces.cpp
   test_intervals.cpp
+  test_schedule.cpp
   region_cases.cpp
 )
 

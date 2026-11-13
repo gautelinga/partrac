@@ -74,7 +74,7 @@ cd data_example/ppf_triangle_p2 && python3 generate_up.py -dim 1
 The generators also need [femtools](https://github.com/gautelinga/femtools) and partractools. `ppf_triangle_p2` writes its walls to `boundaries.xdmf`; run it with `dolfin_params_walls.dat` instead of `dolfin_params.dat` to have `wall_upgrade` use them.
 
 ## Visualization
-A run that dumps (`dump_intv > 0`) keeps `mesh.xdmf` in its folder, indexing every dump so far; open it in ParaView. For runs from older versions, `python3 -m partractools.make_xdmf FOLDER` writes it.
+A run that dumps (`dump_intv` not 0) keeps `mesh.xdmf` in its folder, indexing every dump so far; open it in ParaView. For runs from older versions, `python3 -m partractools.make_xdmf FOLDER` writes it.
 
 Plotting the position:
 `python3 -m partractools.plot_pos FOLDER/RandomWalkers/Dm0..../`
@@ -85,6 +85,13 @@ Parameters are given as `key=value` after the input file. `--help` lists an app'
 ./build/bin/partrac --help
 ```
 A dolfin case's `dolfin_params.dat` names its elements with `velocity_space`, `pressure_space` and, for a phase field (`include_phi=true`), `phase_field_space`; partrac checks them against the field files.
+
+### Output intervals
+`dump_intv`, `stat_intv` and `checkpoint_intv` take a number X (every X; `0` is off) or a schedule of comma-separated segments in time t:
+* `X:U`: every X up to t = U.
+* `logN:S:U`, `logN:U`: N times a decade from S (or the previous U) to U.
+
+`dump_intv=0.1:1,log5:100,10`: every 0.1 to t = 1, 5 a decade to 100, then every 10. Times snap to the nearest step; a schedule also fires at the start, and a restart continues it.
 
 ### Near no-slip walls
 `wall_upgrade=true` raises the order of the velocity next to no-slip walls; it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`.

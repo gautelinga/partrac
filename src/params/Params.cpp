@@ -375,6 +375,11 @@ Schema& Schema::check(Pred ok, std::string message) {
   return *this;
 }
 
+Schema& Schema::check(Problem problem) {
+  m_impl->problems.push_back(std::move(problem));
+  return *this;
+}
+
 Schema& Schema::warn(Pred trigger, std::string message) {
   m_impl->warns.push_back({std::move(trigger), std::move(message)});
   return *this;
@@ -566,6 +571,10 @@ Params Schema::resolve(Params p, std::vector<std::string> problems) const {
 
   for (const auto& c : m_impl->checks)
     if (!c.pred(p)) problems.push_back(c.message);
+  for (const auto& c : m_impl->problems) {
+    std::string message = c(p);
+    if (!message.empty()) problems.push_back(std::move(message));
+  }
 
   if (!problems.empty()) throw ParamError(m_impl->app, std::move(problems));
 
@@ -725,6 +734,8 @@ void Schema::validate_self() const {
   for (const auto& e : m_impl->entries)
     probe_pred(e.required_when, "the condition for '" + e.key + "'");
   for (const auto& c : m_impl->checks) probe_pred(c.pred, "check '" + c.message + "'");
+  for (const auto& c : m_impl->problems)
+    probe_pred([&c](const Params& p) { return !c(p).empty(); }, "a check");
   for (const auto& w : m_impl->warns) probe_pred(w.pred, "warning '" + w.message + "'");
 
   if (!problems.empty()) throw ParamError(m_impl->app, std::move(problems));

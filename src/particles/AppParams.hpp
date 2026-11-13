@@ -9,6 +9,7 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "mesh.hpp"
+#include "schedule.hpp"
 
 // Every app: field scale, seed, threads and folder naming
 inline void add_app_params(partrac::Schema& s){
@@ -54,28 +55,41 @@ inline void add_curv_limit(partrac::Schema& s){
           "curv_refine_cap must be at least 1: below, it lengthens edges");
 }
 
-// dump_intv, stat_intv and checkpoint_intv. These and the keys in more: 0 is off,
-// negative an error; dump and statistics floored at one step of step_key, and
-// Nrw_max raised to Nrw
+// dump_intv, stat_intv and checkpoint_intv: each a number or a schedule
+// (schedule.hpp). A number is written back as a number, and for dump_intv and
+// stat_intv floored at one step of step_key. The keys in more are numbers. 0 is
+// off, a negative interval an error. Nrw_max is raised to Nrw.
 inline void add_intervals(partrac::Schema& s, const std::string& step_key,
                           const std::vector<std::string>& more = {}){
-  s.opt<double>("dump_intv", 100.0, "dump interval");
-  s.opt<double>("stat_intv", 100.0, "statistics interval");
-  s.opt<double>("checkpoint_intv", 1000.0, "checkpoint interval");
-  std::vector<std::string> keys = {"checkpoint_intv", "dump_intv", "stat_intv"};
-  keys.insert(keys.end(), more.begin(), more.end());
-  s.check([keys](const partrac::Params& p){
-            for (const auto& key : keys)
-              if (p.get<double>(key) < 0.) return false;
-            return true;
-          },
-          "intervals cannot be negative");
-  s.finalize([step_key](partrac::Params& p){
+  const std::string forms = ", or a schedule of X, X:U, logN:S:U, logN:U segments";
+  s.opt<std::string>("dump_intv", "100", "dump interval" + forms);
+  s.opt<std::string>("stat_intv", "100", "statistics interval" + forms);
+  s.opt<std::string>("checkpoint_intv", "1000", "checkpoint interval" + forms);
+  const std::vector<std::string> scheduled = {"checkpoint_intv", "dump_intv", "stat_intv"};
+  if (!more.empty())
+    s.check([more](const partrac::Params& p){
+              for (const auto& key : more)
+                if (p.get<double>(key) < 0.) return false;
+              return true;
+            },
+            "intervals cannot be negative");
+  // Which segment breaks which rule
+  for (const auto& key : scheduled)
+    s.check([key](const partrac::Params& p){
+      Schedule sc;
+      return schedule_message(key, parse_schedule(p.get<std::string>(key), sc));
+    });
+  s.finalize([step_key, scheduled](partrac::Params& p){
     const double step = p.get<double>(step_key);
-    if (p.get<double>("dump_intv") > 0.)
-      p.set<double>("dump_intv", std::max(p.get<double>("dump_intv"), step));
-    if (p.get<double>("stat_intv") > 0.)
-      p.set<double>("stat_intv", std::max(p.get<double>("stat_intv"), step));
+    // A number as a number; dump and statistics floored at a step
+    for (const auto& key : scheduled){
+      Schedule sc;
+      if (parse_schedule(p.get<std::string>(key), sc) || !sc.plain()) continue;
+      double intv = sc.segs[0].X;
+      if (key != "checkpoint_intv" && intv > 0.)
+        intv = std::max(intv, step);
+      p.set<std::string>(key, partrac::value_to_string(partrac::Value(intv)));
+    }
     p.set<Uint>("Nrw_max", std::max(p.get<Uint>("Nrw_max"), p.get<Uint>("Nrw")));
   });
 }
