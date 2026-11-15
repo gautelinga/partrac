@@ -56,7 +56,7 @@ Give the folder that holds `Checkpoints/`:
 | `tracervectors_spatial` | Line elements marched in path length                                      |
 | `weighted_walkers`      | Diffusive walkers past an exit plane, resampled by weight                 |
 | `filaments`             | Pairs of points and their stretching                                      |
-| `interpol`              | Probes the fields at random points                                        |
+| `interpol`              | Probes the fields at random points, or at points from a file (`points`)   |
 
 The older names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still run, as their app with the old choices fixed.
 

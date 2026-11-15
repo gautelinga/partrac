@@ -16,8 +16,10 @@ flags; the statistics rows agree with the velocities dumped at the same time
 and do not depend on what the dump holds; the tracer apps shuffle their
 particle slots; the deterministic integrators give bit-identical output on 1
 and 4 threads, and partrac's statistics agree to their printed precision; a
-diffusive run is reproducible for a given seed and thread count; and a bare
-parameter file name reads the case in the working directory.
+diffusive run is reproducible for a given seed and thread count; a bare
+parameter file name reads the case in the working directory; and interpol at
+points from a file gives what it gives at its random points, carries a dump's
+ids, does not overwrite an earlier probe, and leaves the random mode as it was.
 """
 
 import os
@@ -31,7 +33,7 @@ from cases import (ABC, APPS, CORE, EXAMPLE, KINDS, WRAPPERS, args_for, rewrite,
                    wrapper_kind)
 from dumps import all_dumps, read_stats
 from paths import REPO, app, need, needs
-from runs import copy_case, copy_example, merged, read_checkpoint, run_app
+from runs import copy_case, copy_example, interpolation, merged, read_checkpoint, run_app
 
 
 def smoke_cells():
@@ -511,3 +513,139 @@ def test_a_bare_parameter_file_name_reads_the_case_in_the_working_directory(tmp_
                         "random=false", "seed=1", "t0=0"],
                        cwd=d, capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
+
+
+@needs(app("interpol"))
+def test_interpol_at_points_from_a_file_gives_the_random_probes_values(tmp_path, mesh_dir):
+    """interpol at points from a file gives the values it gives at the same random points.
+
+    The file holds the random probes reversed, the same moved by whole periods,
+    and one point past the walls. The rows come in the file's order; the first
+    are the random rows bit for bit, the moved ones keep their x and agree to
+    round-off, and the last is flagged outside and NaN but for its x. A failure
+    means probes at a dump's positions are not the field the tracers saw there.
+    """
+    h5py = pytest.importorskip("h5py")
+    args = ["mode=tetfreq", "int_order=2", "random=false", "seed=1", "t0=0", "num_threads=4"]
+    a = copy_case(mesh_dir("tetfreq"), tmp_path / "random")
+    out = run_app(app("interpol"), a / "dolfin_params.dat", args, ["Nrw=300"]).stdout
+    rnd = interpolation(a)
+    L = [float(v) for v in re.search(r"Lx=([^,]+), Ly=([^,]+),", out).groups()]   # the unit cube: printed exactly
+    x = np.stack([rnd["x"], rnd["y"], rnd["z"]], axis=1)[::-1]
+    n = len(x)
+    moved = x + np.array([-3 * L[0], 0., 0.])   # periodic in x only
+    past = x[:1] + np.array([0., 2 * L[1], 0.])
+    with h5py.File(tmp_path / "points.h5", "w") as h:
+        h["points"] = np.concatenate([x, moved, past])
+
+    b = copy_case(mesh_dir("tetfreq"), tmp_path / "given")
+    run_app(app("interpol"), b / "dolfin_params.dat", args, ["points=%s" % (tmp_path / "points.h5")])
+    got = interpolation(b)
+    assert set(got) == set(rnd) | {"inside"}
+    assert np.array_equal(got["inside"], np.r_[np.ones(2 * n), 0.])
+    fields = sorted(set(rnd) - set("xyz"))
+    for k in rnd:
+        assert np.array_equal(got[k][:n], rnd[k][::-1], equal_nan=True), k
+    for k, col in zip("xyz", np.concatenate([moved, past]).T):
+        assert np.array_equal(got[k][n:], col), k
+    for k in fields:
+        np.testing.assert_allclose(got[k][n:2 * n], rnd[k][::-1], rtol=1e-10, atol=1e-12, err_msg=k)
+        assert np.isnan(got[k][-1]), k
+
+
+# interpol's random probes at 03553fd, before points= (tetfreq case, seed 1, 4
+# threads, Nrw 300): their count, column sums and first row. They pin the
+# random mode to the old output; a change of generate_up.py's mesh changes them.
+INTERPOL_03553FD = {
+    "rows": 300,
+    "sum": {"x": 147.26976093261757, "y": 150.19920250042986, "z": 151.3846803668073,
+            "ux": 400.70815481047026, "uy": 10.13281324374518, "uz": 7.478905906890204,
+            "p": 527.9001570726336, "uxy": 151.38468036680732, "uxz": 148.82843887242646},
+    "first": {"x": 0.034704884587377915, "y": 0.016997575321091793, "z": 0.09934347749395778,
+              "ux": 1.0459761424622351, "uy": 0.00334173155085912, "uz": 0.013286263266261669,
+              "p": 0.2648570429308489, "uxy": 0.09934347749395836, "uxz": 0.4136272969079938},
+}
+
+
+@needs(app("interpol"))
+def test_interpol_random_probes_are_those_of_03553fd(tmp_path, mesh_dir):
+    """The random mode is unchanged by points=: the probes of 03553fd."""
+    a = copy_case(mesh_dir("tetfreq"), tmp_path / "random")
+    run_app(app("interpol"), a / "dolfin_params.dat",
+            ["mode=tetfreq", "int_order=2", "random=false", "seed=1", "t0=0", "num_threads=4", "Nrw=300"])
+    got = interpolation(a)
+    assert len(got["x"]) == INTERPOL_03553FD["rows"]
+    for k, v in INTERPOL_03553FD["sum"].items():
+        assert np.sum(got[k]) == pytest.approx(v, rel=1e-12), k
+    for k, v in INTERPOL_03553FD["first"].items():
+        assert got[k][0] == pytest.approx(v, rel=1e-12, abs=1e-15), k
+
+
+@needs(app("interpol"))
+def test_interpol_at_a_dump_carries_its_ids_and_does_not_overwrite(tmp_path, mesh_dir):
+    """interpol at a tracer dump's points carries their ids and does not overwrite an earlier probe.
+
+    The dump is as partrac writes it: float32 <t>/points, unwrapped, with the
+    integer <t>/id beside them, and here one point not finite. The output
+    carries the ids in the file's order, flags the bad point outside, notes
+    that t0 is not the dump's time, is bit-identical on 1 and 4 threads, sits
+    in a folder named after the file and dataset, and a second probe there
+    stops. Otherwise probes of several dumps would land on one another, and
+    rows could not be matched to tracers.
+    """
+    h5py = pytest.importorskip("h5py")
+    args = ["mode=tetfreq", "int_order=2", "random=false", "seed=1", "t0=0"]
+    a = copy_case(mesh_dir("tetfreq"), tmp_path / "random")
+    out = run_app(app("interpol"), a / "dolfin_params.dat", args, ["Nrw=200", "num_threads=4"]).stdout
+    rnd = interpolation(a)
+    L = float(re.search(r"Lx=([^,]+),", out).group(1))
+    x = np.stack([rnd["x"], rnd["y"], rnd["z"]], axis=1)
+    x[::2, 0] += 2 * L                     # unwrapped, periodic in x
+    x[-1] = [np.nan, 0.5, 0.5]
+    ids = np.random.default_rng(0).permutation(10 * len(x))[:len(x)].astype(np.int64).reshape(-1, 1)
+    with h5py.File(tmp_path / "dump.h5", "w") as h:
+        h["5.000000/points"] = x.astype(np.float32)
+        h["5.000000/id"] = ids
+    given = ["points=%s" % (tmp_path / "dump.h5"), "points_dataset=5.000000/points"]
+
+    got = {}
+    for nt in ("1", "4"):
+        b = copy_case(mesh_dir("tetfreq"), tmp_path / ("given" + nt))
+        r = run_app(app("interpol"), b / "dolfin_params.dat", args, given, ["num_threads=" + nt])
+        assert "names t = 5" in r.stdout, r.stdout
+        [f] = list(b.rglob("interpolation.h5part"))
+        assert "_pts-dump-5.000000-points" in str(f.parent), f
+        got[nt] = interpolation(b)
+    g = got["4"]
+    for k in g:
+        assert np.array_equal(g[k], got["1"][k], equal_nan=True), k
+    assert np.array_equal(g["id"], ids[:, 0].astype(float))
+    assert np.array_equal(g["x"][:-1], x[:-1, 0].astype(np.float32).astype(float))
+    assert g["inside"][-1] == 0 and np.isnan(g["ux"][-1]) and g["id"][-1] == ids[-1, 0]
+    assert np.all(g["inside"][:-1] == 1)
+
+    again = run_app(app("interpol"), b / "dolfin_params.dat", args, given, ["num_threads=4"], check=False)
+    assert again.returncode != 0 and "exists" in again.stdout + again.stderr
+
+
+@needs(app("interpol"))
+def test_interpol_refuses_a_missing_or_wrong_point_count(tmp_path, mesh_dir):
+    """interpol refuses a missing or wrong point count, and a dataset that is not positions.
+
+    Without points=, Nrw is required; with them, a given Nrw must be the
+    file's count; a dataset that is not N x 3 floats is refused with its
+    shape, before any field is loaded.
+    """
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(tmp_path / "p.h5", "w") as h:
+        h["points"] = np.full((4, 3), 0.5)
+        h["flat"] = np.zeros((4, 2))
+        h["ints"] = np.zeros((4, 3), dtype=np.int32)
+    a = copy_case(mesh_dir("tetfreq"), tmp_path / "case")
+    args = ["mode=tetfreq", "int_order=2", "random=false", "seed=1", "t0=0", "num_threads=1"]
+    for extra, needle in ((["dt=1"], "Nrw"),
+                          (["points=%s" % (tmp_path / "p.h5"), "Nrw=5"], "Nrw=5 but"),
+                          (["points=%s" % (tmp_path / "p.h5"), "points_dataset=flat"], "is 4 x 2"),
+                          (["points=%s" % (tmp_path / "p.h5"), "points_dataset=ints"], "floating-point")):
+        r = run_app(app("interpol"), a / "dolfin_params.dat", args, extra, check=False)
+        assert r.returncode != 0 and needle in r.stdout + r.stderr, (extra, r.stdout[-500:] + r.stderr[-500:])

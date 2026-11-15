@@ -71,7 +71,8 @@ public:
     std::array<std::uint32_t, 3> q{{0, 0, 0}};
     for (int d = 0; d < dim_; ++d){
       const double v = (x[d] - lo_[d])*scale_[d];
-      q[d] = std::uint32_t(v < 0. ? 0. : (v > top_ ? top_ : std::floor(v)));
+      // !(v > 0) also takes NaN, whose cast to an integer is undefined
+      q[d] = std::uint32_t(!(v > 0.) ? 0. : (v > top_ ? top_ : std::floor(v)));
     }
     return dim_ == 3 ? morton3(q[0], q[1], q[2]) : morton2(q[0], q[1]);
   }
