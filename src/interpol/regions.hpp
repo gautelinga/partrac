@@ -6,6 +6,13 @@
 // barycentrics at the evaluation point; their rates along a velocity come
 // from the constant barycentric gradients. Free functions over the cell and
 // facet tables, as the walks in cell_walk.hpp.
+//
+// What RK4cells (steps_cells_impl.hpp) asks of an interpolator with regions:
+// region_type, levels_type, n_levels, half_open; region_of, region_in (with
+// the levels or without), region_point, across, level_rates, level_grad,
+// is_wall, region_size; whole_cells (the cells as regions, for projections
+// onto walls); held_by_cell and hold_sub (rebind's), hold and held_motion
+// (held_eval.hpp). MeshCore, SubCellRegions and StructuredInterpol have them.
 
 #include <algorithm>
 #include <array>

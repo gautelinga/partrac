@@ -22,7 +22,8 @@ inline partrac::Schema spatial_schema(){
   s.opt<double>("Ln", 0.0, "path length the march ends at");
   s.opt<double>("xn0", 0.0, "path length the march starts from");
   s.opt<double>("u_eps", 1e-7, "a node this slow or slower cannot move");
-  s.opt<std::string>("outside", "remove", "a node that cannot take its step (outside, too slow, done, or a step longer than dx_max): ignore (it stays), mark (c = 2), or remove");
+  add_outside(s, "remove", "a node that cannot take its step (outside, too slow, done, or a step longer than dx_max)",
+              true);
   s.opt<int>("sort_every", 5, "reorder particles by cell every this many steps, 0 = never");
   add_intervals(s, "dxn", {"coarsen_intv", "refine_intv"});
   s.opt<double>("refine_intv", 100.0, "refinement interval");
@@ -36,7 +37,6 @@ inline partrac::Schema spatial_schema(){
   s.opt<bool>("cut_if_stuck", true, "cut edges that get stuck");
   s.opt<bool>("output_all_props", true, "dump all properties");
   s.choices("mode", interpol_modes());
-  s.choices("outside", {"ignore", "mark", "remove"});
   return s;
 }
 

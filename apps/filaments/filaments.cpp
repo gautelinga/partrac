@@ -41,7 +41,7 @@ static int run(int argc, char* argv[])
   RunHooks hooks;
 
   // Resizing
-  hooks.reshape = [&](const int it, const double){
+  hooks.reshape = [&](const int it, const double, const bool){
     if (!at_interval(it, resize_intv, dt))
       return;
     const bool resized = doublings ? mesh.resize_doublings(resize_to) : mesh.resize(resize_to);

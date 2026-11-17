@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include "Error.hpp"
 #include "ParticleSet.hpp"
@@ -17,6 +18,7 @@ void ParticleSet::for_each_array(Fn&& fn){
   if (has_phi) fn(phi_rw);
   if (has_cell_type) fn(cell_type_rw);
   if (has_generation) fn(generation_rw);
+  for (auto& col : cols_rw) fn(col);
 }
 
 // Size, slots and new nodes
@@ -134,6 +136,7 @@ bool ParticleSet::insert_node_between(const Uint inode, const Uint jnode, const 
   // Interpolate carried fields
   interpolate_carried(Nrw, inode, jnode);
   id_rw[Nrw] = next_id++;
+  for (auto& col : cols_rw) col[Nrw] = std::numeric_limits<double>::quiet_NaN();
 
   ++Nrw;
   return true;
@@ -254,24 +257,22 @@ void ParticleSet::compute_curvature(const EdgesType &edges, const Node2EdgesType
   }
 }
 
+double strip_curvature(const EdgesType& edges, const Node2EdgesType& node2edges, const ParticleSet& ps,
+                       const Uint n){
+  const auto& row = node2edges[n];
+  if (row.size() != 2)
+    return 0.;
+  auto other = [&](const Uint e){ return get_other(edges[e].first[0], edges[e].first[1], n); };
+  const Vector3d a = ps.x(other(row[0])) - ps.x(n), b = ps.x(other(row[1])) - ps.x(n);
+  const double d = a.norm() * b.norm() * (a - b).norm();
+  return d > 0. ? 2. * a.cross(b).norm() / d : 0.;
+}
+
 void ParticleSet::compute_strip_curvature(const EdgesType &edges,
                                                  const Node2EdgesType &node2edges){
   for (Uint inode=0; inode<Nrw; ++inode){
-    H_rw[inode] = 0.;
+    H_rw[inode] = strip_curvature(edges, node2edges, *this, inode);
     n_rw[inode] = {1., 0., 0.};
-    if (node2edges[inode].size() == 2){
-      auto edgeit = node2edges[inode].begin();
-      Uint jnode = get_other(edges[*edgeit].first[0],
-                             edges[*edgeit].first[1], inode);
-      ++edgeit;
-      Uint knode = get_other(edges[*edgeit].first[0],
-                             edges[*edgeit].first[1], inode);
-
-      double R = circumcenter(x_rw[inode], x_rw[jnode], x_rw[knode]);
-
-      H_rw[inode] = 1./R;
-
-    }
   }
 }
 
@@ -281,6 +282,11 @@ void ParticleSet::dump_as(const std::string& field, const std::string& name){
   if (field == "rhohat") rhohat_name = name;
   else if (field == "t_loc") t_loc_name = name;
   else { partrac::fail("ParticleSet::dump_as: no field '", field, "'"); }
+}
+
+Uint ParticleSet::add_column(){
+  cols_rw.emplace_back(Nrw_max, std::numeric_limits<double>::quiet_NaN());
+  return cols_rw.size() - 1;
 }
 
 void ParticleSet::record_generation(){
@@ -314,6 +320,7 @@ void ParticleSet::carry(const TransportElement e){
 void ParticleSet::init_carried(const Uint irw){
   id_rw[irw] = next_id++;
   init_carried_fields(irw);
+  for (auto& col : cols_rw) col[irw] = std::numeric_limits<double>::quiet_NaN();
 }
 
 void ParticleSet::init_carried_fields(const Uint irw){

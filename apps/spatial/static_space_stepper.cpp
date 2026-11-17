@@ -47,7 +47,7 @@ static int run(int argc, char* argv[])
   RunHooks hooks;
 
   // Reshaping
-  hooks.reshape = [&](const int it, const double){ remesher.reshape(it); };
+  hooks.reshape = [&](const int it, const double, const bool dumping){ remesher.reshape(it, dumping); };
 
   hooks.outside = [&](const std::vector<Uint>& nodes, const double xn){
     // Finished and trapped nodes

@@ -154,7 +154,7 @@ inline void StampedInterpol<Cell, Format>::held_at(const int id, const std::arra
   if (h.wall){
     if constexpr (!Format::vertex_fields){
       if (upgrade_p2_){
-        // At the cell's barycentrics, a sub-cell's own polynomial
+        // Levels back to the cell's barycentrics; the held sub-cell's correction
         upgrade_at<Velocity, true>(id, Regions::cell_levels(h.sub, lev), alpha_t, &h, fields);
         return;
       }

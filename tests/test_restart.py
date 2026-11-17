@@ -21,7 +21,8 @@ import pytest
 from cases import ABC
 from dumps import all_dumps, dump_at
 from paths import REPO, app, left_out, needs
-from runs import checkpoint_folder, continuous_and_resumed, copy_example, put_points, run_app
+from runs import (checkpoint_folder, continuous_and_resumed, copy_example, kill_after_checkpoint, put_points,
+                  run_app)
 
 PARTRAC = app("partrac")
 TRACERS = app("tracers")
@@ -114,6 +115,32 @@ def test_a_resumed_run_told_not_to_remesh_does_not(tmp_path):
     assert len(a["edges"]) == len(b["edges"])
     for name in sorted(a):
         assert np.array_equal(a[name], b[name]), name
+
+
+@needs_partrac
+@pytest.mark.parametrize("edges", ["true", "false"], ids=["edges", "points"])
+def test_a_run_killed_after_an_injection_step_injects_on_it_once(tmp_path, edges):
+    """Killed past a checkpoint written on an injection step, after its
+    injection, and resumed: the dumps of the run never stopped, bit for bit. A
+    resume that injected again on that step would double its generation (with
+    edges, an inlet node that has not moved is reused, so it would not)."""
+    hagen = os.path.join(REPO, "data_example", "hagen_poiseuille", "expr_params.dat")
+    args = ["mode=analytic init_mode=uniform_x x0=0 y0=0 z0=0 Nrw=9 Nrw_max=200000 inject=true "
+            "inject_edges=%s inject_intv=0.05 T_inject=1e10 ds_max=1e9 ds_min=1e-9 Dm=0 int_order=1 "
+            "dt=0.005 stat_intv=1e9 dump_intv=0.05 checkpoint_intv=0.1 random=false seed=1" % edges]
+    cont = copy_example(hagen, tmp_path / "cont")
+    run_app(PARTRAC, cont, args, "T=1.5")
+    killed = copy_example(hagen, tmp_path / "killed")
+    t = kill_after_checkpoint(PARTRAC, killed, args + ["T=1000"], 0.2)["t"]
+    run_app(PARTRAC, killed, args, "T=1.5", "restart_folder=%s" % checkpoint_folder(killed.parent))
+    resumed = all_dumps(killed.parent, "data_from_t%.6f.h5" % t, raw=True)
+    assert sorted(resumed) == pytest.approx([t + 0.05 * k for k in range(len(resumed))]) and len(resumed) >= 3
+    every = all_dumps(cont.parent, raw=True)
+    for time, dump in resumed.items():
+        [same] = [u for u in every if abs(u - time) < 1e-9]
+        assert set(dump) == set(every[same])
+        for k in dump:
+            assert np.array_equal(dump[k], every[same][k]), (time, k)
 
 
 # --- filaments ------------------------------------------------------------------

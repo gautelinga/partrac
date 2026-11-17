@@ -6,6 +6,7 @@
 #include "Params.hpp"
 #include "interpol_factory.hpp"
 #include "AppParams.hpp"
+#include "Initializer.hpp"
 
 // Tracer app parameters
 struct TracerDefaults {
@@ -29,6 +30,40 @@ inline void add_scheme(partrac::Schema& s, const std::string& def){
            return p.get<std::string>("scheme") == "RK4" && p.get<double>("Dm") != 0.0;
          },
          "scheme=RK4 ignores Dm");
+}
+
+// First crossings of the levels of n.(x - origin) (crossings.hpp); with
+// needs_n, cross_intv needs cross_n (partrac's exit_plane=x|y|z names it too)
+inline void add_crossing_params(partrac::Schema& s, const bool needs_n = true){
+  s.opt<std::string>("cross_n", "", "plane normal: x, y, z or nx,ny,nz");
+  s.opt<std::string>("cross_intv", "0", "record first crossings of the levels of n.(x - cross_origin): every "
+                     "X, or a schedule of X, X:U, logN:S:U, logN:U segments, as distances; 0: none");
+  s.opt<std::string>("cross_origin", "0,0,0", "where the levels are measured from: x,y,z, or start, each "
+                     "point's position when first seen");
+  s.opt<std::string>("cross_file", "crossings.bin",
+                     "crossing records, in the run folder: a text line naming the float64 columns, then "
+                     "the records");
+  s.check([](const partrac::Params& p){
+            Schedule sc;
+            return schedule_message("cross_intv", parse_schedule(p.get<std::string>("cross_intv"), sc));
+          }, "cross_intv's schedule");
+  s.check([](const partrac::Params& p){
+            bool start;
+            Vector3d o;
+            return try_parse_origin(p.get<std::string>("cross_origin"), start, o);
+          },
+          "cross_origin must be start or x,y,z");
+  s.check([](const partrac::Params& p){
+            Vector3d n;
+            const std::string v = p.get<std::string>("cross_n");
+            return v.empty() || (v != "none" && try_parse_normal(v, n));
+          },
+          "cross_n must be x, y, z or nx,ny,nz, not zero");
+  if (needs_n)
+    s.check([](const partrac::Params& p){
+              return !crossings_on(p) || !p.get<std::string>("cross_n").empty();
+            },
+            "cross_intv needs cross_n");
 }
 
 namespace tracer_params_detail {
@@ -79,8 +114,8 @@ inline void add_tracer_params(partrac::Schema& s, const TracerDefaults& d){
   s.opt<bool>("frozen_fields", false, "freeze the velocity field");
   s.optional<double>("t_frozen", "time to freeze the fields at, clamped to the fields' times; default t0");
   add_scheme(s, "RK4");
-  s.opt<std::string>("outside", d.outside, "a particle that cannot take its step: ignore (it stays), or mark (c = 2)");
-  s.choices("outside", {"ignore", "mark"});
+  add_outside(s, d.outside, "a particle that cannot take its step", false);
+  add_crossing_params(s);
 }
 
 // Marching tracers
@@ -94,8 +129,8 @@ inline void add_march_tracer_params(partrac::Schema& s, const TracerDefaults& d)
   s.opt<double>("dx_max", 1e9, "longest step accepted");
   s.opt<double>("Dm", 0.0, "diffusivity, enters the folder name only");
   s.opt<double>("dt", 1.0, "timestep, enters the folder name only");
-  s.opt<std::string>("outside", d.outside, "a particle that cannot take its step (outside, too slow, done, or a step too long): ignore (it stays), mark (c = 2), or remove");
-  s.choices("outside", {"ignore", "mark", "remove"});
+  add_outside(s, d.outside, "a particle that cannot take its step (outside, too slow, done, or a step too long)",
+              true);
 }
 
 #endif

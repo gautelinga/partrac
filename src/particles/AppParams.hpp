@@ -8,7 +8,7 @@
 #include <vector>
 #include "typedefs.hpp"
 #include "Params.hpp"
-#include "mesh.hpp"
+#include "curv_limit.hpp"
 #include "schedule.hpp"
 
 // Every app: field scale, seed, threads and folder naming
@@ -31,6 +31,17 @@ inline void add_int_order(partrac::Schema& s, const std::string& doc, const int 
           "int_order must be 1 or 2");
 }
 
+// outside: what becomes of what cannot take its step (what), def by
+// default; remove where the app can
+inline void add_outside(partrac::Schema& s, const std::string& def, const std::string& what, const bool remove){
+  s.opt<std::string>("outside", def, what + ": ignore (it stays), " + (remove ? "mark (c = 2), or remove"
+                                                                            : "or mark (c = 2)"));
+  if (remove)
+    s.choices("outside", {"ignore", "mark", "remove"});
+  else
+    s.choices("outside", {"ignore", "mark"});
+}
+
 // Every particle run: app keys, restart, output, checkpoint state
 inline void add_run_params(partrac::Schema& s, const std::string& t_doc){
   add_app_params(s);
@@ -40,9 +51,16 @@ inline void add_run_params(partrac::Schema& s, const std::string& t_doc){
   s.opt<bool>("verbose", false, "print the parameters");
   s.runtime<double>("t", 0.0, t_doc);
   s.runtime<Uint>("it", 0, "current step");
+  s.runtime<bool>("reshaped", false, "whether the checkpoint's step was reshaped before it");
   s.runtime<double>("Lx", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Ly", 0.0, "domain size, from the interpolator");
   s.runtime<double>("Lz", 0.0, "domain size, from the interpolator");
+}
+
+// Whether cross_intv records crossings: a schedule, or a bare number not 0
+inline bool crossings_on(const partrac::Params& p){
+  Schedule sc;
+  return !parse_schedule(p.get<std::string>("cross_intv"), sc) && !sc.off();
 }
 
 // The curvature limit on a strip's edge lengths (CurvLimit); no limit with factor 0
@@ -72,13 +90,13 @@ inline void add_intervals(partrac::Schema& s, const std::string& step_key,
                 if (p.get<double>(key) < 0.) return false;
               return true;
             },
-            "intervals cannot be negative");
+            schedule_rule(ScheduleError::Negative));
   // Which segment breaks which rule
   for (const auto& key : scheduled)
     s.check([key](const partrac::Params& p){
       Schedule sc;
       return schedule_message(key, parse_schedule(p.get<std::string>(key), sc));
-    });
+    }, key + "'s schedule");
   s.finalize([step_key, scheduled](partrac::Params& p){
     const double step = p.get<double>(step_key);
     // A number as a number; dump and statistics floored at a step

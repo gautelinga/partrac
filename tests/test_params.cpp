@@ -410,7 +410,7 @@ TEST_CASE("a check can say what is wrong in its message", "[params]") {
   s.check([](const Params& p) {
     const std::string m = p.get<std::string>("init_mode");
     return m.find(' ') == std::string::npos ? "" : "init_mode: '" + m + "' has a space";
-  });
+  }, "init_mode's spaces");
   REQUIRE_NOTHROW(s.validate_self());
   REQUIRE_NOTHROW(s.parse(cli({"Nrw=1"})));
   try {
@@ -518,6 +518,20 @@ TEST_CASE("a predicate reading a conditional key is caught by validate_self",
                        [](const Params& p) { return p.get<double>("La") > 1.0; },
                        "La is large", "second extent");
   REQUIRE_THROWS_AS(s.validate_self(), ParamError);
+}
+
+TEST_CASE("a message check reading a conditional key is named by what it checks", "[params]") {
+  Schema s = basic();
+  s.require_if<double>("La", needs_La, "init_mode needs it", "extent");
+  s.check([](const Params& p) -> std::string { return p.get<double>("La") > 1.0 ? "" : "La: too short"; },
+          "La's length");
+  try {
+    s.validate_self();
+    FAIL("expected ParamError");
+  } catch (const ParamError& e) {
+    REQUIRE(all_problems(e).find("check of La's length reads a parameter that may not be set")
+            != std::string::npos);
+  }
 }
 
 TEST_CASE("a key declared and also retired or replaced is caught by validate_self",

@@ -2,11 +2,13 @@
 #define __MESH_HPP
 
 #include <algorithm>
+#include <random>
 #include <string>
 #include <vector>
 #include "H5Cpp.h"
 #include "typedefs.hpp"
 #include "ParticleSet.hpp"
+#include "curv_limit.hpp"
 
 void mesh2hdf( H5::H5File& h5f, const std::string& groupname
              , const ParticleSet& ps
@@ -19,13 +21,6 @@ void mesh2hdf( H5::H5File& h5f, const std::string& groupname
 Uint get_common_entry(Uint kedge, Uint ledge,
                       EdgesType &edges);
 
-// Edge lengths shrink where a strip bends: by 1/min(1 + factor kappa, cap); no limit with factor 0. Not on sheets
-// (Topology::check_dim refuses): splits alone cannot grade a sheet that steeply
-struct CurvLimit {
-  double factor = 0.;
-  double cap = 16.;
-  double scale(const double kappa) const { return 1./std::min(1. + factor*kappa, cap); }
-};
 
 // An edge whose midpoint cannot be placed: kept as it is, cut, or the run stops
 enum class StuckEdge { Keep, Cut, Stop };
@@ -70,10 +65,11 @@ Uint coarsening(Connectivity& m,
                 const double ds_max,
                 const CurvLimit& curv);
 
-// Thin a strip to filter_target edges
+// Thin a strip to filter_target edges, dropped at random by gen
 bool strip_filtering(Connectivity& m,
                      ParticleSet& ps,
-                     const Uint filter_target);
+                     const Uint filter_target,
+                     std::mt19937& gen);
 
 bool resizing(EdgesType &edges,
               Node2EdgesType &node2edges,

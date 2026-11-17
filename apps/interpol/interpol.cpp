@@ -138,9 +138,9 @@ inline double time_in_path(const std::string& dataset){
 // rows of those inside the fluid. Given points: a row a point in their order,
 // the id beside it when given, inside 1 or 0; an outside row (a point outside
 // the fluid, or not finite) is NaN but for x, y, z and the id.
-inline void test_interpolation(std::shared_ptr<Interpol> intp, const std::string &newfolder,
-                               const double t0, const std::vector<double>& xs, const bool given,
-                               const std::vector<double>& ids = {}){
+inline void probe_points(std::shared_ptr<Interpol> intp, const std::string &newfolder,
+                         const double t0, const std::vector<double>& xs, const bool given,
+                         const std::vector<double>& ids = {}){
 
   const Uint num_points = xs.size() / 3;
   Vector3d x_min = intp->get_x_min();
@@ -178,27 +178,9 @@ inline void test_interpolation(std::shared_ptr<Interpol> intp, const std::string
   // the tracers' unwrapped positions); a point not finite keys as x_min.
   const int qdim = (x_max[2] > x_min[2]) ? 3 : 2;
   const partrac::MortonBox box(x_min, x_max, qdim);
-  std::vector<std::uint32_t> order;
-  if (given){
-    if (std::size_t(num_points) > std::numeric_limits<std::uint32_t>::max())
-      partrac::fail("interpol: ", num_points, " points do not fit a 32-bit index");
-    std::vector<partrac::MortonKey> keys(num_points);
-    #pragma omp parallel for schedule(static)
-    for (std::ptrdiff_t i = 0; i < std::ptrdiff_t(num_points); ++i){
-      double f[3];
-      for (int d = 0; d < 3; ++d){
-        const double v = xs[3*std::size_t(i) + d];
-        const double L = x_max[d] - x_min[d];
-        f[d] = !std::isfinite(v) ? x_min[d]
-             : (L > 0. && (v < x_min[d] || v >= x_max[d])) ? x_min[d] + modulox(v - x_min[d], L) : v;
-      }
-      keys[i].code = box.code(f);
-      keys[i].index = std::uint32_t(i);
-    }
-    order = partrac::morton_permutation(keys);
-  }
-  else
-    order = partrac::morton_order(xs.data(), std::size_t(num_points), 3, box);
+  const std::vector<std::uint32_t> order =
+      given ? partrac::morton_order(xs.data(), std::size_t(num_points), 3, box, x_min, x_max)
+            : partrac::morton_order(xs.data(), std::size_t(num_points), 3, box);
 
   std::vector<double> ptdata_;
   Uint n_inside = 0;
@@ -260,8 +242,7 @@ inline void test_interpolation(std::shared_ptr<Interpol> intp, const std::string
 
 static int run(int argc, char* argv[])
 {
-
-    std::cout << "Initialized Interpolator." << std::endl;
+  std::cout << "Initialized interpol." << std::endl;
 
   partrac::Params prm = partrac::parse_or_exit(interpol_schema(), argc, argv);
   if (prm.check_only())
@@ -319,8 +300,8 @@ static int run(int argc, char* argv[])
   if (!points.empty() && std::isfinite(t_points) && std::abs(t_points - t0) > 1e-9*std::max(1., std::abs(t0)))
     std::cout << "Note: " << points_dataset << " names t = " << t_points << ", the field is probed at t0 = "
               << t0 << " (set t0= for a field that changes in time)" << std::endl;
-  std::cout << "Testing interpolation..." << std::endl;
-  test_interpolation(intp, newfolder, t0, xs, !points.empty(), given.ids);
+  std::cout << "Probing the fields..." << std::endl;
+  probe_points(intp, newfolder, t0, xs, !points.empty(), given.ids);
 
   return 0;
 }

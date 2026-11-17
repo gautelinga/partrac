@@ -30,14 +30,8 @@ std::string trim(const std::string& s) {
   return s.substr(b, e - b + 1);
 }
 
-// Small helpers
-
-namespace {
-
-// Parse a real, requiring the whole string to be consumed
 bool try_parse_real(const std::string& s, double& out) {
   if (s.empty()) return false;
-  errno = 0;
   char* end = nullptr;
   const double d = std::strtod(s.c_str(), &end);
   if (end == s.c_str()) return false;
@@ -47,6 +41,10 @@ bool try_parse_real(const std::string& s, double& out) {
   out = d;
   return true;
 }
+
+// Small helpers
+
+namespace {
 
 // Via double, to allow scientific notation
 bool try_parse_int(const std::string& s, long long& out) {
@@ -375,8 +373,8 @@ Schema& Schema::check(Pred ok, std::string message) {
   return *this;
 }
 
-Schema& Schema::check(Problem problem) {
-  m_impl->problems.push_back(std::move(problem));
+Schema& Schema::check(Problem problem, std::string what) {
+  m_impl->problems.push_back({std::move(problem), std::move(what)});
   return *this;
 }
 
@@ -572,7 +570,7 @@ Params Schema::resolve(Params p, std::vector<std::string> problems) const {
   for (const auto& c : m_impl->checks)
     if (!c.pred(p)) problems.push_back(c.message);
   for (const auto& c : m_impl->problems) {
-    std::string message = c(p);
+    std::string message = c.first(p);
     if (!message.empty()) problems.push_back(std::move(message));
   }
 
@@ -735,7 +733,7 @@ void Schema::validate_self() const {
     probe_pred(e.required_when, "the condition for '" + e.key + "'");
   for (const auto& c : m_impl->checks) probe_pred(c.pred, "check '" + c.message + "'");
   for (const auto& c : m_impl->problems)
-    probe_pred([&c](const Params& p) { return !c(p).empty(); }, "a check");
+    probe_pred([&c](const Params& p) { return !c.first(p).empty(); }, "check of " + c.second);
   for (const auto& w : m_impl->warns) probe_pred(w.pred, "warning '" + w.message + "'");
 
   if (!problems.empty()) throw ParamError(m_impl->app, std::move(problems));

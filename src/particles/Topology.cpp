@@ -44,7 +44,8 @@ void Topology::check_topology(){
 void Topology::check_dim(){
   if (ps.N() == 0) return;
   const int d = dim();
-  // Not on sheets yet: splits alone cannot grade a sheet that steeply, and it fills with slivers until a step stalls
+  // Strips only (CurvLimit, curv_limit.hpp): a sheet fills with slivers
+  // until a step stalls
   if (d > 1 && opts.curv.factor > 0.)
     partrac::fail("curv_refine_factor = ", opts.curv.factor, " > 0 is for strips only, not sheets");
   if (dim0 < 0){
@@ -211,8 +212,8 @@ Uint Topology::inject(){
   return n;
 }
 
+// H and n for the dumps; only with curvature-limited refinement
 void Topology::compute_interior(){
-  // Only for curvature-weighted refinement
   if (!computes_curvature())
     return;
   compute_interior_prop(interior_ang, mixed_areas, face_normals, *this, ps);
@@ -226,8 +227,8 @@ void Topology::remove_nodes_safe(std::vector<bool>& node_isactive){
   check_dim();
 }
 
-bool Topology::filter(){
-  bool changed = strip_filtering(*this, ps, opts.filter_target);
+bool Topology::filter(std::mt19937& gen){
+  bool changed = strip_filtering(*this, ps, opts.filter_target, gen);
   check_topology();
   return changed;
 }
@@ -365,7 +366,8 @@ bool Topology::has_t_loc(const partrac::Params& prm) const {
 }
 
 // Written beside, then moved over the last: checkpoint.h5 first, params.dat last
-void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const {
+void Topology::write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm,
+                                const std::function<void(H5::H5File&)>& more) const {
   prm.set<double>("t", t);
   prm.set<Uint>("Nrw_current", ps.N());
   prm.dump_tmp(checkpointsfolder);
@@ -389,6 +391,8 @@ void Topology::write_checkpoint(const std::string& checkpointsfolder, const doub
       ulong2hdf5(h5f, "edges_inlet", edges_inlet, edges_inlet.size());
       ulong2hdf5(h5f, "nodes_inlet", nodes_inlet, nodes_inlet.size());
     }
+    if (more)
+      more(h5f);
     h5f.close();
   } catch (const H5::Exception&){
     partrac::fail("cannot write the checkpoint ", path, ".tmp");

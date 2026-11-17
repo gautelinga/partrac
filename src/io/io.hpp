@@ -49,6 +49,8 @@ public:
   ~RecordDatasets();
   RecordDatasets(const RecordDatasets&) = delete;
   RecordDatasets& operator=(const RecordDatasets&) = delete;
+private:
+  std::vector<WrittenDataset>* prev_;
 };
 // What the writers above write in its scope is per face ('f') or edge ('e'), else per node
 class DatasetCentre {

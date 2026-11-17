@@ -22,6 +22,14 @@ struct InitialState {
 
 // Unit vector along x, y or z; zero for anything else
 Vector3d unit_vector(const std::string& dir);
+// A plane normal into n, normalised: x, y, z or nx,ny,nz; none, zero. False,
+// n untouched, for anything else or a zero vector
+bool try_parse_normal(const std::string& value, Vector3d& n);
+// The same; fails on a bad value
+Vector3d parse_normal(const std::string& value);
+// A crossing origin: start (from_start), or a point x,y,z into p; false for
+// anything else
+bool try_parse_origin(const std::string& value, bool& from_start, Vector3d& p);
 
 // Initial states, one per init_mode; key is init_mode split at '_'
 

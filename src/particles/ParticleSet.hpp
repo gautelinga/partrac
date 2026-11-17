@@ -20,6 +20,12 @@ struct OutputFields {
 // The cells of a mesh interpolator, 0 for the rest (stepping.cpp)
 Uint cell_count(Interpol& intp);
 
+class ParticleSet;
+// A strip's curvature at node n, of the circle through it and its two
+// neighbours; 0 at an end
+double strip_curvature(const EdgesType& edges, const Node2EdgesType& node2edges, const ParticleSet& ps,
+                       const Uint n);
+
 class ParticleSet {
 public:
     ParticleSet(std::shared_ptr<Interpol> intp, const Uint Nrw_max);
@@ -34,10 +40,13 @@ public:
     double triangle_area(const Uint iedge, const Uint jedge, const EdgesType& edges) const { return cross_product(iedge, jedge, edges).norm()/2; };
     Vector3d cross_product(const Uint iedge, const Uint jedge, const EdgesType& edges) const;
     void replace_nodes(Vector3d& x, const Uint inode, const Uint jnode);
-    // At `at` if given and inside, else at the chord midpoint (at the node with two edges if only one has)
+    // At at if given and inside; else the chord midpoint, or the interior node
+    // if only one is
     void collapse_nodes(const Uint inode, const Uint jnode, Node2EdgesType& node2edges, const Vector3d* at=nullptr);
     Vector3d x(const Uint i) const { return x_rw[i]; };
     void set_x(const Uint i, const Vector3d& pos) { x_rw[i] = pos; };
+    // Whether x is in the fluid; cell_id a hint, then x's cell
+    bool locate(const Vector3d& x, int& cell_id) const { return intp->locate(x, cell_id); };
     // Moved: its cell unknown
     void move(const Uint i, const Vector3d& pos) { x_rw[i] = pos; cell_id_rw[i] = -1; };
     double t_loc(const Uint i) const { return t_loc_rw[i]; };
@@ -78,6 +87,11 @@ public:
     void set_generation(const Uint i, const double g) { generation_rw[i] = g; };
     // Dump a field under another name
     void dump_as(const std::string& field, const std::string& name);
+    // An owner's column of doubles (crossings.hpp): moved with the slots, NaN in
+    // a slot added or inserted; returns its index
+    Uint add_column();
+    std::vector<double>& column(const Uint k) { return cols_rw[k]; };
+    const std::vector<double>& column(const Uint k) const { return cols_rw[k]; };
     Vector3d rhohat(const Uint i) const { return rhohat_rw[i]; };
     void set_rhohat(const Uint i, const Vector3d& r) { rhohat_rw[i] = r; };
     double w(const Uint i) const { return w_rw[i]; };
@@ -100,6 +114,8 @@ public:
     double phi(const Uint i) const { return phi_rw[i]; };
     // Particle id
     Uint id(const Uint i) const { return id_rw[i]; };
+    // Ids made so far: a new node's is the count before it
+    Uint ids_made() const { return next_id; };
     // Random unit rho-hat in the named directions
     void spin_rhohat(const std::string& dirs, std::mt19937& gen);
     // Sort by cell; returns old -> new, empty if unsorted
@@ -146,6 +162,7 @@ public:
     std::vector<double> phi_rw;
     std::vector<int> cell_type_rw;     // cell marker (XDMF)
     std::vector<double> generation_rw; // walker splits
+    std::vector<std::vector<double>> cols_rw;   // add_column()
     std::string rhohat_name = "rhohat";
     std::string t_loc_name = "t_loc";
     // Apply fn to every particle array

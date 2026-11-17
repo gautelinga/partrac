@@ -130,8 +130,6 @@ SimplexFreqInterpol<Cell>::SimplexFreqInterpol(const std::string& infilename)
   }
 
   mesh_tables::build_cells_and_tree<Cell>(topo_, coords_, ncells_, nverts_, dim, cells_, tree_);
-  this->measure_cells();
-  this->mark_split(ncells_);
   partrac::phase_total();
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
@@ -182,7 +180,7 @@ void SimplexFreqInterpol<Cell>::rest_masks(const std::vector<std::uint8_t>& wall
     near_wall::build_wall_terms<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,
                                       wall_index_, split_, verbose);
   else if (walls.empty()){
-    // The wall vertices those at rest, on the facets at rest
+    // Wall bits: the vertices at rest; edge ends rebuilt on the facets at rest
     for (std::size_t i = 0; i < ncells_; ++i)
       if (wall_index_[i] >= 0) wall_cells_[std::size_t(wall_index_[i])].wall = rest_[std::size_t(wall_index_[i])];
     near_wall::rebuild_wall_edges_at_rest<Cell>(topo_, coords_, ncells_, nverts_, dim, facet_neigh_, vclass_,

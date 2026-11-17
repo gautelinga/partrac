@@ -17,6 +17,7 @@
 #endif
 
 #include "Error.hpp"
+#include "geometry.hpp"
 #include "typedefs.hpp"
 
 namespace partrac {
@@ -123,6 +124,23 @@ inline std::vector<std::uint32_t> morton_order(const double* x, const std::size_
     keys[i].index = std::uint32_t(i);
   }
   return morton_permutation(keys);
+}
+
+// The same, a position outside [lo, hi) folded into it along each axis of
+// some length (a periodic box's unwrapped positions); one not finite at lo
+inline std::vector<std::uint32_t> morton_order(const double* x, const std::size_t n,
+                                               const std::size_t stride, const MortonBox& box,
+                                               const Vector3d& lo, const Vector3d& hi){
+  std::vector<double> folded(3*n);
+#pragma omp parallel for schedule(static)
+  for (std::ptrdiff_t i = 0; i < std::ptrdiff_t(n); ++i)
+    for (int d = 0; d < 3; ++d){
+      const double v = x[std::size_t(i)*stride + std::size_t(d)];
+      const double L = hi[d] - lo[d];
+      folded[3*std::size_t(i) + std::size_t(d)] =
+          !std::isfinite(v) ? lo[d] : (L > 0. && (v < lo[d] || v >= hi[d])) ? lo[d] + modulox(v - lo[d], L) : v;
+    }
+  return morton_order(folded.data(), n, 3, box);
 }
 
 }  // namespace partrac

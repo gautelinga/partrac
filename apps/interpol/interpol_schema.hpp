@@ -10,7 +10,7 @@
 inline partrac::Schema interpol_schema(){
   partrac::Schema s("interpol");
   s.require<std::string>("mode", "interpolator type");
-  s.opt<std::string>("points", "", "HDF5 file of points to probe in place of random ones: a row a point in its order, with inside 1 or 0 and the ids beside them if any");
+  s.opt<std::string>("points", "", "HDF5 file of points to probe instead of random ones; the output keeps their order, with an inside flag and their ids if the file has them");
   s.opt<std::string>("points_dataset", "points", "N x 3 positions in points, as a dump's <t>/points; probed at t0, not at the dump's time");
   s.require_if<Uint>("Nrw", 0,
                      [](const partrac::Params& p){ return p.get<std::string>("points").empty(); },

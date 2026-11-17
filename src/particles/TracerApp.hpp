@@ -4,13 +4,16 @@
 // Tracer apps: points, line elements or tensors on the shared run loop
 
 #include <iostream>
-#include <set>
+#include <memory>
 #include <string>
 
+#include "AppParams.hpp"
 #include "RunLoop.hpp"
+#include "strings.hpp"
 #include "TimeScheme.hpp"
 #include "SpatialIntegrator.hpp"
 #include "TransportElement.hpp"
+#include "crossings.hpp"
 #include "stats.hpp"
 
 // Tracer fields
@@ -69,7 +72,7 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   scheme.prepare(*run.intp, E);
   record_tracer_fields<E>(run, ps, E == TransportElement::Vector);
   Topology mesh(ps, cloud_options(prm));
-  start_tracers<E>(run, ps, mesh);
+  const bool restarting = start_tracers<E>(run, ps, mesh);
   if (check_only(run, ps, mesh))
     return 0;
 
@@ -78,6 +81,17 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   const double dt = prm.get<double>("dt");
   const std::string outside = prm.get<std::string>("outside");
   const bool verbose = prm.get<bool>("verbose");
+
+  // First crossings: a line element's with its stretch and direction, else the point's
+  std::unique_ptr<Crossings> crossings;
+  if (crossings_on(prm))
+    crossings = std::make_unique<Crossings>(ps, E == TransportElement::Vector ? CrossingRecords::Vectors
+                                                                              : CrossingRecords::Points,
+                                            parse_normal(prm.get<std::string>("cross_n")),
+                                            prm.get<std::string>("cross_intv"),
+                                            prm.get<std::string>("cross_origin"),
+                                            run.out.run + "/" + prm.get<std::string>("cross_file"),
+                                            restarting ? run.out.checkpoints + "checkpoint.h5" : "");
 
   // Stepper
   struct Stepper {
@@ -102,6 +116,12 @@ int run_tracers(partrac::Params& prm, const std::string& folder){
   hooks.outside = [&](const std::vector<Uint>& outside_nodes, const double t){
     handle_outside(mesh, ps, outside, outside_nodes, t, verbose);
   };
+  if (crossings){
+    hooks.after_step = [&](const int, const double t){
+      crossings->record(ps, mesh.edges, mesh.node2edges, t, dt);
+    };
+    hooks.checkpoint = [&](H5::H5File& h5f){ crossings->checkpoint(h5f, ps); };
+  }
   OutsideTotals totals{outside, *run.intp, [&]{ return scheme.counters().get_declined(); }};
   totals.attach(hooks, verbose);
 

@@ -142,7 +142,7 @@ bool relocate(Interp& intp, HeldEval<Interp>& ev, PointValues& pv, State<E, Inte
 }
 
 // Rare: past the cap on steps a major step, from the fastest first stage and
-// the region's size; the largest met
+// the region's size; kept at the largest within the step
 template<TransportElement E, typename Interp>
 __attribute__((noinline))
 bool over_cap(Interp& intp, State<E, Interp>& s, const double dt){

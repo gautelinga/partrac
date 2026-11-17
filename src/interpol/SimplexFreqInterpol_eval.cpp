@@ -222,7 +222,7 @@ void SimplexFreqInterpol<Cell>::held_motion(const int id, const std::array<doubl
   constexpr std::size_t bs = Cell::n_dofs_max*3;
   const FreqWeights& wf = weights(t);
   if (h.wall){
-    // At the cell's barycentrics, a sub-cell's own polynomial
+    // Levels back to the cell's barycentrics; the held sub-cell's correction
     wall_at(id, Regions::cell_levels(h.sub, lev), wf, h.blocks.data(), bs, fields, h.sub);
     return;
   }

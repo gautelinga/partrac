@@ -1,5 +1,6 @@
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 #include <functional>
 #include <numeric>
@@ -192,6 +193,37 @@ Vector3d unit_vector(const std::string& dir){
   const int axis = axis_of(dir);
   if (axis >= 0)
     n[axis] = 1.;
+  return n;
+}
+
+bool try_parse_normal(const std::string& value, Vector3d& n){
+  Vector3d v = unit_vector(value);
+  char rest;
+  if (value != "none" && !(v.norm() > 0.)){
+    if (std::sscanf(value.c_str(), "%lf,%lf,%lf%c", &v[0], &v[1], &v[2], &rest) != 3 || !(v.norm() > 0.))
+      return false;
+    v /= v.norm();
+  }
+  n = v;
+  return true;
+}
+
+bool try_parse_origin(const std::string& value, bool& from_start, Vector3d& p){
+  from_start = value == "start";
+  if (from_start)
+    return true;
+  Vector3d v;
+  char rest;
+  if (std::sscanf(value.c_str(), "%lf,%lf,%lf%c", &v[0], &v[1], &v[2], &rest) != 3 || !v.allFinite())
+    return false;
+  p = v;
+  return true;
+}
+
+Vector3d parse_normal(const std::string& value){
+  Vector3d n;
+  if (!try_parse_normal(value, n))
+    partrac::fail("plane normal ", value, ": not x, y, z or nx,ny,nz, or zero");
   return n;
 }
 

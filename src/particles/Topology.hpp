@@ -2,6 +2,7 @@
 #define __TOPOLOGY_HPP
 
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <random>
 #include <string>
@@ -9,7 +10,7 @@
 #include "typedefs.hpp"
 #include "Params.hpp"
 #include "ParticleSet.hpp"
-#include "mesh.hpp"
+#include "curv_limit.hpp"
 #include "stats.hpp"
 
 struct InitialState;
@@ -43,7 +44,8 @@ public:
   void clear();
   Uint refine();
   Uint coarsen(const bool full);
-  bool filter();
+  // A strip thinned to filter_target edges, dropped at random by gen
+  bool filter(std::mt19937& gen);
   Uint remove_beyond(const Vector3d& n, const double Ln);   // x.n > Ln
   Uint inject();
   void compute_interior();
@@ -68,7 +70,9 @@ public:
   bool records_doublings = false;
   std::vector<Uint> doublings;
   std::vector<Uint>& edge_doublings(){ doublings.resize(edges.size(), 0); return doublings; }
-  void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm) const;
+  // more: what an app adds to the file, before it replaces the last
+  void write_checkpoint(const std::string& checkpointsfolder, const double t, partrac::Params& prm,
+                        const std::function<void(H5::H5File&)>& more = nullptr) const;
   void load_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   void load_text_checkpoint(const std::string& checkpointsfolder, const partrac::Params& prm);
   bool has_t_loc(const partrac::Params& prm) const;   // t_loc in a checkpoint

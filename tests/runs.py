@@ -10,7 +10,9 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import subprocess
+import time
 
 import numpy as np
 import pytest
@@ -76,6 +78,44 @@ def checkpoint_folder(d):
     return checkpoint_file(d).parent.parent
 
 
+def checkpoint_attrs(d):
+    """The attributes of the one checkpoint under d once complete (nothing of
+    a checkpoint being written beside it), else None."""
+    h5py = pytest.importorskip("h5py")
+    found = list(d.rglob("Checkpoints"))
+    if not found or any(f.name.endswith(".tmp") for f in found[0].iterdir()):
+        return None
+    try:
+        with h5py.File(found[0] / "checkpoint.h5", "r") as h:
+            return dict(h.attrs)
+    except (OSError, KeyError):
+        return None
+
+
+def kill_after_checkpoint(binary, params, args, t_kill, ready=lambda attrs: True):
+    """Run binary on params with the merged args, and kill it (SIGKILL) once a
+    complete checkpoint at t_kill or later is on disk and ready(its attributes)
+    holds. Stopped (SIGSTOP) to look, so the kill lands there. Returns the
+    checkpoint's attributes; fails if the run ends first."""
+    p = subprocess.Popen([str(binary), str(params)] + merged(args), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    try:
+        while p.poll() is None:
+            time.sleep(0.002)
+            p.send_signal(signal.SIGSTOP)
+            attrs = checkpoint_attrs(params.parent)
+            if attrs is not None and attrs["t"] >= t_kill and ready(attrs):
+                p.kill()
+                p.wait()
+                return attrs
+            p.send_signal(signal.SIGCONT)
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    pytest.fail("the run ended before it could be killed: %d" % p.returncode)
+
+
 def read_checkpoint(d):
     """Every dataset of the one checkpoint under d, by name, as written."""
     h5py = pytest.importorskip("h5py")
@@ -96,7 +136,7 @@ def write_checkpoint(d, **datasets):
 
 # One row a particle; points first
 PER_PARTICLE = ("points", "id", "c", "t_loc", "rhohat", "w", "S", "Q", "logstretch", "U", "generation",
-                "cell_id")
+                "cell_id", "crossings_max", "crossings_xn")
 
 
 def put_points(d, points):

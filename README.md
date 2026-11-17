@@ -60,6 +60,10 @@ Give the folder that holds `Checkpoints/`:
 
 The older names (`tracervectors_triangleRK4`, `filaments_felbmRK4`, ...) still run, as their app with the old choices fixed.
 
+`interpol` probes `Nrw` random points in the fluid, or, with `points=<file.h5>`, the N x 3 dataset `points_dataset` there (`points` by default; a dump's `<t>/points` too, probed at `t0`). Its `interpolation.h5part` then holds a row a point in the file's order, with an `inside` column (1, or 0 and the fields NaN for a point outside the fluid or not finite) and an `id` column from an `id` dataset beside the points, if any.
+
+`outside` says what becomes of a particle that cannot take its step: `ignore` leaves it, `mark` sets its c to 2, and the marching apps can `remove` it. `tracers` and `tracertensors` default to `mark`; `reinject` is gone, and a run that used it does not restart.
+
 ### Time schemes
 Set with `scheme`.
 * `explicit`: Euler, or second order with `int_order=2`. Diffusive when `Dm > 0`.
@@ -87,11 +91,14 @@ Parameters are given as `key=value` after the input file. `--help` lists an app'
 A dolfin case's `dolfin_params.dat` names its elements with `velocity_space`, `pressure_space` and, for a phase field (`include_phi=true`), `phase_field_space`; partrac checks them against the field files.
 
 ### Output intervals
-`dump_intv`, `stat_intv` and `checkpoint_intv` take a number X (every X; `0` is off) or a schedule of comma-separated segments in time t:
+`dump_intv`, `stat_intv` and `checkpoint_intv` take a number X (every floor(X/dt) steps from the start, as the other intervals; `0` is off) or a schedule of comma-separated segments in time t:
 * `X:U`: every X up to t = U.
 * `logN:S:U`, `logN:U`: N times a decade from S (or the previous U) to U.
 
-`dump_intv=0.1:1,log5:100,10`: every 0.1 to t = 1, 5 a decade to 100, then every 10. Times snap to the nearest step; a schedule also fires at the start, and a restart continues it.
+`dump_intv=0.1:1,log5:100,10`: every 0.1 to t = 1, 5 a decade to 100, then every 10. A schedule's times snap to the nearest step; a schedule also fires at the start, and a restart continues it.
+
+### Crossing records
+`cross_n` and `cross_intv` record when each point first passes a set of parallel planes, in `crossings.bin`. `cross_n` is the planes' normal and `cross_intv` their spacing: a number, or a schedule as for `dump_intv`, read as distance. The planes are fixed in space (`cross_origin=x,y,z`, `0,0,0` by default), or measured from each point's own start with `cross_origin=start`. The file's first line names its columns; a schedule's planes are listed in `crossings.bin.levels`.
 
 ### Near no-slip walls
 `wall_upgrade=true` raises the order of the velocity next to no-slip walls; it is on by default for `xdmftet`, `xdmftriangle` and `openfoam`.

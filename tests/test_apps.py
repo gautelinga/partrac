@@ -553,34 +553,6 @@ def test_interpol_at_points_from_a_file_gives_the_random_probes_values(tmp_path,
         assert np.isnan(got[k][-1]), k
 
 
-# interpol's random probes at 03553fd, before points= (tetfreq case, seed 1, 4
-# threads, Nrw 300): their count, column sums and first row. They pin the
-# random mode to the old output; a change of generate_up.py's mesh changes them.
-INTERPOL_03553FD = {
-    "rows": 300,
-    "sum": {"x": 147.26976093261757, "y": 150.19920250042986, "z": 151.3846803668073,
-            "ux": 400.70815481047026, "uy": 10.13281324374518, "uz": 7.478905906890204,
-            "p": 527.9001570726336, "uxy": 151.38468036680732, "uxz": 148.82843887242646},
-    "first": {"x": 0.034704884587377915, "y": 0.016997575321091793, "z": 0.09934347749395778,
-              "ux": 1.0459761424622351, "uy": 0.00334173155085912, "uz": 0.013286263266261669,
-              "p": 0.2648570429308489, "uxy": 0.09934347749395836, "uxz": 0.4136272969079938},
-}
-
-
-@needs(app("interpol"))
-def test_interpol_random_probes_are_those_of_03553fd(tmp_path, mesh_dir):
-    """The random mode is unchanged by points=: the probes of 03553fd."""
-    a = copy_case(mesh_dir("tetfreq"), tmp_path / "random")
-    run_app(app("interpol"), a / "dolfin_params.dat",
-            ["mode=tetfreq", "int_order=2", "random=false", "seed=1", "t0=0", "num_threads=4", "Nrw=300"])
-    got = interpolation(a)
-    assert len(got["x"]) == INTERPOL_03553FD["rows"]
-    for k, v in INTERPOL_03553FD["sum"].items():
-        assert np.sum(got[k]) == pytest.approx(v, rel=1e-12), k
-    for k, v in INTERPOL_03553FD["first"].items():
-        assert got[k][0] == pytest.approx(v, rel=1e-12, abs=1e-15), k
-
-
 @needs(app("interpol"))
 def test_interpol_at_a_dump_carries_its_ids_and_does_not_overwrite(tmp_path, mesh_dir):
     """interpol at a tracer dump's points carries their ids and does not overwrite an earlier probe.

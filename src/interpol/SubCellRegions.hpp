@@ -8,14 +8,12 @@
 // cell one region (sub -1), as MeshCore's.
 // Levels in the cell's barycentric units: a sub-cell's barycentrics mu
 // (split_eval.hpp), the macro facet's divided by n_verts, its least barycentric.
-// Split cells: Derived::split_cell(id), marked by mark_split, or every one with Every.
+// Split cells: Derived::split_cell(id), or every one with Every.
 
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cstdint>
 #include <string>
-#include <vector>
 #include "MeshCore.hpp"
 #include "regions.hpp"
 #include "split_eval.hpp"
@@ -92,11 +90,11 @@ public:
     assert(R.sub >= 0);
     return k == nv - 1 && Base::is_wall(R, R.sub);
   }
-  // A split cell's an n_verts-th: a path meets each sub-cell once at most;
-  // at least the floor (MeshCore)
+  // A split cell's size over n_verts (a path meets each sub-cell at most
+  // once); at least the floor (MeshCore)
   double region_size(const int id) const {
     const double s = split(id) ? Base::cell_size(id)/nv : Base::cell_size(id);
-    return std::max(s, double(this->size_floor_[std::size_t(id)]));
+    return std::max(s, Base::size_floor(id));
   }
   // The whole cells as regions, MeshCore's: all of a cell's walls
   const MeshCore<Cell>& whole_cells() const { return *this; }
@@ -128,17 +126,9 @@ public:
 protected:
   using Base = MeshCore<Cell>;
   static constexpr int nv = Cell::n_verts;
-  // Derived::split_cell of every cell, once its tables are built
-  void mark_split(const std::size_t ncells){
-    if constexpr (!Every){
-      split_cells_.resize(ncells);
-      const Derived& d = static_cast<const Derived&>(*this);
-      for (std::size_t i = 0; i < ncells; ++i) split_cells_[i] = d.split_cell(int(i));
-    }
-  }
   bool split(const int id) const {
     if constexpr (Every) return true;
-    else return split_cells_[std::size_t(id)];
+    else return static_cast<const Derived&>(*this).split_cell(id);
   }
   bool whole(const SubRegion& R) const { return !Every && R.sub < 0; }
   // Cell id's sub-cell of the least barycentric, lev the cell's barycentrics
@@ -151,7 +141,6 @@ protected:
     region_levels(i, b, lev);
     return i;
   }
-  std::vector<std::uint8_t> split_cells_;   // by cell, unless Every
 };
 
 #endif

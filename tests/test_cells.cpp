@@ -1584,19 +1584,19 @@ TEST_CASE("Past the cap on steps a major step: RK4's pieces from the start", "[c
                               const double i = std::round(40.*x[0]);
                               return Vector3d(i < 39. ? 0.3*i/38. : i < 40. ? 0.3 + 1e-9 : 1., x[1], 0.); });
     auto intp = std::make_shared<SimplexInterpol<Triangle>>(c.file("h5_params.dat"));
-    // The slivers' regions size_floor of their longest edge, 1/40; every other cell its own size
+    // The slivers' regions size_floor_fraction of their longest edge, 1/40; every other cell its own size
     std::size_t slivers = 0;
     int id = -1;
     for (int i = 0; i < int(intp->cell_count()); ++i){
       const double s = intp->region_size(i);
       if (s == intp->cell_size(i)) continue;
       REQUIRE(intp->cell_size(i) < 1e-5);
-      REQUIRE(s == Approx(MeshCore<Triangle>::size_floor/40.).epsilon(1e-6));
+      REQUIRE(s == Approx(MeshCore<Triangle>::size_floor_fraction/40.).epsilon(1e-6));
       ++slivers;
       id = i;
     }
     REQUIRE(slivers == 80);
-    // Circling after one, the cap the sliver's floor sets: 5 dt u/(size_floor L) + cap_free, about 50
+    // Circling after one, the cap the sliver's floor sets: 5 dt u/(size_floor_fraction L) + cap_free, about 50
     const double floor = intp->region_size(id);
     REQUIRE(cap_count(floor, 0.1) == int(std::ceil(5.*0.01/floor + cells::cap_free)));
     REQUIRE(cap_count(floor, 0.1) <= 51);

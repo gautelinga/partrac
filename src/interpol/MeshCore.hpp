@@ -74,12 +74,14 @@ public:
     ::level_rates(cells_[std::size_t(R.id)], v, rate);
   }
   Vector3d level_grad(const Region& R, const int k) const { return cells_[std::size_t(R.id)].bary_grad(k); }
-  // Of a cell's longest edge, the least size of its regions for the cap: a
-  // sliver's set by its edges, a sub-cell's never while (d! V)^(1/d) is at
-  // least n_verts*size_floor of the longest edge
-  static constexpr double size_floor = 0.05;
-  // Of the regions in cell id, as a path crosses them; at least size_floor of its longest edge
-  double region_size(const int id) const { return std::max(cell_size(id), double(size_floor_[std::size_t(id)])); }
+  // Regions are at least size_floor_fraction of their cell's longest edge, so
+  // a sliver cannot inflate the step cap; a sub-cell (an n_verts-th) rarely
+  // reaches it
+  static constexpr double size_floor_fraction = 0.05;
+  // That floor of cell id; in float, as a bound needs no more
+  double size_floor(const int id) const;
+  // Of the regions in cell id, as a path crosses them; at least the floor
+  double region_size(const int id) const { return std::max(cell_size(id), size_floor(id)); }
   // The whole cells as regions: the cells
   const MeshCore& whole_cells() const { return *this; }
   // The nodes held of a region, not of its cell (held_eval.hpp)
@@ -108,8 +110,6 @@ protected:
   }
   // The box lengths along the periodic axes, once x_min and x_max are final
   void set_period();
-  // size_floor_ of the cells built
-  void measure_cells();
   // Out of the step loops: the cell tree, from nothing known
   bool locate_tree(const Vector3d& xx, CellPos& pos);
   // Into the box along the periodic axes
@@ -137,7 +137,6 @@ protected:
   // The cells from nothing known; it addresses the loader's own arrays
   std::unique_ptr<partrac::CellTree> tree_;
   std::vector<std::int32_t> facet_neigh_;     // walk_to_cell, reflect_in_cells
-  std::vector<float> size_floor_;             // by cell
   Vector3d period_ = Vector3d::Zero();
   CellDofs u_dofs_;
   CellDofs p_dofs_;
@@ -145,22 +144,19 @@ protected:
 
 // The edges from vertex 0: the columns of the inverse of lambda_1..d's gradients
 template<typename Cell>
-void MeshCore<Cell>::measure_cells(){
+double MeshCore<Cell>::size_floor(const int id) const {
   constexpr int d = Cell::n_verts - 1;
-  size_floor_.resize(cells_.size());
-#pragma omp parallel for schedule(static)
-  for (std::size_t i = 0; i < cells_.size(); ++i){
-    Eigen::Matrix<double, d, d> G;
-    for (int k = 0; k < d; ++k)
-      for (int c = 0; c < d; ++c) G(k, c) = cells_[i].bary_grad(k + 1)[c];
-    const Eigen::Matrix<double, d, d> E = G.inverse();
-    double l2 = 0.;
-    for (int a = 0; a < d; ++a){
-      l2 = std::max(l2, E.col(a).squaredNorm());
-      for (int b = a + 1; b < d; ++b) l2 = std::max(l2, (E.col(a) - E.col(b)).squaredNorm());
-    }
-    size_floor_[i] = float(size_floor*std::sqrt(l2));
+  const Cell& c = cells_[std::size_t(id)];
+  Eigen::Matrix<double, d, d> G;
+  for (int k = 0; k < d; ++k)
+    for (int j = 0; j < d; ++j) G(k, j) = c.bary_grad(k + 1)[j];
+  const Eigen::Matrix<double, d, d> E = G.inverse();
+  double l2 = 0.;
+  for (int a = 0; a < d; ++a){
+    l2 = std::max(l2, E.col(a).squaredNorm());
+    for (int b = a + 1; b < d; ++b) l2 = std::max(l2, (E.col(a) - E.col(b)).squaredNorm());
   }
+  return float(size_floor_fraction*std::sqrt(l2));
 }
 
 #endif

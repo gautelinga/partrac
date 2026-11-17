@@ -9,7 +9,6 @@
 #include <iostream>
 #include <memory>
 #include <random>
-#include <set>
 #include <string>
 #include <vector>
 #include <omp.h>
@@ -18,7 +17,6 @@
 #include "typedefs.hpp"
 #include "Error.hpp"
 #include "Params.hpp"
-#include "strings.hpp"
 #include "intervals.hpp"
 #include "schedule.hpp"
 #include "perf_window.hpp"
@@ -182,14 +180,13 @@ struct Remesher {
   Topology& mesh;
   const bool refine, coarsen, verbose;
   const double refine_intv, coarsen_intv, step;
-  EventClock dumps;
 
   Remesher(Topology& mesh, const Run& run, const double step)
     : mesh(mesh), refine(run.prm.get<bool>("refine")), coarsen(run.prm.get<bool>("coarsen")),
       verbose(run.prm.get<bool>("verbose")), refine_intv(run.prm.get<double>("refine_intv")),
       // Coarsen at refine_intv when coarsening is off
       coarsen_intv(coarsen ? run.prm.get<double>("coarsen_intv") : refine_intv),
-      step(step), dumps(event_clock(run, "dump_intv", step_grid(run, step))) {}
+      step(step) {}
 
   // Initial refinement and coarsening
   void initial(const bool restarting, const bool inject){
@@ -208,12 +205,10 @@ struct Remesher {
     mesh.compute_interior();
   }
 
-  // Curvature, refinement, coarsening
-  void reshape(const int it){
-    if ((refine && at_interval(it, refine_intv, step)) || at_interval(it, coarsen_intv, step)
-        || dumps.at(it)){
+  // Curvature for a dump, refinement, coarsening
+  void reshape(const int it, const bool dumping){
+    if (dumping)
       mesh.compute_interior();
-    }
     if (refine && at_interval(it, refine_intv, step) && it > 0){
       Uint n_add = mesh.refine();
       if (verbose)
@@ -283,8 +278,9 @@ inline void note_step_size(Run& run, const ParticleSet& ps, const double t_field
 
 // App hooks
 struct RunHooks {
-  // After field update: injection, remeshing, resizing, removal
-  std::function<void(int it, double t)> reshape = [](int, double){};
+  // After field update: injection, remeshing, resizing, removal; whether the
+  // step dumps
+  std::function<void(int it, double t, bool dumping)> reshape = [](int, double, bool){};
   // After each piece of a step: the particles that could not step
   std::function<void(const std::vector<Uint>& nodes, double t)> outside =
       [](const std::vector<Uint>&, double){};
@@ -298,6 +294,8 @@ struct RunHooks {
   std::function<void(std::ostream& os)> progress = [](std::ostream&){};
   // Continue?
   std::function<bool()> keep_going = []{ return true; };
+  // Into each checkpoint; unset: nothing
+  std::function<void(H5::H5File& h5f)> checkpoint;
 };
 
 // Steps declined over the run, and what outside= did with them
@@ -352,7 +350,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
   const std::string& newfolder = run.out.run;
   prm.dump(newfolder, time_name(t, dt));
 
-  // Loop constants: the steps with a dump, a statistics row, a checkpoint
+  // The steps with a dump, a statistics row, a checkpoint
   EventClock dumps = event_clock(run, "dump_intv", grid);
   EventClock stats = event_clock(run, "stat_intv", grid);
   EventClock checkpoints = event_clock(run, "checkpoint_intv", grid);
@@ -367,7 +365,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
 
   std::string h5name = "data_from_t" + time_name(t, dt) + ".h5";
   std::string h5fname = newfolder + "/" + h5name;
-  // The start file takes the first dump, a restart's on a chunk boundary too
+  // The run's first step: its dump goes into the start file, a restart's too
   const int it_first = it;
   // No dump file when dumping is off
   H5::H5File h5f;
@@ -414,7 +412,7 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     if (!run.frozen_fields)
       run.intp->update(t);
 
-    hooks.reshape(it, t);
+    hooks.reshape(it, t, dumps.at(it));
 
     // Update fields
     if (dumps.at(it) || stats.at(it) || (refresh_S && checkpoints.at(it))){
@@ -438,10 +436,11 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
       hooks.after_statistics(it, t);
     }
 
-    // Checkpoint
+    // Checkpoint, the step reshaped: a restart repeats the reshaping
     if (checkpoints.at(it)){
       prm.set<Uint>("it", it);
-      mesh.write_checkpoint(run.out.checkpoints, t, prm);
+      prm.set<bool>("reshaped", true);
+      mesh.write_checkpoint(run.out.checkpoints, t, prm, hooks.checkpoint);
     }
 
     // Dump detailed data
@@ -449,10 +448,10 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
       const std::string groupname = time_name(t, dt);
       std::vector<WrittenDataset> written;
       try {
-        // A new file at each chunk, the first made at the start. A bare
-        // number's layout as it was: a restart's first dump on a chunk
-        // boundary starts a new file even with the restart's file empty; a
-        // schedule's goes into that file instead of leaving it empty
+        // A new file every dump_chunk_size dumps, the first made at the
+        // start. On a restart's first dump at a chunk boundary, a bare number
+        // starts a new file (the restart's stays empty); a schedule fills the
+        // restart's file first
         if (chunk_size > 0 && dumps_before % chunk_size == 0 && it > it_first
             && (dumps.plain() || dumps_in_file > 0)){
           h5name = "data_from_t" + groupname + ".h5";
@@ -516,7 +515,8 @@ void run_loop(Run& run, ParticleSet& ps, Topology& mesh, Stepper& stepper,
     update_fields(ps, *run.intp, t_fields, output_fields);
   }
   prm.set<Uint>("it", it);
-  mesh.write_checkpoint(run.out.checkpoints, t, prm);
+  prm.set<bool>("reshaped", false);
+  mesh.write_checkpoint(run.out.checkpoints, t, prm, hooks.checkpoint);
 
   statfile.close();
 }

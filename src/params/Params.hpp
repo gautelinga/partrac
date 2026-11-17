@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -99,7 +100,7 @@ struct SchemaImpl {
   std::vector<Entry> entries;              // registration order, drives dump/print
   std::map<std::string, std::size_t> index;
   std::vector<Constraint> checks;
-  std::vector<Problem> problems;
+  std::vector<std::pair<Problem, std::string>> problems;   // and what each checks
   std::vector<Constraint> warns;
   std::vector<std::function<void(Params&)>> finalizers;
   bool strict_file = true;
@@ -200,8 +201,9 @@ public:
   Schema& token_choices(const std::string& key, const std::string& sep,
                         std::vector<std::string> allowed);
   Schema& check(Pred ok, std::string message);
-  // A message made from the values, such as which part of a value is wrong
-  Schema& check(Problem problem);
+  // A message made from the values, such as which part of a value is wrong;
+  // what it checks, for the schema's own check
+  Schema& check(Problem problem, std::string what);
   Schema& warn(Pred trigger, std::string message);
   Schema& finalize(std::function<void(Params&)> f);
 
@@ -248,6 +250,8 @@ bool peek_bool(const std::string& path, const std::string& key);
 bool try_parse_bool(const std::string& s, bool& out);
 // s without its leading and trailing whitespace
 std::string trim(const std::string& s);
+// A finite real, the whole of s but trailing whitespace
+bool try_parse_real(const std::string& s, double& out);
 void report(const ParamError& e, std::ostream& out);
 
 // Template definitions

@@ -38,4 +38,12 @@ inline std::vector<std::mt19937> make_generators(partrac::Params& prm){
   return gens;
 }
 
+// A generator of the run's own for one sequence of draws (stream), as the
+// strip filter's: the run's seed and words no thread's generator has
+inline std::mt19937 stream_generator(const partrac::Params& prm, const std::uint32_t stream){
+  const std::vector<std::uint32_t> words{std::uint32_t(prm.get<int>("seed")), stream, 0, 0, 0};
+  std::seed_seq rd(words.begin(), words.end());
+  return std::mt19937(rd);
+}
+
 #endif

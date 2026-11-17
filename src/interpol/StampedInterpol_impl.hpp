@@ -77,8 +77,6 @@ StampedInterpol<Cell, Format>::StampedInterpol(const std::string& infilename)
 
   // The per-cell geometry and the tree, from the topology
   mesh_tables::build_cells_and_tree<Cell>(topo_, coords_, ncells_, nverts_, dim, cells_, tree_);
-  this->measure_cells();
-  this->mark_split(ncells_);
   partrac::phase_total();
 
   std::cout << "Setting max threads: " << omp_get_max_threads() << std::endl;
@@ -187,7 +185,6 @@ void StampedInterpol<Cell, Format>::keep_rest(const Stamp& s, const typename For
   }
   rest_fixed_ = true;
   wall_eval_ = true;
-  if (first) this->mark_split(ncells_);
   if (moved_facets || moved_others || moved_vertices){
     const char* others_name = D == 3 ? "wall edges" : "wall vertices";
     std::string what;

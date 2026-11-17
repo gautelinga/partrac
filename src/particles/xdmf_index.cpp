@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -41,8 +42,27 @@ std::vector<std::string> links(const hid_t loc, const std::string& group){
 
 using Dsets = std::map<std::string, WrittenDataset>;
 
-// Datasets of a group in a file, by name; per node where the rows are the
-// points', else per face or edge where they match those
+// The centre a dump marked a dataset with: 'f' per face, 'e' per edge; 0 if
+// unmarked
+char marked_centre(const hid_t file, const std::string& p){
+  if (H5Aexists_by_name(file, p.c_str(), "centre", H5P_DEFAULT) <= 0)
+    return 0;
+  const partrac::H5Id attr(H5Aopen_by_name(file, p.c_str(), "centre", H5P_DEFAULT, H5P_DEFAULT), H5Aclose);
+  if (!attr.valid())
+    return 0;
+  const partrac::H5Id type(H5Aget_type(attr), H5Tclose);
+  if (!type.valid() || H5Tget_class(type) != H5T_STRING || H5Tis_variable_str(type) > 0)
+    return 0;
+  std::string mark(H5Tget_size(type), '\0');
+  if (H5Aread(attr, type, &mark[0]) < 0)
+    return 0;
+  return mark.rfind("face", 0) == 0 ? 'f' : mark.rfind("edge", 0) == 0 ? 'e' : 0;
+}
+
+// Datasets of a group in a file, by name: per face or edge where the dump
+// marked them so, else per node. A dump with no marks, older, by its rows: per
+// node where they are the points', else per face or edge where they match
+// those
 Dsets datasets(const hid_t file, const std::string& group){
   Dsets out;
   for (const auto& name : links(file, group)){
@@ -55,7 +75,12 @@ Dsets datasets(const hid_t file, const std::string& group){
     if (d.rank() < 1 || d.rank() > 2) continue;
     if (d.type_class != H5T_FLOAT && d.type_class != H5T_INTEGER) continue;
     const char kind = d.type_class == H5T_FLOAT ? 'f' : d.type_signed ? 'i' : 'u';
-    out[name] = {name, Uint(d.rows()), Uint(d.cols()), kind, unsigned(d.type_size), 0};
+    out[name] = {name, Uint(d.rows()), Uint(d.cols()), kind, unsigned(d.type_size), marked_centre(file, p)};
+  }
+  if (std::any_of(out.begin(), out.end(), [](const auto& d){ return d.second.centre != 0; })){
+    for (auto& [name, d] : out)
+      if (!d.centre) d.centre = 'n';
+    return out;
   }
   const auto rows = [&](const char* name){ const auto it = out.find(name); return it == out.end() ? -1 : long(it->second.rows); };
   const long nodes = rows("points"), faces = rows("faces"), edges = rows("edges");

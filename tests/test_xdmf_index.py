@@ -201,6 +201,35 @@ def test_a_strip_or_sheet_run_indexes_every_dump(tmp_path, init):
     meshio_reads(folder)
 
 
+@needs(PARTRAC)
+def test_a_rebuilt_index_takes_the_centre_the_dump_marks_not_the_row_count(tmp_path):
+    """A strip's first dump made a closed loop, as many edges as nodes, and the
+    index removed: the rebuild on the restart reads each per-edge dataset's
+    centre from the dump, so equal counts cannot make its fields per node."""
+    h5py = pytest.importorskip("h5py")
+    params = copy_example(SINE, tmp_path / "c")
+    run_app(PARTRAC, params, MESH, STRIP, "T=0.25 checkpoint_intv=1e9")
+    folder = run_folder(tmp_path / "c")
+    with h5py.File(folder / "data_from_t0.000000.h5", "r+") as h:
+        g = h["0.000000"]
+        n = len(g["points"])
+        for name in list(g):
+            if len(g[name]) != n - 1:
+                continue
+            data, attrs = g[name][()], dict(g[name].attrs)
+            del g[name]
+            extra = [[n - 1, 0]] if name == "edges" else data[:1]
+            g[name] = np.concatenate([data, np.asarray(extra, dtype=data.dtype)])
+            g[name].attrs.update(attrs)
+        assert len(g["edges"]) == len(g["points"]) == len(g["dl"])
+    (folder / "mesh.xdmf").unlink()
+    run_app(PARTRAC, params, MESH, STRIP, "T=0.5", "restart_folder=%s" % folder)
+    first = grids(folder)[0]
+    assert first.find("Time").get("Value") == "0.000000"
+    centres = {a.get("Name"): a.get("Center") for a in first.findall("Attribute")}
+    assert centres["dl"] == centres["dl0"] == "Cell" and centres["u"] == "Node"
+
+
 @needs(TRACERS)
 def test_a_point_cloud_is_indexed_as_vertices(tmp_path):
     """Tracers with no mesh: a Polyvertex grid per dump, every field per node."""

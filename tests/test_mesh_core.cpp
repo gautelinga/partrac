@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <tuple>
 #include <vector>
 
 #include "typedefs.hpp"
@@ -106,6 +107,26 @@ struct HumpInterpol final : public Interpol {
     return Vector3d(0.3*M_PI*std::cos(M_PI*x[0]), -1., 0.).normalized();
   }
   Vector3d get_boundary_normal(const Vector3d& x, const int) const override { return normal(x); }
+  using Interpol::locate;
+  using Interpol::evaluate;
+};
+
+// Fluid everywhere but in balls of radius r about the centres
+struct HoleInterpol final : public Interpol {
+  HoleInterpol(const std::vector<Vector3d>& centres, const double r) : Interpol(""), centres(centres), r(r) {}
+  std::vector<Vector3d> centres;
+  double r;
+  double get_t_min() const override { return 0.; }
+  double get_t_max() const override { return 1.; }
+  void update(const double) override {}
+  void freeze(const double) override {}
+  bool locate(const Vector3d& x, const double, CellPos& pos) override {
+    for (const auto& c : centres)
+      if ((x - c).norm() < r) return false;
+    pos.id = 0;
+    return true;
+  }
+  void evaluate(const Vector3d&, const double, const CellPos&, PointValues&) override {}
   using Interpol::locate;
   using Interpol::evaluate;
 };
@@ -364,6 +385,67 @@ TEST_CASE("a strip splits and merges at its material midpoint, exactly on a cubi
   REQUIRE( (ps.x(2) - x(1.15)).norm() < 1e-12 );
 }
 
+TEST_CASE("a strip splits at the chord's midpoint where its neighbours would put the node past an end", "[mesh]") {
+  // a -- i -- j along x, j an end; (a, i) a quarter or half of (i, j) in
+  // material length but 0.95 long: the quadratic through a, i, j puts the
+  // material midpoint of (i, j) at 1.06, past j (a fold), or at 0.65, kept
+  for (const double dl0 : {0.25, 0.5}){
+    ParticleSet ps(std::make_shared<EverywhereInterpol>(), 8);
+    ps.add({{0., 0., 0.}, {1., 0., 0.}, {-0.95, 0., 0.}}, 0);
+    Connectivity m;
+    m.edges = {{{0, 1}, 1.}, {{2, 0}, dl0}};
+    compute_edge2faces(m.edge2faces, m.faces, m.edges);
+    compute_node2edges(m.node2edges, m.edges, ps.N());
+    REQUIRE( refinement(m, ps, 0.99, {}, StuckEdge::Stop) == 1 );
+    if (dl0 == 0.25)
+      REQUIRE( ps.x(3) == Vector3d(0.5, 0., 0.) );
+    else
+      REQUIRE( ps.x(3)[0] == Approx(0.95/3 + 1./3) );
+  }
+}
+
+TEST_CASE("coincident strip nodes merge where they are", "[mesh]") {
+  // a -- i = j -- b along x, (a, i) a quarter of the others in material
+  // length: the material midpoint of (i, j) would be at 0.49
+  ParticleSet ps(std::make_shared<EverywhereInterpol>(), 8);
+  ps.add({{-1., 0., 0.}, {0., 0., 0.}, {0., 0., 0.}, {1., 0., 0.}}, 0);
+  Connectivity m;
+  m.edges = {{{0, 1}, 0.25}, {{1, 2}, 1.}, {{2, 3}, 1.}};
+  compute_edge2faces(m.edge2faces, m.faces, m.edges);
+  compute_node2edges(m.node2edges, m.edges, ps.N());
+  // The zero edges alone, as coarsen(false) does
+  REQUIRE( coarsening(m, ps, 1e-12, 0., {}) == 1 );
+  REQUIRE( ps.N() == 3 );
+  REQUIRE( ps.x(1) == Vector3d::Zero() );
+  // The full coarsening too
+  ParticleSet full(std::make_shared<EverywhereInterpol>(), 8);
+  full.add({{-1., 0., 0.}, {0., 0., 0.}, {0., 0., 0.}, {1., 0., 0.}}, 0);
+  Connectivity f;
+  f.edges = {{{0, 1}, 0.25}, {{1, 2}, 1.}, {{2, 3}, 1.}};
+  compute_edge2faces(f.edge2faces, f.faces, f.edges);
+  compute_node2edges(f.node2edges, f.edges, full.N());
+  REQUIRE( coarsening(f, full, 0.5, 10., {}) == 1 );
+  REQUIRE( full.x(1) == Vector3d::Zero() );
+}
+
+TEST_CASE("a strip merge out of the fluid falls back to the chord's midpoint only within ds_max", "[mesh]") {
+  // a -- i -- j -- b along x, graded: the material midpoint of (i, j) at
+  // 0.00726, in a hole; the chord's, 0.01, would take a past 0.5085
+  const auto merged = [](const double ds_max){
+    const Vector3d mid(0.02*0.362890625, 0., 0.);
+    ParticleSet ps(std::make_shared<HoleInterpol>(std::vector<Vector3d>{mid}, 1e-3), 8);
+    ps.add({{-0.5, 0., 0.}, {0., 0., 0.}, {0.02, 0., 0.}, {0.51, 0., 0.}}, 0);
+    Connectivity m;
+    m.edges = {{{0, 1}, 0.08}, {{1, 2}, 0.02}, {{2, 3}, 0.06}};
+    compute_edge2faces(m.edge2faces, m.faces, m.edges);
+    compute_node2edges(m.node2edges, m.edges, ps.N());
+    const Uint n = coarsening(m, ps, 0.05, ds_max, {});
+    return std::pair{n, ps.x(1)[0]};
+  };
+  REQUIRE( merged(0.5085).first == 0 );
+  REQUIRE( merged(0.6) == std::pair<Uint, double>{1, 0.01} );
+}
+
 TEST_CASE("the curvature limit refines a bent strip to ds_max/(1 + factor kappa), and no further than the cap", "[mesh]") {
   // Three quarters of a circle of radius 1/2, kappa = 2, in 12 edges of 0.2; refined to ds_max = 0.5
   const auto refined = [](const CurvLimit& curv){
@@ -430,6 +512,57 @@ TEST_CASE("a sheet merges at the chord's midpoint where the fitted one would fli
       m.nodes_inlet.push_back(n);
   REQUIRE( sheet_coarsening(m, ps, 4., 0.) == 1 );
   REQUIRE( (ps.x(3) - chord).norm() < 1e-12 );
+}
+
+TEST_CASE("a sheet merging at the chord's midpoint, the fitted point flipping a face, keeps ds_max", "[mesh]") {
+  // The neighbourhood above with node 1 half as far again from node 3: the
+  // fitted point keeps every edge within 10.05715 or its length, the chord's
+  // midpoint takes 3-1 past it
+  const auto merged = [](const double ds_max){
+    ParticleSet ps(std::make_shared<EverywhereInterpol>(), 16);
+    ps.add({{2.5437, -8.8667, 3.5893}, {-4.0974, -10.0825, 4.46255}, {3.6641, -3.7515, 1.6458},
+            {-2.5209, -2.5675, 1.0049}, {-3.5430, 3.3364, -2.5660}, {1.2231, 1.7154, -0.4558},
+            {-6.9250, -3.1783, 0.4577}, {0., 0., 0.}, {-5.2528, 1.1867, -1.5916}, {-7.0894, -0.9638, -0.6819},
+            {0.8622, -5.8900, 2.7452}}, 0);
+    Connectivity m;
+    make_sheet(m, ps, {{3, 9, 6}, {3, 0, 1}, {4, 7, 5}, {6, 1, 3}, {7, 2, 5}, {8, 3, 4}, {3, 9, 8}, {10, 3, 0},
+                       {10, 3, 2}, {4, 7, 3}, {7, 2, 3}});
+    for (Uint n = 0; n < ps.N(); ++n)
+      if (n != 3 && n != 7)
+        m.nodes_inlet.push_back(n);
+    return sheet_coarsening(m, ps, 4., ds_max);
+  };
+  REQUIRE( merged(10.05715) == 0 );
+  REQUIRE( merged(11.) == 1 );
+}
+
+TEST_CASE("a sheet merges at the chord's midpoint where the fitted point is out of the fluid, else not at all", "[mesh]") {
+  // The neighbourhood above with node 0 a tenth nearer node 3: there the
+  // fitted point, 0.055 off the chord's midpoint, flips no face
+  const Vector3d fitted(-1.26586183153, -1.2605446377, 0.551815825916);
+  const auto sheet = [&fitted](const std::vector<Vector3d>& holes){
+    ParticleSet ps(std::make_shared<HoleInterpol>(holes, 0.02), 16);
+    ps.add({{2.03724, -8.23678, 3.33086}, {-3.5719, -7.5775, 3.3100}, {3.6641, -3.7515, 1.6458},
+            {-2.5209, -2.5675, 1.0049}, {-3.5430, 3.3364, -2.5660}, {1.2231, 1.7154, -0.4558},
+            {-6.9250, -3.1783, 0.4577}, {0., 0., 0.}, {-5.2528, 1.1867, -1.5916}, {-7.0894, -0.9638, -0.6819},
+            {0.8622, -5.8900, 2.7452}}, 0);
+    const Vector3d chord = 0.5*(ps.x(3) + ps.x(7));
+    Connectivity m;
+    make_sheet(m, ps, {{3, 9, 6}, {3, 0, 1}, {4, 7, 5}, {6, 1, 3}, {7, 2, 5}, {8, 3, 4}, {3, 9, 8}, {10, 3, 0},
+                       {10, 3, 2}, {4, 7, 3}, {7, 2, 3}});
+    for (Uint n = 0; n < ps.N(); ++n)
+      if (n != 3 && n != 7)
+        m.nodes_inlet.push_back(n);
+    const Uint n = sheet_coarsening(m, ps, 4., 0.);
+    return std::tuple{n, (ps.x(3) - fitted).norm(), (ps.x(3) - chord).norm(), chord};
+  };
+  const auto free = sheet(std::vector<Vector3d>{});
+  REQUIRE( std::get<0>(free) == 1 );
+  REQUIRE( std::get<1>(free) < 1e-8 );
+  const auto hole = sheet(std::vector<Vector3d>{fitted});
+  REQUIRE( std::get<0>(hole) == 1 );
+  REQUIRE( std::get<2>(hole) < 1e-12 );
+  REQUIRE( std::get<0>(sheet(std::vector<Vector3d>{fitted, std::get<3>(free)})) == 0 );
 }
 
 TEST_CASE("a broken mesh invariant throws an internal error", "[mesh][errors]") {

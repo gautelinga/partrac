@@ -160,9 +160,11 @@ inline std::array<Uint, 3> get_close_entities(Uint iedge, Uint jedge, Uint kedge
   return {knode, mnedges[0], mnedges[1]};
 }
 
-// Where a sheet's edge (i, j) splits or merges: its chord midpoint, lifted onto a quadratic least-squares fit of the
-// sheet's height over the plane of best fit through i, j and their neighbours. Not lifted with under 6 or over 32
-// nodes, or by more than ds/16, the sagitta of a turn of half a radian across the edge: the sheet is unresolved there
+// Where a sheet's edge (i, j) splits or merges: its chord midpoint, lifted onto
+// a quadratic least-squares fit of the sheet's height over the plane of best
+// fit through i, j and their neighbours. Not lifted with under 6 or over 32
+// nodes, or by more than ds/16, the sagitta of a turn of half a radian across
+// the edge: the sheet is unresolved there
 inline Vector3d sheet_point(const ParticleSet& ps, const EdgesType& edges, const Node2EdgesType& node2edges,
                             const Uint i, const Uint j){
   constexpr int NMAX = 32;
@@ -195,7 +197,7 @@ inline Vector3d sheet_point(const ParticleSet& ps, const EdgesType& edges, const
   if (t.norm() < 1e-6*ds)
     return m;
   const Vector3d e1 = t.normalized(), e2 = n.cross(e1);
-  // On the stack
+  // Fixed capacity NMAX: no allocation per edge
   Eigen::Matrix<double, Eigen::Dynamic, 6, 0, NMAX, 6> A(np, 6);
   Eigen::Matrix<double, Eigen::Dynamic, 1, 0, NMAX, 1> w(np);
   for (Uint r = 0; r < np; ++r){
@@ -282,7 +284,8 @@ Uint sheet_refinement(Connectivity& m,
       double ds0 = edges[iedge].second;
 
       Uint new_inode = ps.N();
-      // On the surface
+      // A sheet's on its fitted surface; an initial shape's (on_surface
+      // false) on the chord
       bool added;
       if (m.on_surface){
         const Vector3d at = sheet_point(ps, edges, node2edges, inode, jnode);
@@ -403,25 +406,22 @@ inline long strip_neighbour(const Connectivity& m, const Uint n, const Uint e, d
   return get_other(m.edges[f].first[0], m.edges[f].first[1], n);
 }
 
-// Curvature at node n, of the circle through it and its two neighbours; 0 at an end
-inline double strip_curvature(const Connectivity& m, const ParticleSet& ps, const Uint n){
-  const auto& row = m.node2edges[n];
-  if (row.size() != 2)
-    return 0.;
-  auto other = [&](const Uint e){ return get_other(m.edges[e].first[0], m.edges[e].first[1], n); };
-  const Vector3d a = ps.x(other(row[0])) - ps.x(n), b = ps.x(other(row[1])) - ps.x(n);
-  const double d = a.norm() * b.norm() * (a - b).norm();
-  return d > 0. ? 2. * a.cross(b).norm() / d : 0.;
-}
-
 // The curvature limit's scale for edge (i, j): the sharper bend of its two ends
 inline double strip_scale(const Connectivity& m, const ParticleSet& ps, const CurvLimit& curv, const Uint i, const Uint j){
   if (curv.factor <= 0.) return 1.;
-  return curv.scale(std::max(strip_curvature(m, ps, i), strip_curvature(m, ps, j)));
+  return curv.scale(std::max(strip_curvature(m.edges, m.node2edges, ps, i),
+                             strip_curvature(m.edges, m.node2edges, ps, j)));
 }
 
-// Edge e = (i, j) split at its material midpoint: Lagrange in the material length (dl0) through i, j and the nodes
-// beyond them whose edges are within a factor 4 of e's: cubic, quadratic or the chord
+// Edge e = (i, j) split at its material midpoint: Lagrange in the material
+// length (dl0) through i, j and the nodes beyond them whose edges are within a
+// factor 4 of e's: cubic, quadratic or the chord. The chord's midpoint instead
+// where that leaves the chord's middle half, or lies off it by more than half
+// the chord: on a straight edge a stretch varying linearly along it, however
+// steeply, puts the material midpoint in [1/4, 3/4] of the chord, and on an
+// arc of at most a half circle it is within half the chord of it. Beyond,
+// the neighbours extrapolate: a fold past an end, a zero edge's node moved
+// off it
 inline Vector3d strip_midpoint(const Connectivity& m, const ParticleSet& ps, const Uint e, const Uint i, const Uint j){
   const double h = m.edges[e].second;
   std::vector<std::pair<double, Vector3d>> p{{0., ps.x(i)}, {h, ps.x(j)}};
@@ -439,7 +439,11 @@ inline Vector3d strip_midpoint(const Connectivity& m, const ParticleSet& ps, con
         w *= (h / 2 - p[l].first) / (p[k].first - p[l].first);
     x += w * p[k].second;
   }
-  return x;
+  const Vector3d d = ps.x(j) - ps.x(i), r = x - ps.x(i);
+  const double d2 = d.squaredNorm(), u = r.dot(d) / d2;
+  if (u >= 0.25 && u <= 0.75 && (r - u * d).squaredNorm() <= d2 / 4)
+    return x;
+  return 0.5 * (ps.x(i) + ps.x(j));
 }
 
 inline Uint strip_refinement(Connectivity& m,
@@ -815,14 +819,19 @@ inline bool collapse_edge(const Uint iedge,
     // Corner edge
     return false;
   }
-  // Lengthen no edge past ds_max
-  if (ds_max > 0.){
+  // Whether a merge at y lengthens no edge past ds_max
+  const auto keeps_lengths = [&](const Vector3d& y){
+    if (!(ds_max > 0.))
+      return true;
     for (const auto& [owner, conodes] : {std::pair{inode, &inodes}, std::pair{jnode, &jnodes}})
       for (const Uint knode : *conodes)
         if (knode != inode && knode != jnode
-            && (x - ps.x(knode)).norm() > std::max(ds_max, ps.dist(owner, knode)))
+            && (y - ps.x(knode)).norm() > std::max(ds_max, ps.dist(owner, knode)))
           return false;
-  }
+    return true;
+  };
+  if (!keeps_lengths(x))
+    return false;
 
   double dA_res = 0.;
   double dA0_res = 0.;
@@ -870,11 +879,16 @@ inline bool collapse_edge(const Uint iedge,
       v_res += faces[iface].second/sqrt(faces[iface].tau);
   }
 
-  // No flipped normals; also computes new areas
+  // No flipped normals; also computes new areas. The chord's position where
+  // the surface's flips a face (a fold, or nodes welded together) or leaves
+  // the fluid (a wall the lift crosses); none if the chord's fails too
   auto &dAs_new = buf.dAs_new;
-  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new)){
-    // The chord's position, where the surface's flips a face (a fold, or nodes welded together)
-    if (x_plain == x || !normals_are_ok(iedge, x_plain, ps, kfaces, faces, edges, cross_old, dAs_new))
+  int cell = ps.get_cell_id(inode);
+  if (!normals_are_ok(iedge, x, ps, kfaces, faces, edges, cross_old, dAs_new) || !ps.locate(x, cell)){
+    cell = ps.get_cell_id(inode);
+    if (x_plain == x || !keeps_lengths(x_plain)
+        || !normals_are_ok(iedge, x_plain, ps, kfaces, faces, edges, cross_old, dAs_new)
+        || !ps.locate(x_plain, cell))
       return false;
     x = x_plain;
   }
@@ -1303,8 +1317,13 @@ inline Uint strip_coarsening(Connectivity& m,
             ++iedge;
             continue;
           }
-          // Merge at the material midpoint, as refinement inserts; lengthen no neighbour past its ds_max
-          const Vector3d mid = strip_midpoint(m, ps, iedge, inode, jnode);
+          // Merge at the material midpoint, as refinement inserts (coincident
+          // nodes where they are), or, out of the fluid, at the chord's, as
+          // collapse_nodes then does; lengthen no neighbour past its ds_max
+          Vector3d mid = strip_midpoint(m, ps, iedge, inode, jnode);
+          int cell = ps.get_cell_id(new_inode);
+          if (!ps.locate(mid, cell))
+            mid = 0.5*(ps.x(inode) + ps.x(jnode));
           if (ds_max > 0.){
             const double ds_max_loc = ds_max*scale;
             const Uint jfar = get_other(edges[jedge].first[0], edges[jedge].first[1], old_inode);
@@ -1375,7 +1394,8 @@ Uint coarsening(Connectivity& m,
 
 bool strip_filtering(Connectivity& m,
                      ParticleSet& ps,
-                     const Uint filter_target){
+                     const Uint filter_target,
+                     std::mt19937& gen){
   EdgesType& edges = m.edges;
 
   const Uint n_edges = edges.size();
@@ -1390,7 +1410,7 @@ bool strip_filtering(Connectivity& m,
     std::vector<Uint> ids(n_edges);
     std::iota(ids.begin(), ids.end(), 0);
     for (Uint k = 0; k < n_edges - filter_target; ++k){
-      std::swap(ids[k], ids[k + rand() % (n_edges - k)]);
+      std::swap(ids[k], ids[k + std::uniform_int_distribution<Uint>(0, n_edges - k - 1)(gen)]);
       edge_isactive[ids[k]] = false;
     }
   }
